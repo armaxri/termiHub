@@ -616,6 +616,33 @@ describe("Terminal — a window that regains a session keeps the repaint's outpu
     expect(shown()).not.toContain("stale");
   });
 
+  it("shows output that waited for a repaint that another one replaced", async () => {
+    const answers = await mountWithHeldRepaints();
+    const xterm = xtermInstances[xtermInstances.length - 1];
+    imageHold.on = true;
+    emitOutput("kept");
+    regain();
+    let landed: () => void = () => {};
+    xterm.write.mockImplementationOnce((_data: unknown, done?: () => void) => {
+      landed = () => done?.();
+    });
+    await act(async () => {
+      answers[0](snapshot("stale"));
+      await wait(0);
+    });
+    imageHold.on = false;
+    await settle();
+    // The second repaint finds nothing to show.
+    regain();
+    await act(async () => {
+      landed();
+      answers[1](snapshot("", 0));
+      await wait(60);
+    });
+
+    expect(shown()).toBe("kept");
+  });
+
   it("writes nothing under a repaint while it lands", async () => {
     const answers = await mountWithHeldRepaints();
     const xterm = xtermInstances[xtermInstances.length - 1];

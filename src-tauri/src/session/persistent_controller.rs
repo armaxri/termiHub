@@ -322,8 +322,9 @@ impl<'a> PersistentController<'a> {
                     // Re-insert under the same session_id so the tab's existingSessionId
                     // prop and the TerminalOutputDispatcher's pendingOutput buffer both
                     // continue to work without any frontend state update.
-                    {
+                    let capture = {
                         let mut sessions = self.manager.sessions.lock().await;
+                        let capture = self.manager.start_output_buffer(&session_id);
                         sessions.insert(
                             session_id.clone(),
                             SessionEntry {
@@ -342,14 +343,15 @@ impl<'a> PersistentController<'a> {
                                 line_ending: LineEnding::default(),
                                 reader_cancel: reader_cancel.clone(),
                                 io,
+                                capture: capture.clone(),
                             },
                         );
-                    }
+                        capture
+                    };
 
                     // Spawn output reader for the re-created session.
                     let sessions_clone = self.manager.sessions.clone();
                     let emitter_clone = emitter.clone();
-                    let capture = self.manager.start_output_buffer(&session_id);
                     let output_buffers = self.manager.output_buffers.clone();
                     let session_loggers = self.manager.session_loggers.clone();
                     let session_tab_ids = self.manager.session_tab_ids.clone();

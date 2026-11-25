@@ -441,30 +441,157 @@ async fn a_new_stream_of_the_same_session_has_a_larger_epoch() {
     assert_eq!(emitted, epochs);
 }
 
-/// The late cleanup of an ended stream leaves the capture of the stream that
-/// started after it under the same id.
-#[tokio::test]
-async fn the_cleanup_of_an_ended_stream_leaves_the_next_one() {
-    let emitter = MockEventEmitter::new();
-    let buffers = new_output_buffers();
-    let (old, new) = (new_capture(), new_capture());
-    for (current, kept) in [(&new, true), (&old, false)] {
-        let sessions = sessions_with_mock("sess-1").await;
-        buffers
+/// What one session id has in the manager: its entry, capture, logger and tab.
+struct Registered {
+    sessions: Arc<Mutex<HashMap<String, SessionEntry>>>,
+    buffers: OutputBuffers,
+    loggers: SessionLoggers,
+    tabs: SessionTabIds,
+    dir: tempfile::TempDir,
+}
+
+impl Registered {
+    fn new() -> Self {
+        Self {
+            sessions: Arc::default(),
+            buffers: new_output_buffers(),
+            loggers: new_session_loggers(),
+            tabs: new_session_tab_ids(),
+            dir: tempfile::tempdir().expect("temp dir"),
+        }
+    }
+
+    /// Start a stream of `sess-1` in `sessions`, as an attach does.
+    fn start(&self, sessions: &mut HashMap<String, SessionEntry>) -> Arc<StdMutex<OutputCapture>> {
+        let id = "sess-1".to_string();
+        let entry = mock_entry(&id);
+        let capture = entry.capture.clone();
+        sessions.insert(id.clone(), entry);
+        self.buffers
             .lock()
             .unwrap()
-            .insert("sess-1".to_string(), current.clone());
+            .insert(id.clone(), capture.clone());
+        let log = SessionLogConfig::new(self.dir.path().join("out.log"), false);
+        let logger = SessionLogger::open(log, Box::new(|| "T".to_string())).expect("logger");
+        self.loggers
+            .lock()
+            .unwrap()
+            .insert(id.clone(), Arc::new(StdMutex::new(logger)));
+        self.tabs.lock().unwrap().insert(
+            id,
+            TabBinding {
+                tab_id: "tab-1".to_string(),
+                resilient: false,
+                agent_id: None,
+            },
+        );
+        capture
+    }
+
+    /// Whether the entry, the capture, the logger and the tab are there.
+    async fn present(&self) -> [bool; 4] {
+        [
+            self.sessions.lock().await.contains_key("sess-1"),
+            self.buffers.lock().unwrap().contains_key("sess-1"),
+            self.loggers.lock().unwrap().contains_key("sess-1"),
+            self.tabs.lock().unwrap().contains_key("sess-1"),
+        ]
+    }
+
+    async fn cleanup<E: EventEmitter>(&self, emitter: &E, capture: &Arc<StdMutex<OutputCapture>>) {
         SessionManager::emit_and_cleanup(
             "sess-1",
             Vec::new(),
-            &emitter,
-            &sessions,
-            &old,
-            &buffers,
-            &new_session_loggers(),
-            &new_session_tab_ids(),
+            emitter,
+            &self.sessions,
+            capture,
+            &self.buffers,
+            &self.loggers,
+            &self.tabs,
         )
         .await;
-        assert_eq!(buffers.lock().unwrap().contains_key("sess-1"), kept);
     }
+}
+
+/// The cleanup of a stream comes when its session is attached again already
+/// (#6004): the session goes on, so nothing of it is removed and no tab hears
+/// that it ended.
+#[tokio::test]
+async fn a_late_cleanup_leaves_a_session_that_was_attached_again() {
+    let emitter = MockEventEmitter::new();
+    let registered = Arc::new(Registered::new());
+    let mut sessions = registered.sessions.lock().await;
+    let old = registered.start(&mut sessions);
+    // The cleanup waits for the session map while the session is closed and
+    // attached again.
+    let late = tokio::spawn({
+        let (registered, emitter) = (registered.clone(), emitter.clone());
+        async move { registered.cleanup(&emitter, &old).await }
+    });
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    sessions.remove("sess-1");
+    let new = registered.start(&mut sessions);
+    drop(sessions);
+    late.await.expect("cleanup");
+
+    assert_eq!(registered.present().await, [true; 4]);
+    assert!(Arc::ptr_eq(
+        &capture_of(&registered.sessions, "sess-1").await,
+        &new
+    ));
+    assert!(emitter.exits.lock().unwrap().is_empty());
+    assert!(emitter.session_drops.lock().unwrap().is_empty());
+
+    // Its own cleanup removes all of it.
+    registered.cleanup(&emitter, &new).await;
+    assert_eq!(registered.present().await, [false; 4]);
+    assert_eq!(emitter.exits.lock().unwrap().len(), 1);
+}
+
+/// Attaches `registered` again the moment the session's end is announced.
+#[derive(Clone)]
+struct AttachAtExit(Arc<Registered>);
+
+impl EventEmitter for AttachAtExit {
+    fn emit_output(&self, _event: &TerminalOutputEvent) -> bool {
+        true
+    }
+    fn emit_exit(&self, _event: &TerminalExitEvent) {
+        let mut sessions = self
+            .0
+            .sessions
+            .try_lock()
+            .expect("no lock at the exit event");
+        assert!(
+            !sessions.contains_key("sess-1"),
+            "an attach must not find the ended session"
+        );
+        self.0.start(&mut sessions);
+    }
+}
+
+#[tokio::test]
+async fn a_cleanup_leaves_a_session_attached_again_at_its_exit_event() {
+    let registered = Arc::new(Registered::new());
+    let old = registered.start(&mut *registered.sessions.lock().await);
+
+    registered
+        .cleanup(&AttachAtExit(registered.clone()), &old)
+        .await;
+
+    assert_eq!(registered.present().await, [true; 4]);
+}
+
+/// A session closed on purpose has no entry any more when its reader ends.
+#[tokio::test]
+async fn the_cleanup_of_a_closed_session_removes_the_rest_and_ends_its_tab() {
+    let emitter = MockEventEmitter::new();
+    let registered = Registered::new();
+    let capture = registered.start(&mut *registered.sessions.lock().await);
+    registered.sessions.lock().await.remove("sess-1");
+
+    registered.cleanup(&emitter, &capture).await;
+
+    assert_eq!(registered.present().await, [false; 4]);
+    assert_eq!(emitter.exits.lock().unwrap().len(), 1);
 }

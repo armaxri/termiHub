@@ -436,6 +436,9 @@ pub(super) struct SessionEntry {
     /// `sessions` lock (#4300): the per-session input order and the gate close
     /// waits on before `disconnect()`.
     pub(super) io: SessionIo,
+    /// The scrollback capture of this entry's output stream. It also tells the
+    /// stream from another one under the same session id (#6004).
+    pub(super) capture: Arc<StdMutex<OutputCapture>>,
 }
 
 /// Entry access the desktop session-ownership map offers its helpers
@@ -1425,8 +1428,9 @@ impl SessionManager {
 
         // Store session, promoting its capacity reservation to a live entry
         // under the same `sessions` lock so the occupied-slot count never dips.
-        {
+        let capture = {
             let mut sessions = self.sessions.lock().await;
+            let capture = self.start_output_buffer(&session_id);
             sessions.insert(
                 session_id.clone(),
                 SessionEntry {
@@ -1436,13 +1440,15 @@ impl SessionManager {
                     line_ending: LineEnding::default(),
                     reader_cancel: reader_cancel.clone(),
                     io,
+                    capture: capture.clone(),
                 },
             );
             self.pending_creates
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .release(&session_id);
-        }
+            capture
+        };
 
         if resumed {
             self.mark_resumed_session(&session_id);
@@ -1561,7 +1567,6 @@ impl SessionManager {
 
         // Spawn output streaming task.
         let sessions_clone = self.sessions.clone();
-        let capture = self.start_output_buffer(&session_id);
         let output_buffers = self.output_buffers.clone();
         let session_loggers = self.session_loggers.clone();
         let session_tab_ids = self.session_tab_ids.clone();
@@ -2414,8 +2419,9 @@ impl SessionManager {
         let output_flow = self.output_flow_for(Some(agent_id), &io);
 
         // Insert under the fresh desktop session id.
-        {
+        let capture = {
             let mut sessions = self.sessions.lock().await;
+            let capture = self.start_output_buffer(&session_id);
             sessions.insert(
                 session_id.clone(),
                 SessionEntry {
@@ -2434,9 +2440,11 @@ impl SessionManager {
                     line_ending: LineEnding::default(),
                     reader_cancel: reader_cancel.clone(),
                     io,
+                    capture: capture.clone(),
                 },
             );
-        }
+            capture
+        };
 
         // Record the identity bridge for the new desktop session id, keyed by the
         // stable tab id, so a future drop of this re-attached session folds
@@ -2468,7 +2476,6 @@ impl SessionManager {
         // Stream output for the re-attached session (buffer replay is already
         // in-flight from `attach_session`).
         let sessions_clone = self.sessions.clone();
-        let capture = self.start_output_buffer(&session_id);
         let output_buffers = self.output_buffers.clone();
         let session_loggers = self.session_loggers.clone();
         let session_tab_ids = self.session_tab_ids.clone();
@@ -2694,6 +2701,7 @@ impl SessionManager {
                 line_ending: LineEnding::default(),
                 reader_cancel: CancellationToken::new(),
                 io: SessionIo::default(),
+                capture: Arc::default(),
             },
         );
     }
