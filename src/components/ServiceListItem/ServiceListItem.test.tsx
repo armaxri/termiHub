@@ -229,6 +229,11 @@ describe("what the row says", () => {
     expect(q("server-risk-s")?.textContent).toBe("Anyone on your network can upload");
     // It says who reaches it, so nothing else does.
     expect(q("server-address-s")?.textContent).toBe("http://localhost:8080");
+    // Without an address, why there is none is said, too.
+    const open = serverIn("running", { bindHost: "0.0.0.0" });
+    render({ ...open, risk: "Anyone on your network can upload" });
+    expect(q("server-address-s")?.textContent).toContain("no network address now");
+    expect(q("server-risk-s")).not.toBeNull();
     render(serverIn("running"));
     expect(q("server-risk-s")).toBeNull();
   });

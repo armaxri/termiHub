@@ -221,6 +221,19 @@ describe("EmbeddedServerActivityPanel", () => {
     expect(q("server-activity-filter-srv-1")).toBeNull();
   });
 
+  it("says who transfers now, the device first (T-005)", async () => {
+    const transfer = { id: 1, method: "GET", path: "/big.iso", bytes: 2048, startedAt: "" };
+    const currentTransfers = [
+      { ...transfer, client: "10.0.0.7" },
+      { ...transfer, id: 2 },
+    ];
+    getActivity.mockResolvedValue(activity({ stats: { ...activity().stats, currentTransfers } }));
+    await renderPanel(true);
+    const items = q("server-activity-transfers-srv-1")!.querySelectorAll("li");
+    expect(items[0].textContent).toBe("10.0.0.7 · 2.0 KB so farGET /big.iso");
+    expect(items[1].textContent).toContain("Unknown device · 2.0 KB so far");
+  });
+
   it("does not say so once somebody has", async () => {
     const one = { ...activity().stats, totalConnections: 1, totalRequests: 0 };
     getActivity.mockResolvedValue(activity({ entries: [], stats: one }));

@@ -440,6 +440,10 @@ describe("state, reason and next step", () => {
     // An FTP sign-in left over says nothing about the web server.
     expect(reach({ ...open, ftpAuth: signIn })).toBe("anyone on your network");
     expect(reach({ ...web, bindHost: "127.0.0.1" })).toBe("only this computer");
+    // Why there is no address is said either way.
+    const offline = { ...CONTEXT, networkAddress: undefined };
+    const unknown = fileServerModel(server(ftp), serverIn("running"), offline).address;
+    expect(unknown?.reach).toContain("no network address now");
   });
 
   it("a list says how many run, and how many are in each state that is not on or off", () => {

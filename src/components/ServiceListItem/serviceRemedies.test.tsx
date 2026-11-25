@@ -256,6 +256,7 @@ describe("stopping a file server", () => {
     );
     await press("confirm-service-lifecycle-confirm");
     expect(actions.stopEmbeddedServer).toHaveBeenCalledWith("s");
+    expect(q("confirm-service-lifecycle-dialog")).toBeNull();
   });
 
   it("and not when nobody is", async () => {
