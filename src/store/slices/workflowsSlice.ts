@@ -35,6 +35,7 @@ import {
   cancelWorkflowRunById,
   replaceActiveWorkflowRun,
   runWorkflowOnTarget,
+  type LocalProcessDecision,
 } from "./workflowRunOnTarget";
 
 /** UI-facing metadata describing an in-flight workflow run (#1852). */
@@ -150,8 +151,10 @@ export interface WorkflowParamPromptState {
 
 /** State backing the open local-process authorization dialog (#1857). */
 export interface LocalProcessPromptState {
-  /** The program the step wants to spawn. */
+  /** The program the step wants to spawn, as written. */
   program: string;
+  /** The file that would start (#5994); the approval is for this file. */
+  path: string;
   /** The discrete arguments it would be spawned with. */
   args: string[];
   /** The name of the workflow requesting it, for the prompt copy. */
@@ -434,7 +437,7 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
     activeFanout = fanout;
     const toastId = `workflow-run-${workflowId}-fanout`;
     const statuses: FanoutTargetStatus[] = targets.map(() => "queued");
-    const authDecisions = new Map<string, Promise<boolean>>();
+    const authDecisions = new Map<string, Promise<LocalProcessDecision>>();
     const title = `Running workflow "${workflow.name}" on ${targets.length} terminals…`;
     const renderProgress = (note?: string) => {
       const line = describeFanoutProgress(statuses);

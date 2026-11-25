@@ -14,6 +14,7 @@ pub mod file_bookmarks;
 pub mod files;
 pub mod inventory_import;
 pub mod local_process;
+pub mod local_process_policy;
 pub mod logs;
 pub mod macros;
 pub mod mobaxterm_import;

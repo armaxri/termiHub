@@ -5,14 +5,12 @@
 //!
 //! The security model is layered:
 //!
-//! 1. **Explicit opt-in, enforced at the trust boundary.** [`run_local_process`]
-//!    refuses to spawn anything unless `workflow_local_process_enabled` is set in
-//!    the persisted [`AppSettings`]. The frontend gates on the same flag and adds
-//!    a per-program confirmation/allowlist on top, but this backend check means a
-//!    step can never spawn a process without the user having opted in — even if
-//!    the frontend were bypassed.
-//!    The step is also experimental: `experimental_features_enabled` must be on
-//!    too, for every run and whatever started it ([`authorize_spawn`], #5988).
+//! 1. **Decided at the trust boundary.** [`run_local_process`] starts a program only
+//!    when [`super::local_process_policy`] says so, from the persisted settings:
+//!    experimental features and the opt-in must be on (#5988), and the program must
+//!    be on the user's list or be the file the user approved for this run (#5994).
+//!    It then starts exactly the file that was judged. That module states the rule
+//!    and what it does not protect against (the window itself, above all).
 //! 2. **Direct argv — never a shell.** The program is spawned with
 //!    [`tokio::process::Command`] from `program` + a discrete `args` vector. No
 //!    shell is ever involved and no argument is concatenated into a command line,
@@ -37,6 +35,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
+use super::local_process_policy::{self, LocalProcessCheck, Program, SearchEnv};
 use crate::connection::settings::{AppSettings, SettingsStorage};
 use crate::utils::errors::TerminalError;
 
@@ -142,22 +141,24 @@ impl LocalProcessRegistry {
     }
 }
 
-/// The trust-boundary check of [`run_local_process`]: the experimental switch
-/// (#5988) **and** the master opt-in, whatever started the run. The per-program
-/// allowlist is the frontend's, on top of both.
-fn authorize_spawn(settings: &AppSettings) -> Result<(), &'static str> {
-    if settings.experimental_features_enabled != Some(true) {
-        return Err(
-            "running a local process is experimental; turn on Settings ▸ General ▸ Allow \
-             experimental features to run this step",
-        );
-    }
-    if !settings.workflow_local_process_enabled {
-        return Err(
-            "local process execution is disabled; enable it in Settings before running this step",
-        );
-    }
-    Ok(())
+/// The settings as they are on disk now. `None` when they are missing, unreadable,
+/// corrupt or newer: then nothing starts. Never repairs or resets the file.
+fn persisted_settings<R: Runtime>(app_handle: &AppHandle<R>) -> Option<AppSettings> {
+    SettingsStorage::new(app_handle).ok()?.peek()
+}
+
+/// What starting `program` now would do: allowed, ask the user, or refused. The
+/// frontend asks this before it starts a program, so it holds no rule of its own.
+#[tauri::command]
+pub fn check_local_process<R: Runtime>(
+    program: String,
+    app_handle: AppHandle<R>,
+) -> LocalProcessCheck {
+    local_process_policy::check(
+        persisted_settings(&app_handle).as_ref(),
+        &program,
+        &SearchEnv::current(),
+    )
 }
 
 /// Clamp a caller-requested timeout into `[1ms, MAX_TIMEOUT_MS]`, applying the
@@ -210,21 +211,22 @@ where
 /// command line. Kept free of any Tauri dependency so the guardrails are unit
 /// testable.
 async fn execute_local_process(
-    program: &str,
+    program: &Program,
     args: &[String],
     timeout: Duration,
     token: &CancellationToken,
     output_tx: mpsc::Sender<(&'static str, String)>,
 ) -> Result<LocalProcessOutcome, TerminalError> {
-    let program = program.trim();
-    if program.is_empty() {
-        return Err(TerminalError::WorkflowError(
-            "no program configured for the local-process step".to_string(),
-        ));
-    }
+    let shown = program.path.display();
 
     // Direct argv — NEVER a shell. `program` + discrete `args`, no interpolation.
-    let mut command = Command::new(program);
+    // The judged file itself: the OS gets no name to search for again.
+    let mut command = Command::new(&program.path);
+    // A program found by its name still sees that name.
+    #[cfg(unix)]
+    if let Some(name) = &program.bare_name {
+        command.arg0(name);
+    }
     command
         .args(args)
         .stdin(Stdio::null())
@@ -240,7 +242,7 @@ async fn execute_local_process(
     }
 
     let mut child = command.spawn().map_err(|e| {
-        TerminalError::WorkflowError(format!("failed to spawn local process '{program}': {e}"))
+        TerminalError::WorkflowError(format!("failed to spawn local process '{shown}': {e}"))
     })?;
 
     let stdout_task = spawn_reader(child.stdout.take(), "stdout", output_tx.clone());
@@ -276,7 +278,7 @@ async fn execute_local_process(
         },
         Ending::WaitErr(e) => {
             return Err(TerminalError::WorkflowError(format!(
-                "failed while waiting for local process '{program}': {e}"
+                "failed while waiting for local process '{shown}': {e}"
             )));
         }
         Ending::Cancelled => {
@@ -308,8 +310,8 @@ async fn execute_local_process(
 
 /// Spawn a guarded local process for a `run-local-process` workflow step.
 ///
-/// Enforces the experimental switch and the master opt-in before doing
-/// anything, then delegates to [`execute_local_process`], forwarding streamed
+/// Starts only what [`local_process_policy::authorize`] allows (`approved_path` is
+/// the file the user approved for this run, if it is not on the list), then delegates to [`execute_local_process`], forwarding streamed
 /// output as [`EVENT_LOCAL_PROCESS_OUTPUT`] events and returning the exit
 /// outcome. Awaits completion so the caller learns the exit status.
 #[tauri::command]
@@ -318,25 +320,25 @@ pub async fn run_local_process<R: Runtime>(
     program: String,
     args: Vec<String>,
     timeout_ms: Option<u64>,
+    approved_path: Option<String>,
     registry: State<'_, LocalProcessRegistry>,
     app_handle: AppHandle<R>,
 ) -> Result<LocalProcessOutcome, TerminalError> {
-    // GUARDRAIL: the experimental switch and the explicit opt-in, enforced at the
-    // trust boundary from the persisted settings. A step can never spawn a process
-    // unless the user turned on both, whatever the frontend says about the run.
-    let settings = SettingsStorage::new(&app_handle)
-        .and_then(|storage| storage.load_with_recovery())
-        .map(|recovered| recovered.data)
-        .map_err(|e| {
-            TerminalError::WorkflowError(format!("could not load settings to authorize step: {e}"))
-        })?;
-    if let Err(reason) = authorize_spawn(&settings) {
+    // GUARDRAIL: decided here, from the persisted settings, whatever the frontend
+    // says about the run. Nothing between this and the spawn looks the program up.
+    let program = local_process_policy::authorize(
+        persisted_settings(&app_handle).as_ref(),
+        &program,
+        approved_path.as_deref(),
+        &SearchEnv::current(),
+    )
+    .map_err(|reason| {
         warn!(run_id, reason, "refused local-process step");
-        return Err(TerminalError::WorkflowError(reason.to_string()));
-    }
+        TerminalError::WorkflowError(reason)
+    })?;
 
     let timeout = resolve_timeout(timeout_ms);
-    debug!(run_id, program, ?timeout, "spawning guarded local process");
+    debug!(run_id, program = %program.path.display(), ?timeout, "spawning guarded local process");
 
     let token = registry.register(&run_id);
     let registry_handle = registry.inner().clone();
@@ -384,37 +386,20 @@ pub fn cancel_local_process(run_id: String, registry: State<'_, LocalProcessRegi
 mod tests {
     use super::*;
 
-    /// #5988: the experimental switch and the master opt-in are both required.
-    #[test]
-    fn a_spawn_needs_experimental_and_the_opt_in() {
-        let settings = |experimental, enabled| AppSettings {
-            experimental_features_enabled: experimental,
-            workflow_local_process_enabled: enabled,
-            ..AppSettings::default()
-        };
-        for off in [None, Some(false)] {
-            let err = authorize_spawn(&settings(off, true)).unwrap_err();
-            assert!(err.contains("Allow experimental features"), "{err}");
-            assert!(authorize_spawn(&settings(off, false)).is_err());
-        }
-        assert!(authorize_spawn(&settings(Some(true), true)).is_ok());
-        let err = authorize_spawn(&settings(Some(true), false)).unwrap_err();
-        assert!(err.contains("disabled"), "{err}");
-    }
-
-    /// The real command against settings on disk: with either control off it
-    /// returns an error and no process is created; with both on it runs.
+    /// The real command against settings on disk: with any control off it returns
+    /// an error and no process is created; with all on it runs.
     #[cfg(unix)]
     #[tokio::test]
-    async fn the_command_spawns_only_with_both_controls_on() {
+    async fn the_command_spawns_only_with_every_control_on() {
         use crate::utils::config_paths::ConfigDirOverride;
         use tauri::Manager;
 
-        for (experimental, enabled) in [
-            (None, true),
-            (Some(false), true),
-            (Some(true), false),
-            (Some(true), true),
+        for (experimental, enabled, listed) in [
+            (None, true, true),
+            (Some(false), true, true),
+            (Some(true), false, true),
+            (Some(true), true, false),
+            (Some(true), true, true),
         ] {
             let dir = tempfile::TempDir::new().unwrap();
             let app = tauri::test::mock_app();
@@ -425,6 +410,11 @@ mod tests {
                 .save(&AppSettings {
                     experimental_features_enabled: experimental,
                     workflow_local_process_enabled: enabled,
+                    workflow_local_process_allowlist: if listed {
+                        vec!["/usr/bin/touch".into()]
+                    } else {
+                        Vec::new()
+                    },
                     ..AppSettings::default()
                 })
                 .unwrap();
@@ -435,13 +425,14 @@ mod tests {
                 "/usr/bin/touch".into(),
                 vec![marker.display().to_string()],
                 Some(5_000),
+                None,
                 app.state(),
                 app.handle().clone(),
             )
             .await;
 
-            let allowed = experimental == Some(true) && enabled;
-            let case = format!("experimental {experimental:?}, opt-in {enabled}");
+            let allowed = experimental == Some(true) && enabled && listed;
+            let case = format!("experimental {experimental:?}, opt-in {enabled}, listed {listed}");
             assert_eq!(result.is_ok(), allowed, "{case}: {result:?}");
             assert_eq!(marker.exists(), allowed, "{case}");
         }
@@ -474,6 +465,7 @@ mod tests {
             "/usr/bin/touch".into(),
             vec![marker.display().to_string()],
             Some(5_000),
+            None,
             app.state(),
             app.handle().clone(),
         )
@@ -492,14 +484,126 @@ mod tests {
         out
     }
 
+    /// A judged program, as the policy hands it over.
+    fn program(path: &str) -> Program {
+        Program {
+            path: path.into(),
+            bare_name: None,
+        }
+    }
+
+    /// The judged file is what starts, under the name it was asked for by.
+    #[cfg(unix)]
     #[tokio::test]
-    async fn empty_program_is_refused() {
-        let (tx, _rx) = mpsc::channel(LOCAL_PROCESS_OUTPUT_QUEUE_CAP);
+    async fn the_judged_file_starts_and_sees_its_bare_name() {
+        let (tx, rx) = mpsc::channel(LOCAL_PROCESS_OUTPUT_QUEUE_CAP);
         let token = CancellationToken::new();
-        let err = execute_local_process("   ", &[], Duration::from_secs(5), &token, tx)
+        let judged = Program {
+            path: "/bin/sh".into(),
+            bare_name: Some("shown-name".into()),
+        };
+        let args = ["-c".to_string(), "echo \"$0\"".to_string()];
+        execute_local_process(&judged, &args, Duration::from_secs(5), &token, tx)
             .await
-            .expect_err("empty program must be refused");
-        assert!(err.to_string().contains("no program"), "got: {err}");
+            .unwrap();
+        assert_eq!(
+            collect_output(rx),
+            vec![("stdout".to_string(), "shown-name".to_string())]
+        );
+    }
+
+    /// A program the user approved for this run starts without being listed, and
+    /// only as the file that was approved.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_approved_program_starts_only_as_the_file_that_was_approved() {
+        use crate::utils::config_paths::ConfigDirOverride;
+        use tauri::Manager;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let app = tauri::test::mock_app();
+        app.manage(ConfigDirOverride(dir.path().to_path_buf()));
+        app.manage(LocalProcessRegistry::default());
+        let storage = SettingsStorage::new(app.handle()).unwrap();
+        storage
+            .save(&AppSettings {
+                experimental_features_enabled: Some(true),
+                workflow_local_process_enabled: true,
+                ..AppSettings::default()
+            })
+            .unwrap();
+        for (approved, starts) in [("/usr/bin/true", false), ("/usr/bin/touch", true)] {
+            let marker = dir.path().join("spawned");
+            let result = run_local_process(
+                "run-1".into(),
+                "/usr/bin/touch".into(),
+                vec![marker.display().to_string()],
+                Some(5_000),
+                Some(approved.into()),
+                app.state(),
+                app.handle().clone(),
+            )
+            .await;
+            assert_eq!(result.is_ok(), starts, "{approved}: {result:?}");
+            assert_eq!(marker.exists(), starts, "{approved}");
+        }
+    }
+
+    /// Unreadable settings refuse, and the check never repairs or resets the file.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn unreadable_settings_refuse_and_are_left_alone() {
+        use crate::utils::config_paths::ConfigDirOverride;
+        use tauri::Manager;
+
+        let on = r#""experimentalFeaturesEnabled":true,"workflowLocalProcessEnabled":true"#;
+        for raw in [
+            "{ not json".to_string(),
+            format!(
+                r#"{{"version":"9999",{on},"workflowLocalProcessAllowlist":["/usr/bin/touch"]}}"#
+            ),
+            format!(r#"{{"version":"1",{on},"workflowLocalProcessAllowlist":"/usr/bin/touch"}}"#),
+            format!(
+                r#"{{"version":"1",{on},"workflowLocalProcessAllowlist":["/usr/bin/touch",7]}}"#
+            ),
+        ] {
+            let dir = tempfile::TempDir::new().unwrap();
+            let file = dir.path().join("settings.json");
+            std::fs::write(&file, &raw).unwrap();
+            let app = tauri::test::mock_app();
+            app.manage(ConfigDirOverride(dir.path().to_path_buf()));
+            app.manage(LocalProcessRegistry::default());
+            let marker = dir.path().join("spawned");
+            // Also when the window says that the user approved it.
+            for approved in [None, Some("/usr/bin/touch".to_string())] {
+                let result = run_local_process(
+                    "run-1".into(),
+                    "/usr/bin/touch".into(),
+                    vec![marker.display().to_string()],
+                    Some(5_000),
+                    approved,
+                    app.state(),
+                    app.handle().clone(),
+                )
+                .await;
+                assert!(
+                    result.unwrap_err().to_string().contains("cannot be read"),
+                    "{raw}"
+                );
+            }
+            let verdict = check_local_process("/usr/bin/touch".into(), app.handle().clone());
+            assert!(
+                matches!(verdict, LocalProcessCheck::Refused { .. }),
+                "{raw}"
+            );
+            assert!(!marker.exists());
+            assert_eq!(std::fs::read_to_string(&file).unwrap(), raw);
+            assert_eq!(
+                std::fs::read_dir(dir.path()).unwrap().count(),
+                1,
+                "no backup file"
+            );
+        }
     }
 
     /// GUARDRAIL: a space-containing argument is passed as a single discrete argv
@@ -512,10 +616,15 @@ mod tests {
         let (tx, rx) = mpsc::channel(LOCAL_PROCESS_OUTPUT_QUEUE_CAP);
         let token = CancellationToken::new();
         let args = vec!["[%s]\n".to_string(), "a b".to_string()];
-        let outcome =
-            execute_local_process("/usr/bin/printf", &args, Duration::from_secs(5), &token, tx)
-                .await
-                .expect("printf should run");
+        let outcome = execute_local_process(
+            &program("/usr/bin/printf"),
+            &args,
+            Duration::from_secs(5),
+            &token,
+            tx,
+        )
+        .await
+        .expect("printf should run");
         assert_eq!(outcome.exit_code, Some(0));
         let lines: Vec<String> = collect_output(rx)
             .into_iter()
@@ -536,10 +645,15 @@ mod tests {
         let (tx, rx) = mpsc::channel(LOCAL_PROCESS_OUTPUT_QUEUE_CAP);
         let token = CancellationToken::new();
         let args = vec!["%s\n".to_string(), "; rm -rf / && echo pwned".to_string()];
-        let outcome =
-            execute_local_process("/usr/bin/printf", &args, Duration::from_secs(5), &token, tx)
-                .await
-                .expect("printf should run");
+        let outcome = execute_local_process(
+            &program("/usr/bin/printf"),
+            &args,
+            Duration::from_secs(5),
+            &token,
+            tx,
+        )
+        .await
+        .expect("printf should run");
         assert_eq!(outcome.exit_code, Some(0));
         let lines: Vec<String> = collect_output(rx)
             .into_iter()
@@ -558,9 +672,15 @@ mod tests {
         // `sh -c 'exit 3'` is spawned as a direct argv (no shell wrapping by us);
         // it deterministically exits 3.
         let args = vec!["-c".to_string(), "exit 3".to_string()];
-        let outcome = execute_local_process("/bin/sh", &args, Duration::from_secs(5), &token, tx)
-            .await
-            .expect("sh should run");
+        let outcome = execute_local_process(
+            &program("/bin/sh"),
+            &args,
+            Duration::from_secs(5),
+            &token,
+            tx,
+        )
+        .await
+        .expect("sh should run");
         assert_eq!(outcome.exit_code, Some(3));
         assert!(!outcome.timed_out);
         assert!(!outcome.cancelled);
@@ -574,10 +694,15 @@ mod tests {
         let (tx, _rx) = mpsc::channel(LOCAL_PROCESS_OUTPUT_QUEUE_CAP);
         let token = CancellationToken::new();
         let args = vec!["30".to_string()];
-        let outcome =
-            execute_local_process("/bin/sleep", &args, Duration::from_millis(150), &token, tx)
-                .await
-                .expect("sleep should spawn");
+        let outcome = execute_local_process(
+            &program("/bin/sleep"),
+            &args,
+            Duration::from_millis(150),
+            &token,
+            tx,
+        )
+        .await
+        .expect("sleep should spawn");
         assert!(outcome.timed_out, "expected timeout: {outcome:?}");
         assert!(!outcome.cancelled);
         assert_eq!(outcome.exit_code, None);
@@ -595,10 +720,15 @@ mod tests {
             cancel_token.cancel();
         });
         let args = vec!["30".to_string()];
-        let outcome =
-            execute_local_process("/bin/sleep", &args, Duration::from_secs(30), &token, tx)
-                .await
-                .expect("sleep should spawn");
+        let outcome = execute_local_process(
+            &program("/bin/sleep"),
+            &args,
+            Duration::from_secs(30),
+            &token,
+            tx,
+        )
+        .await
+        .expect("sleep should spawn");
         assert!(outcome.cancelled, "expected cancelled: {outcome:?}");
         assert!(!outcome.timed_out);
         assert_eq!(outcome.exit_code, None);
@@ -611,9 +741,10 @@ mod tests {
         let (tx, _rx) = mpsc::channel(LOCAL_PROCESS_OUTPUT_QUEUE_CAP);
         let token = CancellationToken::new();
         let args = vec!["/c".to_string(), "exit 3".to_string()];
-        let outcome = execute_local_process("cmd", &args, Duration::from_secs(5), &token, tx)
-            .await
-            .expect("cmd should run");
+        let outcome =
+            execute_local_process(&program("cmd"), &args, Duration::from_secs(5), &token, tx)
+                .await
+                .expect("cmd should run");
         assert_eq!(outcome.exit_code, Some(3));
         assert!(!outcome.timed_out);
         assert!(!outcome.cancelled);
@@ -628,9 +759,15 @@ mod tests {
         let token = CancellationToken::new();
         // ping -n 30 keeps the process alive well past the timeout.
         let args = vec!["-n".to_string(), "30".to_string(), "127.0.0.1".to_string()];
-        let outcome = execute_local_process("ping", &args, Duration::from_millis(200), &token, tx)
-            .await
-            .expect("ping should spawn");
+        let outcome = execute_local_process(
+            &program("ping"),
+            &args,
+            Duration::from_millis(200),
+            &token,
+            tx,
+        )
+        .await
+        .expect("ping should spawn");
         assert!(outcome.timed_out, "expected timeout: {outcome:?}");
         assert_eq!(outcome.exit_code, None);
     }

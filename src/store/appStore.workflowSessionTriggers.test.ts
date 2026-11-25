@@ -29,6 +29,15 @@ const invokeRunLocalProcess = vi.hoisted(() =>
   vi.fn(() => Promise.resolve({ exitCode: 0, timedOut: false, cancelled: false }))
 );
 vi.mock("@/services/localProcessApi", () => ({
+  // The backend's rule, over the seeded settings: the program as written or its file.
+  checkLocalProcess: vi.fn(async (program: string) => {
+    const { currentSettingsView } = await import("@/store/settingsBridge");
+    const list = currentSettingsView().workflowLocalProcessAllowlist ?? [];
+    const path = `/bin/${program}`;
+    return list.includes(program) || list.includes(path)
+      ? { status: "allowed", path }
+      : { status: "ask", path, reason: `"${program}" (${path}) is not an allowed program.` };
+  }),
   invokeRunLocalProcess,
   cancelLocalProcess: vi.fn(() => Promise.resolve(true)),
   subscribeLocalProcessOutput: vi.fn(() => Promise.resolve(() => {})),

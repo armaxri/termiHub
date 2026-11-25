@@ -54,6 +54,20 @@ vi.mock("@/utils/frontendLog", async (importOriginal) => ({
   frontendLog: (...args: unknown[]) => mocks.frontendLog(...args),
 }));
 
+vi.mock("@/services/localProcessApi", () => ({
+  checkLocalProcess: async (program: string) =>
+    mocks.settings.workflowLocalProcessAllowlist?.includes(program)
+      ? { status: "allowed", path: `/bin/${program}` }
+      : {
+          status: "ask",
+          path: `/bin/${program}`,
+          reason: `"${program}" (/bin/${program}) is not an allowed program.`,
+        },
+  invokeRunLocalProcess: vi.fn(),
+  cancelLocalProcess: vi.fn(),
+  subscribeLocalProcessOutput: vi.fn(),
+}));
+
 vi.mock("./settingsBridge", () => ({
   currentSettingsView: () => mocks.settings,
 }));
@@ -357,7 +371,9 @@ describe("runWorkflowOnTarget — local-process authorization", () => {
   const lp: WorkflowStep = { kind: "run-local-process", program: "make", args: ["test"] };
 
   it("reuses a fan-out's shared decision instead of prompting again", async () => {
-    const authDecisions = new Map([[JSON.stringify(["make", "test"]), Promise.resolve(false)]]);
+    const authDecisions = new Map([
+      [JSON.stringify(["make", "test"]), Promise.resolve({ ok: false as const })],
+    ]);
 
     const result = await run(workflow([lp]), { fanout: { authDecisions } });
 
@@ -381,7 +397,9 @@ describe("runWorkflowOnTarget — local-process authorization", () => {
   });
 
   it("never reuses a fan-out decision made while experimental was on (#5988)", async () => {
-    const authDecisions = new Map([[JSON.stringify(["make", "test"]), Promise.resolve(true)]]);
+    const authDecisions = new Map([
+      [JSON.stringify(["make", "test"]), Promise.resolve({ ok: true as const })],
+    ]);
     mocks.injector.mockImplementation(() => {
       mocks.settings.experimentalFeaturesEnabled = false;
       return true;
@@ -401,7 +419,7 @@ describe("runWorkflowOnTarget — local-process authorization", () => {
     expect(result.status).toBe("failed");
     expect(mocks.frontendLog).toHaveBeenCalledWith(
       "workflow",
-      "scheduled run refused un-allowlisted local program: make"
+      'unattended run refused local program: "make" (/bin/make) is not an allowed program.'
     );
   });
 });

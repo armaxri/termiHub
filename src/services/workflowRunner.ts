@@ -380,7 +380,12 @@ export interface LocalProcessResult {
   timedOut: boolean;
   /** `true` when the process was killed because the run was cancelled. */
   cancelled: boolean;
+  /** Why it did not start or run, when it did not. */
+  error?: string;
 }
+
+/** The authorization gate's answer: approved, or not, with the reason if known. */
+export type LocalProcessAuthorization = boolean | { refused: string };
 
 /** Options threaded into a local-process spawn so it can observe cancellation. */
 export interface LocalProcessRunOptions {
@@ -392,14 +397,15 @@ export interface LocalProcessRunOptions {
  * The **authorization gate** for a `run-local-process` step (#1857). Resolves
  * `true` only when the user has both opted in *and* authorized this specific
  * program (via a persisted allowlist or an interactive confirmation). The runner
- * treats every other resolution — `false`, or the seam being absent — as "not
- * authorized" and refuses to spawn. This is the security choke point: nothing
- * runs a local process without a `true` from here first.
+ * treats every other resolution — `false`, a refusal with its reason, or the seam
+ * being absent — as "not authorized" and refuses to spawn: nothing runs a local
+ * process without a `true` from here first. The backend decides again when the
+ * program starts (#5994).
  */
 export type WorkflowAuthorizeLocalProcessSeam = (
   program: string,
   args: string[]
-) => Promise<boolean> | boolean;
+) => Promise<LocalProcessAuthorization> | LocalProcessAuthorization;
 
 /**
  * Spawns an authorized local program with the discrete `args` (never a shell),
@@ -1032,10 +1038,12 @@ export async function executeStep(
       const authorized = deps.authorizeLocalProcess
         ? await deps.authorizeLocalProcess(resolved.program, resolved.args)
         : false;
-      if (!authorized) {
+      if (authorized !== true) {
         return {
           ok: false,
-          error: `local process "${resolved.program}" is not authorized to run`,
+          error: authorized
+            ? authorized.refused
+            : `local process "${resolved.program}" is not authorized to run`,
         };
       }
       // A cancel observed before the spawn aborts the run without spawning.
@@ -1043,6 +1051,7 @@ export async function executeStep(
 
       const result = await deps.runLocalProcess(resolved.program, resolved.args, { signal });
       if (result.cancelled) return { ok: true, cancelled: true };
+      if (result.error !== undefined) return { ok: false, error: result.error };
       if (result.timedOut) {
         return { ok: false, error: `local process "${resolved.program}" timed out` };
       }

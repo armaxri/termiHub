@@ -299,9 +299,7 @@ describe("executeStep", () => {
       const refused = await executeStep(
         step("rm"),
         deps({
-          authorizeLocalProcess: (async () => ({
-            refused: refusal,
-          })) as unknown as WorkflowAuthorizeLocalProcessSeam,
+          authorizeLocalProcess: async () => ({ refused: refusal }),
           runLocalProcess: spawn,
         })
       );

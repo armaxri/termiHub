@@ -644,10 +644,10 @@ pub struct AppSettings {
     #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub workflow_local_process_enabled: bool,
     /// Programs the user has chosen to always allow a `run-local-process` step
-    /// to spawn without re-confirming (#1857). Owned by the frontend
-    /// `AppSettings.workflowLocalProcessAllowlist`; persisted here so the
-    /// authorization survives a restart. Independent of workflow data, so an
-    /// imported workflow can never add an entry.
+    /// to spawn without re-confirming (#1857). Independent of automation data,
+    /// so an imported automation can never add an entry. The backend matches it
+    /// when a program starts (`commands::local_process_policy`, #5994), but the
+    /// window writes it like every other setting.
     #[serde(default)]
     #[cfg_attr(test, ts(as = "Option<Vec<String>>", optional))]
     pub workflow_local_process_allowlist: Vec<String>,

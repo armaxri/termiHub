@@ -17,9 +17,11 @@ import {
 import { localReadFile } from "@/services/api";
 import { isScriptSourceConfirmed } from "@/services/workflowScriptSources";
 import {
+  checkLocalProcess,
   invokeRunLocalProcess,
   cancelLocalProcess,
   subscribeLocalProcessOutput,
+  type LocalProcessCheck,
 } from "@/services/localProcessApi";
 import { runAutomation } from "@/services/automationRunner";
 import { getTerminalInputInjector } from "@/services/macroPlayback";
@@ -116,6 +118,15 @@ export function activeWorkflowRunCount(): number {
   return activeWorkflowRuns.size;
 }
 
+/** What was decided about one program + args (#5994). */
+export type LocalProcessDecision =
+  | {
+      ok: true;
+      /** The file the user approved; absent when the program is on the list. */
+      approvedPath?: string;
+    }
+  | { ok: false; reason?: string };
+
 /**
  * Serializes the interactive local-process authorization prompts: there is one
  * prompt slot in the store, so concurrent targets (#3418) must take turns
@@ -136,7 +147,7 @@ export interface WorkflowFanoutHooks {
    * keyed by program + args, so the user is asked once per program rather than
    * once per terminal.
    */
-  authDecisions?: Map<string, Promise<boolean>>;
+  authDecisions?: Map<string, Promise<LocalProcessDecision>>;
 }
 
 /** Everything {@link runWorkflowOnTarget} needs to run one workflow on one tab. */
@@ -257,51 +268,61 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
     return injector(targetTabId, data);
   };
 
-  // The authorization gate for a `run-local-process` step (#1857). Fails
-  // closed: unless the user has opted in AND authorized this specific
-  // program (allowlist hit or an interactive confirmation), it returns
-  // false and the step never spawns. An imported workflow's step is never
-  // pre-authorized — the program is not on the allowlist and the master
-  // opt-in defaults off, so it lands here and is gated exactly like any
-  // other untrusted program.
-  const askAuthorization = async (program: string, args: string[]): Promise<boolean> => {
-    const settings = currentSettingsView();
-    if (!settings.workflowLocalProcessEnabled) {
+  // The authorization gate for a `run-local-process` step (#1857). The backend
+  // holds the rule (#5994) and decides again when the program starts; this asks it
+  // first, so that a program that is not on the list can be put to the user. An
+  // imported automation adds nothing to the list. Fails closed.
+  const askAuthorization = async (
+    program: string,
+    args: string[]
+  ): Promise<LocalProcessDecision> => {
+    if (!currentSettingsView().workflowLocalProcessEnabled) {
       toast.error("Local process execution is disabled", {
         description:
           "Enable it in Settings → Security before this workflow can run a local program.",
       });
-      return false;
+      return { ok: false };
     }
-    const allowlist = settings.workflowLocalProcessAllowlist ?? [];
-    if (allowlist.includes(program)) return true;
+    let verdict: LocalProcessCheck;
+    try {
+      verdict = await checkLocalProcess(program);
+    } catch (err) {
+      return { ok: false, reason: `"${program}" was not started: ${errorMessage(err)}` };
+    }
+    if (verdict.status === "allowed") return { ok: true };
+    if (verdict.status !== "ask") return { ok: false, reason: verdict.reason };
     if (unattended) {
-      // Never prompt from a scheduled run: an un-allowlisted program is refused.
-      frontendLog("workflow", `scheduled run refused un-allowlisted local program: ${program}`);
-      return false;
+      // Never prompt from an unattended run: an unlisted program is refused.
+      frontendLog("workflow", `unattended run refused local program: ${verdict.reason}`);
+      return { ok: false, reason: verdict.reason };
     }
 
-    // Not yet trusted — ask the user, once, via the confirmation dialog.
+    // Not yet trusted — ask the user, once, via the confirmation dialog, about the
+    // file that would start. The approval is for that file only.
+    const { path } = verdict;
     const decision = await new Promise<LocalProcessAuthDecision>((resolve) => {
       set({
-        localProcessPrompt: { program, args, workflowName: workflow.name, resolve },
+        localProcessPrompt: { program, path, args, workflowName: workflow.name, resolve },
       });
     });
     set({ localProcessPrompt: null });
 
-    if (decision === "cancel") return false;
+    if (decision === "cancel") return { ok: false };
     if (decision === "always") {
       const current = currentSettingsView();
       const nextAllowlist = [...(current.workflowLocalProcessAllowlist ?? [])];
-      if (!nextAllowlist.includes(program)) nextAllowlist.push(program);
+      // The file, not the name it was found by: another one is asked about again.
+      if (!nextAllowlist.includes(path)) nextAllowlist.push(path);
       await get().updateSettings({
         ...current,
         workflowLocalProcessAllowlist: nextAllowlist,
       });
     }
-    return true;
+    return { ok: true, approvedPath: path };
   };
-  const authorizeLocalProcess: WorkflowAuthorizeLocalProcessSeam = (program, args) => {
+  // The files the user approved for this run, by program + args.
+  const approvedPaths = new Map<string, string>();
+  const authorizeLocalProcess: WorkflowAuthorizeLocalProcessSeam = async (program, args) => {
     // The run was checked before it started; this catches an automation or the
     // switch that changed while it runs (#5988). Before the shared decisions, so
     // a fan-out cannot reuse one made while the switch was on. The backend
@@ -312,21 +333,26 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
         id: localProcessRefusalToastId(workflowId),
         description: LOCAL_PROCESS_REASON,
       });
-      return Promise.resolve(false);
+      return false;
     }
     // A fan-out shares one decision per program + args across its targets.
     const key = JSON.stringify([program, ...args]);
-    const shared = fanout?.authDecisions?.get(key);
-    if (shared) return shared;
-    // One prompt slot: queue behind any prompt a concurrent target has open.
-    const decision = authPromptQueue.then(() => askAuthorization(program, args));
-    // The caller awaiting `decision` handles its rejection; the queue only has to
-    // settle so the next prompt is not blocked. Trace it here too (#4520).
-    authPromptQueue = decision.catch((err: unknown) =>
-      frontendLog("workflow", `local-process authorization prompt failed: ${errorMessage(err)}`)
-    );
-    fanout?.authDecisions?.set(key, decision);
-    return decision;
+    let decision = fanout?.authDecisions?.get(key);
+    if (!decision) {
+      // One prompt slot: queue behind any prompt a concurrent target has open.
+      decision = authPromptQueue.then(() => askAuthorization(program, args));
+      // The caller awaiting `decision` handles its rejection; the queue only has to
+      // settle so the next prompt is not blocked. Trace it here too (#4520).
+      authPromptQueue = decision.catch((err: unknown) =>
+        frontendLog("workflow", `local-process authorization prompt failed: ${errorMessage(err)}`)
+      );
+      fanout?.authDecisions?.set(key, decision);
+    }
+    const decided = await decision;
+    approvedPaths.delete(key);
+    if (!decided.ok) return decided.reason === undefined ? false : { refused: decided.reason };
+    if (decided.approvedPath !== undefined) approvedPaths.set(key, decided.approvedPath);
+    return true;
   };
 
   // Spawn an authorized local process through the guarded backend command,
@@ -379,6 +405,7 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
         runId: processRunId,
         program,
         args,
+        approvedPath: approvedPaths.get(JSON.stringify([program, ...args])),
         timeoutMs: LOCAL_PROCESS_TIMEOUT_MS,
       });
       frontendLog(
@@ -393,12 +420,12 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
       setWorkflowOutputProcessResult(outcome.exitCode, outcome.timedOut, runId);
       return outcome;
     } catch (err) {
-      // A backend rejection (e.g. opt-in disabled at the trust boundary)
-      // surfaces as a failed step rather than crashing the run.
+      // A backend refusal (it decides what may start, #5994) surfaces as a failed
+      // step with its reason rather than crashing the run.
       const message = errorMessage(err);
       frontendLog("workflow", `local process error: ${message}`);
       setWorkflowOutputProcessResult(1, false, runId);
-      return { exitCode: 1, timedOut: false, cancelled: false };
+      return { exitCode: 1, timedOut: false, cancelled: false, error: message };
     } finally {
       processSettled = true;
       unlisten();
