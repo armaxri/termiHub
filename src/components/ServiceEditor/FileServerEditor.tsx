@@ -87,14 +87,19 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
   const original = meta.copyOf ? servers.find(({ id }) => id === meta.copyOf) : undefined;
   const saved = savedSignIn(existing);
   const schema = useMemo(() => fileServerSchema(saved), [saved]);
-  const blank = (): FileServerForm =>
-    original
+  /** What it starts with, before anything is typed. */
+  const untouched = (): FileServerForm => {
+    if (existing) return formOf(existing);
+    return original
       ? {
           ...formOf(original),
           name: tf("server.editor.copyName", { name: original.name }),
           autoStart: false,
         }
       : newForm(meta.serverType ?? "http");
+  };
+  // Unsaved values carried in from another window by "Move tabs" (#4500).
+  const carried = useCarriedFormDraft<FileServerForm>(tabId, "server-editor");
   const {
     form: { getValues, setValue, reset },
     draft: form,
@@ -102,28 +107,22 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
     canSave,
   } = useZodEditorForm<FileServerForm>({
     schema,
-    defaultValues: existing ? formOf(existing) : blank(),
+    defaultValues: (meta.serverId && !existing ? null : carried) ?? untouched(),
   });
   // Errors show once the user edited a field and left it, or tried to save (#5917).
   const { shown: errors, rootProps, revealAndFocus } = useRevealOnSave(allErrors, form);
 
-  // Keyed on the id: a server that is published again (its state, its traffic) must
-  // not reset what the user typed.
-  const existingId = existing?.id;
-  const [baseline, setBaseline] = useState(() => draftKey(getValues()));
-  const carried = useCarriedFormDraft<FileServerForm>(tabId, "server-editor");
+  const [baseline, setBaseline] = useState(() => draftKey(untouched()));
+  // A server that is published again (its state, its traffic) must not reset what
+  // the user typed: it is loaded once, when it is there.
+  const loadedId = useRef(existing?.id);
   useEffect(() => {
-    if (!existing && carried && !meta.serverId) reset(carried);
-    // Once; the draft of a saved server is taken when that is loaded.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  useEffect(() => {
-    if (!existing) return;
+    if (!existing || loadedId.current === existing.id) return;
+    loadedId.current = existing.id;
     const loaded = formOf(existing);
     reset(carried ?? loaded);
     setBaseline(draftKey(loaded));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [existingId]);
+  }, [existing, carried, reset]);
 
   const isDirty = draftKey(form) !== baseline;
   const tab = useEditorTab(tabId, isDirty);
