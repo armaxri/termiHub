@@ -292,27 +292,29 @@ async fn copy_across(src: &SharedDisk, dst: &SharedDisk, total: usize) -> Ran {
 #[tokio::test]
 async fn a_completed_copy_between_servers_has_closed_both_files() {
     let data = content(600_000);
-    let (src, dst) = (disk(LAG), disk(LAG));
-    src.lock()
-        .expect("disk")
-        .files
-        .insert(REMOTE.to_string(), data.clone());
+    for (src_lag, dst_lag) in [(LAG, Duration::ZERO), (Duration::ZERO, LAG)] {
+        let (src, dst) = (disk(src_lag), disk(dst_lag));
+        src.lock()
+            .expect("disk")
+            .files
+            .insert(REMOTE.to_string(), data.clone());
 
-    let ran = copy_across(&src, &dst, data.len()).await;
+        let ran = copy_across(&src, &dst, data.len()).await;
 
-    assert_eq!(
-        ran.state(),
-        TransferStateTag::Completed,
-        "{:?}",
-        ran.messages
-    );
-    assert_eq!(
-        dst.lock().expect("disk").open(REMOTE),
-        (0, 0),
-        "destination"
-    );
-    assert_eq!(src.lock().expect("disk").open(REMOTE), (0, 0), "source");
-    assert!(dst.lock().expect("disk").files[REMOTE] == data);
+        assert_eq!(
+            ran.state(),
+            TransferStateTag::Completed,
+            "{:?}",
+            ran.messages
+        );
+        assert_eq!(
+            dst.lock().expect("disk").open(REMOTE),
+            (0, 0),
+            "destination"
+        );
+        assert_eq!(src.lock().expect("disk").open(REMOTE), (0, 0), "source");
+        assert!(dst.lock().expect("disk").files[REMOTE] == data);
+    }
 }
 
 #[tokio::test]
