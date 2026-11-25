@@ -39,6 +39,16 @@ const id = (testId: string) => `[data-testid="${testId}"]`;
 
 /** Every state, and what the user wants to do there. */
 const STATES = {
+  "services--filled": "Tunnels and file servers together: which work right now, which need you?",
+  "services--agent-offline": "An agent with five services is gone: what about them, and what now?",
+  "services--closed": "Only the file servers matter now.",
+  "services--new-menu": "You want to reach a database behind a server: start.",
+  "services--new-tunnel": "The tunnel's editor after choosing what it is for.",
+  "services--search": "Find the service that uses port 15003.",
+  "services--nothing": "You searched for something that is not there.",
+  "services--empty": "There is no service yet: what is this for, and make one.",
+  "services--palette": "Find the tunnels from the command palette.",
+  "services--narrow": "The narrowest sidebar, both kinds.",
   "tunnels--stopped": "Find the tunnel you need and start it.",
   "tunnels--waiting": "Two tunnels have not started yet: why, and will they?",
   "tunnels--starting": "A tunnel was just started: is it there yet?",
@@ -55,7 +65,6 @@ const STATES = {
   "tunnels--wide": "Tunnels that others can use: who, and where?",
   "tunnels--mixed-error": "Show only what has an error.",
   "tunnels--mixed": "Fifteen tunnels: which work right now, which need you?",
-  "tunnels--empty": "There is no tunnel yet: make one.",
   "tunnels--tooltip": "What exactly does this tunnel do?",
   "tunnels--stop": "Stop a tunnel that is in use: what happens?",
   "tunnels--delete": "Delete a running tunnel: what happens?",
@@ -80,7 +89,6 @@ const STATES = {
   "servers--activity-nobody": "Does anybody use the server?",
   "servers--activity-unavailable": "The log cannot be read: does the server run, and what now?",
   "servers--mixed": "Fifteen servers: which work right now, which need you?",
-  "servers--empty": "There is no file server yet: make one.",
   "servers--tooltip": "What exactly does this server share?",
   "servers--stop": "Stop a server while somebody downloads: what happens?",
   "servers--delete": "Delete a running server: what happens?",
@@ -577,6 +585,59 @@ const REQUESTS = {
     ],
   },
 };
+const BOTH: { tunnels: Row[]; servers: Row[] } = {
+  tunnels: [
+    ...MIXED_TUNNELS.slice(0, 7),
+    { id: "chain", name: "Shop database", status: "connected", over: { host: ON_EDGE } },
+    {
+      id: "hop",
+      name: "Shop database (hop on this computer)",
+      status: "connected",
+      over: { companionOf: "chain", ...onPort(15432) },
+    },
+  ],
+  servers: [
+    ...serversIn("running"),
+    {
+      id: "wide",
+      name: "For the team",
+      status: "running",
+      over: { bindHost: "0.0.0.0", port: 8081 },
+    },
+    { id: "taken", name: "Docs", status: "error", error: WHY.port(8080), state: PORT },
+  ],
+};
+const OFFLINE: { tunnels: Row[]; servers: Row[] } = {
+  tunnels: [
+    { id: "ok", name: "Grafana", status: "connected", over: onPort(13000) },
+    ...tunnelsIn("notReachable", WHY.away, { host: ON_EDGE }, AGENT),
+    {
+      id: "late",
+      name: "Metrics",
+      status: "waiting",
+      error: WHY.agent,
+      over: { host: ON_EDGE },
+      state: AGENT,
+    },
+  ],
+  servers: [
+    ...serversIn("notReachable", WHY.away, { host: ON_EDGE }, AGENT).slice(0, 1),
+    { id: "own", name: "Release builds here", status: "running", over: { port: 8082 } },
+  ],
+};
+/** Both kinds at once, per state. */
+const BOTH_ROWS: Partial<Record<State, { tunnels: Row[]; servers: Row[] }>> = {
+  "services--filled": BOTH,
+  "services--agent-offline": OFFLINE,
+  "services--closed": BOTH,
+  "services--new-menu": BOTH,
+  "services--new-tunnel": BOTH,
+  "services--search": BOTH,
+  "services--nothing": BOTH,
+  "services--palette": BOTH,
+  "services--narrow": BOTH,
+};
+
 /** What else the backend answers in a state. */
 const ANSWERS: Partial<Record<State, Partial<VisualScenario>>> = {
   "servers--open-unknown": { networkInterfaces: [] },
@@ -601,29 +662,28 @@ interface GalleryState {
 
 async function boot(page: Page, theme: string, state: State): Promise<void> {
   await page.emulateMedia({ reducedMotion: "reduce" });
-  const view = state.startsWith("tunnels") ? "tunnels" : "services";
   await page.addInitScript(
     (scenario) => {
       window.__VISUAL_SCENARIO__ = scenario;
     },
     {
       populated: true,
-      serviceData: data(TUNNEL_ROWS[state] ?? [], SERVER_ROWS[state] ?? []),
+      serviceData: data(
+        BOTH_ROWS[state]?.tunnels ?? TUNNEL_ROWS[state] ?? [],
+        BOTH_ROWS[state]?.servers ?? SERVER_ROWS[state] ?? []
+      ),
       ...ANSWERS[state],
     } satisfies VisualScenario
   );
   await page.goto("/tests/visual/harness/index.html");
   await page.waitForFunction(() => window.__visual !== undefined);
   await page.locator(id("sidebar")).waitFor();
-  await page.evaluate(
-    ([t, v]) => {
-      const store = window.__visual.store.getState() as unknown as GalleryState;
-      if (store.sidebarView !== v) store.setSidebarView(v);
-      window.__visual.applyTheme(t);
-    },
-    [theme, view]
-  );
-  await page.locator(id(`${view === "tunnels" ? "tunnel" : "server"}-sidebar`)).waitFor();
+  await page.evaluate((t) => {
+    const store = window.__visual.store.getState() as unknown as GalleryState;
+    if (store.sidebarView !== "services") store.setSidebarView("services");
+    window.__visual.applyTheme(t);
+  }, theme);
+  await page.locator(id("services-sidebar")).waitFor();
   await settle(page);
 }
 
@@ -705,7 +765,7 @@ for (const viewport of WINDOWS) {
         const kind = state.startsWith("tunnels") ? "tunnel" : "server";
         test(state, async ({ page }) => {
           await boot(page, theme, state);
-          await expect(page.locator("[role=treeitem]")).toHaveCount(rows[state]!.length);
+          await expect(page.locator(".service-row")).toHaveCount(rows[state]!.length);
           const first = rows[state]![0].id;
           if (state.endsWith("--narrow")) {
             const min = Number(
@@ -747,16 +807,17 @@ for (const viewport of WINDOWS) {
           }
           if (state.endsWith("--mixed-error")) {
             await page.locator(id("service-count-error")).click();
-            await expect(page.locator("[role=treeitem]")).toHaveCount(1);
+            await expect(page.locator(".service-row")).toHaveCount(1);
           }
           const over = /--(hover|menu|tooltip|stop|delete)$/.test(state);
-          await shot(page, state, id(`${kind}-sidebar`), over);
+          await shot(page, state, id("services-sidebar"), over);
         });
       }
 
       test("servers--new", async ({ page }) => {
         await boot(page, theme, "servers--new");
-        await page.locator(id("server-new-btn")).click();
+        await page.locator(id("service-new-btn")).click();
+        await page.locator(id("service-new-server-http")).click();
         await page.locator(id("server-dialog-name")).waitFor();
         await shot(page, "servers--new", "[role=dialog]");
         // It only looks disabled: activating it says what is missing.
@@ -764,20 +825,65 @@ for (const viewport of WINDOWS) {
         await shot(page, "servers--new-missing", "[role=dialog]");
       });
 
-      for (const [state, button] of [
-        ["tunnels--empty", "tunnel-empty-message"],
-        ["servers--empty", "server-empty-message"],
-      ] as const) {
+      for (const state of Object.keys(BOTH_ROWS) as State[]) {
         test(state, async ({ page }) => {
           await boot(page, theme, state);
-          await page.locator(id(button)).waitFor();
-          await shot(
-            page,
-            state,
-            id(state.startsWith("tunnels") ? "tunnel-sidebar" : "server-sidebar")
-          );
+          const sidebar = id("services-sidebar");
+          let over = false;
+          switch (state) {
+            case "services--closed":
+              await page.locator(id("service-group-tunnels")).click();
+              await expect(page.locator("[data-testid^=tunnel-item-]")).toHaveCount(0);
+              break;
+            case "services--new-menu":
+              await page.locator(id("service-new-btn")).click();
+              await page.locator("[role=menu]").waitFor();
+              over = true;
+              break;
+            case "services--new-tunnel":
+              await page.locator(id("service-new-btn")).click();
+              await page.locator(id("service-new-tunnel-remote")).click();
+              await expect(page.locator(id("tunnel-type-remote"))).toBeChecked();
+              break;
+            case "services--search":
+              await page.locator(id("services-search")).fill("15003");
+              await expect(page.locator(".service-row")).toHaveCount(1);
+              break;
+            case "services--nothing":
+              await page.locator(id("services-search")).fill("jenkisn");
+              await page.locator(id("services-none")).waitFor();
+              break;
+            case "services--palette":
+              await page.evaluate(() => {
+                const store = window.__visual.store.getState() as unknown as {
+                  setCommandPaletteOpen(open: boolean): void;
+                };
+                store.setCommandPaletteOpen(true);
+              });
+              await page.locator("[role=combobox]").fill("tunnel");
+              await page.getByText("Show services").waitFor();
+              over = true;
+              break;
+            case "services--narrow": {
+              const min = Number(
+                await page.locator(id("sidebar-resize-handle")).getAttribute("aria-valuemin")
+              );
+              await page.evaluate((width) => {
+                const store = window.__visual.store.getState() as unknown as GalleryState;
+                store.setSidebarWidth(width);
+              }, min);
+              break;
+            }
+          }
+          await shot(page, state, sidebar, over);
         });
       }
+
+      test("services--empty", async ({ page }) => {
+        await boot(page, theme, "services--empty");
+        await page.locator(id("services-empty")).waitFor();
+        await shot(page, "services--empty", id("services-sidebar"));
+      });
     });
   }
 }
