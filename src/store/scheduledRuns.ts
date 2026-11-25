@@ -41,6 +41,7 @@ import type { AutomationRun } from "@/types/generated/AutomationRun";
 import type { BroadcastGroup } from "@/types/terminal";
 import type { Workflow } from "@/types/workflow";
 import type { Automation } from "@/types/generated/Automation";
+import { reachesWaitForUser } from "@/services/automationRunner";
 import { t, tf } from "@/i18n/catalog";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
@@ -282,7 +283,11 @@ async function resolveAction(
     (id) => automationForRun(store.getState(), id),
     experimentalFeaturesOn()
   );
-  return blocked ? { refused: blocked } : { automation };
+  if (blocked) return { refused: blocked };
+  // Nobody is there to type what it waits for (#6025).
+  return reachesWaitForUser(automation, (id) => automationForRun(store.getState(), id))
+    ? { refused: t("schedule.skip.waits") }
+    : { automation };
 }
 
 /** Run the fire's automation on `tabIds` in this window. */

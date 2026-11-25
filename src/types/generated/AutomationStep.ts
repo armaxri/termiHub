@@ -166,4 +166,16 @@ continueOnError?: boolean,
 /**
  * Retry this step when it fails.
  */
+retry?: WorkflowStepRetry, } | { "kind": "wait-for-user", 
+/**
+ * What the user is asked to do; absent means a general wording.
+ */
+message?: string, 
+/**
+ * When `true`, a failure of this step is tolerated and the run continues.
+ */
+continueOnError?: boolean, 
+/**
+ * Retry this step when it fails.
+ */
 retry?: WorkflowStepRetry, };

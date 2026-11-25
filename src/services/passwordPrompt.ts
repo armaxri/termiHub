@@ -22,6 +22,24 @@ export function isPasswordPrompt(beforeCursor: string): boolean {
   return PROMPT.test(beforeCursor);
 }
 
+type TerminalPromptReader = (tabId: string) => string;
+
+let readTerminalPrompt: TerminalPromptReader | null = null;
+
+/** Register (or clear) the reader of a terminal's {@link textBeforeCursor} (#6025). */
+export function registerTerminalPromptReader(reader: TerminalPromptReader | null): void {
+  readTerminalPrompt = reader;
+}
+
+/** The text in front of the cursor of terminal `tabId`; empty when it cannot be read. */
+export function promptOfTerminal(tabId: string): string {
+  try {
+    return readTerminalPrompt?.(tabId) ?? "";
+  } catch {
+    return "";
+  }
+}
+
 /** The parts of an xterm buffer {@link textBeforeCursor} reads. */
 export interface CursorBuffer {
   baseY: number;

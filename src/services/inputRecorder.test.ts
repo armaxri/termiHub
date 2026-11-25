@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { InputRecorder, withoutSecrets } from "./inputRecorder";
+import { InputRecorder, recordedParts, withoutSecrets } from "./inputRecorder";
 
 /** A recorder on a clock and a screen the test sets. */
 function setup() {
@@ -90,13 +90,29 @@ describe("what is typed at a password prompt", () => {
     ).toBe("hunter2\r");
   });
 
-  it("is left out with its time kept as a pause", () => {
+  it("is left out, and the place is known", () => {
     const { at, recorder, type } = setup();
     sudo(type, at);
-    expect(withoutSecrets(recorder.finish())).toEqual([
-      { data: "sudo -v\r", delayMs: 0 },
-      { data: "ls\r", delayMs: 1000 },
+    const recorded = recorder.finish();
+    expect(recordedParts(recorded)).toEqual([
+      { kind: "keys", chunks: [{ data: "sudo -v\r", delayMs: 0 }] },
+      { kind: "left-out" },
+      { kind: "keys", chunks: [{ data: "ls\r", delayMs: 0 }] },
     ]);
+    expect(withoutSecrets(recorded).map((c) => c.data)).toEqual(["sudo -v\r", "ls\r"]);
+  });
+
+  it("is kept apart while something waits for it, whatever the screen shows (#6025)", () => {
+    const { at, recorder } = setup();
+    at.screen = "Deploy hunter2";
+    const read = () => at.screen;
+    recorder.push("hunter2", read, "Deploy");
+    expect(recorder.finish().secrets).toEqual([{ start: 0, end: 1, prompt: "Deploy" }]);
+    recorder.reserve(read, "Deploy").fill("pasted");
+    // The wait is over without an Enter: what follows is not part of it.
+    at.screen = "$ ";
+    recorder.push("x", read);
+    expect(recorder.finish().secrets).toEqual([{ start: 0, end: 2, prompt: "Deploy" }]);
   });
 
   it("is flagged when the prompt masks it", () => {

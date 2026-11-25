@@ -35,6 +35,7 @@ STEP_KINDS = [
     "send-command",
     "wait",
     "wait-for-output",
+    "wait-for-user",
     "conditional",
     "loop",
     "run-script",

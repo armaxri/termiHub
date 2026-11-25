@@ -23,7 +23,7 @@ import {
   subscribeLocalProcessOutput,
   type LocalProcessCheck,
 } from "@/services/localProcessApi";
-import { runAutomation } from "@/services/automationRunner";
+import { reachesWaitForUser, runAutomation } from "@/services/automationRunner";
 import { getTerminalInputInjector } from "@/services/macroPlayback";
 import { onTerminalOutput } from "@/services/events";
 import { newId } from "@/services/transport/ids";
@@ -36,6 +36,7 @@ import {
   type WorkflowRunLocalProcessSeam,
   type WorkflowWaitForOutputSeam,
   type WaitForOutputResult,
+  type WorkflowWaitForUserSeam,
   type WorkflowParamValues,
 } from "@/services/workflowRunner";
 import type { AutomationRun } from "@/types/generated/AutomationRun";
@@ -50,8 +51,10 @@ import {
   localProcessRefusal,
   localProcessRefusalToastId,
 } from "../localProcessRefusal";
+import { t } from "@/i18n/catalog";
 import { LOCAL_PROCESS_REASON } from "@/utils/localProcessGate";
 import type { AppState } from "../appStore";
+import { collectLiveTabs } from "../layoutHelpers";
 import { currentSettingsView } from "../settingsBridge";
 import {
   appendWorkflowOutputLine,
@@ -250,6 +253,41 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
   if (refusal) {
     frontendLog("workflow", `run of "${workflow.name}" refused: ${refusal}`);
     return { status: "failed", stepsCompleted: 0, error: refusal };
+  }
+  // Nobody is there to type what it waits for (#6025): not started, rather than
+  // left standing at the prompt an earlier step opened. The History says so.
+  const unwatched = unattended === true || sessionless === true;
+  const stored = automationForRun(get(), workflowId) ?? workflowToAutomation(workflow);
+  if (unwatched && reachesWaitForUser(stored, (id) => automationForRun(get(), id))) {
+    const at = new Date().toISOString();
+    const notRun: AutomationRun = {
+      id: newId("workflow-run"),
+      automationId: workflowId,
+      automationName: workflow.name,
+      startedAt: at,
+      endedAt: at,
+      status: "failed",
+      stepsCompleted: 0,
+      total: workflow.steps.length,
+      error: t("automation.wait.unattended"),
+      tabId: targetTabId,
+      targetLabel: targetLabel || undefined,
+      origin: triggeredBy,
+    };
+    recordAutomationRun(set, notRun, "workflow");
+    frontendLog("workflow", `run of "${workflow.name}" refused: it waits for the user`);
+    if (!fanout) {
+      toast.error(`Automation "${workflow.name}" was not run`, {
+        id: `automation-wait-refused-${workflowId}`,
+        description: t("automation.wait.unattended"),
+      });
+    }
+    return {
+      status: "failed",
+      stepsCompleted: 0,
+      error: t("automation.wait.unattended"),
+      historyRunId: notRun.id,
+    };
   }
   // This run's key in the workflow-run region (#3418): concurrent targets of a
   // fan-out each get their own entry, progressing and settling independently.
@@ -491,6 +529,26 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
         });
     });
 
+  // A "Wait for you" step (#6025): the run stops here until the user continues.
+  const waitForUser: WorkflowWaitForUserSeam = (message, { signal }) => {
+    const note = t("automation.wait.note");
+    if (fanout) fanout.onProgress?.(0, note);
+    else
+      toast.loading(`Running automation "${workflow.name}"…`, { id: toastId, description: note });
+    const tab = collectLiveTabs(get()).find((x) => x.id === targetTabId);
+    return get().waitForUser(
+      {
+        runId,
+        tabId: targetTabId,
+        sessionId: targetSessionId,
+        tabTitle: targetLabel || tab?.title || "Terminal",
+        automationName: workflow.name,
+        message,
+      },
+      signal
+    );
+  };
+
   // A single-target run keeps its own toast; a fan-out target raises none and
   // reports to the fan-out's hooks, which render one shared status toast
   // (PROD-047, #3418).
@@ -554,6 +612,8 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
       runLocalProcess,
       // A sessionless run has no output to wait for: the step fails loudly.
       waitForOutput: sessionless ? undefined : waitForOutput,
+      // Nobody is there to continue a scheduled run or one without a session.
+      waitForUser: unwatched ? undefined : waitForUser,
     },
     {
       onProgress: (completed) => {

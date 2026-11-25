@@ -89,9 +89,12 @@ export function macroPreviewLines(steps: MacroStep[], maxLength = 80): string[] 
  * characters cannot be typed into (or safely shown in) a text field, so a step
  * is edited in a small, lossless backslash notation:
  *
- *   \r  Enter (carriage return)   \n  line feed      \t  Tab
- *   \e  Escape (ESC, 0x1b)        \\  a literal backslash
+ *   ⏎ or \r  Enter (carriage return)   \n  line feed   ⇥ or \t  Tab
+ *   ⎋ or \e  Escape (ESC, 0x1b)        \\  a literal backslash
  *   \xHH  any byte/code unit 0x00–0xFF given as two hex digits
+ *   \⏎ \⇥ \⎋  that character itself
+ *
+ * The keys with a glyph show as it, as in the collapsed row (A-030).
  *
  * `escapeMacroStepData` renders recorded data into that notation and
  * `parseMacroStepText` turns the notation back into the raw input played into
@@ -102,11 +105,17 @@ export function macroPreviewLines(steps: MacroStep[], maxLength = 80): string[] 
 /** Named escapes emitted/accepted by the editable notation. */
 const ESCAPE_OUT: Record<string, string> = {
   "\\": "\\\\",
-  "\r": "\\r",
+  "\r": "⏎",
   "\n": "\\n",
-  "\t": "\\t",
-  "\x1b": "\\e",
+  "\t": "⇥",
+  "\x1b": "⎋",
+  "⏎": "\\⏎",
+  "⇥": "\\⇥",
+  "⎋": "\\⎋",
 };
+
+/** The glyphs a key is written as. */
+const GLYPH_IN: Record<string, string> = { "⏎": "\r", "⇥": "\t", "⎋": "\x1b" };
 
 const ESCAPE_IN: Record<string, string> = {
   "\\": "\\",
@@ -114,11 +123,14 @@ const ESCAPE_IN: Record<string, string> = {
   n: "\n",
   t: "\t",
   e: "\x1b",
+  "⏎": "⏎",
+  "⇥": "⇥",
+  "⎋": "⎋",
 };
 
 /**
  * Render a step's raw input as editable text: printable characters pass
- * through, a backslash is doubled, Enter/LF/Tab/ESC use their short escapes and
+ * through, a backslash is doubled, Enter/Tab/ESC use their glyphs, LF `\n`, and
  * every other control character (0x00–0x1f, 0x7f) becomes `\xHH`. The result
  * contains no control characters, so it is safe to put in an input field.
  */
@@ -150,7 +162,7 @@ export function parseMacroStepText(text: string): MacroStepParseResult {
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
     if (ch !== "\\") {
-      out += ch;
+      out += GLYPH_IN[ch] ?? ch;
       continue;
     }
     const next = text[i + 1];

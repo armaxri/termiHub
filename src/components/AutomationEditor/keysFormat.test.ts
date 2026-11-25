@@ -69,10 +69,10 @@ describe("escapeMacroStepData", () => {
     expect(escapeMacroStepData("héllo ✓")).toBe("héllo ✓");
   });
 
-  it("uses short escapes for Enter, LF, Tab, Esc and backslash", () => {
-    expect(escapeMacroStepData("ls\r")).toBe("ls\\r");
-    expect(escapeMacroStepData("a\nb\tc")).toBe("a\\nb\\tc");
-    expect(escapeMacroStepData("\x1b[A")).toBe("\\e[A");
+  it("uses the row's glyphs for Enter, Tab and Esc, and short escapes for LF and backslash", () => {
+    expect(escapeMacroStepData("ls\r")).toBe("ls⏎");
+    expect(escapeMacroStepData("a\nb\tc")).toBe("a\\nb⇥c");
+    expect(escapeMacroStepData("\x1b[A")).toBe("⎋[A");
     expect(escapeMacroStepData("C:\\dir")).toBe("C:\\\\dir");
   });
 
@@ -91,6 +91,14 @@ describe("parseMacroStepText", () => {
     expect(parseMacroStepText("\\e[A\\t\\n")).toEqual({ ok: true, data: "\x1b[A\t\n" });
     expect(parseMacroStepText("\\x03\\x7F")).toEqual({ ok: true, data: "\x03\x7f" });
     expect(parseMacroStepText("a\\\\b")).toEqual({ ok: true, data: "a\\b" });
+  });
+
+  it("reads a glyph as its key, and an escaped one as the character itself (A-030)", () => {
+    expect(parseMacroStepText("ls⏎⇥⎋")).toEqual({ ok: true, data: "ls\r\t\x1b" });
+    expect(parseMacroStepText("\\⏎\\⇥\\⎋")).toEqual({ ok: true, data: "⏎⇥⎋" });
+    for (const data of ["⏎", "a⇥\t⎋\x1b\\⏎\r", "\\⏎"]) {
+      expect(parseMacroStepText(escapeMacroStepData(data))).toEqual({ ok: true, data });
+    }
   });
 
   it("rejects an unknown escape", () => {

@@ -24,6 +24,8 @@ function props(overrides: Partial<TerminalToolbarMoreProps> = {}): TerminalToolb
     loggingActive: false,
     onToggleLogging: vi.fn(),
     recordingLabel: null,
+    recording: (overrides.recordingLabel ?? null) !== null,
+    recordingAtPrompt: false,
     onToggleRecording: vi.fn(),
     playback: null,
     onRunAutomation: vi.fn(),
@@ -130,12 +132,12 @@ describe("TerminalToolbarMore (#5756)", () => {
   it("names the bound shortcut on the logging and playback chips (#5779)", () => {
     setOverride("toggle-session-logging", { key: "L", alt: true, shift: true });
     setOverride("play-macro", { key: "F5", ctrl: true });
-    render(props({ loggingActive: true, playback: { played: 1, total: 3 } }));
+    render(props({ loggingActive: true, playback: { macroName: "Deploy", played: 1, total: 3 } }));
     expect(q("terminal-view-active-logging")!.getAttribute("aria-label")).toBe(
       "Stop logging output (Shift+Alt+L)"
     );
     expect(q("terminal-view-active-playback")!.getAttribute("aria-label")).toBe(
-      "Stop automation (1/3) (Ctrl+F5)"
+      "Stop “Deploy” (1 of 3) (Ctrl+F5)"
     );
   });
 
@@ -156,7 +158,7 @@ describe("TerminalToolbarMore (#5756)", () => {
     act(() => root.unmount());
     root = createRoot(container);
 
-    render(props({ loggingActive: true, recordingLabel: "Recording" }));
+    render(props({ loggingActive: true, recordingLabel: "Stop recording" }));
     menu = await openMenu();
     for (const [id, label] of [
       ["terminal-view-toggle-logging", "Log session output"],
@@ -190,15 +192,15 @@ describe("TerminalToolbarMore (#5756)", () => {
       props({
         broadcastActive: true,
         loggingActive: true,
-        recordingLabel: "Recording",
-        playback: { played: 2, total: 4 },
+        recordingLabel: "Stop recording",
+        playback: { macroName: "Deploy", played: 2, total: 4 },
       })
     );
     const chips = Array.from(
       q("terminal-view-active-states")!.querySelectorAll("button"),
       (b) => b.textContent
     );
-    expect(chips).toEqual(["Broadcasting", "Recording", "Playing 2/4", "Logging"]);
+    expect(chips).toEqual(["Broadcasting", "Stop recording", "Stop “Deploy” (2 of 4)", "Logging"]);
     expect(q("terminal-view-more-actions")!.getAttribute("data-active-count")).toBe("4");
   });
 

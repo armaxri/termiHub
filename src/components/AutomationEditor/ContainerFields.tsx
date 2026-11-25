@@ -8,6 +8,7 @@ import { conditionOpLabel, WORKFLOW_CONDITION_OPS } from "./stepMeta";
 interface ConditionFieldsProps {
   path: string;
   condition: WorkflowCondition;
+  error?: string;
   onChange: (condition: WorkflowCondition) => void;
 }
 
@@ -16,11 +17,12 @@ interface ConditionFieldsProps {
  * of a loop's while-condition. `${param}` references (and `${iteration}` inside
  * a loop) are resolved at run time.
  */
-function ConditionFields({ path, condition, onChange }: ConditionFieldsProps) {
+function ConditionFields({ path, condition, error, onChange }: ConditionFieldsProps) {
   return (
     <div className="automation-step__condition">
-      <Field label="If" htmlFor={`automation-step-cond-left-${path}`}>
+      <Field label="If" htmlFor={`automation-step-cond-left-${path}`} error={error}>
         <Input
+          error={Boolean(error)}
           id={`automation-step-cond-left-${path}`}
           value={condition.left}
           placeholder="e.g. ${env}"
@@ -76,11 +78,13 @@ export interface ConditionalFieldsProps {
   draft: StepDraft;
   step: Extract<AutomationStep, { kind: "conditional" }>;
   path: string;
+  /** What is wrong with what it compares. */
+  error?: string;
   onChange: (draft: StepDraft) => void;
 }
 
 /** A condition and the steps of its two branches (PROD-0044). */
-export function ConditionalFields({ draft, step, path, onChange }: ConditionalFieldsProps) {
+export function ConditionalFields({ draft, step, path, error, onChange }: ConditionalFieldsProps) {
   return (
     <div
       className="automation-step__container"
@@ -89,6 +93,7 @@ export function ConditionalFields({ draft, step, path, onChange }: ConditionalFi
       <ConditionFields
         path={path}
         condition={step.condition}
+        error={error}
         onChange={(condition) => onChange({ ...draft, step: { ...step, condition } })}
       />
       <NestedList draft={draft} path={path} list="then" label="Then" onChange={onChange} />
@@ -108,6 +113,8 @@ export interface LoopFieldsProps {
   draft: StepDraft;
   step: Extract<AutomationStep, { kind: "loop" }>;
   path: string;
+  /** What is wrong with what it compares. */
+  error?: string;
   onChange: (draft: StepDraft) => void;
 }
 
@@ -115,7 +122,7 @@ export interface LoopFieldsProps {
  * How often a loop repeats, and the steps it repeats (PROD-044). The runner caps
  * the number of iterations.
  */
-export function LoopFields({ draft, step, path, onChange }: LoopFieldsProps) {
+export function LoopFields({ draft, step, path, error, onChange }: LoopFieldsProps) {
   const mode = step.loop;
   const setMode = (loop: typeof mode) => onChange({ ...draft, step: { ...step, loop } });
   return (
@@ -159,6 +166,7 @@ export function LoopFields({ draft, step, path, onChange }: LoopFieldsProps) {
         <ConditionFields
           path={`${path}-loop`}
           condition={mode.condition}
+          error={error}
           onChange={(condition) => setMode({ kind: "while", condition })}
         />
       )}

@@ -43,7 +43,7 @@ export function useScheduleLabels() {
       if (!automation) return tf("schedule.blocked", { reason: t("schedule.gone.automation") });
       const blocked =
         localProcessBlockedReason(automation, find, experimental) ??
-        unattendedBlockedReason(automation);
+        unattendedBlockedReason(automation, find);
       if (blocked) return blocked;
       const { gone } = targets(s.targets);
       return gone ? tf("schedule.blocked", { reason: gone }) : null;

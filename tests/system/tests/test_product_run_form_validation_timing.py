@@ -43,6 +43,7 @@ ERROR_INFIX = "-error-"
 #: The automation editor (#5917): its Name error uses ``Field``'s default test id.
 MACRO_EDITOR = "automation-editor-dialog"
 MACRO_SAVE = "automation-editor-save"
+MACRO_FOOTER_NOTE = "automation-editor-footer-note"
 MACRO_NAME_ERROR = "field-error"
 MACRO_STEP_ERROR = "automation-editor-keys-error-0-0"
 
@@ -67,6 +68,16 @@ def pristine_problems(shown: list[str]) -> list[str]:
 def save_attempt_problems(shown: list[str], expected: Iterable[str]) -> list[str]:
     """After a failed save every blocking field's error must show."""
     return [f"{test_id} is missing after Save" for test_id in expected if test_id not in shown]
+
+
+def named_save_problems(disabled: str | None, note: str) -> list[str]:
+    """Save of the automation editor works while something is missing, and the footer names it."""
+    problems = []
+    if disabled is not None:
+        problems.append("Save is disabled, so it cannot say what is missing")
+    if note != "To save: give it a name and complete the steps.":
+        problems.append(f"the footer says {note!r}")
+    return problems
 
 
 def blocked_save_problems(disabled: str | None, aria_disabled: str | None) -> list[str]:
@@ -122,6 +133,12 @@ def test_grade_save_attempt_missing_field_error_fails():
 def test_grade_reads_indexed_row_errors():
     items = [_item(MACRO_STEP_ERROR), _item("automation-editor-keys-row-0-0"), _item(MACRO_NAME_ERROR)]
     assert shown_error_ids(items) == [MACRO_STEP_ERROR, MACRO_NAME_ERROR]
+
+
+def test_grade_named_save():
+    note = "To save: give it a name and complete the steps."
+    assert named_save_problems(None, note) == []
+    assert len(named_save_problems("", "")) == 2
 
 
 def test_grade_aria_disabled_save_passes():
@@ -200,20 +217,17 @@ class TestProductRunDialogValidationTiming(ProductRunUi, AutomationPhaseUi, Side
             "forms.dialog-validation-timing",
             "A new automation shows no error until a field is left or Save is tried; "
             "Save stays clickable and then shows every reason (#5917)",
-            expect="#5917: the new-automation dialog opens clean; Save is aria-disabled, "
-            "not disabled; after Save, Name and the empty keys each show their error",
+            expect="#5917, A-023: the new-automation dialog opens clean, Save looks usable and the "
+            "footer says what is missing; after Save, Name and the empty keys each show their error",
         ):
             self.open_new_keystrokes()
             pristine = self._shown_errors()
             disabled = self.driver.get_attribute(MACRO_SAVE, "disabled")
-            aria_disabled = self.driver.get_attribute(MACRO_SAVE, "aria-disabled")
-            self.evidence(
-                f"pristine errors {pristine}; Save disabled={disabled!r} "
-                f"aria-disabled={aria_disabled!r}"
-            )
+            note = self.driver.get_text(MACRO_FOOTER_NOTE)
+            self.evidence(f"pristine errors {pristine}; Save disabled={disabled!r}; {note!r}")
             self.shot(label="pristine")
             problems = pristine_problems(pristine)
-            problems += blocked_save_problems(disabled, aria_disabled)
+            problems += named_save_problems(disabled, note)
 
             self.driver.click(MACRO_SAVE)
             self.wait(

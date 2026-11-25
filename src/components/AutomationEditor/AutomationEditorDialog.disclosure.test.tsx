@@ -70,7 +70,7 @@ afterEach(() => editor.unmount());
 describe("an automation that only types recorded keys", () => {
   it("shows a name, a description and one line for the keys", async () => {
     await open(keys);
-    expect(query("automation-editor-step-summary-0")?.textContent).toBe("ls⏎2 keys, recorded");
+    expect(query("automation-editor-step-summary-0")?.textContent).toBe("ls⏎Recorded");
     expect(query("automation-editor-step-body-0")).toBeNull();
     expect(expandedOf("automation-editor-when-toggle")).toBe("false");
     expect(query("automation-editor-when-toggle")?.textContent).toContain("Only when you run it");
@@ -100,16 +100,41 @@ describe("what a power user asks for", () => {
     expect(query("automation-params-add")).not.toBeNull();
   });
 
-  it("keeps stored values in view, also of keys-only automations", async () => {
-    await open({ ...keys, parameters: [{ name: "host", type: "string" }] });
+  it("names stored values in the closed heading, also of keys-only automations (A-024)", async () => {
+    await open({
+      ...keys,
+      parameters: [
+        { name: "host", type: "string" },
+        { name: "env", label: "Environment", type: "string" },
+      ],
+    });
+    expect(expandedOf("automation-editor-values-toggle")).toBe("false");
+    expect(query("automation-editor-values-toggle")?.textContent).toContain("host, Environment");
+    click("automation-editor-values-toggle");
     expect(query("automation-param-name-0")).not.toBeNull();
   });
 
-  it("opens the triggers that are there", async () => {
+  it("names the triggers that are there before the steps (A-024)", async () => {
     await open({ ...keys, triggers: [{ kind: "hotkey", binding: "Ctrl+Alt+D" }] });
-    expect(expandedOf("automation-editor-when-toggle")).toBe("true");
+    const toggle = query("automation-editor-when-toggle")!;
+    expect(toggle.textContent).toContain("Hotkey");
+    expect(
+      toggle.compareDocumentPosition(query("automation-editor-steps")!) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
     click("automation-editor-when-toggle");
-    expect(query("automation-editor-when-toggle")?.textContent).toContain("Hotkey");
+    expect(query("automation-trigger-binding-0")).not.toBeNull();
+  });
+
+  it("stays where it is while a trigger is added", async () => {
+    await open(steps);
+    click("automation-editor-when-toggle");
+    await chooseFrom("automation-editor-add-trigger", "automation-editor-add-trigger-hotkey");
+    expect(
+      query("automation-editor-steps")!.compareDocumentPosition(
+        query("automation-editor-when-toggle")!
+      ) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
   });
 
   it("shows a step's failure options once set or asked for", async () => {

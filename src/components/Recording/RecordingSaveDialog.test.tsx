@@ -67,9 +67,7 @@ afterEach(() => {
 describe("RecordingSaveDialog", () => {
   it("is one Enter away: named after what was typed, unique, selected", async () => {
     await render();
-    expect(query("recording-save-summary")?.textContent).toContain(
-      "Recorded 2 keys in prod-web (3.2 s)"
-    );
+    expect(query("recording-save-summary")?.textContent).toContain("Recorded in prod-web, 3.2 s");
     expect(query("recording-save-summary")?.textContent).toContain("git pull");
     const name = query("recording-save-name") as HTMLInputElement;
     expect(name.value).toBe("git pull 2");

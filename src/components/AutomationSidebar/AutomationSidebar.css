@@ -152,3 +152,7 @@
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
+
+.automation-sidebar__stop-recording {
+  color: var(--color-error);
+}

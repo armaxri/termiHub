@@ -2092,6 +2092,14 @@ step:
   substitution. The chunks are scheduled by `runMacroPlayback` with the step's saved timing
   (`recorded`, `fixed` or `instant`). Delays sleep through the runner's `wait` seam, so tests
   drive them with a fake clock. Agent-hosted and remote sessions need no protocol change.
+- **`wait-for-user`** (#6025) stops the run until the user presses Continue. The seam is
+  `AppState.waitForUser` (`store/slices/automationWaitSlice.ts`), which keeps the open waits of this
+  window; `WaitingRunBar` shows them and ends those whose terminal is gone. A wait that nobody
+  answers within `WAIT_FOR_USER_LIMIT_MS` (five minutes: longer than `sudo` asks, the next keys
+  would land in the shell) is a **fatal** outcome: `executeStepWithPolicy` neither retries nor
+  tolerates it, at any level. Runs nobody watches are refused before they type anything
+  (`reachesWaitForUser`): scheduled ones as skipped, triggered ones as a failed run in the History.
+  A recording gets such a step wherever it leaves a password out (`recordingSteps`).
 - **`run-automation`** runs another automation's steps inline on the same target. The chain of
   automation ids is passed down the call stack: a call back into the chain fails with the path
   (`"A" → "B" → "A"`), and nesting is capped at `MAX_AUTOMATION_DEPTH` (10).

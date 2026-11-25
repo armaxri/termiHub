@@ -41,6 +41,8 @@ export interface WhenItRunsProps {
   triggersEnabled: boolean;
   /** The stored automation's id; `null` while it is new. */
   automationId: string | null;
+  /** It has a step that waits for the user, or runs one that does (#6025). */
+  waitsForUser: boolean;
   /** A new automation opens the schedule editor once it is saved. */
   scheduleAfterSave: boolean;
   /** The validation errors the user should see now, by draft path. */
@@ -59,6 +61,7 @@ export function WhenItRuns({
   triggers,
   triggersEnabled,
   automationId,
+  waitsForUser,
   scheduleAfterSave,
   errors,
   onTriggersChange,
@@ -68,7 +71,8 @@ export function WhenItRuns({
   const portalContainer = useModalPortalContainer();
   const schedules = useAppStore((s) => s.schedules);
   const openScheduleEditor = useAppStore((s) => s.openScheduleEditor);
-  const { connections, targets } = useScheduleLabels();
+  const { automations, connections, targets } = useScheduleLabels();
+  const others = automations.filter((a) => a.id !== automationId);
   const rootRef = useRef<HTMLDivElement>(null);
   const addRef = useRef<HTMLButtonElement>(null);
   // What the Add trigger menu does once it closed, so its button keeps no focus
@@ -121,6 +125,14 @@ export function WhenItRuns({
           />
         </Field>
       )}
+      {waitsForUser && (triggers.length > 0 || linked.length > 0 || scheduleAfterSave) && (
+        <p
+          className="automation-step__note automation-step__note--warning"
+          data-testid="automation-editor-when-waits"
+        >
+          {t("automation.wait.whenNote")}
+        </p>
+      )}
       {triggers.length > 0 && (
         <ul className="automation-triggers__list" data-testid="automation-editor-triggers">
           {triggers.map(({ uid, trigger }, index) => (
@@ -129,7 +141,9 @@ export function WhenItRuns({
               trigger={trigger}
               index={index}
               connections={connections}
+              automations={others}
               errors={{
+                binding: errors[`triggers.${uid}.binding`],
                 pattern: errors[`triggers.${uid}.pattern`],
                 cooldownMs: errors[`triggers.${uid}.cooldownMs`],
                 maxFiresPerSession: errors[`triggers.${uid}.maxFiresPerSession`],

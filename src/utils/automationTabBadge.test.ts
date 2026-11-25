@@ -26,6 +26,7 @@ describe("runningAutomationOnTab (#5818 slice 5)", () => {
       name: "Deploy",
       completed: 3,
       total: 4,
+      waiting: false,
       stop: { kind: "macro" },
     });
     expect(runningAutomationOnTab(playback(), [], "b")).toBeNull();
@@ -44,13 +45,27 @@ describe("runningAutomationOnTab (#5818 slice 5)", () => {
       name: "Health",
       completed: 1,
       total: 2,
+      waiting: false,
       stop: { kind: "workflow", runId: "r1" },
     });
   });
 
+  it("says that it waits for the user there (#6025)", () => {
+    const info = runningAutomationOnTab(null, [run], "b", [{ runId: "r1" }])!;
+    expect(info.waiting).toBe(true);
+    expect(runningAutomationLabel(info)).toBe('Automation "Health" waits for you');
+    expect(runningAutomationOnTab(null, [run], "b", [{ runId: "other" }])!.waiting).toBe(false);
+  });
+
   it("labels the badge with the name and progress", () => {
     expect(
-      runningAutomationLabel({ name: "Deploy", completed: 2, total: 5, stop: { kind: "macro" } })
+      runningAutomationLabel({
+        name: "Deploy",
+        completed: 2,
+        total: 5,
+        waiting: false,
+        stop: { kind: "macro" },
+      })
     ).toBe('Running automation "Deploy" (2/5)');
   });
 });

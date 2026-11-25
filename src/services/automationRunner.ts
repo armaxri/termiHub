@@ -71,21 +71,22 @@ export function referencedAutomations(steps: readonly RunnableStep[]): string[] 
 }
 
 /**
- * Whether running `root` can reach a `run-local-process` step: its own, one
- * nested in a conditional branch or a loop, or one of an automation it calls
- * (#5818). Every branch counts. Each automation is visited once, so a cycle
- * ends the walk; missing automations are skipped. A **pure** helper.
+ * Whether running `root` can reach a step that `matches`: its own, one nested in
+ * a conditional branch or a loop, or one of an automation it calls (#5818). Every
+ * branch counts. Each automation is visited once, so a cycle ends the walk;
+ * missing automations are skipped.
  */
-export function reachesLocalProcess(
+function reachesStep(
   root: Automation,
-  resolve: (id: string) => Automation | undefined
+  resolve: (id: string) => Automation | undefined,
+  matches: (step: RunnableStep) => boolean
 ): boolean {
   const seen = new Set<string>([root.id]);
   const queue: Automation[] = [root];
   for (let next = queue.pop(); next; next = queue.pop()) {
     let found = false;
     visitSteps(next.steps, (step) => {
-      if (step.kind === "run-local-process") found = true;
+      if (matches(step)) found = true;
     });
     if (found) return true;
     for (const id of referencedAutomations(next.steps)) {
@@ -96,6 +97,22 @@ export function reachesLocalProcess(
     }
   }
   return false;
+}
+
+/** Whether running `root` can reach a `run-local-process` step. A **pure** helper. */
+export function reachesLocalProcess(
+  root: Automation,
+  resolve: (id: string) => Automation | undefined
+): boolean {
+  return reachesStep(root, resolve, (step) => step.kind === "run-local-process");
+}
+
+/** Whether running `root` can reach a step that waits for the user (#6025). A **pure** helper. */
+export function reachesWaitForUser(
+  root: Automation,
+  resolve: (id: string) => Automation | undefined
+): boolean {
+  return reachesStep(root, resolve, (step) => step.kind === "wait-for-user");
 }
 
 /** Every step kind the runner executes; one it misses fails to compile. */
@@ -109,6 +126,7 @@ const RUNNABLE_KIND_MAP: Record<RunnableStep["kind"], true> = {
   conditional: true,
   loop: true,
   "wait-for-output": true,
+  "wait-for-user": true,
 };
 /** A set: `in` would also find what every object inherits. */
 const RUNNABLE_KINDS: ReadonlySet<string> = new Set(Object.keys(RUNNABLE_KIND_MAP));

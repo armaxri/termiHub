@@ -2237,6 +2237,17 @@ describe("appStore — scheduled runs (PROD-043)", () => {
     expect(report).toEqual({ outcome: "completed", targetsRun: 1, runIds: [run.id] });
   });
 
+  it("skips an automation that waits for the user: nobody is there (#6025)", async () => {
+    const waits = { kind: "wait-for-user" } as unknown as WorkflowStep;
+    useAppStore.setState({ workflows: [workflow("w1", [cmd("sudo -v"), waits, cmd("ls")])] });
+    const connectMissing = vi.fn();
+    const report = await executeScheduledRun(fire(), store, { connectMissing });
+    expect(report).toMatchObject({ outcome: "skipped", targetsRun: 0 });
+    expect(report.message).toContain("nobody is there on a schedule");
+    expect(injected).toEqual([]);
+    expect(connectMissing).not.toHaveBeenCalled();
+  });
+
   it("runs on every member of a broadcast group", async () => {
     seedSettings({
       broadcastGroups: [{ id: "g1", name: "Web", connectionIds: ["conn-a", "conn-b"] }],

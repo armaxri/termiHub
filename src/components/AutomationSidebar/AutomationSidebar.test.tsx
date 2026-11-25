@@ -278,6 +278,20 @@ describe("empty state", () => {
     expect(query("automation-editor-dialog")).not.toBeNull();
   });
 
+  it("without a terminal offers to open one and record there (A-004)", async () => {
+    const recordInNewTerminal = vi.fn(async () => true);
+    seedLayoutState({
+      rootPanel: { type: "leaf", id: "leaf", tabs: [], activeTabId: null },
+      activePanelId: "leaf",
+    });
+    await render([]);
+    act(() => useAppStore.setState({ recordInNewTerminal }));
+    expect(query("automation-empty-record-btn")!.textContent).toBe("Open a terminal and record");
+    click("automation-empty-record-btn");
+    expect(recordInNewTerminal).toHaveBeenCalledTimes(1);
+    expect(storeFns.toggleRecording).not.toHaveBeenCalled();
+  });
+
   it("keeps the way to import reachable", async () => {
     await render([]);
     openMenu("automation-new-btn");
@@ -322,6 +336,24 @@ describe("toolbar (R-037)", () => {
       })
     );
     expect(query("automation-record-btn")!.textContent).toBe("Stop recording");
+  });
+
+  it("leaves the stop of a recording for the editor to the bar (A-010)", async () => {
+    await render();
+    act(() =>
+      useAppStore.setState({
+        recording: {
+          tabId: "tab-a",
+          tabTitle: "web-1",
+          keys: 0,
+          atPrompt: false,
+          intoEditor: "Deploy",
+        },
+      })
+    );
+    expect(query("automation-record-btn")!.textContent).toBe("Record");
+    click("automation-record-btn");
+    expect(storeFns.toggleRecording).not.toHaveBeenCalled();
   });
 
   it("folds Record into one menu only below the smallest sidebar", async () => {

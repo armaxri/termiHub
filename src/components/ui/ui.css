@@ -1131,6 +1131,22 @@
   border-top: 1px solid var(--border-secondary);
 }
 
+/* Content goes on below the footer's edge: it fades out there (A-024). */
+.ui-modal__body[data-more-below] + .ui-modal__foot {
+  position: relative;
+}
+
+.ui-modal__body[data-more-below] + .ui-modal__foot::before {
+  content: "";
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  height: var(--spacing-xl);
+  background: linear-gradient(to top, var(--bg-secondary), transparent);
+  pointer-events: none;
+}
+
 /*
  * Inline status line (#5830): success/info feedback of an action taken in the
  * dialog, at the left of the footer instead of a toast beside the dialog.

@@ -94,6 +94,8 @@ fn shared_step_kinds_keep_the_workflow_json_shape() {
         json!({ "kind": "wait", "delayMs": 250 }),
         json!({ "kind": "run-local-process", "program": "p", "args": ["a"] }),
         json!({ "kind": "wait-for-output", "pattern": "$ ", "isRegex": false, "timeoutMs": 10 }),
+        json!({ "kind": "wait-for-user" }),
+        json!({ "kind": "wait-for-user", "message": "Type your password" }),
         json!({
             "kind": "conditional",
             "condition": { "left": "a", "op": "eq", "right": "a" },

@@ -33,7 +33,7 @@ import { useAppStore } from "@/store/appStore";
 import { currentBroadcastView } from "@/store/broadcastBridge";
 import { currentSettingsView } from "@/store/settingsBridge";
 import { frontendLog } from "@/utils/frontendLog";
-import { textBeforeCursor } from "@/services/passwordPrompt";
+import { registerTerminalPromptReader, textBeforeCursor } from "@/services/passwordPrompt";
 import { bufferToLogicalLines } from "@/utils/terminalBuffer";
 import { getXtermTheme } from "@/themes";
 import { isFitReady, isProposedFitSafe } from "./safeFit";
@@ -732,7 +732,13 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     // A scheduled run waits on this before typing into a tab it just opened
     // on a live session (#3527).
     registerTerminalReadyProbe((tabId) => sessionRegistryRef.current.has(tabId));
+    // Continue asks whether the terminal still wants a password (#6025).
+    registerTerminalPromptReader((tabId) => {
+      const xterm = xtermRegistryRef.current.get(tabId);
+      return xterm ? textBeforeCursor(xterm.buffer.active) : "";
+    });
     return () => {
+      registerTerminalPromptReader(null);
       registerTerminalInputInjector(null);
       registerTerminalReadyProbe(null);
     };

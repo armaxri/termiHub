@@ -1,14 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { recordedKeys, recordedTime, recordingName, uniqueName } from "./recordingText";
+import { recordedTime, recordingName, uniqueName } from "./recordingText";
 
 const chunks = (...data: string[]) => data.map((d) => ({ data: d, delayMs: 0 }));
 
 describe("recordingText", () => {
-  it("counts keys", () => {
-    expect(recordedKeys(1)).toBe("1 key");
-    expect(recordedKeys(14)).toBe("14 keys");
-  });
-
   it.each([
     [0, "0.0 s"],
     [3240, "3.2 s"],

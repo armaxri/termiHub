@@ -18,7 +18,7 @@ import type { Automation } from "@/types/generated/Automation";
 import type { LeafPanel, TerminalTab } from "@/types/terminal";
 import { useAppStore } from "./appStore";
 import { automationLibraryState } from "./slices/automationStoreState";
-import { recordingStep, type SaveTakeRequest } from "./slices/recordingSlice";
+import { recordingSteps, type SaveTakeRequest } from "./slices/recordingSlice";
 import { __emitSessionViewForTest, type ProjectedSessionLifecycle } from "./sessionBridge";
 
 let version = 1000;
@@ -338,14 +338,58 @@ describe("saving", () => {
       return store().recordedTake!;
     };
     const typed = (keep: boolean) => {
-      const step = recordingStep(store().recordedTake!, keep);
-      return step?.kind === "type-keys" ? step.chunks.map((c) => c.data) : null;
+      const steps = recordingSteps(store().recordedTake!, keep);
+      return steps.map((s) => (s.kind === "type-keys" ? s.chunks.map((c) => c.data) : s.kind));
     };
 
     it("is left out unless it is asked for", () => {
       expect(take().secrets).toEqual([{ start: 1, end: 4, prompt: "Password:" }]);
-      expect(typed(false)).toEqual(["sudo -v\r", "ls\r"]);
-      expect(typed(true)).toEqual(["sudo -v\r", "p", "w", "\r", "ls\r"]);
+      expect(typed(false)).toEqual([["sudo -v\r"], "wait-for-user", ["ls\r"]]);
+      expect(typed(true)).toEqual([["sudo -v\r", "p", "w", "\r", "ls\r"]]);
+    });
+
+    it("is kept apart while an automation waits for it, prompt or not (#6025)", () => {
+      useAppStore.setState({
+        automationWaits: [
+          {
+            runId: "r",
+            tabId: "a",
+            tabTitle: "prod-web",
+            automationName: "Deploy",
+            until: Date.now() + 1000,
+            stillAsking: false,
+          },
+        ],
+      });
+      store().startRecording();
+      // Echoed as it is: still not the recording's.
+      for (const key of ["p", "w", "\r"]) store().recordInput("a", key, () => "$ pw");
+      useAppStore.setState({ automationWaits: [] });
+      store().recordInput("a", "ls\r", () => "$ ");
+      store().stopRecording();
+      expect(store().recordedTake?.secrets).toEqual([{ start: 0, end: 3, prompt: "Deploy" }]);
+      expect(typed(false)).toEqual(["wait-for-user", ["ls\r"]]);
+    });
+
+    it("a paste is kept apart too while an automation waits (#6025)", () => {
+      useAppStore.setState({
+        automationWaits: [
+          {
+            runId: "r",
+            tabId: "a",
+            tabTitle: "a",
+            automationName: "Deploy",
+            until: Date.now() + 1000,
+            stillAsking: false,
+          },
+        ],
+      });
+      store().startRecording();
+      store()
+        .reserveRecordedPaste("a", () => "$ ")!
+        .fill("hunter2");
+      store().stopRecording();
+      expect(store().recordedTake?.secrets).toEqual([{ start: 0, end: 1, prompt: "Deploy" }]);
     });
 
     it("alone leaves nothing to save", async () => {
@@ -357,6 +401,26 @@ describe("saving", () => {
       ).rejects.toThrow("There is nothing to save");
       expect(saveAutomation).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("recording in a new terminal (A-004)", () => {
+  it("does not record a terminal the user left meanwhile", async () => {
+    useAppStore.setState({ addLocalShellTab: () => "b" });
+    expect(await store().recordInNewTerminal()).toBe(false);
+    expect(store().recording).toBeNull();
+  });
+
+  it("records it once it is connected and in front", async () => {
+    useAppStore.setState({ addLocalShellTab: () => "a" });
+    expect(await store().recordInNewTerminal()).toBe(true);
+    expect(store().recording?.tabId).toBe("a");
+  });
+
+  it("gives up when it is gone", async () => {
+    useAppStore.setState({ addLocalShellTab: () => "nowhere" });
+    expect(await store().recordInNewTerminal()).toBe(false);
+    expect(toast.error).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -373,7 +437,7 @@ describe("discarding", () => {
     store().discardRecordedTake();
     expect(store()).toMatchObject({ recordedTake: null, recordingSaveOpen: false });
     expect(toast.info).toHaveBeenCalledWith(
-      "Discarded the recording of 1 key",
+      "Discarded the recording in a",
       expect.objectContaining({ action: expect.objectContaining({ label: "Undo" }) })
     );
     undo();

@@ -423,16 +423,27 @@ export type MenuSubContentProps = React.ComponentPropsWithoutRef<
 
 /** The portaled surface of a submenu, styled like its parent content. */
 export const MenuSubContent = React.forwardRef<HTMLDivElement, MenuSubContentProps>(
-  function MenuSubContent({ className, container, width, ...rest }, ref) {
+  function MenuSubContent({ className, container, width, style, ...rest }, ref) {
     const kind = useMenuKind("MenuSubContent");
     const classes = cx("ui-menu__content", width === "wide" && "ui-menu__content--wide", className);
     return kind === "context" ? (
       <RadixContextMenu.Portal container={container}>
-        <RadixContextMenu.SubContent ref={ref} className={classes} {...rest} />
+        <RadixContextMenu.SubContent ref={ref} className={classes} style={style} {...rest} />
       </RadixContextMenu.Portal>
     ) : (
       <RadixDropdownMenu.Portal container={container}>
-        <RadixDropdownMenu.SubContent ref={ref} className={classes} {...rest} />
+        <RadixDropdownMenu.SubContent
+          ref={ref}
+          className={classes}
+          collisionBoundary={container instanceof Element ? container : undefined}
+          style={
+            {
+              "--ui-menu-max-height": "var(--radix-dropdown-menu-content-available-height)",
+              ...style,
+            } as React.CSSProperties
+          }
+          {...rest}
+        />
       </RadixDropdownMenu.Portal>
     );
   }

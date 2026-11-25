@@ -21,6 +21,8 @@ import { TabGroupChips } from "./TabGroupChips";
 import { TerminalToolbarMore } from "./TerminalToolbarMore";
 import { RecordingBar } from "@/components/Recording";
 import { useRecordingLabel } from "@/components/Recording/useRecordingLabel";
+import { EditorAsideBar } from "@/components/AutomationEditor/EditorAsideBar";
+import { WaitingRunBar } from "@/components/Automations/WaitingRunBar";
 import { RunTargetsDialog } from "@/components/Automations/RunTargetsDialog";
 import { BroadcastScopeDialog } from "./BroadcastScopeDialog";
 import { SplitView } from "@/components/SplitView";
@@ -85,6 +87,7 @@ export function TerminalView() {
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
   const recordingLabel = useRecordingLabel();
+  const recording = useAppStore((s) => s.recording);
   const toggleRecording = useAppStore((s) => s.toggleRecording);
   // The toolbar's active/pressed state is sourced from the authoritative
   // `broadcast` region (#2242).
@@ -351,6 +354,8 @@ export function TerminalView() {
               loggingActive={isActiveSessionLogging}
               onToggleLogging={() => void handleToggleLogging()}
               recordingLabel={recordingLabel}
+              recording={recording !== null}
+              recordingAtPrompt={recording?.atPrompt === true}
               onToggleRecording={toggleRecording}
               playback={macroPlayback}
               onRunAutomation={() => setRunDialog({})}
@@ -359,6 +364,8 @@ export function TerminalView() {
           </div>
         </div>
         <RecordingBar />
+        <EditorAsideBar />
+        <WaitingRunBar />
         <div className="terminal-view__content" role="region" aria-label="Terminal">
           <TerminalHost />
           <SplitView />

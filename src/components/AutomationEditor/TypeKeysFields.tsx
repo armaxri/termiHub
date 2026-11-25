@@ -31,6 +31,7 @@ export interface TypeKeysFieldsProps {
 export function TypeKeysFields({ draft, step, path, stepNumber, onChange }: TypeKeysFieldsProps) {
   const { errors } = useStepEditor();
   const [showAll, setShowAll] = useState(false);
+  const [moreKeys, setMoreKeys] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const keys = draft.keys ?? [];
   const errorBase = `steps.${draft.uid}.keys`;
@@ -84,10 +85,24 @@ export function TypeKeysFields({ draft, step, path, stepNumber, onChange }: Type
         id={`automation-step-keys-hint-${path}`}
         data-testid={`automation-editor-keys-hint-${path}`}
       >
-        Typed exactly as written. Press Enter to add an Enter key (<code>\r</code>). Also{" "}
-        <code>\t</code> Tab, <code>\e</code> Esc, <code>\x03</code> Ctrl+C (any <code>\xHH</code>),{" "}
-        <code>\\</code> backslash.
+        Typed exactly as written; press Enter to add <code>⏎</code>.{" "}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="type-keys__more"
+          aria-expanded={moreKeys}
+          onClick={() => setMoreKeys((v) => !v)}
+          data-testid={`automation-editor-keys-more-${path}`}
+        >
+          More keys
+        </Button>
       </p>
+      {moreKeys && (
+        <p className="type-keys__hint" data-testid={`automation-editor-keys-more-text-${path}`}>
+          Write <code>\t</code> for Tab <code>⇥</code>, <code>\e</code> for Esc <code>⎋</code>,{" "}
+          <code>\x03</code> for Ctrl+C (any <code>\xHH</code>), <code>\\</code> for a backslash.
+        </p>
+      )}
       <div className="type-keys__rows">
         {keys.slice(0, shown).map((key, i) => (
           <KeyRow
@@ -125,7 +140,7 @@ export function TypeKeysFields({ draft, step, path, stepNumber, onChange }: Type
             onClick={() => setShowAll(true)}
             data-testid={`automation-editor-keys-show-all-${path}`}
           >
-            Show all {keys.length} keys
+            Show all {keys.length} rows
           </Button>
         )}
         <Button
@@ -211,11 +226,11 @@ function KeyRow({
   const errorId = `automation-step-keys-error-${id}`;
   const label = `keys ${number} of step ${stepNumber}`;
 
-  /** Replace `start`..`end` of the text with an Enter key (`\r`). */
+  /** Replace `start`..`end` of the text with an Enter key (`⏎`). */
   const insertEnter = (start: number, end: number) => {
-    flushSync(() => onChange({ text: `${draft.text.slice(0, start)}\\r${draft.text.slice(end)}` }));
+    flushSync(() => onChange({ text: `${draft.text.slice(0, start)}⏎${draft.text.slice(end)}` }));
     // Keep typing after it: React puts the caret at the end of a changed value.
-    inputRef.current?.setSelectionRange(start + 2, start + 2);
+    inputRef.current?.setSelectionRange(start + 1, start + 1);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -240,7 +255,7 @@ function KeyRow({
           value={draft.text}
           onChange={(e) => onChange({ text: e.target.value })}
           onKeyDown={handleKeyDown}
-          placeholder={"e.g. ls -la\\r"}
+          placeholder="e.g. ls -la⏎"
           spellCheck={false}
           autoComplete="off"
           aria-label={`Keys ${number} of step ${stepNumber}`}
@@ -253,7 +268,7 @@ function KeyRow({
           size="sm"
           iconOnly
           aria-label={`Add Enter to ${label}`}
-          title="Add Enter (\\r)"
+          title="Add Enter (⏎)"
           icon={<CornerDownLeft size={12} />}
           onClick={() => insertEnter(draft.text.length, draft.text.length)}
           data-testid={`automation-editor-keys-enter-${id}`}

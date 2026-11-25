@@ -22,6 +22,7 @@ the normal lane.
 from __future__ import annotations
 
 import sys
+import time
 from typing import Any, Optional
 
 import pytest
@@ -51,6 +52,7 @@ from termihub_harness.product_run.automation_recording_grades import (
     save_dialog_problems,
     save_layout_problems,
     secret_problems,
+    wait_problems,
 )
 from termihub_harness.product_run.automation_steps import AutomationPhaseUi
 from termihub_harness.product_run.automation_store import AUTOMATIONS_FILE
@@ -101,18 +103,27 @@ def test_grade_secret():
 
 
 def test_grade_chip():
-    assert chip_problems("Recording", CHIP_HERE) == []
+    assert chip_problems("Stop recording", CHIP_HERE) == []
     assert chip_problems(None, None) == []
     assert chip_problems(None, CHIP_HERE) == ["no recording chip"]
-    assert chip_problems("Recording", CHIP_AT_PROMPT) != []
+    assert chip_problems("Stop recording", CHIP_AT_PROMPT) != []
     assert chip_problems("Recording", None) == ["the chip still reads 'Recording'"]
 
 
 def test_grade_save_dialog():
-    summary = "Recorded 3 keys in pr-rec (1.2 s)"
-    assert save_dialog_problems(summary, "ls", 3, "ls") == []
-    assert save_dialog_problems("Recorded 1 key in t (0.0 s)", "l", 1, "l") == []
-    assert len(save_dialog_problems(summary, "⎋[A", 4, "ls")) == 2
+    summary = "Recorded in pr-rec, 1.2 s ls"
+    assert save_dialog_problems(summary, "ls", "ls", "ls") == []
+    assert len(save_dialog_problems(summary, "⎋[A", "pwd", "ls")) == 2
+    assert len(save_dialog_problems("Recorded 3 keys in pr-rec ls", "ls", "ls", "ls")) == 2
+
+
+def test_grade_wait():
+    bar = (
+        "“Prompt” waits for you in web. Type your password, then Continue. "
+        "Stops at 6:05:00 PM if you do nothing."
+    )
+    assert wait_problems(bar, "Prompt", "web") == []
+    assert len(wait_problems("Running", "Prompt", "web")) == 3
 
 
 def test_grade_save_layout():
@@ -188,6 +199,10 @@ class TestProductRunAutomationRecording(
         found = [a for a in self.driver.get_state("automations") or [] if a["id"] == automation_id]
         return found[0] if found else {}
 
+    def _after_prompt(self, tab: str) -> str:
+        """What the terminal shows after the last password prompt."""
+        return self.driver.read_terminal(tab).rsplit("Password:", 1)[-1]
+
     def _stored_text(self) -> str:
         return (self.config_dir / AUTOMATIONS_FILE).read_text(encoding="utf-8")
 
@@ -197,7 +212,7 @@ class TestProductRunAutomationRecording(
         with self.step(
             "automation-recording.toolbar",
             "Record automation from the toolbar, stop on its chip, and run what was stored",
-            expect="the toolbar with the Recording chip and a dot on the tab; then Save the "
+            expect="the toolbar with the Stop recording chip and a dot on the tab; then Save the "
             "recording: what was recorded, New automation or Add to an automation, a name; "
             "Discard recording and Save",
             screenshot=False,
@@ -221,7 +236,7 @@ class TestProductRunAutomationRecording(
             summary = self.driver.get_text("recording-save-summary")
             offered = self.driver.get_value("recording-save-name")
             self.evidence(f"{summary!r}, name {offered!r}")
-            problems += save_dialog_problems(summary, offered, len(line) + 1, line)
+            problems += save_dialog_problems(summary, offered, line, line)
             self.shot(label="save")
             self.driver.type("recording-save-name", f"Recorded {t}")
             self._save()
@@ -302,7 +317,7 @@ class TestProductRunAutomationRecording(
         with self.step(
             "automation-recording.password",
             "What is typed at a password prompt is announced while recording and not stored",
-            expect="the chip 'Recording: password prompt'; then Save recording naming the "
+            expect="the chip 'Stop recording (password kept apart)'; then Save recording naming the "
             "prompt, with 'Leave it out' chosen",
             screenshot=False,
         ):
@@ -335,9 +350,74 @@ class TestProductRunAutomationRecording(
             stored = self.wait(
                 lambda: self.stored_automation(f"Prompt {t}"), what="the stored automation"
             )
-            problems += recorded_problems(stored, "id\r")
+            self.ids["prompt"] = stored["id"]
+            kinds = [s["kind"] for s in stored["steps"]]
+            if kinds != ["wait-for-user", "type-keys"]:
+                problems.append(f"the password's place is not a wait: {kinds}")
+            problems += recorded_problems(stored, "id\r", -1)
             problems += secret_problems(self._stored_text(), secret)
             assert not problems, problems
+
+    def test_35_password_wait(self):
+        t = self.tag
+        with self.step(
+            "automation-recording.wait",
+            "Replayed, the left-out password is a wait: nothing is typed until Continue",
+            expect="a yellow bar above the terminal: the automation waits for you, type your "
+            "password, then Continue; Stop and Continue; the tab's badge says it waits",
+            screenshot=False,
+        ):
+            self.require("automation-recording.password")
+            tab, secret = self.ids["tab"], f"typed{t}"
+            bar, go_on = f"automation-wait-{tab}", f"automation-wait-continue-{tab}"
+            self.switch_to_tab(tab)
+            self.run_command(
+                "stty -echo; printf 'Password: '; IFS= read -r PW; stty echo; "
+                'printf "\\nPR_WAIT_%s\\n" "${#PW}"'
+            )
+            self.wait(
+                lambda: self.driver.read_terminal(tab).rstrip().endswith("Password:"),
+                what="the password prompt",
+            )
+            self.run_automation(self.ids["prompt"])
+            self.wait(lambda: self.driver.exists(bar), what="the bar of the waiting run")
+            text = self.driver.get_text(bar)
+            self.evidence(f"bar {text!r}")
+            self.shot(label="waiting")
+            problems = wait_problems(text, f"Prompt {t}", f"pr-rec-{t}")
+            # Too early: the prompt is still there, so it does not go on.
+            self.driver.click(go_on)
+            time.sleep(1.5)
+            if not self.driver.exists(bar) or "PR_WAIT_" in self._after_prompt(tab):
+                problems.append("Continue went on while the terminal asked for a password")
+            self.shot(label="still-asking")
+            self._press(f"{secret}\r")
+            self.wait_for_output(f"PR_WAIT_{len(secret)}", tab_id=tab)
+            self.driver.click(go_on)
+            self.wait(lambda: not self.driver.exists(bar), what="the run to go on")
+            self.wait(lambda: "uid=" in self._after_prompt(tab), what="the keys after the password")
+            problems += secret_problems(self._stored_text(), secret)
+            assert not problems, problems
+
+    def test_36_password_wait_stopped(self):
+        with self.step(
+            "automation-recording.wait-stop",
+            "Stop ends a waiting run; nothing more is typed and the History says canceled",
+            expect="the bar gone and nothing typed into the terminal",
+            screenshot=False,
+        ):
+            self.require("automation-recording.wait")
+            tab = self.ids["tab"]
+            bar = f"automation-wait-{tab}"
+            self.switch_to_tab(tab)
+            before = self.driver.read_terminal(tab)
+            self.run_automation(self.ids["prompt"])
+            self.wait(lambda: self.driver.exists(bar), what="the bar of the waiting run")
+            self.driver.click(f"automation-wait-stop-{tab}")
+            self.wait(lambda: not self.driver.exists(bar), what="the bar to go")
+            self.shot(label="stopped")
+            after = self.driver.read_terminal(tab)
+            assert after.rstrip() == before.rstrip(), after[len(before) :]
 
     def test_40_editor(self):
         t = self.tag
@@ -406,7 +486,7 @@ class TestProductRunAutomationRecording(
             self.shot(label="closed")
             self._discard()
             assert "closed" in note, note
-            assert "Recorded 2 keys" in summary, summary
+            assert "Recorded in" in summary and "ls" in summary, summary
 
     def test_60_narrow(self):
         with self.step(
