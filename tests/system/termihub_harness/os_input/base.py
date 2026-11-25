@@ -187,9 +187,14 @@ class OsInput:
         :data:`~termihub_harness.app_leaks.FOREIGN_EXIT_WAIT`) for an app the
         previous test stopped to finish exiting, then raises
         :class:`ForeignAppAlive` naming every termiHub PID that is neither
-        allowed here nor a live instance of this pytest process. Read-only: a
+        allowed here nor a live instance of this pytest process.
+
+        A test app that a *finished* session of this checkout provably left
+        behind is ended first (#6046): it is reported by one test of its own,
+        ``test_os_input_desktop.py``, instead of failing every grade. Any other
         foreign process is only named, never signalled or sent input.
         """
+        self._end_own_leaks()
         foreign = self._foreign_apps(timeout)
         if foreign:
             raise ForeignAppAlive(
@@ -198,6 +203,12 @@ class OsInput:
                 f"{sorted(self._allowed)}); refusing to inject (#5467):\n"
                 + "\n".join(f"  foreign app: {line}" for line in foreign)
             )
+
+    def _end_own_leaks(self) -> None:
+        from .. import app_leaks  # noqa: PLC0415
+
+        for line in app_leaks.end_leaks_of_gone_sessions(self._allowed):
+            print(f"[termihub-harness] ended an app a finished session left behind: {line}")
 
     def _foreign_apps(self, timeout: Optional[float]) -> list[str]:
         """Descriptions of the foreign app processes still alive after ``timeout``."""

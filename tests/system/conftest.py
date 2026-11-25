@@ -13,6 +13,7 @@ from termihub_harness import (
     js_errors,
     native_ssh,
     rerun_budget,
+    rerun_finalizers,
     skip_guard,
     timing,
     tool_preflight,
@@ -164,6 +165,9 @@ def pytest_configure(config):
         "manual: guided-manual test — automated setup then an operator prompt. "
         "Skipped unless --manual is passed with an interactive TTY.",
     )
+    plugin = sys.modules.get("pytest_rerunfailures")
+    if plugin is not None:
+        rerun_finalizers.install(plugin)  # a rerun must lose no teardown (#6046)
     config._manual_session = ManualSession()
     _SESSION_CONFIG["config"] = config
     config._manual_started = datetime.datetime.now(datetime.timezone.utc)
@@ -617,7 +621,8 @@ def pytest_sessionfinish(session, exitstatus):
     """Enforce the skip guard; hand timing samples to the xdist controller;
     flush the guided-manual report."""
     hang_guard.close()
-    _LEAKS.extend(app_leaks.reap_leaks("the session"))
+    _LEAKS.extend(app_leaks.reap_leaks("the session", session_over=True))
+    _LEAKS.extend(f"[termihub-harness] ended: {line}" for line in app_leaks.ENDED_LEAKS)
     _finish_product_run(session)
     _enforce_skip_guard(session)
     _enforce_rerun_budget(session)
