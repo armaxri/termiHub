@@ -573,3 +573,27 @@ fn the_check_says_what_always_would_remember() {
         LocalProcessCheck::Allowed { .. }
     ));
 }
+
+#[test]
+#[cfg(unix)]
+fn an_entry_of_the_list_is_judged_by_its_file_or_else_by_its_name() {
+    let dir = TempDir::new().unwrap();
+    let shell = dir.path().join("dash");
+    executable(&shell);
+    std::os::unix::fs::symlink(&shell, dir.path().join("mine")).unwrap();
+    let in_dir = SearchEnv {
+        path: Some(dir.path().into()),
+        ..env()
+    };
+    for (entry, expected) in [
+        ("sh", true),
+        (" /bin/sh ", true),
+        ("/usr/bin/true", false),
+        ("python3.99-gone", false),
+        ("/gone/python3", true),
+        ("gone-tool", false),
+    ] {
+        assert_eq!(is_interpreter_entry(entry, &env()), expected, "{entry}");
+    }
+    assert!(is_interpreter_entry("mine", &in_dir));
+}

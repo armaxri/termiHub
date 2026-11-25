@@ -921,6 +921,9 @@ pub fn run() -> anyhow::Result<()> {
             commands::local_process::check_local_process,
             commands::local_process::run_local_process,
             commands::local_process::confirm_local_process,
+            commands::local_process::list_confirmed_local_commands,
+            commands::local_process::revoke_confirmed_local_commands,
+            commands::local_process::interpreters_among,
             commands::local_process::cancel_local_process,
             // Network diagnostics
             commands::network::network_port_scan,

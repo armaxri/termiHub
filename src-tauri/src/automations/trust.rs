@@ -63,15 +63,47 @@ pub struct AutomationTrust {
     /// Automation id to the fingerprint it had when the user last saved it here.
     #[serde(default)]
     pub own: BTreeMap<String, String>,
-    /// Automation id to the commands confirmed for it ([`command_hash`]).
+    /// Automation id to the commands confirmed for it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub confirmed: BTreeMap<String, BTreeSet<String>>,
+    pub confirmed: BTreeMap<String, Vec<ConfirmedCommand>>,
     /// Ids of deleted automations that were not the user's own.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub deleted: BTreeSet<String>,
     /// Keys this build does not know, kept verbatim.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+/// A command the user confirmed for an automation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum ConfirmedCommand {
+    /// The file and every argument.
+    Command {
+        /// The resolved file.
+        path: String,
+        /// Every argument.
+        args: Vec<String>,
+    },
+    /// Its [`command_hash`] only, as an earlier build kept it (#6057).
+    Hash(String),
+}
+
+impl ConfirmedCommand {
+    fn new(path: &Path, args: &[String]) -> Self {
+        Self::Command {
+            path: path.to_string_lossy().into_owned(),
+            args: args.to_vec(),
+        }
+    }
+
+    /// What names it when it is revoked.
+    pub fn key(&self) -> String {
+        match self {
+            Self::Command { path, args } => command_hash(Path::new(path), args),
+            Self::Hash(hash) => hash.clone(),
+        }
+    }
 }
 
 impl AutomationTrust {
@@ -123,8 +155,7 @@ pub enum Standing {
     Unknown,
 }
 
-/// The hash a confirmation is remembered by: the file that starts, and every
-/// argument.
+/// The hash a command is named by: the file that starts, and every argument.
 pub fn command_hash(path: &Path, args: &[String]) -> String {
     sha256_hex(json!([path.to_string_lossy(), args]).to_string().as_bytes())
 }
@@ -396,12 +427,7 @@ impl TrustBook {
             return Standing::Own;
         }
         let hash = command_hash(path, args);
-        let confirmed = |a: &&Automation| {
-            self.trust
-                .confirmed
-                .get(&a.id)
-                .is_some_and(|commands| commands.contains(&hash))
-        };
+        let confirmed = |a: &&Automation| self.is_confirmed(&a.id, &hash);
         if strangers.iter().all(confirmed) {
             return Standing::Confirmed;
         }
@@ -426,20 +452,54 @@ impl TrustBook {
             .iter()
             .map(|a| a.id.clone())
             .collect();
-        let hash = command_hash(path, args);
+        let command = ConfirmedCommand::new(path, args);
         let before = self.trust.clone();
         for id in ids {
-            self.trust
-                .confirmed
-                .entry(id)
-                .or_default()
-                .insert(hash.clone());
+            if !self.is_confirmed(&id, &command.key()) {
+                let commands = self.trust.confirmed.entry(id).or_default();
+                commands.push(command.clone());
+            }
         }
+        self.save_or_restore(before, "The confirmation could not be saved.")
+    }
+
+    fn is_confirmed(&self, id: &str, hash: &str) -> bool {
+        let commands = self.trust.confirmed.get(id);
+        commands.is_some_and(|commands| commands.iter().any(|c| c.key() == hash))
+    }
+
+    fn save_or_restore(&mut self, before: AutomationTrust, failed: &str) -> Result<(), String> {
         if self.save() {
             return Ok(());
         }
         self.trust = before;
-        Err("The confirmation could not be saved.".to_string())
+        Err(failed.to_string())
+    }
+
+    /// The confirmed commands of every automation that has any.
+    pub fn confirmed(&self) -> &BTreeMap<String, Vec<ConfirmedCommand>> {
+        &self.trust.confirmed
+    }
+
+    /// Take confirmations back: one command of an automation (`key`), all of one
+    /// automation, or all.
+    pub fn revoke(&mut self, id: Option<&str>, key: Option<&str>) -> Result<(), String> {
+        let before = self.trust.clone();
+        match (id, key) {
+            (None, _) => self.trust.confirmed.clear(),
+            (Some(id), None) => {
+                self.trust.confirmed.remove(id);
+            }
+            (Some(id), Some(key)) => {
+                if let Some(commands) = self.trust.confirmed.get_mut(id) {
+                    commands.retain(|c| c.key() != key);
+                    if commands.is_empty() {
+                        self.trust.confirmed.remove(id);
+                    }
+                }
+            }
+        }
+        self.save_or_restore(before, "The confirmation could not be taken back.")
     }
 }
 

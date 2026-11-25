@@ -461,3 +461,78 @@ fn a_template_becomes_only_what_the_window_can_make_of_it() {
         assert!(!can_become(template, text), "{template} {text}");
     }
 }
+
+#[test]
+fn a_confirmation_can_be_seen_and_taken_back() {
+    let dir = TempDir::new().unwrap();
+    let m = manager(&dir);
+    import(&m, runs("a", "make", &["${x}"]));
+    import(&m, runs("b", "make", &["${x}"]));
+    for (id, arg) in [("a", "one"), ("a", "two"), ("a", "one"), ("b", "one")] {
+        confirm(&m, &[id], "make", &[arg]);
+    }
+    let listed = |m: &AutomationManager| -> Vec<(String, Vec<String>)> {
+        m.confirmed_commands()
+            .unwrap()
+            .into_iter()
+            .map(|c| {
+                let args = c.commands.iter().map(|command| match command {
+                    ConfirmedCommand::Command { path, args } => {
+                        format!("{path} {}", args.join(" "))
+                    }
+                    ConfirmedCommand::Hash(hash) => hash.clone(),
+                });
+                (c.name.unwrap_or_default(), args.collect())
+            })
+            .collect()
+    };
+    let one = "/bin/make one".to_string();
+    let two = "/bin/make two".to_string();
+    assert_eq!(
+        listed(&m),
+        [
+            ("Name a".to_string(), vec![one.clone(), two.clone()]),
+            ("Name b".to_string(), vec![one.clone()])
+        ]
+    );
+    let key = m.confirmed_commands().unwrap()[0].commands[0].key();
+    m.revoke_confirmed(Some("a"), Some(&key)).unwrap();
+    assert!(asks(&m, &["a"], "make", &["one"]));
+    assert_eq!(standing(&m, &["a"], "make", &["two"]), Standing::Confirmed);
+    assert_eq!(standing(&m, &["b"], "make", &["one"]), Standing::Confirmed);
+    // It stays so, and an automation without any is not listed.
+    let m = manager(&dir);
+    assert_eq!(listed(&m).len(), 2);
+    m.revoke_confirmed(Some("a"), None).unwrap();
+    assert_eq!(listed(&m), [("Name b".to_string(), vec![one])]);
+    m.revoke_confirmed(None, None).unwrap();
+    assert!(listed(&manager(&dir)).is_empty());
+    assert!(asks(&m, &["b"], "make", &["one"]));
+}
+
+/// What a build before #6057 wrote still counts.
+#[test]
+fn a_confirmation_kept_as_a_hash_still_counts_and_can_be_taken_back() {
+    let dir = TempDir::new().unwrap();
+    import(&manager(&dir), runs("a", "make", &[]));
+    let hash = command_hash(Path::new("/bin/make"), &[]);
+    let old = json!({ "version": "1", "own": {}, "confirmed": { "a": [hash] } });
+    fs::write(trust_file(&dir), old.to_string()).unwrap();
+    let m = manager(&dir);
+    assert_eq!(standing(&m, &["a"], "make", &[]), Standing::Confirmed);
+    confirm(&m, &["a"], "make", &[]);
+    assert_eq!(m.confirmed_commands().unwrap()[0].commands.len(), 1);
+    m.revoke_confirmed(Some("a"), Some(&hash)).unwrap();
+    assert!(asks(&m, &["a"], "make", &[]));
+}
+
+#[test]
+fn a_confirmation_that_cannot_be_taken_back_stays() {
+    let dir = TempDir::new().unwrap();
+    let m = manager(&dir);
+    import(&m, runs("a", "make", &[]));
+    confirm(&m, &["a"], "make", &[]);
+    fs::write(trust_file(&dir), json!({ "version": "99" }).to_string()).unwrap();
+    assert!(m.revoke_confirmed(None, None).is_err());
+    assert_eq!(standing(&m, &["a"], "make", &[]), Standing::Confirmed);
+}
