@@ -5,20 +5,18 @@
  * wording, one way to name the terminals it ran on.
  */
 import type { StatusTone } from "@/components/ui";
-import { t } from "@/i18n/catalog";
+import { stepKindLabel, stepSummary } from "@/components/AutomationEditor/stepText";
+import { t, tf, type MessageId } from "@/i18n/catalog";
+import { isMacroShaped } from "@/store/slices/automationViews";
+import type { Automation } from "@/types/generated/Automation";
 import type { AutomationRun } from "@/types/generated/AutomationRun";
 import type { AutomationRunOrigin } from "@/types/generated/AutomationRunOrigin";
 import type { AutomationRunStatus } from "@/types/generated/AutomationRunStatus";
 import { formatElapsed } from "@/utils/formatters";
 import { compareNames } from "@/utils/locale";
 
-/**
- * Who or what started a run, in the unified wording: "Run by you" (by hand or
- * from the command palette), "Run by hotkey", "Run by trigger" (on connect,
- * on disconnect, on output match), "Run by schedule" and "Run by another
- * automation" (a `run-automation` step).
- */
-export function automationRunOriginLabel(origin: AutomationRunOrigin): string {
+/** Who or what started a run; a schedule by its name (A-039). */
+export function automationRunStarter(origin: AutomationRunOrigin, schedule?: string): string {
   switch (origin) {
     case "manual":
     case "palette":
@@ -30,7 +28,9 @@ export function automationRunOriginLabel(origin: AutomationRunOrigin): string {
     case "on-output-match":
       return t("automationHistory.origin.trigger");
     case "scheduled":
-      return t("automationHistory.origin.schedule");
+      return schedule === undefined
+        ? t("automationHistory.origin.schedule")
+        : tf("automationHistory.origin.scheduleNamed", { name: schedule });
     case "run-by-automation":
       return t("automationHistory.origin.automation");
   }
@@ -67,7 +67,7 @@ export function automationRunTone(status: AutomationRunStatus): StatusTone {
   }
 }
 
-/** The run's outcome in words (US spelling: the wire value stays `cancelled`). */
+/** The run's outcome in words; the wire value stays `cancelled`. */
 export function automationRunStatusLabel(status: AutomationRunStatus): string {
   switch (status) {
     case "completed":
@@ -75,7 +75,7 @@ export function automationRunStatusLabel(status: AutomationRunStatus): string {
     case "failed":
       return "Failed";
     case "cancelled":
-      return "Canceled";
+      return "Stopped";
   }
 }
 
@@ -92,11 +92,75 @@ export function automationRunTargets(run: AutomationRun): string[] {
   return run.targetLabel ? [run.targetLabel] : [];
 }
 
+/** "1 tolerated failure" / "2 tolerated failures". */
+export function toleratedText(count: number): string {
+  return `${count} tolerated failure${count === 1 ? "" : "s"}`;
+}
+
+/** The automation of a run as it is now, if it still exists. */
+type RunAutomation = Pick<Automation, "steps" | "triggers" | "parameters" | "legacy"> | undefined;
+
+/**
+ * Whether the run counted what was typed (keys and pastes), not steps: the
+ * automation only types. Its numbers mean nothing to a user then (A-003).
+ */
+function countsTyped(run: Pick<AutomationRun, "total">, automation: RunAutomation): boolean {
+  return (
+    automation !== undefined &&
+    isMacroShaped(automation as Automation) &&
+    run.total !== automation.steps.length
+  );
+}
+
 /** How far the run got, e.g. "3 of 4 steps". */
 export function automationRunProgress(
-  run: Pick<AutomationRun, "stepsCompleted" | "total">
+  run: Pick<AutomationRun, "stepsCompleted" | "total">,
+  automation?: RunAutomation
 ): string {
+  if (countsTyped(run, automation)) {
+    return `${Math.floor((run.stepsCompleted / Math.max(1, run.total)) * 100)} % typed`;
+  }
   return `${run.stepsCompleted} of ${run.total} step${run.total === 1 ? "" : "s"}`;
+}
+
+/**
+ * How the run ended and where, e.g. `Failed at step 2 of 5 (Run command: make)`.
+ * The step is named only while the automation has not changed since: another step
+ * may stand there now.
+ */
+export function automationRunOutcome(run: AutomationRun, automation?: Automation): string {
+  const status = automationRunStatusLabel(run.status);
+  const tolerated = run.continuedFailures ? ` · ${toleratedText(run.continuedFailures)}` : "";
+  if (run.status !== "failed") return status + tolerated;
+  if (countsTyped(run, automation)) {
+    return `${status}, ${automationRunProgress(run, automation)}${tolerated}`;
+  }
+  if (run.failedStepIndex === undefined) return status + tolerated;
+  const at = `${status} at step ${run.failedStepIndex + 1} of ${run.total}`;
+  const unchanged = automation && Date.parse(automation.updatedAt) <= Date.parse(run.startedAt);
+  const step = unchanged ? automation.steps[run.failedStepIndex] : undefined;
+  const what = step ? [stepKindLabel(step.kind), stepSummary(step)].filter(Boolean).join(": ") : "";
+  return `${at}${what ? ` (${what})` : ""}${tolerated}`;
+}
+
+/** What each kind of failure asks for, by words of its stored reason. */
+const NEXT_STEPS: readonly [RegExp, MessageId][] = [
+  [/nobody pressed Continue/, "automationHistory.next.continue"],
+  [/nobody (is|was) there/, "automationHistory.next.attended"],
+  [
+    /no longer connected|stopped accepting input|closed or disconnected/,
+    "automationHistory.next.reconnect",
+  ],
+  [/wait-for-output timed out/, "automationHistory.next.pattern"],
+  [/is not authorized|is not an allowed program/, "automationHistory.next.allow"],
+  [/exited with code/, "automationHistory.next.program"],
+];
+
+/** What to do about a failed run, or `null` when its reason says it already. */
+export function nextStepAfter(run: Pick<AutomationRun, "status" | "error">): string | null {
+  if (run.status !== "failed" || !run.error) return null;
+  const found = NEXT_STEPS.find(([words]) => words.test(run.error ?? ""));
+  return found ? t(found[1]) : null;
 }
 
 /** The runs of one automation (`null`: every run), in the order given. */

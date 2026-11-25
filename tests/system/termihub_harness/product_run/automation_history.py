@@ -1,9 +1,9 @@
 """Grades for the one Automation history panel (#5818, slice 9).
 
 Since slice 9 there is one history, in the Automations sidebar since slice 6: every run
-record from ``automation-runs.json``, rows with the name, a status dot and the
-time only, and each run's origin, outcome, steps and terminals behind the row.
-Who started a run reads one of five labels. These pure functions grade what the
+record from ``automation-runs.json``, rows with the name and, in words, the
+outcome, the time and the terminal (#6026); who started it and the steps are behind the
+row. Who started a run reads one of five labels. These pure functions grade what the
 live phase reads back from the app, and are tested app-free.
 """
 
@@ -16,21 +16,21 @@ from .grades import row_leftover_text
 
 #: The unified origin label of every recorded origin (``historyFormat.ts``).
 ORIGIN_LABELS: dict[str, str] = {
-    "manual": "Run by you",
-    "palette": "Run by you",
-    "hotkey": "Run by hotkey",
-    "on-connect": "Run by trigger",
-    "on-disconnect": "Run by trigger",
-    "on-output-match": "Run by trigger",
-    "scheduled": "Run by schedule",
-    "run-by-automation": "Run by another automation",
+    "manual": "You",
+    "palette": "You",
+    "hotkey": "Hotkey",
+    "on-connect": "Trigger",
+    "on-disconnect": "Trigger",
+    "on-output-match": "Trigger",
+    "scheduled": "Schedule",
+    "run-by-automation": "Another automation",
 }
 
 #: The outcome wording of each stored status (US spelling for ``cancelled``).
 STATUS_LABELS: dict[str, str] = {
     "completed": "Completed",
     "failed": "Failed",
-    "cancelled": "Canceled",
+    "cancelled": "Stopped",
 }
 
 #: A step counter ("3/3", "2 steps", "2 of 3 steps"): never on a row at rest.
@@ -65,8 +65,10 @@ def record_problems(runs: Any, expected: Mapping[str, str]) -> list[str]:
     return problems
 
 
-def row_problems(row_text: str, name: str, status: str, time_text: str) -> list[str]:
-    """A history row at rest shows the name, the status and the time, nothing else."""
+def row_problems(
+    row_text: str, name: str, status: str, time_text: str, target: str = ""
+) -> list[str]:
+    """A history row at rest: the name, the outcome in words, the time and the terminal."""
     problems: list[str] = []
     shown = " ".join(row_text.split())
     if name not in shown:
@@ -74,9 +76,12 @@ def row_problems(row_text: str, name: str, status: str, time_text: str) -> list[
     counts = STEP_COUNT.findall(shown)
     if counts:
         problems.append(f"the row shows a step count {counts}: {shown!r}")
-    if "Run by" in shown:
-        problems.append(f"the row shows its origin at rest: {shown!r}")
-    left = row_leftover_text(shown, [STATUS_LABELS.get(status, status), name, time_text])
+    outcome = STATUS_LABELS.get(status, status)
+    if outcome not in shown:
+        problems.append(f"the row does not say {outcome!r}: {shown!r}")
+    if target and target not in shown:
+        problems.append(f"the row does not name {target!r}: {shown!r}")
+    left = row_leftover_text(shown, [outcome, name, time_text, target])
     if left:
         problems.append(f"settings text on the row: {left!r}")
     return problems

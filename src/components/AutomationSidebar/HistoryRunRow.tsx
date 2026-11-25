@@ -1,17 +1,15 @@
+import { useEffect, useRef } from "react";
 import { ChevronRight } from "lucide-react";
 import { StatusDot, TruncatedText } from "@/components/ui";
-import { t } from "@/i18n/catalog";
 import type { RunSchedule } from "./historyEntries";
 import type { AutomationRun } from "@/types/generated/AutomationRun";
 import { formatAbsoluteTime, formatDayTime } from "@/utils/formatters";
+import { HistoryRunDetails } from "./HistoryRunDetails";
 import {
-  automationRunDuration,
-  automationRunOriginDetail,
-  automationRunOriginLabel,
-  automationRunProgress,
   automationRunStatusLabel,
   automationRunTargets,
   automationRunTone,
+  toleratedText,
 } from "./historyFormat";
 
 /** Props of {@link HistoryRunRow}. */
@@ -27,24 +25,22 @@ export interface HistoryRunRowProps {
 }
 
 /**
- * One row of the Automation history (#5818, slice 9). At rest the row shows
- * only what tells runs apart at a glance: the automation's name, a status dot
- * and when it ended (names, not settings: docs/copy-style.md). Activating the
- * row discloses the run's details: who started it, its outcome, how far it
- * got, the terminals it ran on and any error.
+ * One row of the Automation history (#5818, slice 9): the automation's name, and
+ * under it in words how the run ended, when and where (#6026), so two runs of one
+ * automation can be told apart. Activating the row discloses the rest.
  */
 export function HistoryRunRow({ run, schedule, expanded, onToggle }: HistoryRunRowProps) {
   const detailsId = `automation-run-details-${run.id}`;
-  const status = automationRunStatusLabel(run.status);
-  const origin = automationRunOriginLabel(run.origin);
-  const via = automationRunOriginDetail(run.origin);
-  const duration = automationRunDuration(run);
   const targets = automationRunTargets(run);
-  const failedStep =
-    run.status === "failed" && run.failedStepIndex !== undefined ? run.failedStepIndex + 1 : null;
+  const row = useRef<HTMLDivElement>(null);
+  // What it opened shows, also in a short window.
+  useEffect(() => {
+    if (expanded) row.current?.scrollIntoView?.({ block: "nearest" });
+  }, [expanded]);
 
   return (
     <div
+      ref={row}
       className="automation-history__run"
       role="listitem"
       data-testid={`automation-run-${run.id}`}
@@ -68,71 +64,39 @@ export function HistoryRunRow({ run, schedule, expanded, onToggle }: HistoryRunR
               : "automation-history__chevron"
           }
         />
-        <StatusDot tone={automationRunTone(run.status)} label={status} title={status} />
-        <TruncatedText
-          className="automation-history__name"
-          data-testid={`automation-run-name-${run.id}`}
-        >
-          {run.automationName}
-        </TruncatedText>
-        <time
-          className="automation-history__time"
-          dateTime={run.endedAt}
-          title={formatAbsoluteTime(run.endedAt)}
-          data-testid={`automation-run-time-${run.id}`}
-        >
-          {formatDayTime(run.endedAt)}
-        </time>
+        <span className="automation-history__main">
+          <TruncatedText
+            className="automation-history__name"
+            data-testid={`automation-run-name-${run.id}`}
+          >
+            {run.automationName}
+          </TruncatedText>
+          {/* In words: a dot's colour alone says nothing to many (A-038). */}
+          <span className="automation-history__line">
+            <StatusDot tone={automationRunTone(run.status)} size="sm" ariaHidden />
+            <span
+              className="automation-history__outcome"
+              data-testid={`automation-run-outcome-${run.id}`}
+            >
+              {automationRunStatusLabel(run.status)}
+              {run.continuedFailures ? ` · ${toleratedText(run.continuedFailures)}` : ""}
+            </span>
+            <time
+              dateTime={run.endedAt}
+              title={formatAbsoluteTime(run.endedAt)}
+              data-testid={`automation-run-time-${run.id}`}
+            >
+              {formatDayTime(run.endedAt)}
+            </time>
+            {targets.length > 0 ? (
+              <TruncatedText className="automation-history__target">
+                {targets.length === 1 ? targets[0] : `${targets.length} terminals`}
+              </TruncatedText>
+            ) : null}
+          </span>
+        </span>
       </button>
-      {expanded ? (
-        <dl className="automation-history__details" id={detailsId} data-testid={detailsId}>
-          <dt>Started by</dt>
-          <dd data-testid={`automation-run-origin-${run.id}`}>
-            {origin}
-            {via ? <span className="automation-history__via"> · {via}</span> : null}
-          </dd>
-          {schedule ? (
-            <>
-              <dt>{t("automationHistory.schedule")}</dt>
-              <dd data-testid={`automation-run-schedule-${run.id}`}>
-                {schedule.name}
-                {schedule.leftOut ? ` · ${schedule.leftOut}` : ""}
-              </dd>
-            </>
-          ) : null}
-          <dt>Outcome</dt>
-          <dd data-testid={`automation-run-status-${run.id}`}>
-            {failedStep !== null ? `${status} at step ${failedStep}` : status}
-            {run.continuedFailures
-              ? ` · ${run.continuedFailures} tolerated failure${run.continuedFailures === 1 ? "" : "s"}`
-              : ""}
-          </dd>
-          <dt>Steps</dt>
-          <dd data-testid={`automation-run-steps-${run.id}`}>{automationRunProgress(run)}</dd>
-          <dt>When</dt>
-          <dd>
-            {formatDayTime(run.startedAt)}
-            {duration ? ` · ${duration}` : ""}
-          </dd>
-          {targets.length > 0 ? (
-            <>
-              <dt>{targets.length === 1 ? "Terminal" : "Terminals"}</dt>
-              <dd data-testid={`automation-run-target-${run.id}`}>{targets.join(", ")}</dd>
-            </>
-          ) : null}
-          {run.error ? (
-            <>
-              <dt>Error</dt>
-              <dd
-                className="automation-history__error"
-                data-testid={`automation-run-error-${run.id}`}
-              >
-                {run.error}
-              </dd>
-            </>
-          ) : null}
-        </dl>
-      ) : null}
+      {expanded ? <HistoryRunDetails run={run} schedule={schedule} id={detailsId} /> : null}
     </div>
   );
 }

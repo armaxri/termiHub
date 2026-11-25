@@ -12,13 +12,14 @@ import {
 const options = (over: Partial<RunTargetOptions> = {}): RunTargetOptions => ({
   active: { id: "a", title: "web-1", live: true },
   terminals: [
-    { id: "a", title: "web-1", live: true },
-    { id: "b", title: "web-2", live: true },
-    { id: "c", title: "db-1", live: false },
+    { id: "a", title: "web-1", live: true, where: "", group: "" },
+    { id: "b", title: "web-2", live: true, where: "", group: "" },
+    { id: "c", title: "db-1", live: false, where: "", group: "" },
   ],
   broadcast: ["a", "b"],
   panel: ["a"],
   all: ["a", "b"],
+  groupName: "web",
   groups: [{ id: "g1", name: "web", tabIds: ["b"] }],
   ...over,
 });
@@ -39,7 +40,10 @@ describe("resolveRunTargetChoice (#5818 slice 5)", () => {
   });
 
   it("reaches nothing when the active terminal is not live or broadcast is off", () => {
-    const o = options({ active: { id: "c", title: "db-1", live: false }, broadcast: null });
+    const o = options({
+      active: { id: "c", title: "db-1", live: false },
+      broadcast: null,
+    });
     expect(resolveRunTargetChoice({ kind: "active", parallel: true }, o)).toEqual([]);
     expect(resolveRunTargetChoice({ kind: "broadcast", parallel: true }, o)).toEqual([]);
   });

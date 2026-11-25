@@ -521,7 +521,7 @@ describe("TerminalView — running actions stay visible as chips (#5756)", () =>
     seed(leaf("a", [tab("t1", "a")]), "a");
     await renderView();
     expect(button("terminal-view-active-recording")!.textContent).toBe("Stop recording");
-    expect(button("terminal-view-active-playback")!.textContent).toBe("Stop “Deploy” (1 of 3)");
+    expect(button("terminal-view-active-playback")!.textContent).toBe("Stop “Deploy” (33 % typed)");
 
     click("terminal-view-active-recording");
     click("terminal-view-active-playback");

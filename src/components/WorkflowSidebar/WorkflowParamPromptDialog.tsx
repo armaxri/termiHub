@@ -93,7 +93,7 @@ export function WorkflowParamPromptDialog() {
       onOpenChange={(isOpen) => {
         if (!isOpen) resolve(null);
       }}
-      title={prompt ? `Run "${prompt.workflowName}"` : "Run automation"}
+      title={prompt ? `Run “${prompt.workflowName}”` : "Run automation"}
       description="Values this automation asks for"
       data-testid="workflow-param-prompt"
       footer={

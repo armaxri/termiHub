@@ -41,9 +41,9 @@ import type { Automation } from "@/types/generated/Automation";
 import type { AutomationStep } from "@/types/generated/AutomationStep";
 import type { AutomationTrigger } from "@/types/generated/AutomationTrigger";
 import {
-  armedMarkerDescription,
   automaticTriggers,
   automationRowTooltip,
+  triggerState,
   triggerSummary,
 } from "./automationRowInfo";
 
@@ -181,7 +181,7 @@ describe("kinds this build does not know", () => {
       stepsCompleted: 0,
       failedStepIndex: index,
     });
-    expect(result.error).toContain('"future-step"');
+    expect(result.error).toContain("future-step");
     // The history keeps the error: it names the kind, never the step's content.
     expect(result.error).not.toContain("s3cret");
     expect(send).not.toHaveBeenCalled();
@@ -208,7 +208,7 @@ describe("kinds this build does not know", () => {
     expect(kinds).toEqual(["on-connect", "on-disconnect", "on-output-match"]);
     const name = (id: string) => id;
     expect(triggerSummary(bare, name)).not.toContain("undefined");
-    expect(armedMarkerDescription(bare, name)).not.toContain("undefined");
+    expect(triggerState(bare, name)?.text).not.toContain("undefined");
     expect(automationRowTooltip(bare, name).join()).not.toContain("undefined");
   });
 });

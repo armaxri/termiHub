@@ -13,7 +13,7 @@ export interface EditedAutomation {
 /** Which automation the app-level editor is open on (#5818, slice 8). */
 export interface AutomationEditorState {
   editing: EditedAutomation | null;
-  /** Open the editor. Not while a recording goes into the one that is open. */
+  /** Open the editor, unless it is open on another automation. */
   open: (automation: Automation, isNew: boolean) => void;
   close: () => void;
   /**
@@ -38,7 +38,11 @@ export const useAutomationEditor = create<AutomationEditorState>((set, get) => (
     }
     // Its draft is not lost to another automation.
     if (get().aside) set({ aside: false });
-    else set({ editing: { automation, isNew } });
+    else if (!get().editing) set({ editing: { automation, isNew } });
+    // A failed run's toast can ask for another one while an editor is open (#6026).
+    else if (get().editing?.automation.id !== automation.id)
+      // toast-policy: explains-outcome — the editor does not open, and this says why
+      toast.info("Save or close the open automation first");
   },
   close: () => set({ editing: null, aside: false }),
   aside: false,

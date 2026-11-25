@@ -231,7 +231,7 @@ describe("workflowSessionTriggers launch guards", () => {
     drop();
 
     expect(runner.runWorkflowOnTarget).not.toHaveBeenCalled();
-    expect(info).toHaveBeenCalledWith('Automation "Workflow wf-a" was not run', {
+    expect(info).toHaveBeenCalledWith("Automation “Workflow wf-a” was not run", {
       description: 'Parameter "Host" needs a default value to run from a trigger',
     });
   });

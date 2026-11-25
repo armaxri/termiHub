@@ -38,7 +38,7 @@ export function RecordingHost() {
     const name = state.automations.find((a) => a.id === id)?.name ?? "the automation";
     // toast-policy: off-screen — the saved row is in the Automations list, which does not show
     toast.success(
-      request.to === "new" ? `Saved automation "${name}"` : `Added the recording to "${name}"`
+      request.to === "new" ? `Saved automation “${name}”` : `Added the recording to “${name}”`
     );
   };
 

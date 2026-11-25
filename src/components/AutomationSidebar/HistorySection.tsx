@@ -146,7 +146,7 @@ export function HistorySection({ automationId, onFilterChange, collapse }: Histo
             <Tooltip
               content={
                 automationId
-                  ? `Clear the history of "${filterName}"…`
+                  ? `Clear the history of “${filterName}”…`
                   : "Clear the history of every automation…"
               }
               side="top"
@@ -193,11 +193,11 @@ export function HistorySection({ automationId, onFilterChange, collapse }: Histo
       ) : null}
       <ConfirmDialog
         open={confirmClear}
-        title={automationId ? `Clear the history of "${filterName}"?` : "Clear automation history?"}
+        title={automationId ? `Clear the history of “${filterName}”?` : "Clear automation history?"}
         variant="danger"
         message={
           automationId
-            ? `This removes the recorded runs of "${filterName}". It cannot be undone.`
+            ? `This removes the recorded runs of “${filterName}”. It cannot be undone.`
             : "This removes the recorded runs of every automation. It cannot be undone."
         }
         confirmLabel="Clear history"

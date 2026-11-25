@@ -5,13 +5,13 @@ deselected without ``--product-run``). Since slice 9 the Macros and Workflows
 sidebars show one history panel: every run, macro playbacks and workflow runs
 alike, newest first. A row shows the name, a status dot and the time; the run's
 origin, outcome, steps and terminals open behind the row. Who started a run
-reads "Run by you", "Run by hotkey", "Run by trigger", "Run by schedule" or
-"Run by another automation".
+reads "You", "Hotkey", "Trigger", "Schedule" or
+"Another automation".
 
 Steps: a local-shell terminal; a macro and a workflow whose second step runs
-that macro; the macro played from its row (one "Run by you" record) and from
-the command palette (one "Run by you" record that says so), the workflow run
-from its row (one record for the workflow, one "Run by another automation"
+that macro; the macro played from its row (one "You" record) and from
+the command palette (one "You" record that says so), the workflow run
+from its row (one record for the workflow, one "Another automation"
 record for the macro); each new row graded at rest and opened; the history
 narrowed to the macro from its row and shown in the Automations sidebar too; the
 macro's history cleared after a confirmation while the workflow's run stays.
@@ -57,11 +57,11 @@ def _run(rid: str, automation_id: str, origin: str = "manual", **over: Any) -> d
 
 def test_grade_five_unified_labels():
     assert set(ORIGIN_LABELS.values()) == {
-        "Run by you",
-        "Run by hotkey",
-        "Run by trigger",
-        "Run by schedule",
-        "Run by another automation",
+        "You",
+        "Hotkey",
+        "Trigger",
+        "Schedule",
+        "Another automation",
     }
 
 
@@ -89,9 +89,10 @@ def test_grade_missing_duplicate_or_mislabeled_records_fail():
     ]
 
 
-def test_grade_row_at_rest_shows_name_status_and_time_only():
-    assert row_problems("Completed Deploy just now", "Deploy", "completed", "just now") == []
-    assert row_problems("Canceled Deploy 2 min ago", "Deploy", "cancelled", "2 min ago") == []
+def test_grade_row_at_rest_says_outcome_time_and_terminal():
+    row = "Deploy Completed today 02:00 prod-web"
+    assert row_problems(row, "Deploy", "completed", "today 02:00", "prod-web") == []
+    assert row_problems("Deploy Stopped today 02:00", "Deploy", "cancelled", "today 02:00") == []
 
 
 def test_grade_row_with_settings_fails():
@@ -100,19 +101,21 @@ def test_grade_row_with_settings_fails():
     )
     assert any("step count" in p for p in problems)
     assert any("settings text" in p and "prod-web" in p for p in problems)
-    assert any("origin" in p for p in row_problems("Deploy Run by you", "Deploy", "completed", ""))
+    silent = row_problems("Deploy today 02:00", "Deploy", "failed", "today 02:00", "prod-web")
+    assert any("does not say 'Failed'" in p for p in silent)
+    assert any("does not name 'prod-web'" in p for p in silent)
     assert row_problems("Other just now", "Deploy", "completed", "just now")[0].startswith(
         "the row does not name"
     )
 
 
 def test_grade_origin_label_when_opened():
-    assert origin_problems("Run by you", "manual") == []
-    assert origin_problems("Run by you · From the command palette", "palette") == []
-    assert origin_problems("Run by another automation", "run-by-automation") == []
-    assert origin_problems("Run by you", "palette") == ["a palette run does not say so: 'Run by you'"]
+    assert origin_problems("You", "manual") == []
+    assert origin_problems("You · From the command palette", "palette") == []
+    assert origin_problems("Another automation", "run-by-automation") == []
+    assert origin_problems("You", "palette") == ["a palette run does not say so: 'You'"]
     assert origin_problems("Workflow step", "run-by-automation") == [
-        "origin reads 'Workflow step', want 'Run by another automation'"
+        "origin reads 'Workflow step', want 'Another automation'"
     ]
     assert origin_problems("x", "bogus") == ["unknown origin 'bogus'"]
 
@@ -232,10 +235,10 @@ class TestProductRunAutomationHistory(
     def test_20_one_panel(self):
         with self.step(
             "automation-history.panel",
-            "One history lists macro and workflow runs; rows show name, dot and time only",
+            "One history lists macro and workflow runs; rows say name, outcome, time and terminal",
             expect="the Automations sidebar's History: the four new runs, newest first, each row "
-            "only the automation's name, a status dot and 'today HH:MM'; the nested run opened, "
-            "showing 'Started by: Run by another automation', its steps and the terminal",
+            "the automation's name, 'Completed', 'today HH:MM' and the terminal; the nested run opened, "
+            "showing 'Started by: Another automation', its steps and the terminal",
         ):
             self.require("automation-history.records")
             self.open_automation_history()
@@ -247,7 +250,8 @@ class TestProductRunAutomationHistory(
                 self.wait(lambda tid=toggle: self.driver.exists(tid), what=f"the row of {rid}")
                 text = self.driver.get_text(toggle)
                 when = self.driver.get_text(f"automation-run-time-{rid}").strip()
-                problems = row_problems(text, run["automationName"], run["status"], when)
+                target = run.get("targetLabel") or ""
+                problems = row_problems(text, run["automationName"], run["status"], when, target)
                 self.evidence(f"{rid} row {' '.join(text.split())!r}: {problems or 'ok'}")
                 assert not problems, problems
             for run in self.runs:

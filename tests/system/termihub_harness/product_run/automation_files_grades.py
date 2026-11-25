@@ -58,14 +58,14 @@ def round_trip_problems(
 
 
 def disarmed_problems(automation: Optional[Mapping[str, Any]], marker: Optional[str]) -> list[str]:
-    """An imported automation with triggers is stored and shown switched off."""
+    """An imported automation with triggers is stored and shown with its triggers off."""
     problems = []
     if (automation or {}).get("triggersEnabled") is not False:
         problems.append("it is stored armed")
     if marker is None:
         problems.append("its row shows no marker")
-    elif marker.strip() != "Off":
-        problems.append(f"its row reads {marker!r}, not 'Off'")
+    elif not marker.strip().startswith("Triggers off"):
+        problems.append(f"its row reads {marker!r}, not 'Triggers off …'")
     return problems
 
 
@@ -85,11 +85,11 @@ def called_problems(
 
 
 def palette_problems(row: Optional[str], name: str, terminal: str) -> list[str]:
-    """A palette row is the name and the terminal it runs in; no kind word."""
+    """A palette row says what Enter does: run the name, in which terminal; no kind word."""
     if row is None:
         return [f"{name!r} is not found"]
     problems = []
-    if not row.startswith(name):
+    if not row.startswith(f"Run {name}"):
         problems.append(f"the row reads {row!r}")
     if terminal not in row:
         problems.append(f"the row does not say it runs in {terminal!r}: {row!r}")

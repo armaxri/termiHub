@@ -300,6 +300,8 @@ export interface WorkflowRunResult {
   failedStepIndex?: number;
   /** For `failed`: a human-readable reason. */
   error?: string;
+  /** It was refused before its first step: nothing was typed. */
+  notStarted?: true;
   /**
    * Id of the persisted run-history record (PROD-0046) of this run. Set by the
    * store-level runner once the record is written; the engine never sets it.
@@ -812,7 +814,7 @@ export interface WorkflowRunOptions {
 /** A human-readable name of an automation id for error messages. */
 function automationLabel(id: string, deps: Pick<WorkflowRunnerDeps, "resolveAutomation">): string {
   const name = deps.resolveAutomation?.(id)?.name;
-  return name ? `"${name}"` : `"${id}"`;
+  return name ? `“${name}”` : `“${id}”`;
 }
 
 /**
@@ -882,6 +884,10 @@ async function typeKeys(
   }
 }
 
+/** Why a "Run automation" step fails whose automation does not exist. */
+const MISSING_AUTOMATION_REASON =
+  "The automation this step runs was deleted. Choose another one in the step.";
+
 /**
  * Run another automation's steps inline for a `run-automation` step (#5818),
  * on the same target and under the same cancel signal and error-handling
@@ -916,7 +922,7 @@ async function runNestedAutomation(
     };
   }
   const callee = deps.resolveAutomation(automationId);
-  if (!callee) return { ok: false, error: `automation "${automationId}" was not found` };
+  if (!callee) return { ok: false, error: MISSING_AUTOMATION_REASON };
 
   const chain = [...callChain, automationId];
   const values = calleeParamValues(callee, paramValues);
@@ -959,7 +965,7 @@ async function runNestedAutomation(
       finish("failed", i, { index: i, error: outcome.error });
       return {
         ok: false,
-        error: `in automation "${callee.name}", step ${i + 1}: ${outcome.error}`,
+        error: `in automation “${callee.name}”, step ${i + 1}: ${outcome.error}`,
         ...(outcome.fatal ? { fatal: true } : {}),
       };
     }

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
 import {
   Modal,
   Button,
@@ -12,6 +11,8 @@ import {
   StatusDot,
 } from "@/components/ui";
 import type { RadioGroupOption } from "@/components/ui";
+import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
+import { useAppStore } from "@/store/appStore";
 import { WORKFLOW_FANOUT_CONCURRENCY } from "@/store/slices/workflowFanout";
 import {
   initialRunTargetChoice,
@@ -22,7 +23,9 @@ import {
   type RunTargetKind,
   type RunTargetOptions,
 } from "./runTargetChoice";
+import { runBlockedReason } from "@/utils/runBlocked";
 import { useRunTargets } from "./useRunTargets";
+import { RUN_PREVIEW_STEPS, runPreview, stepCountText } from "./runPreview";
 import "./RunTargetsDialog.css";
 
 /** An automation the picker can run. */
@@ -77,13 +80,15 @@ function targetOptions(options: RunTargetOptions): RadioGroupOption[] {
   if (active) {
     list.push({
       value: "panel",
-      label: `This panel (${options.panel.length})`,
+      label: `Terminals in this split (${options.panel.length})`,
       "data-testid": "run-targets-target-panel",
     });
   }
   list.push({
     value: "all",
-    label: `All terminals (${options.all.length})`,
+    label: options.groupName
+      ? `All terminals in “${options.groupName}” (${options.all.length})`
+      : `All terminals (${options.all.length})`,
     "data-testid": "run-targets-target-all",
   });
   if (options.groups.length > 0) {
@@ -98,14 +103,16 @@ function targetOptions(options: RunTargetOptions): RadioGroupOption[] {
  * or more terminals. It replaces the macro Play dialog (PROD-042) and the
  * workflow "Run on…" dialog (PROD-047).
  *
- * "On" offers this terminal, the broadcast set, this panel, all terminals, a
+ * "On" offers this terminal, the broadcast set, this split, the tab group, a
  * saved group, or a hand-picked list that shows which terminals are live.
  * Every count is the number of live terminals the run would reach. The
  * dialog opens on the last choice made (while it still applies), else this
  * terminal. A choice that reaches more than one terminal turns Run into
  * "Run on N terminals…" and adds a confirmation step that names every
- * terminal; that step ignores Enter, so a double Enter can never type into a
- * fleet by accident. "More" holds "Run in parallel" (on by default).
+ * terminal with its machine and what will be typed there (A-035); that step
+ * ignores Enter, so a double Enter can never type into a fleet by accident.
+ * Whether several run at the same time (the default) is asked as soon as there
+ * are several.
  * Typing speed is a saved property of each Type keys step, so the picker does
  * not ask for it.
  */
@@ -126,7 +133,6 @@ export function RunTargetsDialog({
   const [choice, setChoice] = useState<RunTargetChoice>(() =>
     initialRunTargetChoice(rememberedRunTargetChoice(), options)
   );
-  const [moreOpen, setMoreOpen] = useState(false);
   // The terminals the confirmation names. Frozen when it opens, so a terminal
   // that connects meanwhile never joins a run the user did not confirm.
   const [confirmIds, setConfirmIds] = useState<string[] | null>(null);
@@ -138,7 +144,6 @@ export function RunTargetsDialog({
     setAutomationId(atOpen.current.automations[0]?.id);
     setChoice(initialRunTargetChoice(rememberedRunTargetChoice(), atOpen.current.options));
     setConfirmIds(null);
-    setMoreOpen(false);
   }, [open]);
 
   const radioOptions = useMemo(() => targetOptions(options), [options]);
@@ -147,8 +152,14 @@ export function RunTargetsDialog({
     ? options.terminals.filter((t) => t.live && confirmIds.includes(t.id)).map((t) => t.id)
     : resolveRunTargetChoice(choice, options);
   const count = tabIds.length;
-  const titleOf = new Map(options.terminals.map((t) => [t.id, t.title]));
-  const canRun = selected !== null && selected.stepCount > 0 && count > 0;
+  const terminalOf = new Map(options.terminals.map((t) => [t.id, t]));
+  const library = useAppStore((s) => s.automations);
+  const experimental = useExperimentalFeatures();
+  const automation = library.find((a) => a.id === automationId);
+  const blocked = automation
+    ? runBlockedReason(automation, (id) => library.find((a) => a.id === id), experimental)
+    : null;
+  const canRun = selected !== null && selected.stepCount > 0 && count > 0 && blocked === null;
   const needsConfirm = count > 1;
 
   const run = () => {
@@ -205,26 +216,45 @@ export function RunTargetsDialog({
     : "Run";
 
   const hint =
-    selected && selected.stepCount === 0
-      ? "This automation has no steps to run."
-      : count === 0
-        ? choice.kind === "active"
-          ? "This terminal is not connected."
-          : "No live terminals in this choice."
-        : null;
+    blocked !== null
+      ? `Cannot run: ${blocked}`
+      : selected && selected.stepCount === 0
+        ? "This automation has no steps to run."
+        : count === 0
+          ? choice.kind === "active"
+            ? "This terminal is not connected."
+            : "No live terminals in this choice."
+          : null;
 
   const body = confirming ? (
     <div className="run-targets__confirm" data-testid="run-targets-confirm-step">
       <p className="run-targets__warning" role="alert">
-        {`"${selected?.name ?? ""}" will run on ${count} terminals${
+        {`“${selected?.name ?? ""}” will run on ${count} terminals${
           choice.parallel ? " at the same time" : ", one after another"
         }:`}
       </p>
       <ul className="run-targets__confirm-list" data-testid="run-targets-confirm-list">
         {tabIds.map((id) => (
-          <li key={id}>{titleOf.get(id) ?? id}</li>
+          <li key={id}>
+            <span className="run-targets__confirm-title">{terminalOf.get(id)?.title ?? id}</span>
+            <span className="run-targets__confirm-where">
+              {[terminalOf.get(id)?.where, terminalOf.get(id)?.group].filter(Boolean).join(" · ")}
+            </span>
+          </li>
         ))}
       </ul>
+      {automation && (
+        <div className="run-targets__types" data-testid="run-targets-confirm-steps">
+          <p>What it does there ({stepCountText(automation.steps.length)}):</p>
+          <ol>
+            {runPreview(automation, library).map((line, i) => (
+              <li key={i} className={i < RUN_PREVIEW_STEPS ? undefined : "run-targets__more"}>
+                {line}
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
     </div>
   ) : automations.length === 0 ? (
     <EmptyState title={emptyText} data-testid="run-targets-empty" />
@@ -280,36 +310,30 @@ export function RunTargetsDialog({
                 size="sm"
                 label={t.live ? "Live" : "Not connected"}
               />
-              <label htmlFor={`run-targets-terminal-${t.id}`}>{t.title}</label>
+              <label htmlFor={`run-targets-terminal-${t.id}`}>
+                {t.title}{" "}
+                <span className="run-targets__confirm-where">
+                  {[t.where, t.group].filter(Boolean).join(" · ")}
+                </span>
+              </label>
             </li>
           ))}
         </ul>
       )}
-      <div className="run-targets__more">
-        <Button
-          variant="ghost"
-          size="sm"
-          aria-expanded={moreOpen}
-          icon={moreOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-          onClick={() => setMoreOpen((v) => !v)}
-          data-testid="run-targets-more"
-        >
-          More
-        </Button>
-        {moreOpen && (
-          <div className="run-targets__option">
-            <Checkbox
-              id="run-targets-parallel"
-              checked={choice.parallel}
-              onCheckedChange={(parallel) => setChoice({ ...choice, parallel })}
-              data-testid="run-targets-parallel"
-            />
-            <label htmlFor="run-targets-parallel">
-              Run in parallel (up to {WORKFLOW_FANOUT_CONCURRENCY} at a time)
-            </label>
-          </div>
-        )}
-      </div>
+      {/* A risk decision, so it is not hidden once it applies (A-036). */}
+      {needsConfirm && (
+        <div className="run-targets__option">
+          <Checkbox
+            id="run-targets-parallel"
+            checked={choice.parallel}
+            onCheckedChange={(parallel) => setChoice({ ...choice, parallel })}
+            data-testid="run-targets-parallel"
+          />
+          <label htmlFor="run-targets-parallel">
+            Run at the same time (up to {WORKFLOW_FANOUT_CONCURRENCY}), not one after another
+          </label>
+        </div>
+      )}
       {hint && (
         <p className="run-targets__hint" role="status" data-testid="run-targets-hint">
           {hint}
@@ -322,7 +346,7 @@ export function RunTargetsDialog({
     <Modal
       open={open}
       onOpenChange={onOpenChange}
-      title={selected ? `Run "${selected.name}"` : "Run automation"}
+      title={selected ? `Run “${selected.name}”` : "Run automation"}
       description="Choose the terminals it runs on."
       onKeyDown={handleKeyDown}
       data-testid="run-targets-dialog"

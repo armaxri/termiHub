@@ -6,6 +6,9 @@ import { useActivePanelId, useLayoutRenderTree } from "@/store/layoutSelectors";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
 import { buildCommands } from "@/services/commands";
+import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
+import { isMacroShaped } from "@/store/slices/automationViews";
+import { runBlockedReason } from "@/utils/runBlocked";
 import { openRunPicker } from "@/services/contextCommands";
 import { useConnectSavedConnection } from "@/hooks/useConnectSavedConnection";
 import { ConnectionIcon } from "@/utils/connectionIcons";
@@ -62,6 +65,12 @@ type PaletteEntry =
       /** What else finds it: the verb, its former names, its tags. */
       aliases: string[];
       automationId: string;
+      /** What Enter does with it, after the terminal's name (A-048). */
+      does: string;
+      /** Its triggers are off. */
+      triggersOff: boolean;
+      /** Why it cannot run; it is inert then. */
+      blocked: string | null;
     }
   | {
       kind: "broadcast";
@@ -112,6 +121,24 @@ function automationAliases({ name, tags }: Pick<Automation, "name" | "tags">): s
   return [`Run automation: ${name}`, `Run macro: ${name}`, `Run workflow: ${name}`, ...tags];
 }
 
+/** What running an automation does, in the palette's words: "types 5 steps". */
+function automationDoes(automation: Automation): string {
+  const { steps } = automation;
+  const local = steps.length > 0 && steps.every((s) => s.kind === "run-local-process");
+  if (local) return "runs on this computer";
+  return isMacroShaped(automation)
+    ? "types its keys"
+    : `types ${steps.length} step${steps.length === 1 ? "" : "s"}`;
+}
+
+/** Why an entry does nothing. */
+function disabledReason(entry: PaletteEntry): string | undefined {
+  if (!isDisabled(entry)) return undefined;
+  if (entry.kind === "broadcast") return entry.unavailableReason;
+  if (entry.kind === "automation") return entry.blocked ?? undefined;
+  return "Unavailable in the current context";
+}
+
 /**
  * The entry's secondary match keys: a connection's host, an automation's
  * aliases, or a workspace's "Launch workspace: <name>" phrase, so typing the
@@ -134,6 +161,7 @@ function secondaryMatchKeys(entry: PaletteEntry): string | string[] {
 
 /** Whether an entry is shown but inert in the current context. */
 function isDisabled(entry: PaletteEntry): boolean {
+  if (entry.kind === "automation") return entry.blocked !== null;
   return (entry.kind === "command" || entry.kind === "broadcast") && !entry.available;
 }
 
@@ -147,8 +175,8 @@ function isDisabled(entry: PaletteEntry): boolean {
  * delegated to `match-sorter`. Connecting reuses {@link useConnectSavedConnection}
  * so the palette shares the sidebar's exact credential flow.
  *
- * An automation runs on the active terminal, which its row names ("→ prod-web",
- * R-083); without one the run picker asks where. While broadcasting, a "Run
+ * An automation's row starts with "Run" and says what Enter does and where ("types
+ * 5 steps in prod-web", A-048); without a terminal the run picker asks where. While broadcasting, a "Run
  * automation on broadcast group" entry (#3430) opens a sub-picker; the chosen
  * automation runs on the group's connected terminals. Every run goes through
  * `runAutomation`. Backspace on an empty picker query returns to the root list.
@@ -159,6 +187,7 @@ export function CommandPalette(): React.ReactElement {
   const { connections } = useProjectedConnections();
   const automations = useAppStore((s) => s.automations);
   const runAutomation = useAppStore((s) => s.runAutomation);
+  const experimental = useExperimentalFeatures();
   // Where an automation would type (R-083): the active terminal tab's title.
   const runTarget = useAppStore((s) => {
     const tab = getActiveTab(s);
@@ -212,6 +241,9 @@ export function CommandPalette(): React.ReactElement {
       label: a.name,
       aliases: automationAliases(a),
       automationId: a.id,
+      does: automationDoes(a),
+      triggersOff: a.triggers.length > 0 && a.triggersEnabled === false,
+      blocked: runBlockedReason(a, (id) => automations.find((x) => x.id === id), experimental),
     }));
     // Only offered while broadcasting (#3430); disabled when the group has no
     // connected terminal or there is no automation to pick.
@@ -257,6 +289,7 @@ export function CommandPalette(): React.ReactElement {
     getBroadcastTargetTabIds,
     connections,
     automations,
+    experimental,
     workspaces,
     rootPanel,
     activePanelId,
@@ -404,13 +437,7 @@ export function CommandPalette(): React.ReactElement {
                   className={`command-palette__item${
                     index === nav.activeIndex ? " command-palette__item--active" : ""
                   }${disabled ? " command-palette__item--disabled" : ""}`}
-                  title={
-                    disabled
-                      ? entry.kind === "broadcast"
-                        ? entry.unavailableReason
-                        : "Unavailable in the current context"
-                      : undefined
-                  }
+                  title={disabledReason(entry)}
                   data-testid={`command-palette-item-${entry.key}`}
                 >
                   <span className="command-palette__icon" aria-hidden="true">
@@ -432,16 +459,28 @@ export function CommandPalette(): React.ReactElement {
                       />
                     )}
                   </span>
-                  <span className="command-palette__label">{entry.label}</span>
+                  <span className="command-palette__label">
+                    {entry.kind === "automation" || entry.kind === "broadcast-pick" ? (
+                      <span className="command-palette__verb">Run </span>
+                    ) : null}
+                    {entry.label}
+                  </span>
                   {entry.kind === "command" ? (
                     entry.accelerator ? (
                       <span className="command-palette__accelerator">{entry.accelerator}</span>
                     ) : null
                   ) : entry.kind === "automation" ? (
-                    <span className="command-palette__target">
-                      <span aria-hidden="true">→ </span>
-                      {runTarget ?? "choose a terminal"}
-                    </span>
+                    <>
+                      <span className="command-palette__target">
+                        {entry.blocked !== null
+                          ? "Cannot run"
+                          : runTarget === null
+                            ? "asks where"
+                            : `${entry.does} in ${runTarget}`}
+                        {entry.triggersOff ? " · triggers off" : ""}
+                      </span>
+                      <span className="command-palette__type">automation</span>
+                    </>
                   ) : entry.kind === "broadcast" || entry.kind === "broadcast-pick" ? (
                     <span className="command-palette__type">broadcast</span>
                   ) : entry.kind === "workspace" ? (

@@ -240,7 +240,7 @@ describe("the Armed switch", () => {
   it("says that off covers a hotkey", async () => {
     await open([{ kind: "hotkey", binding: "F8" }], { off: true });
     expect(query("automation-editor-when")?.textContent).toContain(
-      "Off: only a schedule or you can start it."
+      "Nothing below starts it. You can still run it, and schedules have their own switch."
     );
   });
 

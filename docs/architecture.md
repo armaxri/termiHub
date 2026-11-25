@@ -2131,8 +2131,12 @@ run paths, which take the two views `src/store/slices/automationViews.ts` derive
 The **Automations sidebar** (`src/components/AutomationSidebar/`, slice 6) reads the store directly:
 one list of every automation, run through `runAutomation`, which sends an automation that only
 types keystrokes to `playMacro` and every other one to `runWorkflow`. Its running markers come from
-the `workflow-run` region and `macroPlayback`, its Failed marker from the run history
-(`automationRowInfo.summarizeRuns`: an unattended run failed and nothing completed since). It replaced the
+the `workflow-run` region and `macroPlayback`, "Waiting for you" from `automationWaits`, its Failed
+marker from the run history (`automationRowInfo.summarizeRuns`: a run failed and nothing completed
+since), and "Cannot run" from `utils/runBlocked.ts`, which the palette and the run picker use too. A
+failed run's toast asks for the editor or the history through window events that
+`AutomationEditorHost` handles, as the stores must not import the views. Closing the last window or
+quitting asks first while an automation runs (`WindowCloseRequest.runs`). The sidebar replaced the
 `macros` and `workflows` sidebar views: settings v4 (`migrate_automations_view` in
 `src-tauri/src/connection/settings.rs`) maps the hidden activity-bar views (hidden only when both
 were) and the last open view to `automations`.

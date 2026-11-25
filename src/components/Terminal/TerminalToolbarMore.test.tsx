@@ -137,7 +137,7 @@ describe("TerminalToolbarMore (#5756)", () => {
       "Stop logging output (Shift+Alt+L)"
     );
     expect(q("terminal-view-active-playback")!.getAttribute("aria-label")).toBe(
-      "Stop “Deploy” (1 of 3) (Ctrl+F5)"
+      "Stop “Deploy” (33 % typed) (Ctrl+F5)"
     );
   });
 
@@ -200,7 +200,12 @@ describe("TerminalToolbarMore (#5756)", () => {
       q("terminal-view-active-states")!.querySelectorAll("button"),
       (b) => b.textContent
     );
-    expect(chips).toEqual(["Broadcasting", "Stop recording", "Stop “Deploy” (2 of 4)", "Logging"]);
+    expect(chips).toEqual([
+      "Broadcasting",
+      "Stop recording",
+      "Stop “Deploy” (50 % typed)",
+      "Logging",
+    ]);
     expect(q("terminal-view-more-actions")!.getAttribute("data-active-count")).toBe("4");
   });
 

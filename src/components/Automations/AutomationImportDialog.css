@@ -1,16 +1,5 @@
-.automation-import {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-md);
-  overflow-wrap: anywhere;
-}
-
-.automation-import p {
-  margin: 0;
-}
-
-.automation-import__notes,
-.automation-import__lines {
+.automation-import,
+.automation-import__notes {
   display: flex;
   flex-direction: column;
   margin: 0;
@@ -18,23 +7,37 @@
   list-style: none;
 }
 
-.automation-import__notes {
+.automation-import {
   gap: var(--spacing-md);
+  overflow-wrap: anywhere;
 }
 
-.automation-import__note {
+.automation-import__entry {
   display: flex;
   gap: var(--spacing-sm);
 }
 
-.automation-import__note > svg {
-  flex-shrink: 0;
-  margin-top: var(--spacing-xs);
-  color: var(--text-secondary);
+.automation-import__entry p {
+  margin: 0;
 }
 
-.automation-import__lines {
-  margin-top: var(--spacing-xs);
+.automation-import__entry > svg {
+  flex-shrink: 0;
+  margin-top: var(--spacing-xxs);
+  color: var(--color-success);
+}
+
+.automation-import__entry[data-state="partly"] > svg {
+  color: var(--color-warning);
+}
+
+.automation-import__entry[data-state="refused"] > svg {
+  color: var(--color-error);
+}
+
+.automation-import__notes {
   gap: var(--spacing-xs);
-  color: var(--text-secondary);
+  margin-top: var(--spacing-xs);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
 }

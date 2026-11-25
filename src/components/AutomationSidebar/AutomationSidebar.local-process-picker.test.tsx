@@ -142,25 +142,40 @@ describe("run picker and the local-process gate (#5988)", () => {
     if (count === 2) {
       click("run-targets-target-pick");
       click("run-targets-terminal-tab-b");
-      if (!parallel) {
-        click("run-targets-more");
-        click("run-targets-parallel");
-      }
+      if (!parallel) click("run-targets-parallel");
       click("run-targets-run"); // asks to confirm
     }
     click("run-targets-run");
     await flushAsync();
   }
 
+  it("off: the row says that it cannot run, and nothing offers to (A-016)", async () => {
+    seedSettings({ experimentalFeaturesEnabled: false });
+    await act(async () => root.render(withTooltip(<AutomationSidebar />)));
+    await flushAsync();
+    for (const id of ["w1", "w2"]) {
+      expect(q(`automation-start-${id}`)).toBeNull();
+      expect(q(`automation-blocked-reason-${id}`)?.textContent).toContain(
+        "Allow experimental features"
+      );
+    }
+    openAutomationRowMenu("w1");
+    for (const entry of ["run", "run-on"]) {
+      expect(q(`automation-menu-${entry}-w1`)?.hasAttribute("data-disabled")).toBe(true);
+    }
+  });
+
   it.each([
-    ["one terminal", 1, true],
-    ["two terminals, parallel", 2, true],
-    ["two terminals, one after another", 2, false],
-  ] as const)("off: refuses %s before anything starts", async (_name, count, parallel) => {
-    await runFromPicker(false, count, parallel);
+    ["parallel", true],
+    ["one after another", false],
+  ])("off: a run that gets that far is refused, %s", async (_name, parallel) => {
+    seedSettings({ experimentalFeaturesEnabled: false, workflowLocalProcessEnabled: true });
+    await act(async () =>
+      useAppStore.getState().runAutomation("w1", { targetTabIds: ["tab-a", "tab-b"], parallel })
+    );
 
     expect(toast.error).toHaveBeenCalledWith(
-      'Automation "Build" was not run',
+      "Automation “Build” was not run",
       expect.objectContaining({ description: LOCAL_PROCESS_REASON })
     );
     expect(injected).toEqual([]); // nothing typed

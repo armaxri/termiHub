@@ -13,6 +13,7 @@ import { frontendLog } from "@/utils/frontendLog";
 import { currentSessionView, regionExited } from "../sessionBridge";
 
 import type { AppState } from "../appStore";
+import { failedRunActions } from "./automationRunActions";
 import { collectLiveTabs, getActiveTab } from "../layoutHelpers";
 import { filterConnectedTerminalTabIds } from "../tabQueries";
 import { automationToMacro, isMacroShaped } from "./automationViews";
@@ -141,6 +142,11 @@ export interface MacrosSlice {
   cancelMacroPlaybackOnTab: (tabId: string) => void;
 }
 
+/** How much was typed, as a share: the parts of a recording are keys and pastes (A-003). */
+function typedShare(typed: number, total: number): string {
+  return `${total > 0 ? Math.floor((typed / total) * 100) : 0} %`;
+}
+
 export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (set, get) => {
   /** A macro the local library does not hold yet (made in another window). */
   const fetchMacro = async (macroId: string): Promise<Macro | undefined> => {
@@ -170,7 +176,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
     }
     if (macro.steps.length === 0) {
       // toast-policy: explains-outcome — nothing plays, and this says why
-      toast.info(`Automation "${macro.name}" has no steps to run`);
+      toast.info(`Automation “${macro.name}” has no steps to run`);
       return null;
     }
     stopActivePlayback();
@@ -184,7 +190,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
     const startedAt = new Date();
     const toastId = `macro-playback-${macro.id}-multi`;
     const total = macro.steps.length;
-    const title = `Running automation "${macro.name}" on ${targets.length} terminals…`;
+    const title = `Running automation “${macro.name}” on ${targets.length} terminals…`;
     const progress: Record<string, number> = Object.fromEntries(targets.map((id) => [id, 0]));
     toast.loading(title, { id: toastId, description: `0 / ${total} steps` });
     set({
@@ -340,7 +346,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
 
       if (macro.steps.length === 0) {
         // toast-policy: explains-outcome — nothing plays, and this says why
-        toast.info(`Automation "${macro.name}" has no steps to run`);
+        toast.info(`Automation “${macro.name}” has no steps to run`);
         return null;
       }
 
@@ -357,9 +363,9 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
       const total = macro.steps.length;
       const targetLabel = tab.title || "Terminal";
       const startedAt = new Date();
-      toast.loading(`Running automation "${macro.name}"…`, {
+      toast.loading(`Running automation “${macro.name}”…`, {
         id: toastId,
-        description: `0 / ${total} steps`,
+        description: `${typedShare(0, total)} typed`,
       });
       set({
         macroPlayback: {
@@ -380,9 +386,9 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
               ? { macroPlayback: { ...s.macroPlayback, played } }
               : {}
           );
-          toast.loading(`Running automation "${macro.name}"…`, {
+          toast.loading(`Running automation “${macro.name}”…`, {
             id: toastId,
-            description: `${played} / ${stepTotal} steps`,
+            description: `${typedShare(played, stepTotal)} typed`,
           });
         },
       });
@@ -401,13 +407,15 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
         toast.dismiss(toastId);
       } else if (result.status === "cancelled") {
         // toast-policy: explains-outcome — says how far the canceled playback got
-        toast.info(`Automation "${macro.name}" canceled`, {
+        toast.info(`“${macro.name}” stopped`, {
           id: toastId,
-          description: `Stopped after ${result.stepsPlayed} of ${total} steps`,
+          description: `Stopped: ${typedShare(result.stepsPlayed, total)} was typed`,
         });
       } else {
-        toast.error(`Automation "${macro.name}" stopped: the terminal is no longer connected`, {
+        toast.error(`“${macro.name}” failed: the terminal is no longer connected`, {
           id: toastId,
+          description: `${typedShare(result.stepsPlayed, total)} was typed`,
+          ...failedRunActions(macroId),
         });
       }
       const record = buildMacroRun({

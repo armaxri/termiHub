@@ -201,17 +201,17 @@ class TestProductRunRowsNames(
         t = self.tag
         with self.step(
             "rows-names.workflow",
-            "A workflow row shows its name, description and Armed marker; the trigger, its "
+            "A workflow row shows its name, description and its triggers in words; its "
             "target and the tags are in the tooltip",
             expect="the Automations sidebar: 'Answer rows …' with 'Replies on match' muted under "
-            "it and an 'Armed' marker with its switch; no 'On output match' text and no tag "
+            "it and 'Triggers on: matching output in …' with its switch; no tag "
             "chips on the row (#5757)",
         ):
             self.require("rows-names.items")
             self.show_automations()
             wid = self.ids["workflow"]
             marker = self.driver.get_text(f"automation-armed-{wid}").strip()
-            assert marker == "Armed", f"the marker reads {marker!r}"
+            assert marker.startswith("Triggers on: matching output in "), f"it reads {marker!r}"
             self._grade_row(
                 f"automation-item-{wid}",
                 [f"Answer rows {t}", "Replies on match", marker],

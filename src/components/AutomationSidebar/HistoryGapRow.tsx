@@ -44,19 +44,23 @@ export function HistoryGapRow({ gap, expanded, onToggle }: HistoryGapRowProps) {
               : "automation-history__chevron"
           }
         />
-        <StatusDot tone={attemptTone(summary.kind)} ariaHidden />
-        <TruncatedText className="automation-history__name">{gap.automationName}</TruncatedText>
-        <span className="automation-history__outcome">{label}</span>
-        <time
-          className="automation-history__time"
-          dateTime={summary.when}
-          title={formatAbsoluteTime(summary.when)}
-        >
-          {formatDayTime(summary.when)}
-        </time>
+        <span className="automation-history__main">
+          <TruncatedText className="automation-history__name">{gap.automationName}</TruncatedText>
+          <span className="automation-history__line">
+            <StatusDot tone={attemptTone(summary.kind)} size="sm" ariaHidden />
+            <span className="automation-history__outcome">{label}</span>
+            <time dateTime={summary.when} title={formatAbsoluteTime(summary.when)}>
+              {formatDayTime(summary.when)}
+            </time>
+          </span>
+        </span>
       </button>
       {expanded ? (
-        <dl className="automation-history__details" id={detailsId} data-testid={detailsId}>
+        <dl
+          className="automation-history__details automation-history__facts"
+          id={detailsId}
+          data-testid={detailsId}
+        >
           <dt>{t("automationHistory.schedule")}</dt>
           <dd>{gap.scheduleName}</dd>
           <dt>Outcome</dt>

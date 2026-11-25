@@ -47,7 +47,7 @@ export function useAutomationFiles(): AutomationFiles {
       void exportToFile({
         defaultPath: `termihub-automation-${slugify(automation.name, "automation")}.json`,
         content: () => serializeAutomations(exported),
-        successMessage: `Exported "${automation.name}"${extra}`,
+        successMessage: `Exported “${automation.name}”${extra}`,
       });
     },
     [automations, exportToFile]

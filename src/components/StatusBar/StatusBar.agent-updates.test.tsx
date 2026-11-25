@@ -126,7 +126,7 @@ describe("StatusBar — connected-agent update summary (#1347)", () => {
     expect(item).not.toBeNull();
     const expected = "3 agents · 2 updates available — click to open Connections";
     expect(item!.getAttribute("aria-label")).toBe(expected);
-    expect(item!.textContent).toBe("32");
+    expect(item!.textContent).toBe("3 agents2");
     expect(container.querySelector('[data-testid="agent-updates-count"]')!.textContent).toBe("2");
     expect(tooltipText()).toBe(expected);
   });

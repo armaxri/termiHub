@@ -17,6 +17,7 @@ import { useProjectedSessionLifecycleMaps } from "@/store/useSessionLifecycle";
 import type { TerminalTab } from "@/types/terminal";
 import { resolveBroadcastGroup } from "@/utils/broadcastGroups";
 import { getAllLeaves } from "@/utils/panelTree";
+import { terminalWhere } from "@/utils/terminalWhere";
 
 import type { RunTargetOptions } from "./runTargetChoice";
 
@@ -46,11 +47,23 @@ export function useRunTargets(): RunTargetOptions {
     // mirrors; naming it here re-derives the live markers when it changes.
     void lifecycle;
     const state = { ...useAppStore.getState(), terminalSpawnErrors: spawnErrors };
-    const groupTrees = tabGroups.map((g) => (g.id === activeTabGroupId ? rootPanel : g.rootPanel));
-    const tabs: TerminalTab[] = (groupTrees.length > 0 ? groupTrees : [rootPanel])
-      .flatMap((tree) => getAllLeaves(tree))
-      .flatMap((leaf) => leaf.tabs)
-      .filter((t) => t.contentType === "terminal");
+    const trees =
+      tabGroups.length > 0
+        ? tabGroups.map((g) => ({
+            name: g.name,
+            tree: g.id === activeTabGroupId ? rootPanel : g.rootPanel,
+          }))
+        : [{ name: "", tree: rootPanel }];
+    const groupOf = new Map<string, string>();
+    const tabs: TerminalTab[] = trees.flatMap(({ name, tree }) =>
+      getAllLeaves(tree)
+        .flatMap((leaf) => leaf.tabs)
+        .filter((t) => t.contentType === "terminal")
+        .map((t) => {
+          groupOf.set(t.id, name);
+          return t;
+        })
+    );
     const live = new Set(
       filterConnectedTerminalTabIds(
         state,
@@ -58,7 +71,13 @@ export function useRunTargets(): RunTargetOptions {
       )
     );
     const onlyLive = (ids: Iterable<string>) => [...ids].filter((id) => live.has(id));
-    const terminals = tabs.map((t) => ({ id: t.id, title: t.title, live: live.has(t.id) }));
+    const terminals = tabs.map((t) => ({
+      id: t.id,
+      title: t.title,
+      live: live.has(t.id),
+      where: terminalWhere(t),
+      group: groupOf.get(t.id) ?? "",
+    }));
     const source = activeTab?.contentType === "terminal" ? activeTab : null;
     const resolveState = { tabGroups, activeTabGroupId, rootPanel };
     const currentGroupTabs = getAllLeaves(rootPanel)
@@ -72,6 +91,7 @@ export function useRunTargets(): RunTargetOptions {
       broadcast: broadcast.active ? onlyLive(broadcast.targetTabIds) : null,
       panel: source ? onlyLive(resolveBroadcastTargetTabIds(resolveState, "panel", source.id)) : [],
       all: onlyLive(currentGroupTabs),
+      groupName: tabGroups.find((g) => g.id === activeTabGroupId)?.name ?? "",
       groups: groups.map((group) => ({
         id: group.id,
         name: group.name,
