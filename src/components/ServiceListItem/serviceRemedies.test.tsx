@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 
-const { connectAgent, toastError } = vi.hoisted(() => ({
+const { connectAgent, toastError, checkEmbeddedServers } = vi.hoisted(() => ({
+  checkEmbeddedServers: vi.fn(() => Promise.resolve()),
   connectAgent: vi.fn(),
   toastError: vi.fn(),
 }));
@@ -17,6 +18,7 @@ vi.mock("@/components/ui", async () => {
 });
 vi.mock("@/services/embeddedServerApi", () => ({
   listNetworkInterfaces: vi.fn(() => Promise.resolve([])),
+  checkEmbeddedServers,
 }));
 
 import { EmbeddedServerSidebar } from "@/components/EmbeddedServerSidebar";
@@ -63,10 +65,12 @@ const actions = {
   saveTunnel: vi.fn(async (_tunnel: TunnelConfig) => {}),
   reconnectTunnel: vi.fn(async (_id: string) => {}),
   retryTunnelNow: vi.fn(async (_id: string) => {}),
+  checkTunnelsAgain: vi.fn(async () => {}),
   openTunnelEditorTab: vi.fn(),
   openConnectionEditorTab: vi.fn(),
   saveEmbeddedServer: vi.fn(async (_server: EmbeddedServerConfig) => {}),
   startEmbeddedServer: vi.fn(async (_id: string) => {}),
+  stopEmbeddedServer: vi.fn(async (_id: string) => {}),
   setUnlockDialogOpen: vi.fn(),
 };
 
@@ -183,6 +187,26 @@ describe("Connect agent", () => {
 });
 
 describe("the others", () => {
+  it("Check again asks the agents now", async () => {
+    const silent = { status: "notReachable", cause: "agentSilent" } as const;
+    await tunnel({ host: EDGE }, silent);
+    await press("tunnel-check-again-t");
+    expect(actions.checkTunnelsAgain).toHaveBeenCalledOnce();
+    await server({ host: EDGE }, silent);
+    await press("server-check-again-s");
+    expect(checkEmbeddedServers).toHaveBeenCalledOnce();
+  });
+
+  it("Choose machine opens the editor of a service whose agent is gone", async () => {
+    const gone = { kind: "agent", agentId: "gone" } as const;
+    await tunnel({ host: gone }, { status: "connected" });
+    await press("tunnel-choose-machine-t");
+    expect(actions.openTunnelEditorTab).toHaveBeenCalledWith("t");
+    await server({ host: gone }, { status: "running" });
+    await press("server-choose-machine-s");
+    expect(q("server-dialog-runloc")).not.toBeNull();
+  });
+
   it("Unlock opens the unlock dialog", async () => {
     await tunnel({}, { status: "waiting", cause: "storeLocked" });
     await press("tunnel-unlock-t");
@@ -217,5 +241,67 @@ it("both lists say how many run", async () => {
   await tunnel({}, { status: "connected" });
   expect(q("tunnel-counts")?.textContent).toBe("1 of 1 running");
   await server({}, {});
-  expect(q("server-counts")?.textContent).toBe("0 of 1 running, 1 not working");
+  expect(q("server-counts")?.textContent).toBe("0 of 1 running· 1 error");
+});
+
+describe("stopping a file server", () => {
+  const busy = { ...STATS, activeConnections: 1 };
+
+  it("asks when somebody is connected", async () => {
+    await server({}, { status: "running", stats: busy });
+    await press("server-stop-s");
+    expect(actions.stopEmbeddedServer).not.toHaveBeenCalled();
+    expect(q("confirm-service-lifecycle-dialog")?.textContent).toContain(
+      "1 connection is open now. It will be dropped."
+    );
+    await press("confirm-service-lifecycle-confirm");
+    expect(actions.stopEmbeddedServer).toHaveBeenCalledWith("s");
+  });
+
+  it("and not when nobody is", async () => {
+    await server({}, { status: "running" });
+    await press("server-stop-s");
+    expect(actions.stopEmbeddedServer).toHaveBeenCalledWith("s");
+    expect(q("confirm-service-lifecycle-dialog")).toBeNull();
+  });
+});
+
+describe("the numbers of a list", () => {
+  const states = { a: "connected", b: "error", c: "error", d: "disconnected" } as const;
+
+  async function list() {
+    useAppStore.setState({
+      tunnels: Object.keys(states).map((id) => ({ ...TUNNEL, id, name: id })),
+      tunnelStates: Object.fromEntries(
+        Object.entries(states).map(([id, status]) => [
+          id,
+          { tunnelId: id, status, error: "why", stats: STATS },
+        ])
+      ),
+    });
+    await act(async () => root.render(withTooltip(<TunnelSidebar />)));
+  }
+  const shown = () =>
+    Array.from(container.querySelectorAll("[role=treeitem]")).map((row) =>
+      row.getAttribute("data-testid")?.slice(-1)
+    );
+
+  it("show only their rows, and all of them when pressed again", async () => {
+    await list();
+    expect(q("tunnel-counts")?.textContent).toBe("1 of 4 running· 2 error");
+    await press("service-count-error");
+    expect(shown()).toEqual(["b", "c"]);
+    expect(q("service-count-error")?.getAttribute("aria-pressed")).toBe("true");
+    await press("service-count-running");
+    expect(shown()).toEqual(["a"]);
+    await press("service-count-running");
+    expect(shown()).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("show all rows again when their last row is gone", async () => {
+    await list();
+    await press("service-count-error");
+    await act(async () => useAppStore.setState({ tunnelStates: {} }));
+    expect(shown()).toEqual(["a", "b", "c", "d"]);
+  });
 });

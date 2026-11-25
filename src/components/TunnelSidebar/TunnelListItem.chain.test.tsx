@@ -110,7 +110,7 @@ describe("TunnelListItem — chained pair (#2597)", () => {
     expect(q('[data-testid="tunnel-name-p1-hop"]')?.textContent).toBe("On this computer");
     expect(q('[data-testid="tunnel-address-p1-hop"]')?.textContent).toContain("only this computer");
     expect(q('[data-testid="tunnel-item-p1-hop"]')?.getAttribute("aria-description")).toContain(
-      "Hosted on this computer"
+      "Runs on this computer"
     );
   });
 
@@ -137,9 +137,11 @@ describe("TunnelListItem — chained pair (#2597)", () => {
       />
     );
     expect(q('[data-testid="tunnel-reason-p1"]')?.textContent).toBe(
-      "Not reachable from this computer, see below."
+      "Does not work on this computer yet, see below."
     );
     expect(q('[data-testid="tunnel-status-p1"]')?.className).toContain("warning");
+    // Its address is another program's on this computer.
+    expect(q('[data-testid="tunnel-copy-address-p1"]')).toBeNull();
     expect(container.textContent).not.toMatch(/linked|degraded|hop down/i);
   });
 

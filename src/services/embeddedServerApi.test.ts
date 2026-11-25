@@ -12,6 +12,7 @@ import {
   deleteEmbeddedServer,
   startEmbeddedServer,
   stopEmbeddedServer,
+  checkEmbeddedServers,
   createAndStartServer,
   listNetworkInterfaces,
   getEmbeddedServerActivity,
@@ -68,6 +69,14 @@ describe("embeddedServerApi", () => {
       await stopEmbeddedServer("srv-1");
 
       expect(mockedInvoke).toHaveBeenCalledWith("stop_embedded_server", { serverId: "srv-1" });
+    });
+  });
+
+  describe("checkEmbeddedServers", () => {
+    it("invokes check_embedded_servers", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+      await checkEmbeddedServers();
+      expect(mockedInvoke).toHaveBeenCalledWith("check_embedded_servers");
     });
   });
 

@@ -100,6 +100,20 @@ describe("Button async lifecycle", () => {
     expect(toastError).not.toHaveBeenCalled();
   });
 
+  it("returns to idle without a flash when successFlash is off", async () => {
+    render(
+      <Button data-testid="btn" successFlash={false} onClick={() => Promise.resolve()}>
+        Stop
+      </Button>
+    );
+    const btn = document.querySelector('[data-testid="btn"]') as HTMLButtonElement;
+    act(() => btn.click());
+    expect(btn.classList.contains("ui-btn--pending")).toBe(true);
+    await flush();
+    expect(btn.classList.contains("ui-btn--success")).toBe(false);
+    expect(btn.disabled).toBe(false);
+  });
+
   it("returns to idle and fires toast.error on reject", async () => {
     const onClick = vi.fn(() => Promise.reject(new Error("nope")));
     render(

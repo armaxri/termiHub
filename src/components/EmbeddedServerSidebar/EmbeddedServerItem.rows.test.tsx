@@ -73,7 +73,7 @@ describe("EmbeddedServerItem — names, not settings (#5770)", () => {
       expect(text).not.toContain(setting);
     }
     const tip = row().getAttribute("aria-description") ?? "";
-    expect(tip).toContain("HTTP · http://127.0.0.1:8080");
+    expect(tip).toContain("HTTP · http://localhost:8080");
     expect(tip).toContain("Serves /srv/docs");
   });
 

@@ -74,7 +74,7 @@ describe("EmbeddedServerItem — honest states (#6028)", () => {
   });
 
   it.each<[ServerStatus, string, string]>([
-    ["waiting", "Waiting", "Stop waiting"],
+    ["waiting", "Waiting", "Cancel waiting"],
     ["notReachable", "Not reachable", "Stop"],
   ])("%s says so, says why, and can be stopped", (status, word, control) => {
     render(status);
@@ -94,7 +94,7 @@ describe("EmbeddedServerItem — honest states (#6028)", () => {
         new MouseEvent("contextmenu", { bubbles: true, cancelable: true })
       );
     });
-    expect(q("ctx-stop-srv-1")?.textContent).toContain("Stop waiting");
+    expect(q("ctx-stop-srv-1")?.textContent).toContain("Cancel waiting");
     expect(q("ctx-start-srv-1")).toBeNull();
   });
 

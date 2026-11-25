@@ -91,18 +91,18 @@ describe("TunnelListItem — where it runs, on the row and in the tooltip (#2155
 
   it("reads 'this computer' for a desktop-hosted tunnel (default)", () => {
     renderItem({ ...BASE, host: { kind: "thisComputer" } });
-    expect(rowTooltip()).toContain("Hosted on this computer");
+    expect(rowTooltip()).toContain("Runs on this computer");
     expect(container.querySelector('[data-testid^="tunnel-machine"]')).toBeNull();
   });
 
   it("reads 'this computer' when the host field is absent (legacy config)", () => {
     renderItem({ ...BASE } as TunnelConfig);
-    expect(rowTooltip()).toContain("Hosted on this computer");
+    expect(rowTooltip()).toContain("Runs on this computer");
   });
 
   it("names the agent for an agent-hosted tunnel", () => {
     renderItem({ ...BASE, host: { kind: "agent", agentId: "agent-1" } });
-    expect(rowTooltip()).toContain("Hosted on agent build-box");
+    expect(rowTooltip()).toContain("Runs on agent build-box");
     expect(container.querySelector('[data-testid^="tunnel-machine"]')?.textContent).toBe(
       "build-box"
     );

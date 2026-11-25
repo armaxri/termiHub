@@ -19,10 +19,10 @@ const LOCAL_HOST = { label: "this computer", onAgent: false };
 describe("tunnelRowTooltip (#5770)", () => {
   it("lists the forwarding, what it does (#6027), the SSH connection and the host", () => {
     expect(tunnelRowTooltip(LOCAL, { sshLabel: "bastion", host: LOCAL_HOST })).toEqual([
-      "Local (ssh -L) · 127.0.0.1:5432 → db:5432",
+      "Local (ssh -L) · localhost:5432 → db:5432",
       "Use something on the SSH server's side as if it ran here.",
       "Via bastion",
-      "Hosted on this computer",
+      "Runs on this computer",
     ]);
   });
 
@@ -31,7 +31,7 @@ describe("tunnelRowTooltip (#5770)", () => {
       sshLabel: "bastion",
       host: { label: "build-box", onAgent: true },
     });
-    expect(lines).toContain("Hosted on agent build-box");
+    expect(lines).toContain("Runs on agent build-box");
     expect(lines[1]).toBe(
       "Use something on the SSH server's side as if it ran on agent build-box."
     );
@@ -47,7 +47,7 @@ describe("tunnelRowTooltip (#5770)", () => {
       boundAddress: "0.0.0.0:5432",
     });
     expect(lines.slice(4)).toEqual([
-      "↑ 2.0 KB (1 KB/s) · ↓ 0 B · 1 / 4 connections",
+      "1 connection now, 4 in all · sent 2.0 KB (1 KB/s) · received 0 B",
       "Bound 0.0.0.0:5432: reachable on build-box's network",
     ]);
   });
@@ -61,7 +61,7 @@ describe("tunnelRowTooltip (#5770)", () => {
       { sshLabel: "bastion", host: LOCAL_HOST }
     );
     expect(socks.slice(0, 2)).toEqual([
-      "Dynamic (ssh -D) · 127.0.0.1:1080",
+      "Dynamic (ssh -D) · localhost:1080",
       "Use the SSH server as a proxy for many destinations.",
     ]);
   });

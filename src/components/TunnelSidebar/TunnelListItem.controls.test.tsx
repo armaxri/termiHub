@@ -78,7 +78,7 @@ describe("TunnelListItem — run control and labelled dot (#5852)", () => {
     ["connected", "Stop", "Running"],
     ["reconnecting", "Stop", "Reconnecting"],
     ["error", "Retry", "Error"],
-    ["waiting", "Stop waiting", "Waiting"],
+    ["waiting", "Cancel waiting", "Waiting"],
     ["notReachable", "Stop", "Not reachable"],
   ])("status %s: the run control is %s and the dot reads %s", (status, control, dot) => {
     render(status);
