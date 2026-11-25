@@ -63,21 +63,6 @@
   border-color: var(--accent-color);
 }
 
-.server-dialog__radio-group {
-  display: flex;
-  gap: var(--spacing-lg);
-  padding: var(--spacing-xs) 0;
-}
-
-.server-dialog__radio {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs-sm);
-  font-size: var(--font-size-md);
-  color: var(--text-primary);
-  cursor: pointer;
-}
-
 .server-dialog__fieldset {
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-sm);

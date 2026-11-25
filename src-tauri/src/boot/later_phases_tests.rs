@@ -250,7 +250,7 @@ fn assert_secondary_managed(app: &MockApp) {
         .try_state::<workspace::last_session::LastSessionManager>()
         .is_some());
     assert!(app
-        .try_state::<embedded_servers::server_manager::EmbeddedServerManager<MockRuntime>>()
+        .try_state::<Arc<embedded_servers::server_manager::EmbeddedServerManager<MockRuntime>>>()
         .is_some());
 }
 

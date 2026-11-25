@@ -475,13 +475,17 @@ impl EmbeddedServerService {
                     started_at: Some(active.started_at.clone()),
                 }
             }
-            None => ServerState {
-                server_id: config.id.clone(),
-                status: ServerStatus::Stopped,
-                error: None,
-                stats: ServerStats::default(),
-                started_at: None,
-            },
+            // Not listening: stopped, or why the last start failed.
+            None => {
+                let (status, error) = ServerStatus::from_service_status(&self.status);
+                ServerState {
+                    server_id: config.id.clone(),
+                    status,
+                    error,
+                    stats: ServerStats::default(),
+                    started_at: None,
+                }
+            }
         })
     }
 

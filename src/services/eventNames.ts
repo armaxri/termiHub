@@ -36,7 +36,6 @@ export const TAURI_EVENT = {
   credentialStoreUnlocked: "credential-store-unlocked",
   credentialStoreStatusChanged: "credential-store-status-changed",
   credentialStoreUnlockNeeded: "credential-store-unlock-needed",
-  embeddedServerStatusChanged: "embedded-server-status-changed",
   persistentSessionStateChanged: "persistent-session-state-changed",
   connectionIdsChanged: "connection-ids-changed",
   jumpHostHopStatus: "jump-host-hop-status",

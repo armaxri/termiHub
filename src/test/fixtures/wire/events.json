@@ -18,7 +18,6 @@
     "credential-store-status-changed",
     "credential-store-unlock-needed",
     "credential-store-unlocked",
-    "embedded-server-status-changed",
     "file-bookmarks-rekeyed",
     "initial-command-held",
     "jump-host-hop-status",

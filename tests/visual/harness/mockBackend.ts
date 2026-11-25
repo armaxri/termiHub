@@ -846,6 +846,18 @@ function regionView(region: string, populated: boolean): unknown {
     if (!populated) return {};
     return window.__VISUAL_SCENARIO__?.iconStyles ? ICON_STYLE_AGENTS_VIEW : AGENTS_VIEW;
   }
+  if (region === "services") {
+    const rows = window.__VISUAL_SCENARIO__?.serviceStates
+      ? [STATE_SERVERS, STATE_SERVER_STATES]
+      : [EMBEDDED_SERVERS, EMBEDDED_SERVER_STATES];
+    if (!populated) return {};
+    return {
+      servers: rows[0],
+      states: Object.fromEntries(
+        (rows[1] as { serverId: string }[]).map((state) => [state.serverId, state])
+      ),
+    };
+  }
   if (region === "tunnels" && window.__VISUAL_SCENARIO__?.serviceStates) return STATE_TUNNELS_VIEW;
   if (region === "tunnels") return populated ? TUNNELS_VIEW : {};
   if (region.startsWith("file-browser@") && window.__VISUAL_SCENARIO__?.fileListing) {
@@ -1034,12 +1046,6 @@ export function handleCommand(cmd: string, args: Args): unknown {
       };
 
     // ── data the sidebars list ──
-    case "list_embedded_servers":
-      if (scenario.serviceStates) return STATE_SERVERS;
-      return populated ? EMBEDDED_SERVERS : [];
-    case "get_embedded_server_states":
-      if (scenario.serviceStates) return STATE_SERVER_STATES;
-      return populated ? EMBEDDED_SERVER_STATES : [];
     case "network_http_monitor_list":
       return populated ? HTTP_MONITORS : [];
     case "load_connections_and_folders":

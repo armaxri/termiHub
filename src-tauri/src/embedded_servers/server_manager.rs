@@ -4,9 +4,8 @@
 //! [`Service`](termihub_core::service::Service) trait (#2154, following the
 //! HTTP-monitor pilot #2157/#2172). The manager owns the persisted configs, a
 //! map of live services. Each service emits its status transitions on a core
-//! [`EventChannel`](termihub_core::service::EventChannel); the manager bridges
-//! those to the existing `embedded-server-status-changed` Tauri event, so the
-//! frontend contract is unchanged.
+//! [`EventChannel`](termihub_core::service::EventChannel); the manager answers
+//! each by publishing the shared [`services`](super::projection) region (#6028).
 //!
 //! # Agent-hosted servers (#2214)
 //!
@@ -37,7 +36,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use tauri::{AppHandle, Emitter, Manager, Runtime, Wry};
+use tauri::{AppHandle, Manager, Runtime, Wry};
 use termihub_core::service::drain_broadcast;
 use termihub_core::util::entry_extra::{upsert_keeping_extra, without_extra};
 use termihub_core::util::service_host::{HostChoice, ServiceHost};
@@ -75,17 +74,8 @@ use termihub_core::protocol::methods::{
 };
 use termihub_core::service::{Service, ServiceStatus};
 
-/// Tauri event forwarded to the frontend for each embedded server status change.
-///
-/// A server's [`EmbeddedServerService`] emits the status on its core
-/// [`EventChannel`](termihub_core::service::EventChannel); the manager bridges it
-/// to this Tauri event so the frontend receives the same `ServerState` payload as
-/// before the lift. An agent-hosted server (#2214) reaches the same event via the
-/// `service.status` poller below, so the frontend cannot tell where it runs.
-const SERVER_STATUS_EVENT: &str = "embedded-server-status-changed";
-
-/// How often the agent `service.status` poller samples each agent-hosted server
-/// (#2214). Matches the tunnel poller cadence (#2199).
+/// How often the poller asks the agents (#2214) and publishes live traffic.
+/// Matches the tunnel cadence (#2199).
 const STATUS_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 /// The agent-hosted embedded servers (#2214), as [`HostedServices`] sees them.
@@ -216,7 +206,8 @@ impl<R: Runtime> EmbeddedServerManager<R> {
         if moved {
             self.stop_server(&id)?;
         } else {
-            self.clear_refusal(&id);
+            self.lock_refusals().remove(&id);
+            self.announce();
         }
         Ok(())
     }
@@ -273,16 +264,17 @@ impl<R: Runtime> EmbeddedServerManager<R> {
         }
         self.lock_refusals().remove(server_id);
         self.secrets.forget(server_id);
-        let mut store = self.lock_configs()?;
-        store.servers.retain(|s| s.id != server_id);
-        self.persist(&store)
+        {
+            let mut store = self.lock_configs()?;
+            store.servers.retain(|s| s.id != server_id);
+            self.persist(&store)?;
+        }
+        self.announce();
+        Ok(())
     }
 
-    /// Return the current runtime state of every configured server.
+    /// The current state of every configured server, as its row shows it.
     pub fn get_states(&self) -> Result<Vec<ServerState>, TerminalError> {
-        // Polled by the UI, so this is where a migration that waited for the
-        // credential store to unlock usually completes.
-        self.sync_secrets();
         let configs = self.get_configs()?;
         configs.iter().map(|cfg| self.state_of(cfg)).collect()
     }
@@ -330,28 +322,17 @@ impl<R: Runtime> EmbeddedServerManager<R> {
         }
     }
 
-    /// Tell every window what the row of `server_id` shows now.
-    fn announce(&self, server_id: &str) {
-        let Ok(configs) = self.get_configs() else {
-            return;
-        };
-        let Some(cfg) = configs.iter().find(|s| s.id == server_id) else {
-            return;
-        };
-        let Ok(state) = self.state_of(cfg) else {
-            return;
-        };
-        let _ = self.app_handle.emit(SERVER_STATUS_EVENT, &state);
+    /// Tell every window what the rows show now.
+    fn announce(&self) {
+        crate::embedded_servers::projection::publish_services(&self.app_handle);
     }
 
     /// Start a server by ID.
     ///
     /// It runs where its stored host says: on this computer, or on an agent over
     /// the agent RPC (#2214). A host that cannot be honoured or read starts
-    /// nothing (#6028). The server's status transitions are emitted on its core
-    /// [`EventChannel`](termihub_core::service::EventChannel) (local) or bridged
-    /// from the agent poller, both reaching the [`SERVER_STATUS_EVENT`] Tauri
-    /// event.
+    /// nothing (#6028). What its row shows reaches every window through the
+    /// [`services`](super::projection) region.
     pub fn start_server(&self, server_id: &str) -> Result<(), TerminalError> {
         self.start(server_id, StartedBy::User)
     }
@@ -440,7 +421,7 @@ impl<R: Runtime> EmbeddedServerManager<R> {
     fn wait(&self, server_id: &str, on: WaitFor) {
         if self.hosted.wait(server_id, on, Instant::now()) {
             self.lock_refusals().remove(server_id);
-            self.announce(server_id);
+            self.announce();
         }
         self.ensure_status_poller();
     }
@@ -462,11 +443,11 @@ impl<R: Runtime> EmbeddedServerManager<R> {
             }
         }
         let app = &self.app_handle;
-        for id in self
+        let forgotten = self
             .hosted
-            .forget_removed_agents(|agent_id| agent_is_removed(app, agent_id))
-        {
-            self.announce(&id);
+            .forget_removed_agents(|agent_id| agent_is_removed(app, agent_id));
+        if !forgotten.is_empty() {
+            self.announce();
         }
     }
 
@@ -476,7 +457,7 @@ impl<R: Runtime> EmbeddedServerManager<R> {
         match self.hosted.finish(ticket, outcome, Instant::now()) {
             Finished::Done => true,
             Finished::Stopped => {
-                self.announce(server_id);
+                self.announce();
                 false
             }
             Finished::StopThere(agent_id) => {
@@ -494,22 +475,31 @@ impl<R: Runtime> EmbeddedServerManager<R> {
         mut config: EmbeddedServerConfig,
     ) -> Result<(), TerminalError> {
         let server_id = config.id.clone();
-        let started = self.secrets.resolve(&mut config).and_then(|()| {
-            self.lock_refusals().remove(&server_id);
-            self.listen_here(&server_id, config)
-        });
+        self.lock_refusals().remove(&server_id);
+        self.announce();
+        let started = self
+            .secrets
+            .resolve(&mut config)
+            .and_then(|()| self.listen_here(&server_id, config));
         if !self.finish(ticket, Outcome::Failed, &server_id) {
             if let Some(service) = self.lock_services()?.get_mut(&server_id) {
                 service.shutdown();
             }
             return Ok(());
         }
-        // The row was "starting" until now; without a listener there is no
-        // event that says otherwise.
-        if started.is_err() {
-            self.announce(&server_id);
+        // The row was "starting" until now.
+        match started {
+            Ok(()) => {
+                self.announce();
+                self.ensure_status_poller();
+                Ok(())
+            }
+            // Durable: the row keeps saying why, not only the toast.
+            Err(e) => {
+                let _ = self.refuse(&server_id, e.to_string());
+                Err(e)
+            }
         }
-        started
     }
 
     /// Open `config`'s listener on this computer: the only place that does.
@@ -563,7 +553,7 @@ impl<R: Runtime> EmbeddedServerManager<R> {
     ) -> Result<(), TerminalError> {
         let server_id = config.id.clone();
         let server_id = server_id.as_str();
-        self.announce(server_id);
+        self.announce();
         let failed = |this: &Self, ticket: Ticket, reason: String| {
             if this.finish(ticket, Outcome::Failed, server_id) {
                 Err(this.refuse(server_id, reason))
@@ -583,7 +573,7 @@ impl<R: Runtime> EmbeddedServerManager<R> {
             Ok(params) => params,
             Err(e) => {
                 let counts = self.finish(ticket, Outcome::Failed, server_id);
-                self.announce(server_id);
+                self.announce();
                 return if counts { Err(e) } else { Ok(()) };
             }
         };
@@ -605,7 +595,7 @@ impl<R: Runtime> EmbeddedServerManager<R> {
         {
             let reason = stopping_reason(&self.app_handle, agent_id);
             let counts = self.finish(ticket, Outcome::Failed, server_id);
-            self.announce(server_id);
+            self.announce();
             return if counts {
                 Err(TerminalError::EmbeddedServerError(reason))
             } else {
@@ -652,7 +642,7 @@ impl<R: Runtime> EmbeddedServerManager<R> {
             )));
         }
         self.lock_refusals().remove(server_id);
-        self.announce(server_id);
+        self.announce();
         // Sample the agent's status periodically so a later transition
         // (e.g. a crash → Error) and live stats reach the frontend.
         self.ensure_status_poller();
@@ -664,19 +654,16 @@ impl<R: Runtime> EmbeddedServerManager<R> {
     /// for the caller. Durable (see [`refusals`](Self::refusals)).
     fn refuse(&self, server_id: &str, reason: String) -> TerminalError {
         tracing::warn!(%server_id, "{reason}");
-        let state = auto_start_error_state(server_id, &reason);
         self.lock_refusals()
             .insert(server_id.to_string(), reason.clone());
-        let _ = self.app_handle.emit(SERVER_STATUS_EVENT, &state);
+        self.announce();
         TerminalError::EmbeddedServerError(reason)
     }
 
     /// Forget why `server_id` was not started, and put its row back to stopped.
     fn clear_refusal(&self, server_id: &str) {
         if self.lock_refusals().remove(server_id).is_some() {
-            let _ = self
-                .app_handle
-                .emit(SERVER_STATUS_EVENT, &stopped_state(server_id));
+            self.announce();
         }
     }
 
@@ -690,11 +677,11 @@ impl<R: Runtime> EmbeddedServerManager<R> {
         match self.hosted.stop(server_id) {
             StopPlan::Nothing => false,
             StopPlan::StoppedWaiting => {
-                self.announce(server_id);
+                self.announce();
                 false
             }
             StopPlan::StartWillStop => {
-                self.announce(server_id);
+                self.announce();
                 true
             }
             StopPlan::StopThere(agent_id) => {
@@ -717,7 +704,7 @@ impl<R: Runtime> EmbeddedServerManager<R> {
             tracing::warn!("Agent {agent_id} has not confirmed the stop of server {server_id}");
             self.ensure_status_poller();
         }
-        self.announce(server_id);
+        self.announce();
     }
 
     /// Stop a running server by ID (kept listed as `Stopped`).
@@ -729,10 +716,10 @@ impl<R: Runtime> EmbeddedServerManager<R> {
         if self.stop_hosted(server_id) {
             return Ok(());
         }
-        let mut services = self.lock_services()?;
-        if let Some(service) = services.get_mut(server_id) {
+        if let Some(service) = self.lock_services()?.get_mut(server_id) {
             service.shutdown();
         }
+        self.announce();
         Ok(())
     }
 
@@ -838,25 +825,33 @@ impl<R: Runtime> EmbeddedServerManager<R> {
 
     /// Show on the rows what a poll tick changed.
     fn show_changes(&self, changes: Vec<Change>) {
+        if changes.is_empty() {
+            return;
+        }
         for change in changes {
-            match change {
-                Change::Sampled { id, news } => {
-                    if news {
-                        self.announce(&id);
-                    }
-                }
-                Change::Presence(id) | Change::Stopped(id) => self.announce(&id),
-                Change::Gone {
-                    id,
-                    agent_id,
-                    unanswered: true,
-                } => {
-                    let reason = unanswered_start_failed(&self.app_handle, &agent_id);
-                    let _ = self.refuse(&id, reason);
-                }
-                Change::Gone { id, .. } => self.announce(&id),
+            if let Change::Gone {
+                id,
+                agent_id,
+                unanswered: true,
+            } = change
+            {
+                let reason = unanswered_start_failed(&self.app_handle, &agent_id);
+                self.lock_refusals().insert(id, reason);
             }
         }
+        self.announce();
+    }
+
+    /// Where the desktop-hosted server `server_id` listens.
+    #[cfg(test)]
+    pub(super) fn local_addr_of(&self, server_id: &str) -> Option<std::net::SocketAddr> {
+        self.lock_services().ok()?.get(server_id)?.local_addr()
+    }
+
+    /// Whether a server listens on this computer, so its traffic is live.
+    fn any_running_here(&self) -> bool {
+        self.lock_services()
+            .is_ok_and(|services| services.values().any(|service| service.is_live()))
     }
 
     // ─── Private helpers ──────────────────────────────────────────────────────
@@ -1158,8 +1153,8 @@ fn synth_state_from_service_status(server_id: &str, status: &ServiceStatus) -> S
 /// The embedded-server side of the shared agent status poller (DUP-020).
 ///
 /// Asks the agents what they host, sends the stops they owe, and lets the
-/// manager start what waited. [`SERVER_STATUS_EVENT`] is re-emitted only when a
-/// row changes, not every tick.
+/// manager start what waited, and publishes live traffic every tick while a
+/// server runs anywhere.
 struct EmbeddedServerPoll<R: Runtime> {
     hosted: HostedServices<HostedServers>,
     app: AppHandle<R>,
@@ -1178,17 +1173,23 @@ impl<R: Runtime> AgentStatusPollDelegate for EmbeddedServerPoll<R> {
     }
 
     fn snapshot_targets(&self) -> (Vec<Self::Target>, bool) {
-        (self.hosted.targets(), self.hosted.any())
+        let here = self
+            .app
+            .try_state::<Arc<EmbeddedServerManager<R>>>()
+            .is_some_and(|manager| manager.any_running_here());
+        (self.hosted.targets(), here || self.hosted.any())
     }
 
     fn on_tick(&self) {
+        // The traffic of this computer's servers; an unchanged view sends nothing.
+        crate::embedded_servers::projection::publish_services(&self.app);
         if !self.hosted.needs_tick() {
             return;
         }
         let app = self.app.clone();
         // A start blocks on the agent.
         tokio::task::spawn_blocking(move || {
-            if let Some(manager) = app.try_state::<EmbeddedServerManager<R>>() {
+            if let Some(manager) = app.try_state::<Arc<EmbeddedServerManager<R>>>() {
                 manager.start_ready();
             }
         });
@@ -1200,19 +1201,14 @@ impl<R: Runtime> AgentStatusPollDelegate for EmbeddedServerPoll<R> {
 
     fn apply(&self, samples: Vec<Self::Sample>) {
         let changes = self.hosted.apply(samples, Instant::now());
-        if let Some(manager) = self.app.try_state::<EmbeddedServerManager<R>>() {
+        if let Some(manager) = self.app.try_state::<Arc<EmbeddedServerManager<R>>>() {
             manager.show_changes(changes);
         }
     }
 }
 
-/// Bridge a server's core [`EventChannel`](termihub_core::service::EventChannel)
-/// to the desktop's Tauri emitter.
-///
-/// Forwards each `status` [`ServiceEvent`](termihub_core::service::ServiceEvent)
-/// as a [`SERVER_STATUS_EVENT`] Tauri event so the frontend receives the same
-/// `ServerState` payload as before the lift. The task ends when the service is
-/// dropped (channel closed).
+/// Publish what the rows show whenever the desktop-hosted service behind
+/// `events` changes its status, e.g. when its listener ends with an error.
 fn spawn_event_bridge<R: Runtime>(
     app: AppHandle<R>,
     events: termihub_core::service::ServiceEventReceiver,
@@ -1221,7 +1217,7 @@ fn spawn_event_bridge<R: Runtime>(
     tauri::async_runtime::spawn(async move {
         drain_broadcast(events, move |event| {
             if event.kind == STATUS_EVENT_KIND {
-                let _ = app.emit(SERVER_STATUS_EVENT, event.payload);
+                crate::embedded_servers::projection::publish_services(&app);
             }
         })
         .await;
