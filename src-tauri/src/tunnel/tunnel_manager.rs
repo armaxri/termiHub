@@ -1004,7 +1004,11 @@ impl<R: Runtime> TunnelManager<R> {
             .try_state::<ConnectionManager>()
             .and_then(|connections| connections.saved_connection_name(&config.ssh_connection_id))
             .unwrap_or_else(|| "The SSH server".to_string());
-        start_reason(&config.tunnel_type, &server, error)
+        // Behind a jump host it may be that one that refused.
+        let direct = self
+            .resolve_ssh_config(&config.ssh_connection_id)
+            .is_ok_and(|ssh| ssh.proxy_jump.is_empty());
+        start_reason(&config.tunnel_type, &server, direct, error)
     }
 
     /// End a start: `true` when it counts, `false` when a stop was pressed
@@ -2180,19 +2184,22 @@ fn reconnecting_reason(attempt: u32) -> String {
 
 /// Why a tunnel did not start on this computer: what is taken or who refused, in
 /// words for its row. Pure but for the look at the port.
-fn start_reason(tunnel: &TunnelType, server: &str, error: &TerminalError) -> Reason {
+fn start_reason(tunnel: &TunnelType, server: &str, direct: bool, error: &TerminalError) -> Reason {
     let listens_on = match tunnel {
         TunnelType::Local(c) => Some((&c.local_host, c.local_port)),
         TunnelType::Dynamic(c) => Some((&c.local_host, c.local_port)),
         TunnelType::Remote(_) => None,
     };
     match error {
-        TerminalError::SshError(what) if is_refused(what) => Reason::new(
+        TerminalError::SshError(what) if direct && is_refused(what) => Reason::new(
             format!("{server} refused the connection. Is its SSH server running?"),
             Some(ServiceCause::Connection),
         ),
         TerminalError::SshError(what) => Reason::new(
-            format!("Could not connect to {server}: {what}"),
+            format!(
+                "Could not connect to {server}: {}",
+                what.strip_prefix("Connection failed: ").unwrap_or(what)
+            ),
             Some(ServiceCause::Connection),
         ),
         error => match listens_on {
@@ -3053,7 +3060,7 @@ mod tests {
         let port = taken.local_addr().unwrap().port();
         let bind = TerminalError::TunnelError("Failed to start local forwarder: x".into());
         assert_eq!(
-            start_reason(&local_on(port), "Build Box", &bind),
+            start_reason(&local_on(port), "Build Box", true, &bind),
             Reason::new(
                 format!("Port {port} is already in use on this computer."),
                 Some(ServiceCause::PortInUse)
@@ -3063,16 +3070,22 @@ mod tests {
         for code in [61, 111, 10061] {
             let refused = TerminalError::SshError(format!("Verbindung (os error {code})"));
             assert_eq!(
-                start_reason(&local_on(port), "Build Box", &refused),
+                start_reason(&local_on(port), "Build Box", true, &refused),
                 Reason::new(
                     "Build Box refused the connection. Is its SSH server running?",
                     Some(ServiceCause::Connection)
                 )
             );
         }
-        let other = TerminalError::SshError("no route to host".into());
+        // Who refused behind a jump host is not known.
+        let refused = TerminalError::SshError("Connection refused (os error 61)".into());
         assert_eq!(
-            start_reason(&local_on(port), "Build Box", &other),
+            start_reason(&local_on(port), "Build Box", false, &refused).text,
+            "Could not connect to Build Box: Connection refused (os error 61)"
+        );
+        let other = TerminalError::SshError("Connection failed: no route to host".into());
+        assert_eq!(
+            start_reason(&local_on(port), "Build Box", true, &other),
             Reason::new(
                 "Could not connect to Build Box: no route to host",
                 Some(ServiceCause::Connection)
@@ -3081,7 +3094,7 @@ mod tests {
         // Nothing is taken: what was said, without the prefix.
         drop(taken);
         assert_eq!(
-            start_reason(&local_on(port), "Build Box", &bind),
+            start_reason(&local_on(port), "Build Box", true, &bind),
             "Failed to start local forwarder: x".into()
         );
     }

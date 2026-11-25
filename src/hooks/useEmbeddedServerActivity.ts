@@ -41,7 +41,9 @@ export const EMPTY_ACTIVITY: ActivityView = {
 export function mergeActivity(prev: ActivityView, next: ServerActivity): ActivityView {
   const reset = next.epoch !== prev.epoch || next.latestSeq < prev.cursor;
   const base = reset ? [] : prev.entries;
-  const merged = [...base, ...next.entries];
+  // Two reads under way at once have the same cursor.
+  const fresh = reset ? next.entries : next.entries.filter((e) => e.seq > prev.cursor);
+  const merged = [...base, ...fresh];
   const capped = merged.length > next.capacity ? merged.slice(-next.capacity) : merged;
   return {
     entries: capped,

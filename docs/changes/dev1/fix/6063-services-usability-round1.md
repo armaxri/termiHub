@@ -27,3 +27,4 @@
 - The Activity of a running server no longer says that it appears once the server has run (#6063).
 - A row's tooltip in a sidebar no longer covers the next rows and keeps their tooltips from opening; it
   opens beside the row (#6063).
+- A file server's Activity lists a request once, also when two readings of it overlap (#6063).

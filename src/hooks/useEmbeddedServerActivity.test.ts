@@ -45,6 +45,12 @@ describe("mergeActivity", () => {
     expect(second.cursor).toBe(3);
   });
 
+  it("takes a request once when two reads overlapped", () => {
+    const first = mergeActivity(EMPTY_ACTIVITY, read([1, 2]));
+    const second = mergeActivity(first, read([1, 2, 3]));
+    expect(second.entries.map((e) => e.seq)).toEqual([1, 2, 3]);
+  });
+
   it("keeps an empty delta as a no-op on the buffer", () => {
     const first = mergeActivity(EMPTY_ACTIVITY, read([1, 2]));
     const next = mergeActivity(first, { ...read([]), latestSeq: 2 });
