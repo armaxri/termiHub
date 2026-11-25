@@ -104,3 +104,25 @@ export function Tooltip({
     </RadixTooltip.Root>
   );
 }
+
+/** Props for {@link TooltipLines}. */
+export interface TooltipLinesProps {
+  /** The lead sentence first, then the details. */
+  lines: readonly string[];
+}
+
+/**
+ * Multi-line tooltip content: the first line is the lead, the rest explain it.
+ * For help that is too long for one run of text.
+ */
+export function TooltipLines({ lines }: TooltipLinesProps): React.ReactElement {
+  return (
+    <span className="ui-tooltip__lines">
+      {lines.map((line) => (
+        <span className="ui-tooltip__line" key={line}>
+          {line}
+        </span>
+      ))}
+    </span>
+  );
+}

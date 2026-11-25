@@ -543,7 +543,7 @@ export function Terminal({
         // stream (#5990): live output before it is on screen already.
         let replayEnd = NO_REPLAY;
         // Set by a resumed session's repaint, see `ResumedRepaint`.
-        let typedDuringRepaint: string[] = [];
+        let takeTyped: () => string[] = () => [];
         let beforeFirstOutput: (() => void) | null = null;
         // Output of a session being repainted is collected until the tab
         // subscribes below (or is torn down, or fails to set up).
@@ -947,11 +947,11 @@ export function Terminal({
             xterm,
             sessionId,
             () => commandMarksRef.current?.reset(),
-            isCanceled
+            signal
           );
           resumedAgentSession = repaint.resumed;
           replayEnd = repaint.replayEnd;
-          typedDuringRepaint = repaint.typed;
+          takeTyped = repaint.takeTyped;
           beforeFirstOutput = repaint.beforeFirstOutput;
         }
         if (isCanceled()) return;
@@ -1044,6 +1044,9 @@ export function Terminal({
         // (`null` while not holding); bounds the hold, see flushOutput.
         let imageHoldSince: number | null = null;
 
+        // Whether a repaint waits for xterm to take what was written before it.
+        let repaintLanding = false;
+
         const flushOutput = () => {
           if (rafId !== null) {
             cancelAnimationFrame(rafId);
@@ -1053,7 +1056,8 @@ export function Terminal({
             clearTimeout(flushTimer);
             flushTimer = null;
           }
-          if (!outputFlow.hasStaged) return;
+          // A repaint is about to replace the screen: see `offWindowReclaim`.
+          if (!outputFlow.hasStaged || repaintLanding) return;
 
           // Hold the output (bounded) while the inline-image addon is still
           // loading: bytes parsed before it attaches lose their images (#4017).
@@ -1233,6 +1237,8 @@ export function Terminal({
         /** End the repaint in progress, if any, and show what waited for it. */
         const endRepaint = () => {
           repaintRun += 1;
+          repaintLanding = false;
+          if (outputFlow.hasStaged) scheduleFlush();
           const held = outputDuringRepaint ?? [];
           outputDuringRepaint = null;
           for (const { data, position } of held) receiveOutput(data, position);
@@ -1333,7 +1339,7 @@ export function Terminal({
           }
         };
         const onDataDisposable = xterm.onData((data) => sendTyped(data, userInput.take()));
-        typedDuringRepaint.forEach((data) => sendTyped(data));
+        takeTyped().forEach((data) => sendTyped(data));
 
         // Send resize events after fit — deduplicated to avoid SIGWINCH storms.
         // Multiple fit() calls from TerminalSlot (sync+RAF), ResizeObserver,
@@ -1387,17 +1393,21 @@ export function Terminal({
             .then(async ({ data: buffer, ...end }) => {
               if (run !== repaintRun || isCanceled()) return;
               if (sessionIdRef.current !== sid || buffer.length === 0) return;
-              // What is still on its way to the screen is in the repaint too:
-              // let it land before the reset instead of after it.
-              flushOutput();
+              // All received before the repaint began is in it too, so none of it
+              // may reach the screen after the reset (#6003): what xterm has
+              // lands first, what it does not have yet (staged, in a parser) is dropped.
+              repaintLanding = true;
               await new Promise<void>((resolve) => xterm.write("", resolve));
               if (run !== repaintRun || isCanceled()) return;
               // The raw ring buffer carries the OSC 133 marks: reset the tracker
               // with the terminal so they are rebuilt, not duplicated (#3420).
               commandMarksRef.current?.reset();
               xterm.reset();
+              outputFlow.discardStaged();
+              discardSandboxSession(sid);
               xterm.write(buffer);
               replayEnd = end;
+              beforeFirstOutput = null;
             })
             .catch((err) =>
               frontendLog(

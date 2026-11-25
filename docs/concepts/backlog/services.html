@@ -1,0 +1,4423 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Services (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+    <style>
+      /* Concept-only helpers built from theme vars (not app classes). */
+      .svc-app {
+        width: 800px;
+        height: 600px;
+        position: relative;
+        margin: 0 0 10px;
+      }
+      .svc-app[data-theme="light"] {
+        --bg-primary: #ffffff;
+        --bg-secondary: #f3f3f3;
+        --bg-tertiary: #e8e8e8;
+        --bg-hover: #e8e8e8;
+        --bg-active: #d6d6d6;
+        --activity-bar-bg: #2c2c2c;
+        --activity-bar-active: #ffffff;
+        --activity-bar-inactive: #858585;
+        --activity-bar-indicator: #ffffff;
+        --sidebar-bg: #f3f3f3;
+        --tab-bg: #ececec;
+        --tab-active-bg: #ffffff;
+        --tab-border: #e1e4e8;
+        --text-primary: #383a42;
+        --text-secondary: #545b64;
+        --text-disabled: #a0a0a0;
+        --text-accent: #0366d6;
+        --border-primary: #d1d5da;
+        --border-secondary: #e1e4e8;
+        --accent-color: #0366d6;
+        --state-connected: #22863a;
+        --state-connecting: #b08800;
+        --state-disconnected: #cb2431;
+        --color-success: #22863a;
+        --color-warning: #856900;
+        --color-error: #cb2431;
+        color: var(--text-primary);
+      }
+      .svc-theme {
+        color: var(--text-secondary);
+        font-size: 11px;
+        margin: 10px 0 4px;
+      }
+      .svc-sidebar {
+        position: relative;
+      }
+      .svc-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 8px;
+        border-bottom: 1px solid var(--border-secondary);
+      }
+      .svc-tool {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 3px 8px;
+        border-radius: var(--radius-sm);
+        font-size: 12px;
+      }
+      .svc-tool--primary {
+        background: var(--bg-hover);
+      }
+      .svc-search {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin: 6px 8px 4px;
+        padding: 4px 8px;
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-md);
+        color: var(--text-secondary);
+        font-size: 12px;
+      }
+      .svc-group {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 8px 3px;
+        font-size: 11px;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+      }
+      .svc-group__count {
+        margin-left: auto;
+        text-transform: none;
+        letter-spacing: 0;
+      }
+      .svc-row {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        padding: 5px 8px 6px 14px;
+      }
+      .svc-row--sel {
+        background: var(--bg-hover);
+      }
+      .svc-row__head {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .svc-row__name {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 13px;
+      }
+      .svc-row__desc {
+        color: var(--text-secondary);
+        font-size: 11px;
+        padding-left: 13px;
+      }
+      .svc-row__marker {
+        color: var(--color-warning);
+        font-size: 11px;
+      }
+      .svc-row__addr {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding-left: 13px;
+        font-size: 11px;
+      }
+      .svc-row__addr code {
+        color: var(--text-accent);
+        font-family: var(--font-mono);
+      }
+      .svc-row__err {
+        padding-left: 13px;
+        color: var(--color-error);
+        font-size: 11px;
+        line-height: 1.35;
+      }
+      .svc-btn {
+        width: 20px;
+        height: 20px;
+        display: inline-grid;
+        place-items: center;
+        color: var(--text-secondary);
+        border-radius: var(--radius-sm);
+      }
+      .svc-btn--primary {
+        color: var(--text-primary);
+      }
+      .svc-dot--running {
+        background: var(--state-connected);
+      }
+      .svc-dot--stopped {
+        background: var(--text-secondary);
+      }
+      .svc-dot--error {
+        background: var(--state-disconnected);
+      }
+      .svc-dot--busy {
+        background: var(--state-connecting);
+      }
+      .svc-menu {
+        position: absolute;
+        top: 66px;
+        left: 8px;
+        width: 268px;
+        z-index: 2;
+        padding: 4px 0;
+      }
+      .svc-menu--more {
+        left: auto;
+        right: 8px;
+        width: 200px;
+      }
+      .svc-menu__label {
+        padding: 6px 12px 2px;
+        font-size: 11px;
+        color: var(--text-secondary);
+      }
+      .svc-menu__item {
+        display: flex;
+        gap: 10px;
+        padding: 6px 12px;
+        font-size: 13px;
+        align-items: flex-start;
+      }
+      .svc-menu__item small,
+      .svc-radio small,
+      .svc-field small {
+        display: block;
+        color: var(--text-secondary);
+        font-size: 11px;
+      }
+      .svc-menu__item .li {
+        margin-top: 3px;
+        color: var(--text-secondary);
+      }
+      .svc-main {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        background: var(--bg-primary);
+      }
+      .svc-form {
+        flex: 1;
+        overflow: hidden;
+        padding: 12px 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 9px;
+      }
+      .svc-app h4 {
+        margin: 0;
+        font-size: 15px;
+        text-transform: none;
+        letter-spacing: 0;
+        color: var(--text-primary);
+      }
+      .svc-form .svc-sub {
+        color: var(--text-secondary);
+        font-size: 12px;
+        margin: 0;
+      }
+      .svc-cols {
+        display: flex;
+        gap: 10px;
+      }
+      .svc-field {
+        flex: 1;
+        min-width: 0;
+        font-size: 12px;
+      }
+      .svc-field label {
+        color: var(--text-secondary);
+        display: block;
+        margin-bottom: 2px;
+      }
+      .svc-input {
+        border: 1px solid var(--border-primary);
+        background: var(--bg-secondary);
+        border-radius: var(--radius-sm);
+        padding: 4px 8px;
+        font-size: 12px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .svc-radio {
+        display: flex;
+        gap: 8px;
+        font-size: 12px;
+        padding: 3px 0;
+        align-items: flex-start;
+      }
+      .svc-radio__mark {
+        width: 12px;
+        height: 12px;
+        border: 1px solid var(--text-secondary);
+        border-radius: 50%;
+        margin-top: 3px;
+        flex: 0 0 12px;
+      }
+      .svc-radio--on .svc-radio__mark {
+        border: 4px solid var(--accent-color);
+      }
+      .svc-check {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        font-size: 12px;
+      }
+      .svc-check__box {
+        width: 12px;
+        height: 12px;
+        border: 1px solid var(--text-secondary);
+        border-radius: 3px;
+      }
+      .svc-check__box--on {
+        background: var(--accent-color);
+        border-color: var(--accent-color);
+      }
+      .svc-path {
+        border: 1px solid var(--border-primary);
+        background: var(--bg-secondary);
+        border-radius: var(--radius-md);
+        padding: 7px 10px;
+        font-size: 12px;
+      }
+      .svc-path b {
+        color: var(--text-primary);
+      }
+      .svc-path code {
+        font-family: var(--font-mono);
+        color: var(--text-accent);
+      }
+      .svc-warn {
+        border: 1px solid var(--color-warning);
+        color: var(--text-primary);
+        border-radius: var(--radius-md);
+        padding: 6px 10px;
+        font-size: 12px;
+      }
+      .svc-err {
+        border: 1px solid var(--color-error);
+        border-radius: var(--radius-md);
+        padding: 6px 10px;
+        font-size: 12px;
+      }
+      .svc-foot {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+        padding: 8px 18px;
+        border-top: 1px solid var(--border-secondary);
+      }
+      .svc-footbtn {
+        display: inline-flex;
+        align-items: center;
+        padding: 4px 12px;
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-sm);
+        font-size: 12px;
+      }
+      .svc-footbtn.btn--primary {
+        background: var(--accent-color);
+        color: #fff;
+        border-color: var(--accent-color);
+      }
+      .svc-term {
+        flex: 1;
+        padding: 10px 14px;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      .svc-log {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        line-height: 1.6;
+      }
+      .svc-log .bad {
+        color: var(--color-error);
+      }
+      .svc-log .dim {
+        color: var(--text-secondary);
+      }
+      .svc-tabs {
+        display: flex;
+        gap: 14px;
+        font-size: 12px;
+        border-bottom: 1px solid var(--border-secondary);
+      }
+      .svc-tabs span {
+        padding: 3px 0;
+        color: var(--text-secondary);
+      }
+      .svc-tabs .on {
+        color: var(--text-primary);
+        border-bottom: 2px solid var(--accent-color);
+      }
+      .svc-dialog {
+        position: absolute;
+        left: 190px;
+        top: 150px;
+        width: 430px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-overlay);
+        z-index: 3;
+        padding: 14px 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 9px;
+        font-size: 12px;
+      }
+      .svc-dialog ul {
+        margin: 0;
+        padding-left: 18px;
+      }
+      .inv table {
+        table-layout: fixed;
+        width: 100%;
+      }
+      .concept .inv code {
+        white-space: normal;
+        word-break: break-all;
+      }
+      .concept td:first-child {
+        white-space: nowrap;
+      }
+      .concept .inv td:first-child {
+        white-space: normal;
+      }
+      .inv td {
+        font-size: 12px;
+        vertical-align: top;
+        overflow-wrap: anywhere;
+      }
+      .inv th:first-child {
+        width: 13%;
+      }
+      .svc-footbtn.svc-danger {
+        background: var(--color-error);
+        border-color: var(--color-error);
+      }
+      .inv td:first-child {
+        width: 13%;
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body class="mockup-doc">
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-network" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-folder-open" viewBox="0 0 24 24">
+        <path
+          d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
+        />
+      </symbol>
+      <symbol id="i-history" viewBox="0 0 24 24">
+        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+        <path d="M3 3v5h5" />
+        <path d="M12 7v5l4 2" />
+      </symbol>
+      <symbol id="i-layout-grid" viewBox="0 0 24 24">
+        <rect width="7" height="7" x="3" y="3" rx="1" />
+        <rect width="7" height="7" x="14" y="3" rx="1" />
+        <rect width="7" height="7" x="14" y="14" rx="1" />
+        <rect width="7" height="7" x="3" y="14" rx="1" />
+      </symbol>
+      <symbol id="i-zap" viewBox="0 0 24 24">
+        <path
+          d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"
+        />
+      </symbol>
+      <symbol id="i-server" viewBox="0 0 24 24">
+        <rect width="20" height="8" x="2" y="2" rx="2" ry="2" />
+        <rect width="20" height="8" x="2" y="14" rx="2" ry="2" />
+        <line x1="6" x2="6.01" y1="6" y2="6" />
+        <line x1="6" x2="6.01" y1="18" y2="18" />
+      </symbol>
+      <symbol id="i-stethoscope" viewBox="0 0 24 24">
+        <path d="M11 2v2" />
+        <path d="M5 2v2" />
+        <path d="M5 3H4a2 2 0 0 0-2 2v4a6 6 0 0 0 12 0V5a2 2 0 0 0-2-2h-1" />
+        <path d="M8 15a6 6 0 0 0 12 0v-3" />
+        <circle cx="20" cy="10" r="2" />
+      </symbol>
+      <symbol id="i-puzzle" viewBox="0 0 24 24">
+        <path
+          d="M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z"
+        />
+      </symbol>
+      <symbol id="i-file-text" viewBox="0 0 24 24">
+        <path
+          d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"
+        />
+        <path d="M14 2v5a1 1 0 0 0 1 1h5" />
+        <path d="M10 9H8" />
+        <path d="M16 13H8" />
+        <path d="M16 17H8" />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path
+          d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"
+        />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24">
+        <path d="M5 12h14" />
+        <path d="M12 5v14" />
+      </symbol>
+      <symbol id="i-play" viewBox="0 0 24 24">
+        <path
+          d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"
+        />
+      </symbol>
+      <symbol id="i-square" viewBox="0 0 24 24">
+        <rect width="18" height="18" x="3" y="3" rx="2" />
+      </symbol>
+      <symbol id="i-pencil" viewBox="0 0 24 24">
+        <path
+          d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"
+        />
+        <path d="m15 5 4 4" />
+      </symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24">
+        <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+        <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+      </symbol>
+      <symbol id="i-ellipsis" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="1" />
+        <circle cx="19" cy="12" r="1" />
+        <circle cx="5" cy="12" r="1" />
+      </symbol>
+      <symbol id="i-search" viewBox="0 0 24 24">
+        <path d="m21 21-4.34-4.34" />
+        <circle cx="11" cy="11" r="8" />
+      </symbol>
+      <symbol id="i-activity" viewBox="0 0 24 24">
+        <path
+          d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"
+        />
+      </symbol>
+      <symbol id="i-globe" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" />
+        <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+        <path d="M2 12h20" />
+      </symbol>
+      <symbol id="i-triangle-alert" viewBox="0 0 24 24">
+        <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
+        <path d="M12 9v4" />
+        <path d="M12 17h.01" />
+      </symbol>
+      <symbol id="i-monitor" viewBox="0 0 24 24">
+        <rect width="20" height="14" x="2" y="3" rx="2" />
+        <line x1="8" x2="16" y1="21" y2="21" />
+        <line x1="12" x2="12" y1="17" y2="21" />
+      </symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24">
+        <path
+          d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
+        />
+      </symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24">
+        <path d="M12 3v12" />
+        <path d="m17 8-5-5-5 5" />
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      </symbol>
+      <symbol id="i-cpu" viewBox="0 0 24 24">
+        <path d="M12 20v2" />
+        <path d="M12 2v2" />
+        <path d="M17 20v2" />
+        <path d="M17 2v2" />
+        <path d="M2 12h2" />
+        <path d="M2 17h2" />
+        <path d="M2 7h2" />
+        <path d="M20 12h2" />
+        <path d="M20 17h2" />
+        <path d="M20 7h2" />
+        <path d="M7 20v2" />
+        <path d="M7 2v2" />
+        <rect x="4" y="4" width="16" height="16" rx="2" />
+        <rect x="8" y="8" width="8" height="8" rx="1" />
+      </symbol>
+      <symbol id="i-arrow-left-right" viewBox="0 0 24 24">
+        <path d="M8 3 4 7l4 4" />
+        <path d="M4 7h16" />
+        <path d="m16 21 4-4-4-4" />
+        <path d="M20 17H4" />
+      </symbol>
+      <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></symbol>
+      <symbol id="i-rotate-cw" viewBox="0 0 24 24">
+        <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+        <path d="M21 3v5h-5" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </symbol>
+      <symbol id="i-link" viewBox="0 0 24 24">
+        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+      </symbol>
+      <symbol id="i-log-in" viewBox="0 0 24 24">
+        <path d="m10 17 5-5-5-5" />
+        <path d="M15 12H3" />
+        <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
+      </symbol>
+      <symbol id="i-log-out" viewBox="0 0 24 24">
+        <path d="m16 17 5-5-5-5" />
+        <path d="M21 12H9" />
+        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+      </symbol>
+    </svg>
+    <div class="concept">
+      <header class="concept-header">
+        <h1>Services: one view for SSH tunnels and file servers</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Backlog · not implemented</span
+          ><span
+            >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/6028">#6028</a></span
+          ><span><code>docs/concepts/backlog/services.html</code></span>
+        </div>
+      </header>
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#0-summary">0. Summary</a></li>
+          <li><a href="#1-inventory">1. Inventory (from code)</a></li>
+          <li><a href="#2-usability">2. Usability today</a></li>
+          <li><a href="#3-design">3. The merged design</a></li>
+          <li><a href="#4-tasks">4. Everyday tasks (mockups)</a></li>
+          <li><a href="#5-scope">5. What else belongs here</a></li>
+          <li><a href="#6-migration">6. Migration</a></li>
+          <li><a href="#7-slices">7. Slice plan</a></li>
+          <li><a href="#8-questions">8. Open questions for the maintainer</a></li>
+          <li><a href="#status">Implementation Status</a></li>
+          <li><a href="#sync">Sync Ledger</a></li>
+        </ol>
+      </nav>
+      <section>
+        <h2 id="0-summary">0. Summary <a class="anchor" href="#0-summary">#</a></h2>
+        <ul>
+          <li>
+            termiHub has two lists of things that run and listen. <b>SSH tunnels</b> (local, remote,
+            dynamic) are edited in a tab, restart themselves and are shared by all windows.
+            <b>Services</b> (HTTP, FTP, TFTP file servers) are edited in a dialog, have an access
+            log and live in one window. They share a row and nothing else: two activity bar entries,
+            two sets of states, actions, words, confirmations and logs.
+          </li>
+          <li>
+            The maintainer decided (2026-11-25) to merge them into one <b>Services</b>: one sidebar,
+            one New menu, one list, one editor style, one status and log view.
+          </li>
+          <li>
+            Proposal: users pick <b>what they want to do</b> ("Reach something on a server", "Give
+            files to a device"), the technical name stands beside it. A row shows name, state and,
+            while it runs, the address to use. Both kinds get the same states, actions in one order,
+            an editor tab with Settings and Activity, Undo, and a log that answers "why is it down".
+          </li>
+          <li>
+            Stored data stays in its two files. One optional field is added: where a file server
+            runs, which is lost at every restart today (F-1).
+          </li>
+          <li>
+            14 slices. Slices 1 and 2 fix wrong behavior found while taking stock and are useful
+            even without the merge.
+          </li>
+        </ul>
+      </section>
+      <section>
+        <h2 id="1-inventory">
+          1. Inventory (from code) <a class="anchor" href="#1-inventory">#</a>
+        </h2>
+        <p>
+          One table for everything both do today. It cites <code>develop</code> at 6dbd7e4dd plus
+          <a href="https://github.com/armaxri/termiHub/issues/6027">#6027</a> (PR
+          <a href="https://github.com/armaxri/termiHub/issues/6035">#6035</a>, not merged when this
+          was written). "Out" means it does not exist today and this concept does not add it.
+        </p>
+        <div class="table-wrap inv">
+          <table>
+            <thead>
+              <tr>
+                <th></th>
+                <th>Tunnel today</th>
+                <th>File server today</th>
+                <th>Merged</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><b style="text-transform: uppercase; font-size: 11px">Find and open</b></td>
+                <td></td>
+                <td></td>
+                <td></td>
+              </tr>
+              <tr>
+                <td>Activity bar</td>
+                <td>
+                  "SSH tunnels", ArrowLeftRight, view <code>tunnels</code>,
+                  <code>activity-bar-ssh-tunnels</code>
+                </td>
+                <td>
+                  "Services", Server, view <code>services</code>, <code>activity-bar-services</code>
+                </td>
+                <td>
+                  One entry "Services", Server icon, view <code>services</code>, at today's place of
+                  the two. <code>activity-bar-services</code> stays.
+                </td>
+              </tr>
+              <tr>
+                <td>Sidebar title and toolbar</td>
+                <td>"SSH tunnels"; "New tunnel"</td>
+                <td>"Services"; "New service"</td>
+                <td>
+                  "Services"; "New service ▾" (six plain-word entries) and "…" (Stop all services…,
+                  Open connections)
+                </td>
+              </tr>
+              <tr>
+                <td>Empty state</td>
+                <td>"No SSH tunnels configured. Click + New tunnel to create one."</td>
+                <td>"No services configured. Click + New service to add one."</td>
+                <td>
+                  One sentence on what services are for, then the six entries of the New menu as
+                  buttons
+                </td>
+              </tr>
+              <tr>
+                <td>Search</td>
+                <td>none</td>
+                <td>none</td>
+                <td>
+                  Search field (name, description, connection, address, folder), as in Automations
+                </td>
+              </tr>
+              <tr>
+                <td>Order</td>
+                <td>saved order; a chained hop nests under its parent</td>
+                <td>saved order</td>
+                <td>Two groups by type, saved order inside; nesting kept; groups collapse</td>
+              </tr>
+              <tr>
+                <td>Status bar</td>
+                <td>nothing</td>
+                <td>
+                  "N services running", counts only <code>running</code>; click opens Services
+                  (closes it when open)
+                </td>
+                <td>Counts both; a second item "N need attention" on error. Click always opens</td>
+              </tr>
+              <tr>
+                <td>Command palette</td>
+                <td>none</td>
+                <td>none</td>
+                <td>
+                  "New service: …" (six), "Start X", "Stop X", "Open activity of X", "Stop all
+                  services". Aliases: tunnel, server, forward, port, proxy, share, SOCKS, HTTP, FTP,
+                  TFTP
+                </td>
+              </tr>
+              <tr>
+                <td>Keyboard shortcuts</td>
+                <td>none of its own</td>
+                <td>none of its own</td>
+                <td>
+                  Two unbound actions (<code>open-services</code>, <code>stop-all-services</code>).
+                  Nothing to migrate
+                </td>
+              </tr>
+              <tr>
+                <td>Deep link, app menu, command line</td>
+                <td>none (spawn requests open sessions only)</td>
+                <td>none</td>
+                <td>none (out)</td>
+              </tr>
+              <tr>
+                <td>File browser</td>
+                <td>n/a</td>
+                <td>
+                  Local folder menu: "Share via HTTP / FTP / TFTP server" (always 127.0.0.1,
+                  writable, saves a new entry, failure is silent)
+                </td>
+                <td>Same three entries, "…" dialog with "who" and "what" (slice 12)</td>
+              </tr>
+              <tr>
+                <td>Connection editor</td>
+                <td>
+                  Port Forwarding section: list, Add, Edit, Remove, Start with connection, "same
+                  tunnels" hint
+                </td>
+                <td>n/a</td>
+                <td>Kept as a view of the same entries, same rows and words</td>
+              </tr>
+              <tr>
+                <td>Workspaces, last session</td>
+                <td>not stored</td>
+                <td>not stored</td>
+                <td>not stored (out)</td>
+              </tr>
+              <tr>
+                <td><b style="text-transform: uppercase; font-size: 11px">Row</b></td>
+                <td></td>
+                <td></td>
+                <td></td>
+              </tr>
+              <tr>
+                <td>Row content</td>
+                <td>
+                  dot, name, description, tooltip (type and ports, via, host, traffic, reach, pair)
+                </td>
+                <td>
+                  dot, name, description, tooltip (protocol and URL, folder, read only, agent,
+                  traffic)
+                </td>
+                <td>
+                  Same row for both. Running rows add the address with Copy (question 1). Tooltip:
+                  what it does in plain words, full path, host, traffic
+                </td>
+              </tr>
+              <tr>
+                <td>Primary button</td>
+                <td>Start / Stop / Retry; none when the SSH connection is gone</td>
+                <td>Start / Stop (an errored one shows Start)</td>
+                <td>Start / Stop / Retry; "Choose connection" when it is gone</td>
+              </tr>
+              <tr>
+                <td>Other buttons, in order</td>
+                <td>Reconnect (running), View last error (a toast), Edit, Duplicate, Delete</td>
+                <td>Show/Hide activity, Edit, Duplicate, Delete</td>
+                <td>
+                  Activity, Edit, "…". Menu: Copy address, Open in browser (HTTP), Reconnect
+                  (tunnel, running), Duplicate, Delete. Right-click and "…" open the same menu
+                </td>
+              </tr>
+              <tr>
+                <td>Context menu</td>
+                <td>none</td>
+                <td>
+                  Start/Stop, Edit…, Duplicate, Show activity, Copy URL, Open in browser, Delete
+                </td>
+                <td>For both, order above</td>
+              </tr>
+              <tr>
+                <td>Double-click, Enter</td>
+                <td>opens the editor</td>
+                <td>opens the editor</td>
+                <td>opens the editor on Settings</td>
+              </tr>
+              <tr>
+                <td>Keyboard</td>
+                <td>tree, arrows, Home/End, type-ahead; Enter edits; buttons by Tab</td>
+                <td>same</td>
+                <td>same, plus Space starts or stops the focused row</td>
+              </tr>
+              <tr>
+                <td>Inline details</td>
+                <td>
+                  error, reconnect reason, agent reach warning, deleted connection, chain degraded /
+                  redundant
+                </td>
+                <td>error; the activity panel inside the row</td>
+                <td>
+                  One line at most on the row (error, reconnecting, needs attention) with its one
+                  fix; everything else in Activity
+                </td>
+              </tr>
+              <tr>
+                <td><b style="text-transform: uppercase; font-size: 11px">States</b></td>
+                <td></td>
+                <td></td>
+                <td></td>
+              </tr>
+              <tr>
+                <td>States</td>
+                <td>
+                  <code>disconnected</code> Stopped, <code>connecting</code> Starting,
+                  <code>connected</code> Running, <code>reconnecting</code>, <code>error</code>,
+                  <code>missingConnection</code> "SSH connection deleted"
+                </td>
+                <td><code>stopped, starting, running, stopping, error</code></td>
+                <td>
+                  Stopped, Waiting (new), Starting, Running, Reconnecting, Stopping, Error, Needs a
+                  connection, Not reachable (new: its agent is gone). Section 3.5
+                </td>
+              </tr>
+              <tr>
+                <td>What Running means</td>
+                <td>SSH session up and port bound</td>
+                <td>port bound</td>
+                <td>
+                  The port is open on the host machine, and for a tunnel the SSH session is up
+                </td>
+              </tr>
+              <tr>
+                <td>Error text</td>
+                <td>durable until Stop or a good start; shown on the row and as a toast</td>
+                <td>row text until the next state</td>
+                <td>Durable until Stop or a good start, on the row and in Activity</td>
+              </tr>
+              <tr>
+                <td>Start feedback</td>
+                <td>loading toast "Starting X…" until connected; failure toast</td>
+                <td>button spinner; failure toast "Failed to start X"</td>
+                <td>
+                  Button spinner and the dot; failure toast only when the row is not on screen
+                  (copy-style rule #5859)
+                </td>
+              </tr>
+              <tr>
+                <td>Port in use</td>
+                <td>the bind error as it comes</td>
+                <td>
+                  "Port N is already in use. Stop the conflicting process or choose a different
+                  port…"; Share via tries ten ports
+                </td>
+                <td>Same sentence for both, with "Use port N+1" and "Edit"</td>
+              </tr>
+              <tr>
+                <td>
+                  <b style="text-transform: uppercase; font-size: 11px"
+                    >Actions with consequences</b
+                  >
+                </td>
+                <td></td>
+                <td></td>
+                <td></td>
+              </tr>
+              <tr>
+                <td>Stop</td>
+                <td>confirms when connected ("drops every connection…")</td>
+                <td>at once, whatever is open</td>
+                <td>Confirms only when connections are open now, and says how many</td>
+              </tr>
+              <tr>
+                <td>Reconnect</td>
+                <td>force reconnect, confirms when connected</td>
+                <td>none</td>
+                <td>Tunnels: "Reconnect". File servers: "Restart"</td>
+              </tr>
+              <tr>
+                <td>Duplicate</td>
+                <td>
+                  "Copy of X"; keeps host, start with connection and the chain link
+                  (<code>companionOf</code>)
+                </td>
+                <td>"Copy of X"; loses host and saved password</td>
+                <td>
+                  Keeps everything but auto-start, start with connection and the chain link; asks
+                  for a password again and says so
+                </td>
+              </tr>
+              <tr>
+                <td>Delete</td>
+                <td>
+                  confirm with "don't ask again", Undo 10 s; active, chained or hop always confirms
+                </td>
+                <td>confirm "cannot be undone"; no Undo</td>
+                <td>The tunnel flow for both, Undo included (the password is restored with it)</td>
+              </tr>
+              <tr>
+                <td>Stop all</td>
+                <td>Open connections ▸ SSH tunnels ▸ Kill all</td>
+                <td>Open connections ▸ Embedded servers ▸ Stop all</td>
+                <td>Services "…" and palette; Open connections shows one "Services" section</td>
+              </tr>
+              <tr>
+                <td>Change while running</td>
+                <td>saved silently, used at the next start</td>
+                <td>saved silently, used at the next start</td>
+                <td>Banner "Running with the old settings" and "Restart"</td>
+              </tr>
+              <tr>
+                <td><b style="text-transform: uppercase; font-size: 11px">Editor</b></td>
+                <td></td>
+                <td></td>
+                <td></td>
+              </tr>
+              <tr>
+                <td>Where</td>
+                <td>editor tab; unsaved guard; draft moves to another window</td>
+                <td>modal dialog; Cancel, Escape and a click outside drop edits</td>
+                <td>Editor tab for both (reasons in 3.4)</td>
+              </tr>
+              <tr>
+                <td>Name and description</td>
+                <td>same</td>
+                <td>same</td>
+                <td>same</td>
+              </tr>
+              <tr>
+                <td>Type</td>
+                <td>
+                  three cards with help (<a href="https://github.com/armaxri/termiHub/issues/6027"
+                    >#6027</a
+                  >)
+                </td>
+                <td>HTTP / FTP / TFTP radios without help (changing it resets the port)</td>
+                <td>
+                  Chosen in the New menu; shown as cards at the top, changeable inside a family;
+                  help from <code>tunnelTypeHelp</code> and a new <code>shareTypeHelp</code> (<a
+                    href="https://github.com/armaxri/termiHub/issues/6036"
+                    >#6036</a
+                  >)
+                </td>
+              </tr>
+              <tr>
+                <td>Where it runs</td>
+                <td>"Tunnel host", stored in the config</td>
+                <td>"Run on", kept in memory only, lost at restart</td>
+                <td>"Run on" for both, stored for both (slice 1)</td>
+              </tr>
+              <tr>
+                <td>SSH connection</td>
+                <td>picker, ambiguous ids refused, deleted one flagged</td>
+                <td>n/a</td>
+                <td>same</td>
+              </tr>
+              <tr>
+                <td>Bind side</td>
+                <td>free text host + port</td>
+                <td>picker of this computer's addresses (also for an agent) + port</td>
+                <td>
+                  "Who can open it": only this machine / this network / one address / typed address,
+                  + port. For an agent: the agent's addresses
+                </td>
+              </tr>
+              <tr>
+                <td>Target side</td>
+                <td>host + port (none for dynamic)</td>
+                <td>folder as text</td>
+                <td>host + port, or folder with "Choose…" (a text field on an agent)</td>
+              </tr>
+              <tr>
+                <td>Diagram and endpoint lines</td>
+                <td>diagram plus "Listens on / Via / Forwards to"</td>
+                <td>none</td>
+                <td>One sentence with both addresses for every type, diagram under "Show path"</td>
+              </tr>
+              <tr>
+                <td>Access</td>
+                <td>n/a</td>
+                <td>
+                  Read-only (off), directory listing, HTTP Basic, FTP anonymous or login; passwords
+                  in the credential store
+                </td>
+                <td>"What they can do" and "Sign-in"; defaults in question 3</td>
+              </tr>
+              <tr>
+                <td>Limits</td>
+                <td>n/a</td>
+                <td>
+                  <code>maxTransferBytes</code>, <code>maxConcurrentSessions</code> only in the file
+                </td>
+                <td>Unchanged, not in the UI (out)</td>
+              </tr>
+              <tr>
+                <td>Start options</td>
+                <td>
+                  Auto-start when app launches; Start when a session to this SSH connection opens;
+                  Reconnect automatically on disconnect
+                </td>
+                <td>Auto-start when termiHub launches</td>
+                <td>
+                  "Start": When termiHub starts; When a session to X opens (tunnels); Reconnect when
+                  the connection drops (tunnels). One wording
+                </td>
+              </tr>
+              <tr>
+                <td>Footer</td>
+                <td>Cancel · Save · Save and start (new); Cancel · Save and start · Save (edit)</td>
+                <td>Cancel · Save</td>
+                <td>The tunnel order for both</td>
+              </tr>
+              <tr>
+                <td>Validation</td>
+                <td>inline on blur and on Save; ports 1–65535</td>
+                <td>inline on blur and on Save</td>
+                <td>same</td>
+              </tr>
+              <tr>
+                <td><b style="text-transform: uppercase; font-size: 11px">Where it runs</b></td>
+                <td></td>
+                <td></td>
+                <td></td>
+              </tr>
+              <tr>
+                <td>This computer</td>
+                <td>forwarder in the desktop process</td>
+                <td>server in the desktop process</td>
+                <td>same</td>
+              </tr>
+              <tr>
+                <td>Agent</td>
+                <td>
+                  <code>tunnel.start/stop/status</code>; agent opens its own SSH session; bound
+                  address and reach reported
+                </td>
+                <td>
+                  <code>service.start/stop/status</code>,
+                  <code>embedded_server.activity</code> (older agents: "not supported by this agent
+                  version")
+                </td>
+                <td>
+                  same RPCs; one optional new one lists the agent's addresses (slice 7), older
+                  agents get a text field
+                </td>
+              </tr>
+              <tr>
+                <td>Agent gone</td>
+                <td>
+                  stays Running: <code>get_statuses</code> reports Connected for every held handle,
+                  the poller only refreshes counters
+                </td>
+                <td>
+                  stays at the last state: a failed <code>service.status</code> adds no sample
+                </td>
+                <td>"Not reachable: agent X is offline", and back when it reconnects (slice 2)</td>
+              </tr>
+              <tr>
+                <td>Chained hop</td>
+                <td>
+                  "Chain a hop to this computer": companion, ordered start and stop, Linked states,
+                  degraded fix, redundant hint
+                </td>
+                <td>n/a</td>
+                <td>kept as it is, shown nested</td>
+              </tr>
+              <tr>
+                <td>Reach</td>
+                <td>
+                  warning for a loopback bind on an agent ("Widen bind", "Chain a hop"); reported
+                  reach at run time
+                </td>
+                <td>dialog "Security warning" only for 0.0.0.0</td>
+                <td>
+                  One "Who can open it" with the same sentence for every type; the loopback-on-agent
+                  fixes stay (wording:
+                  <a href="https://github.com/armaxri/termiHub/issues/6034">#6034</a>)
+                </td>
+              </tr>
+              <tr>
+                <td><b style="text-transform: uppercase; font-size: 11px">Lifecycle</b></td>
+                <td></td>
+                <td></td>
+                <td></td>
+              </tr>
+              <tr>
+                <td>With the app</td>
+                <td>500 ms after launch; an offline agent or locked store fails once</td>
+                <td>same</td>
+                <td>
+                  "Waiting for agent X" / "Waiting for the credential store", started when that
+                  comes (slice 2)
+                </td>
+              </tr>
+              <tr>
+                <td>With a connection</td>
+                <td><code>startWithConnection</code>, idempotent</td>
+                <td>n/a</td>
+                <td>tunnels only</td>
+              </tr>
+              <tr>
+                <td>Reconnect</td>
+                <td>10 tries, 1 s doubling to 30 s, then Error</td>
+                <td>n/a</td>
+                <td>same; each try in Activity</td>
+              </tr>
+              <tr>
+                <td>SSH prompts</td>
+                <td>host key and sign-in prompts name the tunnel</td>
+                <td>n/a</td>
+                <td>same</td>
+              </tr>
+              <tr>
+                <td>Connection renamed / deleted</td>
+                <td>follows / stops and needs a connection</td>
+                <td>n/a</td>
+                <td>same</td>
+              </tr>
+              <tr>
+                <td>Window closed</td>
+                <td>runs on</td>
+                <td>runs on</td>
+                <td>runs on while termiHub runs (3.7)</td>
+              </tr>
+              <tr>
+                <td>Last window closed</td>
+                <td>macOS: runs on in the Dock. Windows, Linux: stops with the app</td>
+                <td>same</td>
+                <td>same, plus question 2</td>
+              </tr>
+              <tr>
+                <td>Quit</td>
+                <td>stopped without a word, on agents too</td>
+                <td>stopped without a word, on agents too</td>
+                <td>question 2</td>
+              </tr>
+              <tr>
+                <td>Second window</td>
+                <td><code>tunnels</code> projection region: both windows agree</td>
+                <td>list is per window: a save in one window does not reach the other</td>
+                <td>projection region <code>services</code> for file servers too (slice 3)</td>
+              </tr>
+              <tr>
+                <td>
+                  <b style="text-transform: uppercase; font-size: 11px">Watch and diagnose</b>
+                </td>
+                <td></td>
+                <td></td>
+                <td></td>
+              </tr>
+              <tr>
+                <td>Traffic</td>
+                <td>1 Hz: bytes, rates, connections, in the tooltip</td>
+                <td>1.5 s: bytes, connections, in the tooltip</td>
+                <td>Activity: connections now and in all, sent, received, rate</td>
+              </tr>
+              <tr>
+                <td>Log</td>
+                <td>none; last error only</td>
+                <td>
+                  access log (newest 1000), filter, copy as TSV, clear, errors, current transfers,
+                  top paths and clients
+                </td>
+                <td>
+                  Activity for both: what happened (started, signed in, lost, try 3, stopped) for
+                  both, access log for file servers
+                </td>
+              </tr>
+              <tr>
+                <td>Open connections</td>
+                <td>section "SSH tunnels" (nested hops, "Stop pair")</td>
+                <td>section "Embedded servers"</td>
+                <td>one section "Services", same rows, both stop flows</td>
+              </tr>
+              <tr>
+                <td>Notifications</td>
+                <td>failure toasts; Undo toast</td>
+                <td>failure toasts</td>
+                <td>
+                  Failures and Undo only; a service that fails off screen toasts once, with "Show"
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <b style="text-transform: uppercase; font-size: 11px">Data, settings, security</b>
+                </td>
+                <td></td>
+                <td></td>
+                <td></td>
+              </tr>
+              <tr>
+                <td>File</td>
+                <td><code>tunnels.json</code> v1</td>
+                <td><code>embedded_servers.json</code> v2; unknown fields kept</td>
+                <td>
+                  Both files stay. One optional field <code>host</code> is added to file servers
+                </td>
+              </tr>
+              <tr>
+                <td>Secrets</td>
+                <td>none of its own (the SSH connection's)</td>
+                <td>
+                  FTP and Basic passwords in the credential store, owner
+                  <code>embedded-server:&lt;id&gt;:ftp|http</code>
+                </td>
+                <td>unchanged owners</td>
+              </tr>
+              <tr>
+                <td>Backup</td>
+                <td>section <code>tunnels</code> "Tunnels"</td>
+                <td><code>embeddedServers</code> "Embedded servers"</td>
+                <td>Section ids stay; labels "SSH tunnels" and "File servers"</td>
+              </tr>
+              <tr>
+                <td>Portable mode copy list</td>
+                <td><code>tunnels.json</code> listed</td>
+                <td><code>embedded_servers.json</code> missing</td>
+                <td>both listed (slice 1)</td>
+              </tr>
+              <tr>
+                <td>Settings</td>
+                <td>Safety prompts: "an idle tunnel"</td>
+                <td>none</td>
+                <td>"an idle service"; old word stays a search keyword</td>
+              </tr>
+              <tr>
+                <td>Recovery warnings</td>
+                <td>corrupt or newer file</td>
+                <td>same; "Services are unavailable until the app is restarted."</td>
+                <td>same</td>
+              </tr>
+              <tr>
+                <td>Security warnings</td>
+                <td>none for a 0.0.0.0 bind</td>
+                <td>
+                  0.0.0.0 only; none for a network address, for uploads without a login, or for
+                  Basic auth over plain HTTP
+                </td>
+                <td>
+                  One warning line whenever others can reach it, and what they can do; blocking only
+                  where question 3 says so
+                </td>
+              </tr>
+              <tr>
+                <td>IPC</td>
+                <td>
+                  <code>tunnel.create/remove/start/stop/reconnect/startForConnection</code> intents
+                </td>
+                <td>
+                  twelve commands (<code>list_embedded_servers</code> …
+                  <code>create_and_start_server</code>)
+                </td>
+                <td>unchanged; no rename on the wire</td>
+              </tr>
+              <tr>
+                <td>
+                  <b style="text-transform: uppercase; font-size: 11px">Test ids and tests</b>
+                </td>
+                <td></td>
+                <td></td>
+                <td></td>
+              </tr>
+              <tr>
+                <td>Containers</td>
+                <td>
+                  <code>tunnel-sidebar, tunnel-list, tunnel-empty-message, tunnel-new-btn</code>
+                </td>
+                <td>
+                  <code>server-sidebar, server-list, server-empty-message, server-new-btn</code>
+                </td>
+                <td>
+                  <code
+                    >services-sidebar, services-list, services-group-tunnels, services-group-shares,
+                    services-empty, services-new</code
+                  >
+                </td>
+              </tr>
+              <tr>
+                <td>Rows</td>
+                <td>
+                  <code
+                    >tunnel-item|name|status|primary|start|stop|retry|reconnect|view-error|edit|duplicate|delete|reach|pair-status|redundant|degraded-*|missing-connection|choose-connection|tooltip|description-&lt;id&gt;</code
+                  >
+                </td>
+                <td>
+                  <code
+                    >server-item|name|status|primary|start|stop|edit|duplicate|delete|activity-toggle|tooltip|description-&lt;id&gt;</code
+                  >, <code>ctx-*-&lt;id&gt;</code>
+                </td>
+                <td>
+                  kept, per family: ids carry the entity. <code>view-error</code> and
+                  <code>activity-toggle</code> both become <code>service-activity-&lt;id&gt;</code>
+                </td>
+              </tr>
+              <tr>
+                <td>Editors</td>
+                <td><code>tunnel-editor*, tunnel-type-*, tunnel-diagram, tunnel-chain-*</code></td>
+                <td><code>server-dialog-*, lan-warning-*</code></td>
+                <td>
+                  <code>tunnel-editor*</code> kept; <code>server-dialog-*</code> kept as field ids
+                  inside the tab, <code>server-dialog</code> shell replaced by
+                  <code>server-editor</code>
+                </td>
+              </tr>
+              <tr>
+                <td>System tests</td>
+                <td>
+                  <code>test_ssh_tunnels.py</code>, <code>test_product_run_tunnel_primary.py</code>
+                </td>
+                <td><code>test_embedded_services.py</code></td>
+                <td>
+                  kept green through <code>EmbeddedServicesUi</code> and a new
+                  <code>ServicesUi</code>; shared:
+                  <code
+                    >test_product_run_tunnel_service_controls.py, …_rows_names.py,
+                    …_activity_bar_sidebar_headers.py, …_graduated_features.py</code
+                  >
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <h3>1.1 Wrong today</h3>
+        <p>
+          Found in the code while taking stock. None of them was confirmed in a running app. The
+          slice names where each is fixed.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th></th>
+                <th>What happens</th>
+                <th>Slice</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>F-1</td>
+                <td>
+                  A file server set to run on an agent runs on <b>this computer</b> after a restart:
+                  <code>run_locations</code> and <code>runLocationStore</code> are memory only. With
+                  auto-start it opens the port, and serves the same path, on the wrong machine.
+                </td>
+                <td>1</td>
+              </tr>
+              <tr>
+                <td>F-2</td>
+                <td>An agent-hosted service stays green when the agent is gone (both kinds).</td>
+                <td>2</td>
+              </tr>
+              <tr>
+                <td>F-3</td>
+                <td>
+                  Auto-start 500 ms after launch fails once and for good when the agent is not
+                  connected yet or the credential store is locked.
+                </td>
+                <td>2</td>
+              </tr>
+              <tr>
+                <td>F-4</td>
+                <td>
+                  Duplicating a file server loses its host and its password; duplicating a chained
+                  hop creates a second hop of the same parent.
+                </td>
+                <td>1</td>
+              </tr>
+              <tr>
+                <td>F-5</td>
+                <td>
+                  Portable mode copies <code>tunnels.json</code> but not
+                  <code>embedded_servers.json</code>.
+                </td>
+                <td>1</td>
+              </tr>
+              <tr>
+                <td>F-6</td>
+                <td>
+                  File servers are per window: a second window does not see a new, changed or
+                  deleted one until restart.
+                </td>
+                <td>3</td>
+              </tr>
+              <tr>
+                <td>F-7</td>
+                <td>
+                  "Copy URL" gives <code>http://0.0.0.0:8080</code> for a wide bind and
+                  <code>127.0.0.1</code> for an agent: nobody can open either.
+                </td>
+                <td>4</td>
+              </tr>
+              <tr>
+                <td>F-8</td>
+                <td>
+                  The bind picker offers this computer's addresses for a server that runs on an
+                  agent.
+                </td>
+                <td>7</td>
+              </tr>
+              <tr>
+                <td>F-9</td>
+                <td>
+                  "Share via" always binds 127.0.0.1, so the device the folder is shared with cannot
+                  reach it; it is writable; it adds one more saved entry each time; its failure is
+                  neither awaited nor caught (<code>handleShareVia</code> in
+                  <code>FileBrowser.tsx</code>).
+                </td>
+                <td>12</td>
+              </tr>
+              <tr>
+                <td>F-10</td>
+                <td>
+                  A new file server is writable for everyone who reaches it, TFTP without any
+                  sign-in, and the warning appears only for exactly 0.0.0.0.
+                </td>
+                <td>7 and question 3</td>
+              </tr>
+              <tr>
+                <td>F-11</td>
+                <td>
+                  Closing the service dialog (Escape, click outside, Cancel) drops edits without a
+                  question.
+                </td>
+                <td>7</td>
+              </tr>
+              <tr>
+                <td>F-12</td>
+                <td>
+                  Status-bar click closes Services when it is open (<code>setSidebarView</code>
+                  toggles).
+                </td>
+                <td>6</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section>
+        <h2 id="2-usability">2. Usability today <a class="anchor" href="#2-usability">#</a></h2>
+        <ul>
+          <li>
+            <b>The question comes second.</b> "I want to reach a database" has to become "SSH
+            tunnel, local" in the user's head before any button fits. "Services" next to "SSH
+            tunnels" does not say that one shares files and the other forwards ports.
+          </li>
+          <li>
+            <b>The result is hidden.</b> The one thing the user needs next, the address, is in a
+            tooltip. Only file servers can copy it, from a right-click menu.
+          </li>
+          <li>
+            <b>Same action, different behavior.</b> Stop asks on one and not on the other. Delete
+            can be undone on one and not on the other. Retry exists on one. Edits are guarded on
+            one.
+          </li>
+          <li>
+            <b>"Why is it down" has no place.</b> A tunnel keeps one last error, shown as a toast. A
+            file server has a log, in a 260 px column inside its own row.
+          </li>
+          <li>
+            <b>Reach is a riddle.</b> Who can open the port is an IP address on one form, a free
+            text field on the other, and wrong for an agent on both.
+          </li>
+          <li><b>The end is silent.</b> Nobody says what stops when the window closes.</li>
+        </ul>
+      </section>
+      <section>
+        <h2 id="3-design">3. The merged design <a class="anchor" href="#3-design">#</a></h2>
+        <h3>3.1 Words</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Use</th>
+                <th>For</th>
+                <th>Not</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Service</td>
+                <td>anything in this view</td>
+                <td>embedded server, forward</td>
+              </tr>
+              <tr>
+                <td>SSH tunnel · File server</td>
+                <td>the two groups</td>
+                <td>port forwarding (stays a search word)</td>
+              </tr>
+              <tr>
+                <td>Start, Stop, Restart, Retry</td>
+                <td>run control</td>
+                <td>kill, launch, connect</td>
+              </tr>
+              <tr>
+                <td>Running, Stopped, Starting, Stopping, Reconnecting, Waiting, Error</td>
+                <td>states</td>
+                <td>connected, up, down, disconnected</td>
+              </tr>
+              <tr>
+                <td>Address</td>
+                <td>what others type to use it</td>
+                <td>URL, endpoint, bound address</td>
+              </tr>
+              <tr>
+                <td>Run on</td>
+                <td>the machine that opens the port</td>
+                <td>tunnel host, location</td>
+              </tr>
+              <tr>
+                <td>Who can open it</td>
+                <td>the bind address</td>
+                <td>bind address, bind host, widen bind</td>
+              </tr>
+              <tr>
+                <td>Only download · Download and upload</td>
+                <td>read-only</td>
+                <td>read-only (disable uploads / writes)</td>
+              </tr>
+              <tr>
+                <td>Activity</td>
+                <td>state, traffic, log</td>
+                <td>access log, last error</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <h3>3.2 Sidebar</h3>
+        <p>
+          One view. Header "New service ▾" in text and "…". Search under it. Two collapsible groups
+          with "n of m running", always in this order: <b>SSH tunnels</b>, <b>File servers</b>. An
+          empty group is not shown. Groups follow what people compare (tunnels with tunnels); one
+          flat list by name would mix rows that have nothing in common, and grouping by state would
+          move a row away from under the pointer when it starts.
+        </p>
+        <p>
+          The New menu asks "what do you want to do". Each entry opens the editor tab with its type
+          set.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Entry</th>
+                <th>Beside it</th>
+                <th>Opens</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Reach something on a server</td>
+                <td>SSH tunnel, local (ssh -L)</td>
+                <td>tunnel, local</td>
+              </tr>
+              <tr>
+                <td>Let a server reach something here</td>
+                <td>SSH tunnel, remote (ssh -R)</td>
+                <td>tunnel, remote</td>
+              </tr>
+              <tr>
+                <td>Browse through a server</td>
+                <td>SOCKS5 proxy, dynamic (ssh -D)</td>
+                <td>tunnel, dynamic</td>
+              </tr>
+              <tr>
+                <td>Open it in a browser (under "Share a folder")</td>
+                <td>Web server (HTTP)</td>
+                <td>HTTP</td>
+              </tr>
+              <tr>
+                <td>Upload and download files</td>
+                <td>FTP server</td>
+                <td>FTP</td>
+              </tr>
+              <tr>
+                <td>Give files to a device</td>
+                <td>TFTP server, firmware and network boot</td>
+                <td>TFTP</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          The words for tunnels come from <code>src/utils/tunnelTypeHelp.ts</code> (hover and
+          screen-reader help included). File servers get a sibling, <code>shareTypeHelp.ts</code>,
+          with the same shape (label, technical name, summary, three lines). Without an SSH
+          connection the first three entries stay enabled and the editor offers "Add an SSH
+          connection".
+        </p>
+        <h3>3.3 List row</h3>
+        <ul>
+          <li>
+            <b>Line 1:</b> state dot (name of the state as tooltip and accessible name), name, one
+            state word when it needs attention, the run button. On hover, focus and selection:
+            Activity, Edit, "…".
+          </li>
+          <li><b>Line 2:</b> the description, when the user wrote one.</li>
+          <li>
+            <b>Line 3, only while running:</b> the address in the form the user can paste, with
+            Copy: <code>localhost:5432</code>, <code>http://192.168.1.20:8080</code>,
+            <code>socks5://localhost:1080</code>, <code>localhost:9000</code> on shop-web for a
+            remote tunnel (with the machine, because it opens there; only the address is copied). A
+            wide bind shows the machine's network address, never 0.0.0.0. On an agent the agent's
+            host. Question 1 asks for this exception to "names, not settings" (#5757).
+          </li>
+          <li>
+            <b>Or one problem line</b> in its place: the error, "Reconnecting, try 3 of 10",
+            "Waiting for agent build-box", "Its SSH connection was deleted" with the one action that
+            helps.
+          </li>
+          <li>
+            <b>Tooltip:</b> what the type does (first help line), the path, where it runs, start
+            options, traffic. Same order for both kinds.
+          </li>
+        </ul>
+        <h3>3.4 Editor: a tab, not a dialog</h3>
+        <p>
+          Both kinds use an <b>editor tab</b> with two sub-tabs, <b>Settings</b> and
+          <b>Activity</b>.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th></th>
+                <th>Tab (chosen)</th>
+                <th>Dialog</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Size at 800x600</td>
+                <td>the form scrolls in a 490 px wide, 500 px high pane; the footer stays</td>
+                <td>
+                  a tunnel form is about 900 px high, so it scrolls in the same height but loses the
+                  sidebar
+                </td>
+              </tr>
+              <tr>
+                <td>Unsaved changes</td>
+                <td>
+                  guarded by the tab close, bulk close, window close and quit; a draft moves with
+                  the tab
+                </td>
+                <td>lost on Escape, outside click, Cancel (F-11); needs a guard of its own</td>
+              </tr>
+              <tr>
+                <td>Compare with a terminal</td>
+                <td>split: <code>ss -ltn</code> beside the port field</td>
+                <td>blocks every terminal</td>
+              </tr>
+              <tr>
+                <td>Look something up</td>
+                <td>other tabs and the file browser stay usable</td>
+                <td>closed first</td>
+              </tr>
+              <tr>
+                <td>Watch it start</td>
+                <td>a failed start keeps the tab open and shows why</td>
+                <td>closes; the result is elsewhere</td>
+              </tr>
+              <tr>
+                <td>Cost</td>
+                <td>takes a tab; hides the terminal unless split</td>
+                <td>light for a three-field form</td>
+              </tr>
+              <tr>
+                <td>Others</td>
+                <td>connection, tunnel and workspace editors are tabs</td>
+                <td>automations are a dialog (their steps run in the terminal behind it)</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          The light case, "share this folder now", gets a small dialog of its own (Share via, 3.9)
+          that saves nothing but two choices. "Save" closes a tab that was opened to edit; "Save and
+          start" keeps it and switches to Activity when the start does not succeed at once, else it
+          closes and the row shows the address.
+        </p>
+        <p>
+          Order of the Settings form, for every type: what it does (type cards of the family, one
+          help line) · name and description · through which server (tunnels) and Run on · what (host
+          and port, or folder) · where to open it (port) · the sentence "On … , … reaches … through
+          …" · Who can open it · What they can do and Sign-in (file servers) · Start. The diagram
+          and the raw endpoint lines move under "Show path".
+        </p>
+        <h3>3.5 States and actions</h3>
+        <p>
+          One set for both. The order of actions never changes; a button that cannot act is not
+          shown (the run button always is).
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>State</th>
+                <th>Dot</th>
+                <th>Meaning</th>
+                <th>Run button</th>
+                <th>Also offered</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Stopped</td>
+                <td>grey</td>
+                <td>Nothing is open</td>
+                <td>Start</td>
+                <td>Edit</td>
+              </tr>
+              <tr>
+                <td>Waiting</td>
+                <td>yellow</td>
+                <td>
+                  Will start by itself when its agent, SSH session or the credential store is there.
+                  The line says which
+                </td>
+                <td>Stop waiting</td>
+                <td>Start now</td>
+              </tr>
+              <tr>
+                <td>Starting</td>
+                <td>yellow, pulses</td>
+                <td>Signing in or opening the port</td>
+                <td>Stop</td>
+                <td></td>
+              </tr>
+              <tr>
+                <td>Running</td>
+                <td>green</td>
+                <td>The port is open on the machine it runs on; a tunnel is signed in</td>
+                <td>Stop</td>
+                <td>Copy address, Open in browser, Restart / Reconnect</td>
+              </tr>
+              <tr>
+                <td>Reconnecting</td>
+                <td>yellow, pulses</td>
+                <td>The SSH session dropped, port closed; "try n of 10 in s"</td>
+                <td>Stop</td>
+                <td>Retry now</td>
+              </tr>
+              <tr>
+                <td>Stopping</td>
+                <td>yellow</td>
+                <td>Closing</td>
+                <td>none</td>
+                <td></td>
+              </tr>
+              <tr>
+                <td>Error</td>
+                <td>red</td>
+                <td>Did not start, or gave up. Durable until Stop, Start or Edit</td>
+                <td>Retry</td>
+                <td>Activity, the matching fix</td>
+              </tr>
+              <tr>
+                <td>Needs a connection</td>
+                <td>yellow</td>
+                <td>Its SSH connection was deleted</td>
+                <td>none</td>
+                <td>Choose connection</td>
+              </tr>
+              <tr>
+                <td>Not reachable</td>
+                <td>yellow, hollow</td>
+                <td>Its agent is offline: it may still run there, termiHub cannot tell</td>
+                <td>none</td>
+                <td>Connect agent</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Action order in buttons, menu and Activity: Start/Stop/Retry · Copy address · Open in
+          browser · Activity · Edit · Reconnect/Restart · Duplicate · Delete.
+        </p>
+        <pre class="mermaid">
+stateDiagram-v2
+  [*] --> Stopped
+  Stopped --> Waiting: auto-start, agent or store not ready
+  Waiting --> Starting: it is ready
+  Waiting --> Stopped: Stop waiting
+  Stopped --> Starting: Start
+  Starting --> Running: port open, signed in
+  Starting --> Error: failed
+  Running --> Reconnecting: SSH lost, reconnect on
+  Running --> Error: SSH lost, reconnect off
+  Reconnecting --> Running: signed in again
+  Reconnecting --> Error: 10 tries
+  Running --> NotReachable: agent offline
+  NotReachable --> Running: agent back, still runs
+  NotReachable --> Stopped: agent back, gone
+  Running --> Stopping: Stop
+  Stopping --> Stopped
+  Error --> Starting: Retry
+  Error --> Stopped: Stop
+  Stopped --> NeedsConnection: SSH connection deleted
+  NeedsConnection --> Stopped: another one chosen</pre
+        >
+        <h3>3.6 Activity, errors and retry</h3>
+        <p>
+          Activity is one view for both: state and since when, Start/Stop/Restart, the address with
+          Copy and a "how to use it" line per type, four counters, then the log. The log has
+          <b>events</b> for both kinds (started and by what, signed in, port open, connection lost,
+          each retry, stopped and by whom) and, for file servers, today's access log with its
+          filter, copy and clear, its transfers and top lists. Events are a bounded in-memory ring
+          in the manager (200 per service). Nothing new is written to disk. An agent-hosted service
+          shows the events the desktop saw.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Cause</th>
+                <th>Says</th>
+                <th>First action</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Port in use</td>
+                <td>Port 5432 is already in use on this computer.</td>
+                <td>Use 5433 · Edit</td>
+              </tr>
+              <tr>
+                <td>Server does not answer</td>
+                <td>Build Box did not answer (timeout after 15 s).</td>
+                <td>Retry · Open a terminal on Build Box</td>
+              </tr>
+              <tr>
+                <td>Sign-in refused or prompt canceled</td>
+                <td>Build Box refused the sign-in.</td>
+                <td>Retry · Edit connection</td>
+              </tr>
+              <tr>
+                <td>Host key changed</td>
+                <td>The host key of Build Box changed.</td>
+                <td>Review key</td>
+              </tr>
+              <tr>
+                <td>Target refused (tunnel runs, use fails)</td>
+                <td>db.internal:5432 refused the connection. Last: 14:20, 3 times.</td>
+                <td>Edit</td>
+              </tr>
+              <tr>
+                <td>Server refuses the remote port</td>
+                <td>shop-web did not allow port 9000.</td>
+                <td>Edit</td>
+              </tr>
+              <tr>
+                <td>Folder missing</td>
+                <td>The folder ~/firmware no longer exists.</td>
+                <td>Choose folder</td>
+              </tr>
+              <tr>
+                <td>Password not available</td>
+                <td>The credential store is locked.</td>
+                <td>Unlock</td>
+              </tr>
+              <tr>
+                <td>Agent offline</td>
+                <td>Agent build-box is not connected.</td>
+                <td>Connect agent</td>
+              </tr>
+              <tr>
+                <td>SSH connection deleted</td>
+                <td>Its SSH connection was deleted.</td>
+                <td>Choose connection</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Reconnect keeps today's policy (10 tries, 1 s doubling to 30 s). "Target refused" needs
+          the forwarder to count refused targets, which it does not report today; it is part of
+          slice 10 and can be dropped without harm to the rest.
+        </p>
+        <h3>3.7 Running, and what stays after a window closes</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>When</th>
+                <th>macOS</th>
+                <th>Windows, Linux</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>One of several windows closes</td>
+                <td>runs on</td>
+                <td>runs on</td>
+              </tr>
+              <tr>
+                <td>The last window closes</td>
+                <td>runs on (termiHub stays in the Dock)</td>
+                <td>termiHub ends, everything here stops</td>
+              </tr>
+              <tr>
+                <td>Quit</td>
+                <td>stops, on this computer and on agents</td>
+                <td>stops, on this computer and on agents</td>
+              </tr>
+              <tr>
+                <td>Computer sleeps, network changes</td>
+                <td>SSH drops; Reconnecting if on, else Error</td>
+                <td>same</td>
+              </tr>
+              <tr>
+                <td>Agent loses its connection</td>
+                <td>may still run on the agent; shown as Not reachable</td>
+                <td>same</td>
+              </tr>
+              <tr>
+                <td>Crash</td>
+                <td>this computer: closed by the system. Agent: until the agent ends</td>
+                <td>same</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Address rule: what the row shows is reachable from where the user sits, or the row says
+          from where ("on agent build-box only", with the two fixes of today: let others reach it,
+          or a hop to this computer).
+        </p>
+        <h3>3.8 Where it runs</h3>
+        <p>
+          "Run on" is this computer or an agent, in the same place for every type, stored with the
+          service. For an agent the form asks the agent for its addresses (a small optional RPC); an
+          older agent gets a text field. The folder on an agent is typed, as today. Changing it
+          while the service runs stops it there first, after a question. Chaining stays a tunnel
+          feature and is offered from "Who can open it".
+        </p>
+        <h3>3.9 Share via</h3>
+        <p>
+          The file browser keeps its entries, renamed to the New menu's words ("Share this folder in
+          a browser…", "…by FTP…", "…by TFTP…"). A small dialog asks who and what, shows the address
+          and starts it. By default it is <b>temporary</b>: it appears in Services with "Until
+          termiHub closes" and is forgotten then, which ends the pile of "Quick Share (HTTP)"
+          entries; "Keep" turns it into a normal one.
+        </p>
+      </section>
+      <section>
+        <h2 id="4-tasks">4. Everyday tasks <a class="anchor" href="#4-tasks">#</a></h2>
+        <p>
+          Each task for a first-time user (does not know the words) and a power user (wants it in
+          seconds). The mockups are 800x600, dark and light. They show structure and words, not
+          pixels.
+        </p>
+        <h3>4.1 Reach a database behind a server</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>First-time</th>
+                <th>Power user</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <ol>
+                    <li>Services ▸ New service ▸ "Reach something on a server".</li>
+                    <li>
+                      Picks the server, types <code>db.internal</code> and 5432. "Open it here on
+                      port" follows. Reads the sentence: "On this computer, localhost:5432 reaches
+                      db.internal:5432 through Build Box."
+                    </li>
+                    <li>Save and start. The host key prompt names the tunnel.</li>
+                    <li>The row is green and shows <code>localhost:5432</code> with Copy.</li>
+                  </ol>
+                </td>
+                <td>
+                  <ol>
+                    <li>Palette: "reach", Enter.</li>
+                    <li>Tab through server, target, port; Enter saves and starts.</li>
+                    <li>
+                      Ticks "When a session to Build Box opens" once, never starts it by hand again.
+                    </li>
+                    <li>Space on the row stops it.</li>
+                  </ol>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="mockup-section">
+          <h3>Start from an intent</h3>
+          <p>
+            Section 3.2. Technical names beside the plain words; no tunnel or protocol knowledge
+            needed to pick.
+          </p>
+          <div class="app svc-app" data-both="1">
+            <div class="app__body">
+              <div class="activity-bar">
+                <div class="activity-bar__top">
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-network" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-folder-open" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-history" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-layout-grid" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-zap" /></svg>
+                  </div>
+                  <div class="activity-bar__item activity-bar__item--active">
+                    <div class="activity-bar__indicator"></div>
+                    <svg class="li"><use href="#i-server" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-stethoscope" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-puzzle" /></svg>
+                  </div>
+                </div>
+                <div class="activity-bar__bottom">
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-file-text" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-settings" /></svg>
+                  </div>
+                </div>
+              </div>
+              <div class="sidebar svc-sidebar">
+                <div class="sidebar__header"><span class="sidebar__title">Services</span></div>
+                <div class="svc-toolbar">
+                  <span class="svc-tool svc-tool--primary"
+                    ><svg class="li" style="width: 14px; height: 14px"><use href="#i-plus" /></svg>
+                    New service
+                    <svg class="li" style="width: 12px; height: 12px">
+                      <use href="#i-chevron-down" /></svg></span
+                  ><span class="svc-btn" style="margin-left: auto"
+                    ><svg class="li" style="width: 14px; height: 14px">
+                      <use href="#i-ellipsis" /></svg
+                  ></span>
+                </div>
+                <div class="svc-search">
+                  <svg class="li" style="width: 12px; height: 12px"><use href="#i-search" /></svg>
+                  Search services
+                </div>
+                <div class="menu svc-menu">
+                  <div class="svc-menu__label">Connect through SSH</div>
+                  <div class="svc-menu__item">
+                    <svg class="li" style="width: 14px; height: 14px"><use href="#i-log-in" /></svg>
+                    <div>Reach something on a server<small>SSH tunnel, local (ssh -L)</small></div>
+                  </div>
+                  <div class="svc-menu__item">
+                    <svg class="li" style="width: 14px; height: 14px">
+                      <use href="#i-log-out" />
+                    </svg>
+                    <div>
+                      Let a server reach something here<small>SSH tunnel, remote (ssh -R)</small>
+                    </div>
+                  </div>
+                  <div class="svc-menu__item">
+                    <svg class="li" style="width: 14px; height: 14px"><use href="#i-globe" /></svg>
+                    <div>Browse through a server<small>SOCKS5 proxy, dynamic (ssh -D)</small></div>
+                  </div>
+                  <div class="svc-menu__label">Share a folder</div>
+                  <div class="svc-menu__item">
+                    <svg class="li" style="width: 14px; height: 14px">
+                      <use href="#i-monitor" />
+                    </svg>
+                    <div>Open it in a browser<small>Web server (HTTP)</small></div>
+                  </div>
+                  <div class="svc-menu__item">
+                    <svg class="li" style="width: 14px; height: 14px"><use href="#i-upload" /></svg>
+                    <div>Upload and download files<small>FTP server</small></div>
+                  </div>
+                  <div class="svc-menu__item">
+                    <svg class="li" style="width: 14px; height: 14px"><use href="#i-cpu" /></svg>
+                    <div>
+                      Give files to a device<small>TFTP server, firmware and network boot</small>
+                    </div>
+                  </div>
+                </div>
+                <div class="sidebar__content">
+                  <div
+                    style="
+                      padding: 200px 16px 0;
+                      color: var(--text-secondary);
+                      font-size: 12px;
+                      text-align: center;
+                    "
+                  ></div>
+                </div>
+              </div>
+              <div class="svc-main">
+                <div
+                  class="svc-form"
+                  style="align-items: center; justify-content: center; color: var(--text-secondary)"
+                >
+                  This window is empty
+                </div>
+              </div>
+            </div>
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item"
+                  ><svg class="li"><use href="#i-server" /></svg> No services running</span
+                >
+              </div>
+              <div class="status-bar__section status-bar__section--right"></div>
+            </div>
+          </div>
+        </div>
+        <div class="mockup-section">
+          <h3>The tunnel form</h3>
+          <p>
+            Section 3.4. One sentence names both ends; "Who can open it" replaces the bind host.
+          </p>
+          <div class="app svc-app" data-both="1">
+            <div class="app__body">
+              <div class="activity-bar">
+                <div class="activity-bar__top">
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-network" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-folder-open" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-history" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-layout-grid" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-zap" /></svg>
+                  </div>
+                  <div class="activity-bar__item activity-bar__item--active">
+                    <div class="activity-bar__indicator"></div>
+                    <svg class="li"><use href="#i-server" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-stethoscope" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-puzzle" /></svg>
+                  </div>
+                </div>
+                <div class="activity-bar__bottom">
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-file-text" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-settings" /></svg>
+                  </div>
+                </div>
+              </div>
+              <div class="sidebar svc-sidebar">
+                <div class="sidebar__header"><span class="sidebar__title">Services</span></div>
+                <div class="svc-toolbar">
+                  <span class="svc-tool svc-tool--primary"
+                    ><svg class="li" style="width: 14px; height: 14px"><use href="#i-plus" /></svg>
+                    New service
+                    <svg class="li" style="width: 12px; height: 12px">
+                      <use href="#i-chevron-down" /></svg></span
+                  ><span class="svc-btn" style="margin-left: auto"
+                    ><svg class="li" style="width: 14px; height: 14px">
+                      <use href="#i-ellipsis" /></svg
+                  ></span>
+                </div>
+                <div class="svc-search">
+                  <svg class="li" style="width: 12px; height: 12px"><use href="#i-search" /></svg>
+                  Search services
+                </div>
+                <div class="sidebar__content">
+                  <div class="svc-group">
+                    <svg class="li" style="width: 12px; height: 12px">
+                      <use href="#i-chevron-down" /></svg
+                    ><span>SSH tunnels</span><span class="svc-group__count">1 of 2 running</span>
+                  </div>
+                  <div class="svc-row">
+                    <div class="svc-row__head">
+                      <span class="state-dot svc-dot--running"></span
+                      ><span class="svc-row__name">Show my web app</span
+                      ><span class="svc-btn svc-btn--primary"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-square" /></svg
+                      ></span>
+                    </div>
+                    <span class="svc-row__addr"
+                      ><code>localhost:9000</code> on shop-web<code style="display: none"></code
+                      ><span class="svc-btn" title="Copy address"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-copy" /></svg></span
+                    ></span>
+                  </div>
+                  <div class="svc-row">
+                    <div class="svc-row__head">
+                      <span class="state-dot svc-dot--stopped"></span
+                      ><span class="svc-row__name">Staging network</span
+                      ><span class="svc-btn svc-btn--primary"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-play" /></svg
+                      ></span>
+                    </div>
+                    <small class="svc-row__desc">Browser proxy</small>
+                  </div>
+                  <div class="svc-group">
+                    <svg class="li" style="width: 12px; height: 12px">
+                      <use href="#i-chevron-down" /></svg
+                    ><span>File servers</span><span class="svc-group__count">0 of 1 running</span>
+                  </div>
+                  <div class="svc-row">
+                    <div class="svc-row__head">
+                      <span class="state-dot svc-dot--stopped"></span
+                      ><span class="svc-row__name">Docs preview</span
+                      ><span class="svc-btn svc-btn--primary"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-play" /></svg
+                      ></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="svc-main">
+                <div class="tab-bar">
+                  <div class="tab">
+                    <svg class="li" style="width: 14px; height: 14px"><use href="#i-network" /></svg
+                    ><span class="tab__title">Build Box</span>
+                  </div>
+                  <div class="tab tab--active">
+                    <svg class="li" style="width: 14px; height: 14px"><use href="#i-server" /></svg
+                    ><span class="tab__title">New service</span>
+                  </div>
+                </div>
+                <div class="svc-form">
+                  <h4>Reach something on a server</h4>
+                  <p class="svc-sub">
+                    SSH tunnel, local (ssh -L). Use something on the SSH server's side as if it ran
+                    here.
+                  </p>
+                  <div class="svc-cols">
+                    <div class="svc-field">
+                      <label>Name</label>
+                      <div class="svc-input">Shop database</div>
+                    </div>
+                    <div class="svc-field">
+                      <label>Description (optional)</label>
+                      <div class="svc-input">Read replica</div>
+                    </div>
+                  </div>
+                  <div class="svc-cols">
+                    <div class="svc-field">
+                      <label>Through which server</label>
+                      <div class="svc-input">
+                        Build Box<svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-chevron-down" />
+                        </svg>
+                      </div>
+                    </div>
+                    <div class="svc-field">
+                      <label>Run on</label>
+                      <div class="svc-input">
+                        This computer<svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-chevron-down" />
+                        </svg>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="svc-cols">
+                    <div class="svc-field">
+                      <label>What to reach there</label>
+                      <div class="svc-input"><code>db.internal</code></div>
+                    </div>
+                    <div class="svc-field" style="flex: 0 0 90px">
+                      <label>Port</label>
+                      <div class="svc-input">5432</div>
+                    </div>
+                    <div class="svc-field" style="flex: 0 0 140px">
+                      <label>Open it here on port</label>
+                      <div class="svc-input">5432</div>
+                    </div>
+                  </div>
+                  <div class="svc-path">
+                    On this computer, <code>localhost:5432</code> reaches
+                    <code>db.internal:5432</code> through <b>Build Box</b>.
+                  </div>
+                  <div>
+                    <div style="font-size: 12px; color: var(--text-secondary)">Who can open it</div>
+                    <div class="svc-radio svc-radio--on">
+                      <span class="svc-radio__mark"></span>
+                      <div>Only this computer<small>127.0.0.1</small></div>
+                    </div>
+                    <div class="svc-radio">
+                      <span class="svc-radio__mark"></span>
+                      <div>
+                        Everyone on this network<small
+                          >0.0.0.0, or one address of this computer</small
+                        >
+                      </div>
+                    </div>
+                  </div>
+                  <div>
+                    <div style="font-size: 12px; color: var(--text-secondary)">Start</div>
+                    <div class="svc-check">
+                      <span class="svc-check__box"></span>When termiHub starts
+                    </div>
+                    <div class="svc-check">
+                      <span class="svc-check__box svc-check__box--on"></span>When a session to Build
+                      Box opens
+                    </div>
+                    <div class="svc-check">
+                      <span class="svc-check__box svc-check__box--on"></span>Reconnect when the
+                      connection drops
+                    </div>
+                  </div>
+                </div>
+                <div class="svc-foot">
+                  <span class="btn svc-footbtn">Cancel</span
+                  ><span class="btn svc-footbtn">Save</span
+                  ><span class="btn btn--primary svc-footbtn">Save and start</span>
+                </div>
+              </div>
+            </div>
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item"
+                  ><svg class="li"><use href="#i-server" /></svg> 1 service running</span
+                >
+              </div>
+              <div class="status-bar__section status-bar__section--right"></div>
+            </div>
+          </div>
+        </div>
+        <div class="mockup-section">
+          <h3>Use it</h3>
+          <p>
+            Section 3.3. Selected row: Activity, Edit, "…"; the address is there to copy while the
+            user works in the terminal.
+          </p>
+          <div class="app svc-app" data-both="1">
+            <div class="app__body">
+              <div class="activity-bar">
+                <div class="activity-bar__top">
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-network" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-folder-open" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-history" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-layout-grid" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-zap" /></svg>
+                  </div>
+                  <div class="activity-bar__item activity-bar__item--active">
+                    <div class="activity-bar__indicator"></div>
+                    <svg class="li"><use href="#i-server" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-stethoscope" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-puzzle" /></svg>
+                  </div>
+                </div>
+                <div class="activity-bar__bottom">
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-file-text" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-settings" /></svg>
+                  </div>
+                </div>
+              </div>
+              <div class="sidebar svc-sidebar">
+                <div class="sidebar__header"><span class="sidebar__title">Services</span></div>
+                <div class="svc-toolbar">
+                  <span class="svc-tool svc-tool--primary"
+                    ><svg class="li" style="width: 14px; height: 14px"><use href="#i-plus" /></svg>
+                    New service
+                    <svg class="li" style="width: 12px; height: 12px">
+                      <use href="#i-chevron-down" /></svg></span
+                  ><span class="svc-btn" style="margin-left: auto"
+                    ><svg class="li" style="width: 14px; height: 14px">
+                      <use href="#i-ellipsis" /></svg
+                  ></span>
+                </div>
+                <div class="svc-search">
+                  <svg class="li" style="width: 12px; height: 12px"><use href="#i-search" /></svg>
+                  Search services
+                </div>
+                <div class="sidebar__content">
+                  <div class="svc-group">
+                    <svg class="li" style="width: 12px; height: 12px">
+                      <use href="#i-chevron-down" /></svg
+                    ><span>SSH tunnels</span><span class="svc-group__count">2 of 3 running</span>
+                  </div>
+                  <div class="svc-row svc-row--sel">
+                    <div class="svc-row__head">
+                      <span class="state-dot svc-dot--running"></span
+                      ><span class="svc-row__name">Shop database</span
+                      ><span class="svc-btn"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-activity" /></svg></span
+                      ><span class="svc-btn"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-pencil" /></svg></span
+                      ><span class="svc-btn"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-ellipsis" /></svg></span
+                      ><span class="svc-btn svc-btn--primary"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-square" /></svg
+                      ></span>
+                    </div>
+                    <small class="svc-row__desc">Read replica</small
+                    ><span class="svc-row__addr"
+                      ><code>localhost:5432</code
+                      ><span class="svc-btn" title="Copy address"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-copy" /></svg></span
+                    ></span>
+                  </div>
+                  <div class="svc-row">
+                    <div class="svc-row__head">
+                      <span class="state-dot svc-dot--running"></span
+                      ><span class="svc-row__name">Show my web app</span
+                      ><span class="svc-btn svc-btn--primary"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-square" /></svg
+                      ></span>
+                    </div>
+                    <span class="svc-row__addr"
+                      ><code>localhost:9000</code> on shop-web<code style="display: none"></code
+                      ><span class="svc-btn" title="Copy address"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-copy" /></svg></span
+                    ></span>
+                  </div>
+                  <div class="svc-row">
+                    <div class="svc-row__head">
+                      <span class="state-dot svc-dot--stopped"></span
+                      ><span class="svc-row__name">Staging network</span
+                      ><span class="svc-btn svc-btn--primary"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-play" /></svg
+                      ></span>
+                    </div>
+                    <small class="svc-row__desc">Browser proxy</small>
+                  </div>
+                  <div class="svc-group">
+                    <svg class="li" style="width: 12px; height: 12px">
+                      <use href="#i-chevron-down" /></svg
+                    ><span>File servers</span><span class="svc-group__count">1 of 2 running</span>
+                  </div>
+                  <div class="svc-row">
+                    <div class="svc-row__head">
+                      <span class="state-dot svc-dot--running"></span
+                      ><span class="svc-row__name">Router firmware</span
+                      ><span class="svc-btn svc-btn--primary"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-square" /></svg
+                      ></span>
+                    </div>
+                    <small class="svc-row__desc">TFTP for the lab bench</small
+                    ><span class="svc-row__addr"
+                      ><code>tftp://192.168.1.20:6969</code
+                      ><span class="svc-btn" title="Copy address"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-copy" /></svg></span
+                    ></span>
+                  </div>
+                  <div class="svc-row">
+                    <div class="svc-row__head">
+                      <span class="state-dot svc-dot--stopped"></span
+                      ><span class="svc-row__name">Docs preview</span
+                      ><span class="svc-btn svc-btn--primary"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-play" /></svg
+                      ></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="svc-main">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li" style="width: 14px; height: 14px"><use href="#i-network" /></svg
+                    ><span class="tab__title">zsh</span>
+                  </div>
+                </div>
+                <div class="svc-term">
+                  <span>arne@mac ~ %</span> psql -h localhost -p 5432 shop<br />psql (17.2)<br />shop=&gt;
+                  select count(*) from orders;<br />&nbsp;count<br />-------<br />&nbsp;48210<br />shop=&gt;
+                  ▌
+                </div>
+              </div>
+            </div>
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item"
+                  ><svg class="li"><use href="#i-server" /></svg> 3 services running</span
+                >
+              </div>
+              <div class="status-bar__section status-bar__section--right"></div>
+            </div>
+          </div>
+        </div>
+        <h3>4.2 Show my local web app to the server</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>First-time</th>
+                <th>Power user</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <ol>
+                    <li>New service ▸ "Let a server reach something here".</li>
+                    <li>
+                      Server shop-web, "What runs here" localhost:3000, port 9000 on the server.
+                    </li>
+                    <li>
+                      Reads: "On the SSH server shop-web, localhost:9000 reaches localhost:3000 on
+                      this computer."
+                    </li>
+                    <li>
+                      Wants colleagues to see it: picks "Everyone the server lets in" and reads that
+                      OpenSSH needs GatewayPorts.
+                    </li>
+                  </ol>
+                </td>
+                <td>
+                  <ol>
+                    <li>Duplicates last week's row, changes 3000 to 5173, Save and start.</li>
+                    <li>
+                      Copies <code>localhost:9000</code> from the row and pastes it into the session
+                      on shop-web.
+                    </li>
+                  </ol>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="mockup-section">
+          <h3>Remote tunnel</h3>
+          <p>Who can open it speaks about the server, because the port opens there.</p>
+          <div class="app svc-app" data-both="1">
+            <div class="app__body">
+              <div class="activity-bar">
+                <div class="activity-bar__top">
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-network" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-folder-open" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-history" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-layout-grid" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-zap" /></svg>
+                  </div>
+                  <div class="activity-bar__item activity-bar__item--active">
+                    <div class="activity-bar__indicator"></div>
+                    <svg class="li"><use href="#i-server" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-stethoscope" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-puzzle" /></svg>
+                  </div>
+                </div>
+                <div class="activity-bar__bottom">
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-file-text" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-settings" /></svg>
+                  </div>
+                </div>
+              </div>
+              <div class="sidebar svc-sidebar">
+                <div class="sidebar__header"><span class="sidebar__title">Services</span></div>
+                <div class="svc-toolbar">
+                  <span class="svc-tool svc-tool--primary"
+                    ><svg class="li" style="width: 14px; height: 14px"><use href="#i-plus" /></svg>
+                    New service
+                    <svg class="li" style="width: 12px; height: 12px">
+                      <use href="#i-chevron-down" /></svg></span
+                  ><span class="svc-btn" style="margin-left: auto"
+                    ><svg class="li" style="width: 14px; height: 14px">
+                      <use href="#i-ellipsis" /></svg
+                  ></span>
+                </div>
+                <div class="svc-search">
+                  <svg class="li" style="width: 12px; height: 12px"><use href="#i-search" /></svg>
+                  Search services
+                </div>
+                <div class="sidebar__content">
+                  <div class="svc-group">
+                    <svg class="li" style="width: 12px; height: 12px">
+                      <use href="#i-chevron-down" /></svg
+                    ><span>SSH tunnels</span><span class="svc-group__count">1 of 2 running</span>
+                  </div>
+                  <div class="svc-row">
+                    <div class="svc-row__head">
+                      <span class="state-dot svc-dot--running"></span
+                      ><span class="svc-row__name">Shop database</span
+                      ><span class="svc-btn svc-btn--primary"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-square" /></svg
+                      ></span>
+                    </div>
+                    <small class="svc-row__desc">Read replica</small
+                    ><span class="svc-row__addr"
+                      ><code>localhost:5432</code
+                      ><span class="svc-btn" title="Copy address"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-copy" /></svg></span
+                    ></span>
+                  </div>
+                  <div class="svc-row">
+                    <div class="svc-row__head">
+                      <span class="state-dot svc-dot--stopped"></span
+                      ><span class="svc-row__name">Staging network</span
+                      ><span class="svc-btn svc-btn--primary"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-play" /></svg
+                      ></span>
+                    </div>
+                    <small class="svc-row__desc">Browser proxy</small>
+                  </div>
+                  <div class="svc-group">
+                    <svg class="li" style="width: 12px; height: 12px">
+                      <use href="#i-chevron-down" /></svg
+                    ><span>File servers</span><span class="svc-group__count">0 of 1 running</span>
+                  </div>
+                  <div class="svc-row">
+                    <div class="svc-row__head">
+                      <span class="state-dot svc-dot--stopped"></span
+                      ><span class="svc-row__name">Docs preview</span
+                      ><span class="svc-btn svc-btn--primary"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-play" /></svg
+                      ></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="svc-main">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li" style="width: 14px; height: 14px"><use href="#i-server" /></svg
+                    ><span class="tab__title">New service</span>
+                  </div>
+                </div>
+                <div class="svc-form">
+                  <h4>Let a server reach something here</h4>
+                  <p class="svc-sub">
+                    SSH tunnel, remote (ssh -R). Let the SSH server use something here.
+                  </p>
+                  <div class="svc-cols">
+                    <div class="svc-field">
+                      <label>Name</label>
+                      <div class="svc-input">Show my web app</div>
+                    </div>
+                    <div class="svc-field">
+                      <label>Through which server</label>
+                      <div class="svc-input">
+                        shop-web<svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-chevron-down" />
+                        </svg>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="svc-cols">
+                    <div class="svc-field">
+                      <label>Run on</label>
+                      <div class="svc-input">
+                        This computer<svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-chevron-down" />
+                        </svg>
+                      </div>
+                    </div>
+                    <div class="svc-field">
+                      <label>What runs here</label>
+                      <div class="svc-input"><code>localhost</code></div>
+                    </div>
+                    <div class="svc-field" style="flex: 0 0 80px">
+                      <label>Port</label>
+                      <div class="svc-input">3000</div>
+                    </div>
+                  </div>
+                  <div class="svc-cols">
+                    <div class="svc-field" style="flex: 0 0 200px">
+                      <label>Open it on the server on port</label>
+                      <div class="svc-input">9000</div>
+                    </div>
+                    <div style="flex: 1"></div>
+                  </div>
+                  <div class="svc-path">
+                    On the SSH server <b>shop-web</b>, <code>localhost:9000</code> reaches
+                    <code>localhost:3000</code> on this computer.
+                  </div>
+                  <div>
+                    <div style="font-size: 12px; color: var(--text-secondary)">Who can open it</div>
+                    <div class="svc-radio svc-radio--on">
+                      <span class="svc-radio__mark"></span>
+                      <div>Only the SSH server itself<small>127.0.0.1 on the server</small></div>
+                    </div>
+                    <div class="svc-radio">
+                      <span class="svc-radio__mark"></span>
+                      <div>
+                        Everyone the server lets in<small
+                          >0.0.0.0. The server decides: OpenSSH needs GatewayPorts.</small
+                        >
+                      </div>
+                    </div>
+                  </div>
+                  <div>
+                    <div style="font-size: 12px; color: var(--text-secondary)">Start</div>
+                    <div class="svc-check">
+                      <span class="svc-check__box"></span>When termiHub starts
+                    </div>
+                    <div class="svc-check">
+                      <span class="svc-check__box"></span>When a session to shop-web opens
+                    </div>
+                    <div class="svc-check">
+                      <span class="svc-check__box svc-check__box--on"></span>Reconnect when the
+                      connection drops
+                    </div>
+                  </div>
+                </div>
+                <div class="svc-foot">
+                  <span class="btn svc-footbtn">Cancel</span
+                  ><span class="btn svc-footbtn">Save</span
+                  ><span class="btn btn--primary svc-footbtn">Save and start</span>
+                </div>
+              </div>
+            </div>
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item"
+                  ><svg class="li"><use href="#i-server" /></svg> 1 service running</span
+                >
+              </div>
+              <div class="status-bar__section status-bar__section--right"></div>
+            </div>
+          </div>
+        </div>
+        <h3>4.3 Browse through a server</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>First-time</th>
+                <th>Power user</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <ol>
+                    <li>
+                      New service ▸ "Browse through a server". Picks the server, keeps port 1080.
+                    </li>
+                    <li>
+                      After the start Activity opens once with "Set your browser's SOCKS5 proxy to
+                      localhost:1080" and what that means per program.
+                    </li>
+                  </ol>
+                </td>
+                <td>
+                  <ol>
+                    <li>
+                      Copies the curl line, or <code>socks5://localhost:1080</code> from the row.
+                    </li>
+                  </ol>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="mockup-section">
+          <h3>How to use it, in Activity</h3>
+          <p>Section 3.6.</p>
+          <div class="app svc-app" data-both="1">
+            <div class="app__body">
+              <div class="activity-bar">
+                <div class="activity-bar__top">
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-network" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-folder-open" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-history" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-layout-grid" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-zap" /></svg>
+                  </div>
+                  <div class="activity-bar__item activity-bar__item--active">
+                    <div class="activity-bar__indicator"></div>
+                    <svg class="li"><use href="#i-server" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-stethoscope" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-puzzle" /></svg>
+                  </div>
+                </div>
+                <div class="activity-bar__bottom">
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-file-text" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-settings" /></svg>
+                  </div>
+                </div>
+              </div>
+              <div class="sidebar svc-sidebar">
+                <div class="sidebar__header"><span class="sidebar__title">Services</span></div>
+                <div class="svc-toolbar">
+                  <span class="svc-tool svc-tool--primary"
+                    ><svg class="li" style="width: 14px; height: 14px"><use href="#i-plus" /></svg>
+                    New service
+                    <svg class="li" style="width: 12px; height: 12px">
+                      <use href="#i-chevron-down" /></svg></span
+                  ><span class="svc-btn" style="margin-left: auto"
+                    ><svg class="li" style="width: 14px; height: 14px">
+                      <use href="#i-ellipsis" /></svg
+                  ></span>
+                </div>
+                <div class="svc-search">
+                  <svg class="li" style="width: 12px; height: 12px"><use href="#i-search" /></svg>
+                  Search services
+                </div>
+                <div class="sidebar__content">
+                  <div class="svc-group">
+                    <svg class="li" style="width: 12px; height: 12px">
+                      <use href="#i-chevron-down" /></svg
+                    ><span>SSH tunnels</span><span class="svc-group__count">3 of 3 running</span>
+                  </div>
+                  <div class="svc-row">
+                    <div class="svc-row__head">
+                      <span class="state-dot svc-dot--running"></span
+                      ><span class="svc-row__name">Shop database</span
+                      ><span class="svc-btn svc-btn--primary"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-square" /></svg
+                      ></span>
+                    </div>
+                    <small class="svc-row__desc">Read replica</small
+                    ><span class="svc-row__addr"
+                      ><code>localhost:5432</code
+                      ><span class="svc-btn" title="Copy address"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-copy" /></svg></span
+                    ></span>
+                  </div>
+                  <div class="svc-row">
+                    <div class="svc-row__head">
+                      <span class="state-dot svc-dot--running"></span
+                      ><span class="svc-row__name">Show my web app</span
+                      ><span class="svc-btn svc-btn--primary"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-square" /></svg
+                      ></span>
+                    </div>
+                    <span class="svc-row__addr"
+                      ><code>localhost:9000</code> on shop-web<code style="display: none"></code
+                      ><span class="svc-btn" title="Copy address"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-copy" /></svg></span
+                    ></span>
+                  </div>
+                  <div class="svc-row svc-row--sel">
+                    <div class="svc-row__head">
+                      <span class="state-dot svc-dot--running"></span
+                      ><span class="svc-row__name">Staging network</span
+                      ><span class="svc-btn"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-activity" /></svg></span
+                      ><span class="svc-btn"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-pencil" /></svg></span
+                      ><span class="svc-btn"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-ellipsis" /></svg></span
+                      ><span class="svc-btn svc-btn--primary"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-square" /></svg
+                      ></span>
+                    </div>
+                    <small class="svc-row__desc">Browser proxy</small
+                    ><span class="svc-row__addr"
+                      ><code>socks5://localhost:1080</code
+                      ><span class="svc-btn" title="Copy address"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-copy" /></svg></span
+                    ></span>
+                  </div>
+                  <div class="svc-group">
+                    <svg class="li" style="width: 12px; height: 12px">
+                      <use href="#i-chevron-down" /></svg
+                    ><span>File servers</span><span class="svc-group__count">0 of 1 running</span>
+                  </div>
+                  <div class="svc-row">
+                    <div class="svc-row__head">
+                      <span class="state-dot svc-dot--stopped"></span
+                      ><span class="svc-row__name">Docs preview</span
+                      ><span class="svc-btn svc-btn--primary"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-play" /></svg
+                      ></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="svc-main">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li" style="width: 14px; height: 14px"><use href="#i-server" /></svg
+                    ><span class="tab__title">Staging network</span>
+                  </div>
+                </div>
+                <div class="svc-form">
+                  <h4>Staging network</h4>
+                  <p class="svc-sub">Browse through a server · SOCKS5 proxy, dynamic (ssh -D)</p>
+                  <div class="svc-tabs"><span>Settings</span><span class="on">Activity</span></div>
+                  <div class="svc-cols" style="align-items: center">
+                    <span class="state-dot svc-dot--running"></span><b>Running</b> since 14:02 on
+                    this computer<span style="margin-left: auto"
+                      ><span class="btn svc-footbtn">Restart</span>
+                      <span class="btn svc-footbtn">Stop</span></span
+                    >
+                  </div>
+                  <div class="svc-path">
+                    Set your browser's SOCKS5 proxy to <code>localhost:1080</code>
+                    <span class="svc-btn"
+                      ><svg class="li" style="width: 12px; height: 12px">
+                        <use href="#i-copy" /></svg></span
+                    ><br />Its pages then load from <b>Build Box</b>.
+                  </div>
+                  <div class="svc-path" style="color: var(--text-secondary)">
+                    Firefox: Settings, Network settings, Manual proxy, SOCKS v5, “Proxy DNS”.<br />macOS
+                    and Windows: the system proxy settings of the network.<br />Terminal:
+                    <code>curl --socks5-hostname localhost:1080 http://intranet/</code>
+                    <span class="svc-btn"
+                      ><svg class="li" style="width: 12px; height: 12px"><use href="#i-copy" /></svg
+                    ></span>
+                  </div>
+                  <div class="svc-cols">
+                    <div class="svc-path" style="flex: 1">Connections now<br /><b>6</b></div>
+                    <div class="svc-path" style="flex: 1">Connections in all<br /><b>142</b></div>
+                    <div class="svc-path" style="flex: 1">Sent<br /><b>1.4 MB</b></div>
+                    <div class="svc-path" style="flex: 1">Received<br /><b>38 MB</b></div>
+                  </div>
+                  <div class="svc-log">
+                    <span class="dim">14:02:11</span> Running on 127.0.0.1:1080<br /><span
+                      class="dim"
+                      >14:02:10</span
+                    >
+                    Signed in to Build Box<br /><span class="dim">14:02:09</span> Started by you
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item"
+                  ><svg class="li"><use href="#i-server" /></svg> 3 services running</span
+                >
+              </div>
+              <div class="status-bar__section status-bar__section--right"></div>
+            </div>
+          </div>
+        </div>
+        <h3>4.4 Share a folder with a device (TFTP firmware)</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>First-time</th>
+                <th>Power user</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <ol>
+                    <li>New service ▸ "Give files to a device".</li>
+                    <li>
+                      Chooses the folder. "Only this computer" says that a device cannot reach it,
+                      so picks "Devices on this network".
+                    </li>
+                    <li>
+                      Reads the address to type into the router, and the warning who can read it.
+                    </li>
+                    <li>Save and start; the access log shows the router's request.</li>
+                  </ol>
+                </td>
+                <td>
+                  <ol>
+                    <li>File browser ▸ folder ▸ "Share this folder by TFTP…", network, Share.</li>
+                    <li>Watches Activity for the RRQ line; a denied WRQ shows in red.</li>
+                  </ol>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="mockup-section">
+          <h3>TFTP form</h3>
+          <p>
+            "Who can open it" and "What they can do" replace bind address and read-only. Port hint
+            for devices that insist on 69.
+          </p>
+          <div class="app svc-app" data-both="1">
+            <div class="app__body">
+              <div class="activity-bar">
+                <div class="activity-bar__top">
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-network" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-folder-open" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-history" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-layout-grid" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-zap" /></svg>
+                  </div>
+                  <div class="activity-bar__item activity-bar__item--active">
+                    <div class="activity-bar__indicator"></div>
+                    <svg class="li"><use href="#i-server" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-stethoscope" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-puzzle" /></svg>
+                  </div>
+                </div>
+                <div class="activity-bar__bottom">
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-file-text" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-settings" /></svg>
+                  </div>
+                </div>
+              </div>
+              <div class="sidebar svc-sidebar">
+                <div class="sidebar__header"><span class="sidebar__title">Services</span></div>
+                <div class="svc-toolbar">
+                  <span class="svc-tool svc-tool--primary"
+                    ><svg class="li" style="width: 14px; height: 14px"><use href="#i-plus" /></svg>
+                    New service
+                    <svg class="li" style="width: 12px; height: 12px">
+                      <use href="#i-chevron-down" /></svg></span
+                  ><span class="svc-btn" style="margin-left: auto"
+                    ><svg class="li" style="width: 14px; height: 14px">
+                      <use href="#i-ellipsis" /></svg
+                  ></span>
+                </div>
+                <div class="svc-search">
+                  <svg class="li" style="width: 12px; height: 12px"><use href="#i-search" /></svg>
+                  Search services
+                </div>
+                <div class="sidebar__content">
+                  <div class="svc-group">
+                    <svg class="li" style="width: 12px; height: 12px">
+                      <use href="#i-chevron-down" /></svg
+                    ><span>SSH tunnels</span><span class="svc-group__count">2 of 3 running</span>
+                  </div>
+                  <div class="svc-row">
+                    <div class="svc-row__head">
+                      <span class="state-dot svc-dot--running"></span
+                      ><span class="svc-row__name">Shop database</span
+                      ><span class="svc-btn svc-btn--primary"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-square" /></svg
+                      ></span>
+                    </div>
+                    <small class="svc-row__desc">Read replica</small
+                    ><span class="svc-row__addr"
+                      ><code>localhost:5432</code
+                      ><span class="svc-btn" title="Copy address"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-copy" /></svg></span
+                    ></span>
+                  </div>
+                  <div class="svc-row">
+                    <div class="svc-row__head">
+                      <span class="state-dot svc-dot--running"></span
+                      ><span class="svc-row__name">Show my web app</span
+                      ><span class="svc-btn svc-btn--primary"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-square" /></svg
+                      ></span>
+                    </div>
+                    <span class="svc-row__addr"
+                      ><code>localhost:9000</code> on shop-web<code style="display: none"></code
+                      ><span class="svc-btn" title="Copy address"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-copy" /></svg></span
+                    ></span>
+                  </div>
+                  <div class="svc-row">
+                    <div class="svc-row__head">
+                      <span class="state-dot svc-dot--stopped"></span
+                      ><span class="svc-row__name">Staging network</span
+                      ><span class="svc-btn svc-btn--primary"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-play" /></svg
+                      ></span>
+                    </div>
+                    <small class="svc-row__desc">Browser proxy</small>
+                  </div>
+                  <div class="svc-group">
+                    <svg class="li" style="width: 12px; height: 12px">
+                      <use href="#i-chevron-down" /></svg
+                    ><span>File servers</span><span class="svc-group__count">0 of 1 running</span>
+                  </div>
+                  <div class="svc-row">
+                    <div class="svc-row__head">
+                      <span class="state-dot svc-dot--stopped"></span
+                      ><span class="svc-row__name">Docs preview</span
+                      ><span class="svc-btn svc-btn--primary"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-play" /></svg
+                      ></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="svc-main">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li" style="width: 14px; height: 14px"><use href="#i-server" /></svg
+                    ><span class="tab__title">New service</span>
+                  </div>
+                </div>
+                <div class="svc-form">
+                  <h4>Give files to a device</h4>
+                  <p class="svc-sub">
+                    TFTP server. Routers, switches and boards load firmware from it. It has no
+                    password.
+                  </p>
+                  <div class="svc-cols">
+                    <div class="svc-field">
+                      <label>Name</label>
+                      <div class="svc-input">Router firmware</div>
+                    </div>
+                    <div class="svc-field">
+                      <label>Run on</label>
+                      <div class="svc-input">
+                        This computer<svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-chevron-down" />
+                        </svg>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="svc-cols">
+                    <div class="svc-field">
+                      <label>Folder</label>
+                      <div class="svc-input"><code>~/firmware/edge</code></div>
+                    </div>
+                    <div style="align-self: end"><span class="btn svc-footbtn">Choose…</span></div>
+                    <div class="svc-field" style="flex: 0 0 80px">
+                      <label>Port</label>
+                      <div class="svc-input">6969</div>
+                    </div>
+                  </div>
+                  <div style="font-size: 11px; color: var(--text-secondary); margin-top: -5px">
+                    Many devices always ask on port 69. Ports below 1024 may need administrator
+                    rights.
+                  </div>
+                  <div>
+                    <div style="font-size: 12px; color: var(--text-secondary)">Who can open it</div>
+                    <div class="svc-radio">
+                      <span class="svc-radio__mark"></span>
+                      <div>
+                        Only this computer<small
+                          >127.0.0.1. A device on the network cannot reach it.</small
+                        >
+                      </div>
+                    </div>
+                    <div class="svc-radio svc-radio--on">
+                      <span class="svc-radio__mark"></span>
+                      <div>Devices on this network<small>en0, 192.168.1.20</small></div>
+                    </div>
+                    <div class="svc-radio">
+                      <span class="svc-radio__mark"></span>
+                      <div>Devices on every network of this computer<small>0.0.0.0</small></div>
+                    </div>
+                  </div>
+                  <div>
+                    <div style="font-size: 12px; color: var(--text-secondary)">
+                      What they can do
+                    </div>
+                    <div class="svc-cols">
+                      <div>
+                        <div class="svc-radio svc-radio--on">
+                          <span class="svc-radio__mark"></span>
+                          <div>Only download<small></small></div>
+                        </div>
+                      </div>
+                      <div>
+                        <div class="svc-radio">
+                          <span class="svc-radio__mark"></span>
+                          <div>Download and upload<small></small></div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="svc-warn">
+                    <svg class="li" style="width: 12px; height: 12px">
+                      <use href="#i-triangle-alert" />
+                    </svg>
+                    Devices load files from <code>tftp://192.168.1.20:6969</code>. Everyone on that
+                    network can download from this folder while it runs.
+                  </div>
+                </div>
+                <div class="svc-foot">
+                  <span class="btn svc-footbtn">Cancel</span
+                  ><span class="btn svc-footbtn">Save</span
+                  ><span class="btn btn--primary svc-footbtn">Save and start</span>
+                </div>
+              </div>
+            </div>
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item"
+                  ><svg class="li"><use href="#i-server" /></svg> 2 services running</span
+                >
+              </div>
+              <div class="status-bar__section status-bar__section--right"></div>
+            </div>
+          </div>
+        </div>
+        <div class="mockup-section">
+          <h3>Share via, from the file browser</h3>
+          <p>Section 3.9.</p>
+          <div class="app svc-app" data-both="1">
+            <div class="svc-dialog">
+              <h4>Share “firmware”</h4>
+              <div style="color: var(--text-secondary)">
+                Web server (HTTP). Others open the folder in a browser and download files.
+              </div>
+              <div>
+                <div style="color: var(--text-secondary)">Who can open it</div>
+                <div class="svc-radio svc-radio--on">
+                  <span class="svc-radio__mark"></span>
+                  <div>Only this computer<small>127.0.0.1</small></div>
+                </div>
+                <div class="svc-radio">
+                  <span class="svc-radio__mark"></span>
+                  <div>Devices on this network<small>en0, 192.168.1.20</small></div>
+                </div>
+              </div>
+              <div>
+                <div style="color: var(--text-secondary)">What they can do</div>
+                <div class="svc-radio svc-radio--on">
+                  <span class="svc-radio__mark"></span>
+                  <div>Only download<small></small></div>
+                </div>
+                <div class="svc-radio">
+                  <span class="svc-radio__mark"></span>
+                  <div>
+                    Download and upload<small
+                      >Anyone who reaches it can write into the folder</small
+                    >
+                  </div>
+                </div>
+              </div>
+              <div class="svc-check">
+                <span class="svc-check__box svc-check__box--on"></span>Stop sharing and forget it
+                when termiHub closes
+              </div>
+              <div class="svc-path"><code>http://localhost:8080</code></div>
+              <div style="display: flex; gap: 8px; justify-content: flex-end">
+                <span class="btn svc-footbtn">Cancel</span
+                ><span class="btn btn--primary svc-footbtn">Share</span>
+              </div>
+            </div>
+            <div class="app__body">
+              <div class="activity-bar">
+                <div class="activity-bar__top">
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-network" /></svg>
+                  </div>
+                  <div class="activity-bar__item activity-bar__item--active">
+                    <div class="activity-bar__indicator"></div>
+                    <svg class="li"><use href="#i-folder-open" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-history" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-layout-grid" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-zap" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-server" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-stethoscope" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-puzzle" /></svg>
+                  </div>
+                </div>
+                <div class="activity-bar__bottom">
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-file-text" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-settings" /></svg>
+                  </div>
+                </div>
+              </div>
+              <div class="sidebar svc-sidebar">
+                <div class="sidebar__header"><span class="sidebar__title">File browser</span></div>
+                <div class="sidebar__content">
+                  <div class="connection-tree__item">
+                    <svg class="li" style="width: 14px; height: 14px"><use href="#i-folder" /></svg>
+                    docs
+                  </div>
+                  <div class="connection-tree__item connection-tree__item--selected">
+                    <svg class="li" style="width: 14px; height: 14px"><use href="#i-folder" /></svg>
+                    firmware
+                  </div>
+                  <div class="connection-tree__item">
+                    <svg class="li" style="width: 14px; height: 14px"><use href="#i-folder" /></svg>
+                    notes
+                  </div>
+                  <div class="connection-tree__item">
+                    <svg class="li" style="width: 14px; height: 14px"><use href="#i-folder" /></svg>
+                    src
+                  </div>
+                </div>
+              </div>
+              <div class="svc-main">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li" style="width: 14px; height: 14px"><use href="#i-network" /></svg
+                    ><span class="tab__title">zsh</span>
+                  </div>
+                </div>
+                <div class="svc-term">
+                  <span>arne@mac ~ %</span> psql -h localhost -p 5432 shop<br />psql (17.2)<br />shop=&gt;
+                  select count(*) from orders;<br />&nbsp;count<br />-------<br />&nbsp;48210<br />shop=&gt;
+                  ▌
+                </div>
+              </div>
+            </div>
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item"
+                  ><svg class="li"><use href="#i-server" /></svg> 3 services running</span
+                >
+              </div>
+              <div class="status-bar__section status-bar__section--right"></div>
+            </div>
+          </div>
+        </div>
+        <h3>4.5 See why a tunnel is down</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>First-time</th>
+                <th>Power user</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <ol>
+                    <li>The status bar says "1 service needs attention". Click.</li>
+                    <li>
+                      The red row says "Build Box did not answer. Retried 10 times until 14:31."
+                    </li>
+                    <li>Retry on the row; or Activity with what to check.</li>
+                  </ol>
+                </td>
+                <td>
+                  <ol>
+                    <li>
+                      Activity: the log shows the drop at 14:26 and every try; "Open a terminal on
+                      Build Box" tests the same connection.
+                    </li>
+                  </ol>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="mockup-section">
+          <h3>Activity of a failed tunnel</h3>
+          <p>Durable error, next step, log with the cause on top.</p>
+          <div class="app svc-app" data-both="1">
+            <div class="app__body">
+              <div class="activity-bar">
+                <div class="activity-bar__top">
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-network" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-folder-open" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-history" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-layout-grid" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-zap" /></svg>
+                  </div>
+                  <div class="activity-bar__item activity-bar__item--active">
+                    <div class="activity-bar__indicator"></div>
+                    <svg class="li"><use href="#i-server" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-stethoscope" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-puzzle" /></svg>
+                  </div>
+                </div>
+                <div class="activity-bar__bottom">
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-file-text" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-settings" /></svg>
+                  </div>
+                </div>
+              </div>
+              <div class="sidebar svc-sidebar">
+                <div class="sidebar__header"><span class="sidebar__title">Services</span></div>
+                <div class="svc-toolbar">
+                  <span class="svc-tool svc-tool--primary"
+                    ><svg class="li" style="width: 14px; height: 14px"><use href="#i-plus" /></svg>
+                    New service
+                    <svg class="li" style="width: 12px; height: 12px">
+                      <use href="#i-chevron-down" /></svg></span
+                  ><span class="svc-btn" style="margin-left: auto"
+                    ><svg class="li" style="width: 14px; height: 14px">
+                      <use href="#i-ellipsis" /></svg
+                  ></span>
+                </div>
+                <div class="svc-search">
+                  <svg class="li" style="width: 12px; height: 12px"><use href="#i-search" /></svg>
+                  Search services
+                </div>
+                <div class="sidebar__content">
+                  <div class="svc-group">
+                    <svg class="li" style="width: 12px; height: 12px">
+                      <use href="#i-chevron-down" /></svg
+                    ><span>SSH tunnels</span><span class="svc-group__count">1 of 3 running</span>
+                  </div>
+                  <div class="svc-row svc-row--sel">
+                    <div class="svc-row__head">
+                      <span class="state-dot svc-dot--error"></span
+                      ><span class="svc-row__name">Shop database</span
+                      ><span class="svc-btn"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-activity" /></svg></span
+                      ><span class="svc-btn"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-pencil" /></svg></span
+                      ><span class="svc-btn"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-ellipsis" /></svg></span
+                      ><span class="svc-btn svc-btn--primary"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-rotate-cw" /></svg
+                      ></span>
+                    </div>
+                    <small class="svc-row__desc">Read replica</small
+                    ><span class="svc-row__err"
+                      ><svg class="li" style="width: 11px; height: 11px">
+                        <use href="#i-triangle-alert" />
+                      </svg>
+                      Build Box did not answer. Retried 10 times until 14:31.</span
+                    >
+                  </div>
+                  <div class="svc-row">
+                    <div class="svc-row__head">
+                      <span class="state-dot svc-dot--running"></span
+                      ><span class="svc-row__name">Show my web app</span
+                      ><span class="svc-btn svc-btn--primary"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-square" /></svg
+                      ></span>
+                    </div>
+                    <span class="svc-row__addr"
+                      ><code>localhost:9000</code> on shop-web<code style="display: none"></code
+                      ><span class="svc-btn" title="Copy address"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-copy" /></svg></span
+                    ></span>
+                  </div>
+                  <div class="svc-row">
+                    <div class="svc-row__head">
+                      <span class="state-dot svc-dot--stopped"></span
+                      ><span class="svc-row__name">Staging network</span
+                      ><span class="svc-btn svc-btn--primary"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-play" /></svg
+                      ></span>
+                    </div>
+                    <small class="svc-row__desc">Browser proxy</small>
+                  </div>
+                  <div class="svc-group">
+                    <svg class="li" style="width: 12px; height: 12px">
+                      <use href="#i-chevron-down" /></svg
+                    ><span>File servers</span><span class="svc-group__count">0 of 1 running</span>
+                  </div>
+                  <div class="svc-row">
+                    <div class="svc-row__head">
+                      <span class="state-dot svc-dot--stopped"></span
+                      ><span class="svc-row__name">Docs preview</span
+                      ><span class="svc-btn svc-btn--primary"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-play" /></svg
+                      ></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="svc-main">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li" style="width: 14px; height: 14px"><use href="#i-server" /></svg
+                    ><span class="tab__title">Shop database</span>
+                  </div>
+                </div>
+                <div class="svc-form">
+                  <h4>Shop database</h4>
+                  <p class="svc-sub">Reach something on a server · SSH tunnel, local (ssh -L)</p>
+                  <div class="svc-tabs"><span>Settings</span><span class="on">Activity</span></div>
+                  <div class="svc-err">
+                    <svg class="li" style="width: 12px; height: 12px">
+                      <use href="#i-triangle-alert" />
+                    </svg>
+                    <b>Build Box did not answer</b> (timeout after 15 s). termiHub retried 10 times
+                    and stopped at 14:31.<br /><span style="color: var(--text-secondary)"
+                      >Check that the host is on and that your VPN is connected.</span
+                    ><br /><br /><span class="btn btn--primary svc-footbtn">Retry</span>
+                    <span class="btn svc-footbtn">Open a terminal on Build Box</span>
+                    <span class="btn svc-footbtn">Edit</span>
+                  </div>
+                  <div class="svc-path">
+                    When it runs, <code>localhost:5432</code> reaches
+                    <code>db.internal:5432</code> through <b>Build Box</b>.
+                  </div>
+                  <div class="svc-log">
+                    <span class="dim">14:31:20</span>
+                    <span class="bad">Stopped: no answer after 10 tries</span><br /><span
+                      class="dim"
+                      >14:31:05</span
+                    >
+                    Try 10: timeout<br /><span class="dim">14:30:35</span> Try 9: timeout<br /><span
+                      class="dim"
+                      >14:26:48</span
+                    >
+                    Reconnecting, try 1 in 1 s<br /><span class="dim">14:26:47</span>
+                    <span class="bad">Connection to Build Box lost</span> (3 connections dropped)<br /><span
+                      class="dim"
+                      >09:00:12</span
+                    >
+                    Running on 127.0.0.1:5432<br /><span class="dim">09:00:11</span> Signed in to
+                    Build Box<br /><span class="dim">09:00:10</span> Started with a session to Build
+                    Box
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item"
+                  ><svg class="li"><use href="#i-server" /></svg> 1 service running</span
+                >
+              </div>
+              <div class="status-bar__section status-bar__section--right">
+                <span class="status-bar__item" style="color: var(--color-error)"
+                  ><svg class="li"><use href="#i-triangle-alert" /></svg> 1 service needs
+                  attention</span
+                >
+              </div>
+            </div>
+          </div>
+        </div>
+        <h3>4.6 Stop everything</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>First-time</th>
+                <th>Power user</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <ol>
+                    <li>Services ▸ "…" ▸ "Stop all services…".</li>
+                    <li>Sees what will stop and how many connections are open.</li>
+                    <li>Stop all.</li>
+                  </ol>
+                </td>
+                <td>
+                  <ol>
+                    <li>Palette "stop all services", or its own shortcut.</li>
+                  </ol>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="mockup-section">
+          <h3>Stop all</h3>
+          <p>Asks because connections are open; with none open it stops at once.</p>
+          <div class="app svc-app" data-both="1">
+            <div class="svc-dialog">
+              <h4>Stop 3 services?</h4>
+              <div>Their addresses stop working. 3 connections are open now.</div>
+              <ul>
+                <li>Shop database, 2 connections</li>
+                <li>Show my web app, 1 connection</li>
+                <li>Router firmware, no connections</li>
+              </ul>
+              <div style="display: flex; gap: 8px; justify-content: flex-end">
+                <span class="btn svc-footbtn">Cancel</span
+                ><span class="btn btn--primary svc-footbtn svc-danger">Stop all</span>
+              </div>
+            </div>
+            <div class="app__body">
+              <div class="activity-bar">
+                <div class="activity-bar__top">
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-network" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-folder-open" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-history" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-layout-grid" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-zap" /></svg>
+                  </div>
+                  <div class="activity-bar__item activity-bar__item--active">
+                    <div class="activity-bar__indicator"></div>
+                    <svg class="li"><use href="#i-server" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-stethoscope" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-puzzle" /></svg>
+                  </div>
+                </div>
+                <div class="activity-bar__bottom">
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-file-text" /></svg>
+                  </div>
+                  <div class="activity-bar__item">
+                    <svg class="li"><use href="#i-settings" /></svg>
+                  </div>
+                </div>
+              </div>
+              <div class="sidebar svc-sidebar">
+                <div class="sidebar__header"><span class="sidebar__title">Services</span></div>
+                <div class="svc-toolbar">
+                  <span class="svc-tool svc-tool--primary"
+                    ><svg class="li" style="width: 14px; height: 14px"><use href="#i-plus" /></svg>
+                    New service
+                    <svg class="li" style="width: 12px; height: 12px">
+                      <use href="#i-chevron-down" /></svg></span
+                  ><span class="svc-btn" style="margin-left: auto"
+                    ><svg class="li" style="width: 14px; height: 14px">
+                      <use href="#i-ellipsis" /></svg
+                  ></span>
+                </div>
+                <div class="svc-search">
+                  <svg class="li" style="width: 12px; height: 12px"><use href="#i-search" /></svg>
+                  Search services
+                </div>
+                <div class="menu svc-menu svc-menu--more">
+                  <div class="svc-menu__item">
+                    <div>Stop all services…<small>3 running</small></div>
+                  </div>
+                  <div class="svc-menu__item">
+                    <div>Open connections<small>Everything termiHub has open</small></div>
+                  </div>
+                </div>
+                <div class="sidebar__content">
+                  <div class="svc-group">
+                    <svg class="li" style="width: 12px; height: 12px">
+                      <use href="#i-chevron-down" /></svg
+                    ><span>SSH tunnels</span><span class="svc-group__count">2 of 3 running</span>
+                  </div>
+                  <div class="svc-row">
+                    <div class="svc-row__head">
+                      <span class="state-dot svc-dot--running"></span
+                      ><span class="svc-row__name">Shop database</span
+                      ><span class="svc-btn svc-btn--primary"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-square" /></svg
+                      ></span>
+                    </div>
+                    <small class="svc-row__desc">Read replica</small
+                    ><span class="svc-row__addr"
+                      ><code>localhost:5432</code
+                      ><span class="svc-btn" title="Copy address"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-copy" /></svg></span
+                    ></span>
+                  </div>
+                  <div class="svc-row">
+                    <div class="svc-row__head">
+                      <span class="state-dot svc-dot--running"></span
+                      ><span class="svc-row__name">Show my web app</span
+                      ><span class="svc-btn svc-btn--primary"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-square" /></svg
+                      ></span>
+                    </div>
+                    <span class="svc-row__addr"
+                      ><code>localhost:9000</code> on shop-web<code style="display: none"></code
+                      ><span class="svc-btn" title="Copy address"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-copy" /></svg></span
+                    ></span>
+                  </div>
+                  <div class="svc-row">
+                    <div class="svc-row__head">
+                      <span class="state-dot svc-dot--stopped"></span
+                      ><span class="svc-row__name">Staging network</span
+                      ><span class="svc-btn svc-btn--primary"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-play" /></svg
+                      ></span>
+                    </div>
+                    <small class="svc-row__desc">Browser proxy</small>
+                  </div>
+                  <div class="svc-group">
+                    <svg class="li" style="width: 12px; height: 12px">
+                      <use href="#i-chevron-down" /></svg
+                    ><span>File servers</span><span class="svc-group__count">1 of 2 running</span>
+                  </div>
+                  <div class="svc-row">
+                    <div class="svc-row__head">
+                      <span class="state-dot svc-dot--running"></span
+                      ><span class="svc-row__name">Router firmware</span
+                      ><span class="svc-btn svc-btn--primary"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-square" /></svg
+                      ></span>
+                    </div>
+                    <small class="svc-row__desc">TFTP for the lab bench</small
+                    ><span class="svc-row__addr"
+                      ><code>tftp://192.168.1.20:6969</code
+                      ><span class="svc-btn" title="Copy address"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-copy" /></svg></span
+                    ></span>
+                  </div>
+                  <div class="svc-row">
+                    <div class="svc-row__head">
+                      <span class="state-dot svc-dot--stopped"></span
+                      ><span class="svc-row__name">Docs preview</span
+                      ><span class="svc-btn svc-btn--primary"
+                        ><svg class="li" style="width: 12px; height: 12px">
+                          <use href="#i-play" /></svg
+                      ></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="svc-main">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li" style="width: 14px; height: 14px"><use href="#i-network" /></svg
+                    ><span class="tab__title">zsh</span>
+                  </div>
+                </div>
+                <div class="svc-term">
+                  <span>arne@mac ~ %</span> psql -h localhost -p 5432 shop<br />psql (17.2)<br />shop=&gt;
+                  select count(*) from orders;<br />&nbsp;count<br />-------<br />&nbsp;48210<br />shop=&gt;
+                  ▌
+                </div>
+              </div>
+            </div>
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item"
+                  ><svg class="li"><use href="#i-server" /></svg> 3 services running</span
+                >
+              </div>
+              <div class="status-bar__section status-bar__section--right"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section>
+        <h2 id="5-scope">5. What else belongs here <a class="anchor" href="#5-scope">#</a></h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Thing</th>
+                <th>Recommendation</th>
+                <th>Reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>HTTP monitor</td>
+                <td><b>Out</b></td>
+                <td>
+                  It watches something; it opens no port and has no address. It lives with ping and
+                  port scan in Network tools.
+                </td>
+              </tr>
+              <tr>
+                <td>X server</td>
+                <td><b>Out</b></td>
+                <td>
+                  One shared helper for SSH sessions, nothing to configure per item. Stays in
+                  Settings and Open connections.
+                </td>
+              </tr>
+              <tr>
+                <td>VNC / RDP SSH tunnel</td>
+                <td><b>Out</b></td>
+                <td>
+                  Part of one connection, starts and ends with its tab, has no address to use
+                  elsewhere. Listing it would offer a Stop that breaks the session.
+                </td>
+              </tr>
+              <tr>
+                <td>Agent port forwards for VNC/RDP</td>
+                <td><b>Out</b></td>
+                <td>Same as above, internal.</td>
+              </tr>
+              <tr>
+                <td>Port Forwarding in the connection editor</td>
+                <td><b>In, as a view</b></td>
+                <td>
+                  Same entries. Keeps its place (found while editing the host), uses the same rows,
+                  words and editor.
+                </td>
+              </tr>
+              <tr>
+                <td>"Share via" in the file browser</td>
+                <td><b>In, as an entry point</b></td>
+                <td>Creates a file server; gets the dialog of 3.9.</td>
+              </tr>
+              <tr>
+                <td>SSH agent forwarding, X11 forwarding</td>
+                <td><b>Out</b></td>
+                <td>Options of a session.</td>
+              </tr>
+              <tr>
+                <td>Open connections</td>
+                <td><b>Stays</b></td>
+                <td>
+                  It answers "what is open" across everything. Its two sections become one,
+                  "Services".
+                </td>
+              </tr>
+              <tr>
+                <td>Plugin-provided servers</td>
+                <td><b>Out, later</b></td>
+                <td>No plugin API for it. The view-model of slice 3 leaves room.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section>
+        <h2 id="6-migration">6. Migration <a class="anchor" href="#6-migration">#</a></h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>What</th>
+                <th>Rule</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Activity bar, hidden views (<code>hiddenActivityBarViews</code>)</td>
+                <td>
+                  Settings v4 to v5, as for Automations (#5818): hidden only when <b>both</b>
+                  <code>tunnels</code> and <code>services</code> were hidden, at the first one's
+                  place; <code>tunnels</code> is dropped. One hidden: Services is shown. If Services
+                  was hidden and tunnels not, this shows it again: the safe direction, since the
+                  tunnels would vanish otherwise.
+                </td>
+              </tr>
+              <tr>
+                <td>Activity bar order</td>
+                <td>
+                  Not stored today (fixed order); nothing to migrate. Services takes the place of
+                  SSH tunnels.
+                </td>
+              </tr>
+              <tr>
+                <td>Last sidebar view</td>
+                <td>
+                  Stored <code>tunnels</code> becomes <code>services</code> (read for old files
+                  only; the app always starts on Connections).
+                </td>
+              </tr>
+              <tr>
+                <td>Older build reading v5</td>
+                <td>
+                  Sees <code>services</code> hidden or not; its own SSH tunnels entry shows. Nothing
+                  is lost.
+                </td>
+              </tr>
+              <tr>
+                <td>Open editor tabs</td>
+                <td>
+                  Tab kind <code>tunnel-editor</code> stays valid for a tab moved between windows;
+                  <code>server-editor</code> is new. Neither is stored in workspaces.
+                </td>
+              </tr>
+              <tr>
+                <td>Shortcuts</td>
+                <td>None exist; two unbound ones are added.</td>
+              </tr>
+              <tr>
+                <td>Palette and search words</td>
+                <td>
+                  tunnel, server, service, forward, port forwarding, proxy, share, SOCKS, HTTP, FTP,
+                  TFTP find the entries. Settings search keeps "tunnel" for the safety prompt.
+                </td>
+              </tr>
+              <tr>
+                <td>Stored data</td>
+                <td>
+                  Both files untouched. <code>embedded_servers.json</code> gains an optional
+                  <code>host</code> (absent means this computer). Older builds keep unknown fields
+                  on save. Ids, secrets and backup sections stay.
+                </td>
+              </tr>
+              <tr>
+                <td>Test ids</td>
+                <td>
+                  Row and field ids stay (section 1). Renamed: the two sidebar shells, lists, empty
+                  states, New buttons, and <code>activity-bar-ssh-tunnels</code> goes. The harness
+                  keeps one constant per name, so a slice changes it once.
+                </td>
+              </tr>
+              <tr>
+                <td>Harness</td>
+                <td>
+                  New <code>ServicesUi</code> mixin; <code>EmbeddedServicesUi</code> and the tunnel
+                  tests call it. <code>graduated_features.py</code> maps both old views to
+                  <code>services</code>.
+                </td>
+              </tr>
+              <tr>
+                <td>Docs</td>
+                <td>
+                  README, architecture, testing, marketing pages; the concepts ssh-tunneling,
+                  embedded-network-daemons and the chain concept get a pointer.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section>
+        <h2 id="7-slices">7. Slice plan <a class="anchor" href="#7-slices">#</a></h2>
+        <p>
+          Each slice merges on its own and leaves a working app. "Gallery" are the named rendered
+          states added to a <code>servicesGallery.spec.ts</code> (the shape of
+          <code>automationGallery.spec.ts</code>), each at 800x600 and 1280x800 in dark and light.
+          Every slice also runs the rendered audit and keeps the harness green.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Slice</th>
+                <th>What</th>
+                <th>Tests</th>
+                <th>Gallery</th>
+                <th>Product run</th>
+                <th>After</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td>Right machine</td>
+                <td>
+                  Store a file server's host (F-1); Duplicate keeps what it should (F-4); portable
+                  list (F-5). No layout change.
+                </td>
+                <td>
+                  Rust manager tests with a fake agent client; store round trip with an older file;
+                  golden wire for <code>host</code>; component tests
+                </td>
+                <td>none (no new state)</td>
+                <td>an agent-hosted TFTP server starts on the agent again after an app restart</td>
+                <td></td>
+              </tr>
+              <tr>
+                <td>2</td>
+                <td>Honest states</td>
+                <td>
+                  Not reachable for agent-hosted services of both kinds (F-2); Waiting for an agent
+                  or the credential store at start (F-3).
+                </td>
+                <td>Rust state tests (agent lost, back running, back gone); start order tests</td>
+                <td>rows: waiting, not reachable</td>
+                <td>agent killed and restarted: the row follows</td>
+                <td>1</td>
+              </tr>
+              <tr>
+                <td>3</td>
+                <td>One model</td>
+                <td>
+                  File servers on a <code>services</code> projection region (F-6). Pure view-model
+                  (kind, state, address, path, actions in order) over both;
+                  <code>shareTypeHelp</code>. No UI change.
+                </td>
+                <td>
+                  table tests: every state maps, order fixed, address never 0.0.0.0; two-window
+                  store test
+                </td>
+                <td>none</td>
+                <td>second window sees a new file server</td>
+                <td>2</td>
+              </tr>
+              <tr>
+                <td>4</td>
+                <td>One row</td>
+                <td>
+                  One <code>ServiceListItem</code> for both sidebars: address line, Copy, menu and
+                  right-click, problem line (F-7).
+                </td>
+                <td>Component and a11y tests for every state; keyboard</td>
+                <td>all states, both kinds, long names, 200 px</td>
+                <td>address copied and used from a terminal</td>
+                <td>3, <a href="https://github.com/armaxri/termiHub/issues/6027">#6027</a></td>
+              </tr>
+              <tr>
+                <td>5</td>
+                <td>One sidebar</td>
+                <td>
+                  Activity bar, groups, search, New menu, empty state, settings v5. Old views
+                  removed.
+                </td>
+                <td>Migration table test; sidebar and roving tests; drift test</td>
+                <td>empty, menu open, filled, one group, search, nothing found</td>
+                <td>six New entries open the right editor; hidden-state migration</td>
+                <td>4</td>
+              </tr>
+              <tr>
+                <td>6</td>
+                <td>Around it</td>
+                <td>
+                  Status bar (both, needs attention, F-12), Open connections section, palette
+                  entries and aliases, two actions, safety prompt word.
+                </td>
+                <td>Palette alias tests; status bar; settings search</td>
+                <td>status bar, palette, Open connections</td>
+                <td>palette start and stop; old words find it</td>
+                <td>5</td>
+              </tr>
+              <tr>
+                <td>7</td>
+                <td>File server tab</td>
+                <td>
+                  Dialog becomes the editor tab on a shared shell: who, what, sign-in, folder
+                  chooser, agent addresses, warning (F-8, F-10, F-11).
+                </td>
+                <td>Form, guard, draft move, warning matrix, axe</td>
+                <td>each protocol, warning, sign-in, invalid, agent</td>
+                <td>create, edit, cancel with unsaved changes</td>
+                <td>5</td>
+              </tr>
+              <tr>
+                <td>8</td>
+                <td>Tunnel tab</td>
+                <td>
+                  Tunnel form on the same shell: sentence, who can open it, start options, "old
+                  settings" banner, "Show path".
+                </td>
+                <td>Existing tunnel tests kept; bind mapping table</td>
+                <td>three types, agent loopback, chain, banner</td>
+                <td>create and use each type</td>
+                <td>7</td>
+              </tr>
+              <tr>
+                <td>9</td>
+                <td>Activity</td>
+                <td>
+                  Event ring in both managers, Activity sub-tab, counters, how to use it; the access
+                  log moves out of the row.
+                </td>
+                <td>Rust ring and event order tests; log tests moved</td>
+                <td>running, stopped, reconnecting, log full, old agent</td>
+                <td>traffic and events of a tunnel and an HTTP server</td>
+                <td>8</td>
+              </tr>
+              <tr>
+                <td>10</td>
+                <td>Errors with a next step</td>
+                <td>
+                  The table of 3.6 on row and in Activity; refused targets counted in the forwarder.
+                </td>
+                <td>Cause table test; forwarder test with a refusing target</td>
+                <td>each cause</td>
+                <td>stop sshd, read why, restart it, Retry</td>
+                <td>9</td>
+              </tr>
+              <tr>
+                <td>11</td>
+                <td>Stop, delete, quit</td>
+                <td>
+                  Stop confirm by open connections, Undo for file servers, Stop all, quit and close
+                  (question 2).
+                </td>
+                <td>Undo restores the password; decision table; quit coordinator tests</td>
+                <td>dialogs</td>
+                <td>Stop all with an open connection; quit</td>
+                <td>6, 9</td>
+              </tr>
+              <tr>
+                <td>12</td>
+                <td>Share via</td>
+                <td>Dialog, temporary services, shown failure (F-9, question 3).</td>
+                <td>Temporary entry gone after restart; failure shown</td>
+                <td>dialog, temporary row</td>
+                <td>share to another machine on the network</td>
+                <td>7</td>
+              </tr>
+              <tr>
+                <td>13</td>
+                <td>Port Forwarding and cleanup</td>
+                <td>
+                  Connection editor section on the shared row; dead components, CSS, ids; docs,
+                  README, concepts, copy-style words.
+                </td>
+                <td>Section tests; dead-code check</td>
+                <td>section filled, empty, unsaved</td>
+                <td>add from a connection</td>
+                <td>10, 11, 12</td>
+              </tr>
+              <tr>
+                <td>14</td>
+                <td>Final review</td>
+                <td>
+                  A fresh reviewer grades the gallery and a product run; fix loop until every state
+                  is 4 or better; this concept moves to implemented.
+                </td>
+                <td>the gallery itself</td>
+                <td>all states above, 800x600 and 1280x800, dark and light</td>
+                <td>whole walkthrough of section 4</td>
+                <td>all</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <pre class="mermaid">
+flowchart LR
+  S1[1 Right machine] --> S2[2 Honest states] --> S3[3 One model] --> S4[4 One row] --> S5[5 One sidebar]
+  S5 --> S6[6 Around it]
+  S5 --> S7[7 File server tab] --> S8[8 Tunnel tab] --> S9[9 Activity] --> S10[10 Errors]
+  S7 --> S12[12 Share via]
+  S6 --> S11[11 Stop, delete, quit]
+  S9 --> S11
+  S10 --> S13[13 Cleanup]
+  S11 --> S13
+  S12 --> S13 --> S14[14 Final review]</pre
+        >
+        <h3>Collisions with running work</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Work</th>
+                <th>Touches</th>
+                <th>So</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <a href="https://github.com/armaxri/termiHub/issues/6027">#6027</a> / PR
+                  <a href="https://github.com/armaxri/termiHub/issues/6035">#6035</a>
+                </td>
+                <td>
+                  <code
+                    >TunnelEditor, RadioGroup, tunnelRowTooltip,
+                    ConnectionPortForwardingSection</code
+                  >
+                </td>
+                <td>Must be merged before slice 4.</td>
+              </tr>
+              <tr>
+                <td>
+                  <a href="https://github.com/armaxri/termiHub/issues/6034">#6034</a> reach wording
+                </td>
+                <td><code>tunnelHost.ts</code></td>
+                <td>Before slice 8; its sentences move into "Who can open it".</td>
+              </tr>
+              <tr>
+                <td>
+                  <a href="https://github.com/armaxri/termiHub/issues/6036">#6036</a> bare words
+                </td>
+                <td>protocol radios</td>
+                <td>
+                  The protocol item is done in slice 5 (menu) and 7 (cards); the rest is
+                  independent.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <a href="https://github.com/armaxri/termiHub/issues/6025">#6025</a> /
+                  <a href="https://github.com/armaxri/termiHub/issues/6026">#6026</a> automations
+                  usability
+                </td>
+                <td>
+                  status bar icons (A-020), command palette rows (A-048), sidebar row marks,
+                  <code>docs/copy-style.md</code>
+                </td>
+                <td>
+                  Slices 6 and 13 after them. Slices 1 to 5 touch no automation component. Reuse
+                  their palette row form.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <a href="https://github.com/armaxri/termiHub/issues/5860">#5860</a> Settings
+                  regroup
+                </td>
+                <td><code>settingsRegistry.ts, SafetyPromptSettings</code></td>
+                <td>Slice 6 changes one hint and one keyword; whoever lands second merges.</td>
+              </tr>
+              <tr>
+                <td>Settings schema</td>
+                <td>version 5</td>
+                <td>
+                  One migration at a time: check <code>CURRENT_VERSION</code> when slice 5 starts.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <h3>Risks</h3>
+        <ul>
+          <li>
+            <b>Behavior change hidden in a move.</b> The shared row and shell are built next to the
+            old ones and the old tests keep running against them before the old code goes.
+          </li>
+          <li>
+            <b>Agent versions.</b> Only the address list needs a new RPC; without it the form falls
+            back to text. Events come from the desktop side.
+          </li>
+          <li>
+            <b>Not reachable vs. stopped.</b> Only the agent can tell. After a reconnect its
+            <code>service.status</code> / <code>tunnel.status</code> decides.
+          </li>
+          <li><b>Quit on agents.</b> Today's stop at quit is kept unless question 2 changes it.</li>
+        </ul>
+      </section>
+      <section>
+        <h2 id="8-questions">
+          8. Open questions for the maintainer <a class="anchor" href="#8-questions">#</a>
+        </h2>
+        <p>
+          Three. Everything else above is decided here and can be changed in the review of this
+          concept.
+        </p>
+        <ol>
+          <li>
+            <b>May a running row show its address with a Copy button?</b> It is an exception to
+            "users are looking for names, not the settings" (#5757).
+            <b>Recommendation: yes, only while it runs.</b> Then the address is the result, the
+            thing the user needs next, not a setting; stopped rows show names only. Otherwise the
+            address moves to the tooltip and the menu, and Copy costs two clicks.
+          </li>
+          <li>
+            <b>Should termiHub ask before quitting when services run?</b> Today it stops them
+            silently, on agents too.
+            <b>Recommendation: ask only when one has connections open right now</b>, in the existing
+            quit dialog ("3 services stop, 2 connections are open"); otherwise quit at once. On
+            Windows and Linux the last window closing counts as quit. Agent-hosted services keep
+            stopping at quit, as today.
+          </li>
+          <li>
+            <b>May the defaults for new file servers become safer?</b> Today a new server and every
+            "Share via" lets anyone who reaches it upload, and the warning covers only 0.0.0.0.
+            <b>Recommendation: yes.</b> New file servers start with "Only download"; "Share via"
+            asks who and what and is temporary; a warning shows whenever other machines can reach
+            it. Saved servers keep their settings.
+          </li>
+        </ol>
+      </section>
+      <section>
+        <h2 id="status">Implementation Status <a class="anchor" href="#status">#</a></h2>
+        <p>
+          Not started. Written for
+          <a href="https://github.com/armaxri/termiHub/issues/6028">#6028</a> (step 0).
+        </p>
+      </section>
+      <section>
+        <h2 id="sync">Sync Ledger <a class="anchor" href="#sync">#</a></h2>
+        <p>
+          <strong>Last synced:</strong> never (not implemented) · <strong>Status:</strong> concept
+          only
+        </p>
+      </section>
+    </div>
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      // Each mockup is written once; its light twin is a copy with the light theme values.
+      document.querySelectorAll(".svc-app[data-both]").forEach(function (app) {
+        var light = app.cloneNode(true);
+        light.removeAttribute("data-both");
+        light.setAttribute("data-theme", "light");
+        var l = document.createElement("div");
+        l.className = "svc-theme";
+        l.textContent = "Dark, 800x600";
+        app.before(l);
+        var m = l.cloneNode(true);
+        m.textContent = "Light, 800x600";
+        app.after(m);
+        m.after(light);
+      });
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>

@@ -27,6 +27,7 @@ import {
   connected as connectedLifecycle,
   disconnected,
 } from "@/test/sessionLifecycleRegionTestHarness";
+import { resumedMarker } from "./dropCopy";
 import { mockXtermInstances as xtermInstances } from "@/test/mockXterm";
 
 // The distinctive serialized snapshot the SerializeAddon mock returns, so a test
@@ -36,6 +37,14 @@ const SERIALIZED_SCROLLBACK = "\x1b[32mlocal scrollback snapshot\x1b[0m\r\n";
 // Every xterm instance created, in order, with its write() spy — so a test can
 // inspect what the fresh (final) instance rendered. The shared mock records each
 // constructed instance in `mockXtermInstances`.
+const inputFrom = vi.hoisted(() => ({ user: true, known: true }));
+vi.mock("./xtermUserInput", () => ({
+  trackUserInput: () => ({
+    known: inputFrom.known,
+    take: () => !inputFrom.known || inputFrom.user,
+    dispose: () => undefined,
+  }),
+}));
 vi.mock("@xterm/xterm", async () => (await import("@/test/mockXterm")).createMockXtermModule());
 vi.mock("@xterm/addon-fit", () => {
   class M {
@@ -74,21 +83,21 @@ const mockCreateTerminal = vi.fn().mockResolvedValue("fresh-session");
 const mockGetAgentSessionBuffer = vi
   .fn()
   .mockResolvedValue({ data: new Uint8Array(), endOffset: 0, epoch: 1, coming: false });
+const mockSetLineEnding = vi.fn().mockResolvedValue(undefined);
+const mockReplayScrollback = vi.fn();
 const mockSendInput = vi.fn().mockResolvedValue(undefined);
 const mockTakeResumed = vi.fn().mockResolvedValue(false);
 vi.mock("@/services/api", () => ({
   createTerminal: (...a: unknown[]) => mockCreateTerminal(...a),
   cancelConnecting: vi.fn().mockResolvedValue(undefined),
   sendInput: (...a: unknown[]) => mockSendInput(...a),
-  setSessionLineEnding: vi.fn().mockResolvedValue(undefined),
+  setSessionLineEnding: (...a: unknown[]) => mockSetLineEnding(...a),
   resizeTerminal: vi.fn().mockResolvedValue(undefined),
   closeTerminal: vi.fn().mockResolvedValue(undefined),
   detachPersistentTab: vi.fn().mockResolvedValue(0),
   getAgentSessionBuffer: (...a: unknown[]) => mockGetAgentSessionBuffer(...a),
   takeResumedAgentSession: (...a: unknown[]) => mockTakeResumed(...a),
-  replaySessionScrollback: vi
-    .fn()
-    .mockResolvedValue({ data: new Uint8Array(), endOffset: 0, epoch: 1, coming: false }),
+  replaySessionScrollback: (...a: unknown[]) => mockReplayScrollback(...a),
   sessionGetCapabilities: vi.fn().mockResolvedValue({}),
 }));
 
@@ -294,7 +303,8 @@ describe("Terminal — agent tab Reconnect after a user Disconnect (#5953)", () 
 });
 
 /** Type into the tab: every data listener that is still registered gets it. */
-function type(data: string): void {
+function type(data: string, fromUser = true): void {
+  inputFrom.user = fromUser;
   const { onData } = xtermInstances[xtermInstances.length - 1];
   onData.mock.calls.forEach(([listener], i) => {
     const { dispose } = onData.mock.results[i].value as { dispose: ReturnType<typeof vi.fn> };
@@ -387,7 +397,7 @@ describe("Terminal — a resumed session and the tab's own scrollback (#5990)", 
     expect(mockSendInput, "the session is not wired yet").not.toHaveBeenCalled();
     // The repaint asks the terminal something: xterm answers as it parses it.
     fresh.write.mockImplementationOnce((_data: unknown, done?: () => void) => {
-      type("\x1b[0n");
+      type("\x1b[0n", false);
       done?.();
     });
     await act(async () => {
@@ -400,6 +410,131 @@ describe("Terminal — a resumed session and the tab's own scrollback (#5990)", 
     expect(new Set(mockSendInput.mock.calls.map((call) => call[0]))).toEqual(
       new Set(["fresh-session"])
     );
+  });
+
+  it("does not wipe a repaint of a window that regained the session before its history came", async () => {
+    const tabId = await mountConnected();
+    mockTakeResumed.mockResolvedValue(true);
+    mockGetAgentSessionBuffer.mockResolvedValue(emptyRepaint(true));
+    await disconnectAndReconnect(tabId);
+    const fresh = xtermInstances[xtermInstances.length - 1];
+    const history = new TextEncoder().encode("history ");
+    mockReplayScrollback.mockResolvedValue({
+      data: history,
+      endOffset: history.length,
+      epoch: 1,
+      coming: false,
+    });
+
+    act(() => useAppStore.getState().setSessionOwners({ "fresh-session": "win-1" }));
+    act(() => useAppStore.getState().setSessionOwners({ "fresh-session": "main" }));
+    await act(async () => {
+      await wait(40);
+    });
+    act(() => {
+      outputCallbacks["fresh-session"]?.(new TextEncoder().encode("live"), {
+        offset: history.length,
+        epoch: 1,
+      });
+    });
+    await act(async () => {
+      await wait(40);
+    });
+
+    expect(fresh.reset).toHaveBeenCalledTimes(1);
+    expect(timesShown(fresh, "history live")).toBe(1);
+  });
+
+  it("sends keys typed from the read until the tab is wired, but nothing xterm answers", async () => {
+    const tabId = await mountConnected();
+    mockTakeResumed.mockResolvedValue(true);
+    let wired: () => void = () => {};
+    mockSetLineEnding.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        wired = resolve;
+      })
+    );
+    mockGetAgentSessionBuffer.mockImplementation(() => {
+      const fresh = xtermInstances[xtermInstances.length - 1];
+      fresh.write.mockImplementationOnce((_data: unknown, done?: () => void) => {
+        type("a");
+        type("\x1b[0n", false);
+        done?.();
+      });
+      return Promise.resolve({
+        data: new TextEncoder().encode("\x1b[5n"),
+        endOffset: 4,
+        epoch: 1,
+        coming: false,
+      });
+    });
+    await disconnectAndReconnect(tabId);
+    mockSendInput.mockClear();
+    type("b");
+    type("\x1b[?1;2c", false);
+    await act(async () => {
+      wired();
+      await wait(40);
+    });
+    type("c");
+
+    expect(mockSendInput.mock.calls.map((call) => call[1])).toEqual(["a", "b", "c"]);
+  });
+
+  it("sends no reply to what is repainted when xterm does not tell typed input", async () => {
+    const tabId = await mountConnected();
+    mockTakeResumed.mockResolvedValue(true);
+    let answer: (value: unknown) => void = () => {};
+    mockGetAgentSessionBuffer.mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      })
+    );
+    inputFrom.known = false;
+    try {
+      await disconnectAndReconnect(tabId);
+      const fresh = xtermInstances[xtermInstances.length - 1];
+      mockSendInput.mockClear();
+      type("l");
+      fresh.write.mockImplementationOnce((_data: unknown, done?: () => void) => {
+        type("\x1b[0n", false);
+        done?.();
+      });
+      await act(async () => {
+        const data = new TextEncoder().encode("\x1b[5n");
+        answer({ data, endOffset: 4, epoch: 1, coming: false });
+        await wait(60);
+      });
+      type("x");
+    } finally {
+      inputFrom.known = true;
+    }
+
+    expect(mockSendInput.mock.calls.map((call) => call[1])).toEqual(["l", "x"]);
+  });
+
+  it("stamps the resumed line with the time the repaint ended", async () => {
+    const tabId = await mountConnected();
+    mockTakeResumed.mockResolvedValue(true);
+    let answer: (value: unknown) => void = () => {};
+    mockGetAgentSessionBuffer.mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      })
+    );
+    await disconnectAndReconnect(tabId);
+    const later = new Date(2030, 0, 2, 3, 4, 5);
+    vi.setSystemTime(later);
+    try {
+      await act(async () => {
+        answer(emptyRepaint(false));
+        await wait(40);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+    const fresh = xtermInstances[xtermInstances.length - 1];
+    expect(written(fresh).some((line) => line.includes(resumedMarker(later)))).toBe(true);
   });
 });
 

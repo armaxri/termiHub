@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { tunnelRowTooltip, tunnelTypeLabel } from "./tunnelRowTooltip";
+import { tunnelRowTooltip } from "./tunnelRowTooltip";
 import type { TunnelConfig } from "@/types/tunnel";
 
 const LOCAL: TunnelConfig = {
@@ -17,9 +17,10 @@ const LOCAL: TunnelConfig = {
 const LOCAL_HOST = { label: "this computer", onAgent: false };
 
 describe("tunnelRowTooltip (#5770)", () => {
-  it("lists the forwarding, the SSH connection and the host", () => {
+  it("lists the forwarding, what it does (#6027), the SSH connection and the host", () => {
     expect(tunnelRowTooltip(LOCAL, { sshLabel: "bastion", host: LOCAL_HOST })).toEqual([
-      "Local · 127.0.0.1:5432 → db:5432",
+      "Local (ssh -L) · 127.0.0.1:5432 → db:5432",
+      "Use something on the SSH server's side as if it ran here.",
       "Via bastion",
       "Hosted on this computer",
     ]);
@@ -31,6 +32,9 @@ describe("tunnelRowTooltip (#5770)", () => {
       host: { label: "build-box", onAgent: true },
     });
     expect(lines).toContain("Hosted on agent build-box");
+    expect(lines[1]).toBe(
+      "Use something on the SSH server's side as if it ran on agent build-box."
+    );
   });
 
   it("adds the traffic, a reachability note with its bound address and a pair label", () => {
@@ -43,19 +47,24 @@ describe("tunnelRowTooltip (#5770)", () => {
       boundAddress: "0.0.0.0:5432",
       pair: "Linked · connected",
     });
-    expect(lines.slice(3)).toEqual([
+    expect(lines.slice(4)).toEqual([
       "↑ 2.0 KB (1 KB/s) · ↓ 0 B · 1 / 4 connections",
       "Bound 0.0.0.0:5432: reachable on build-box's network",
       "Linked · connected",
     ]);
   });
 
-  it("labels each tunnel type", () => {
-    expect(
-      tunnelTypeLabel({
+  it("names and explains each tunnel type", () => {
+    const socks = tunnelRowTooltip(
+      {
         ...LOCAL,
-        tunnelType: { type: "dynamic", config: LOCAL.tunnelType.config },
-      } as TunnelConfig)
-    ).toBe("Dynamic");
+        tunnelType: { type: "dynamic", config: { localHost: "127.0.0.1", localPort: 1080 } },
+      },
+      { sshLabel: "bastion", host: LOCAL_HOST }
+    );
+    expect(socks.slice(0, 2)).toEqual([
+      "Dynamic (ssh -D) · 127.0.0.1:1080",
+      "Use the SSH server as a proxy for many destinations.",
+    ]);
   });
 });

@@ -576,11 +576,14 @@ fn session_is_open(
 
 /// Whether a POSIX setup whose shell ended as `end` may have installed the
 /// agent: its exit code says so (only a failed service leaves the new agent in
-/// place), and an end without one says nothing against it.
+/// place), or it may still do so. An end without a code is a lost link or a
+/// closed tab, which hang up on the script: it then puts the previous agent back
+/// (#5999), and the stored path names that one.
 fn installs_agent(end: ShellEnd) -> bool {
     match end {
         ShellEnd::Exited(code) => code == 0 || code == EXIT_SERVICE_FAILED,
-        ShellEnd::NoStatus | ShellEnd::StillOpen => true,
+        ShellEnd::StillOpen => true,
+        ShellEnd::NoStatus => false,
     }
 }
 

@@ -97,8 +97,8 @@ export type {
   RadioGroupVariant,
 } from "./RadioGroup";
 
-export { Tooltip, TooltipProvider } from "./Tooltip";
-export type { TooltipProps, TooltipProviderProps } from "./Tooltip";
+export { Tooltip, TooltipLines, TooltipProvider } from "./Tooltip";
+export type { TooltipLinesProps, TooltipProps, TooltipProviderProps } from "./Tooltip";
 
 export { ResponsiveToolbar } from "./ResponsiveToolbar";
 export type {

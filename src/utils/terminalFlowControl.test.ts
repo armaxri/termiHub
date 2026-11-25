@@ -104,6 +104,28 @@ describe("TerminalOutputFlow watermarks (PERF2-002)", () => {
     expect(Array.from(flow.takeBatch() as Uint8Array)).toEqual([1, 2, 3]);
   });
 
+  it("drops staged output and resumes the backend it had paused", () => {
+    const { flow, pausedChanges } = makeFlow();
+    for (let i = 0; i < 10; i++) flow.push(bytes(50, i));
+    expect(flow.paused).toBe(true);
+    flow.discardStaged();
+    expect(flow.hasStaged).toBe(false);
+    expect(flow.stagedBytes).toBe(0);
+    expect(flow.paused).toBe(false);
+    expect(pausedChanges).toEqual([true, false]);
+  });
+
+  it("stays paused after dropping staged output while xterm is behind", () => {
+    const { flow } = makeFlow();
+    for (let i = 0; i < 10; i++) flow.push(bytes(50, i));
+    const batch = flow.takeBatch() as Uint8Array;
+    flow.push(bytes(50));
+    flow.discardStaged();
+    expect(flow.paused).toBe(true);
+    flow.written(batch.length);
+    expect(flow.paused).toBe(false);
+  });
+
   it("bounds the staged buffer under a flood whose producer ignores pause", () => {
     const { flow, overflows } = makeFlow();
     // Nothing is ever written to xterm: a pure flood of 100 x 50 bytes.

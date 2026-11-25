@@ -10,6 +10,7 @@ import { createRoot, Root } from "react-dom/client";
 import { flushAsync } from "@/test/flushAsync";
 import { useAppStore } from "@/store/appStore";
 import { seedLayoutState } from "@/test/layoutState";
+import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { TunnelEditor } from "./TunnelEditor";
 import { checkA11y } from "@/test/axe";
@@ -45,11 +46,11 @@ let container: HTMLDivElement;
 let root: Root;
 let saveTunnel: (config: TunnelConfig) => Promise<void>;
 
-async function render() {
+async function render(tunnelId: string | null = null) {
   await act(async () => {
     root.render(
-      <TooltipProvider>
-        <TunnelEditor tabId={TAB_ID} meta={{ tunnelId: null }} isVisible={true} />
+      <TooltipProvider delayDuration={0}>
+        <TunnelEditor tabId={TAB_ID} meta={{ tunnelId }} isVisible={true} />
       </TooltipProvider>
     );
   });
@@ -82,7 +83,29 @@ async function flush() {
   });
 }
 
+/** Move the pointer onto an element as Radix's tooltip sees it. */
+async function hover(el: HTMLElement) {
+  await act(async () => {
+    el.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerType: "mouse" }));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  });
+}
+
+/** The open help tooltip of a card (portalled to the body). */
+function help(testid: string): HTMLElement | null {
+  return document.querySelector<HTMLElement>(`[data-testid="${testid}-help"]`);
+}
+
+/** The text a screen reader gets as the element's description. */
+function description(el: HTMLElement): string {
+  return (el.getAttribute("aria-describedby") ?? "")
+    .split(" ")
+    .map((ref) => document.getElementById(ref)?.textContent)
+    .join(" ");
+}
+
 setupConnectionsRegion();
+setupAgentsRegion();
 
 describe("TunnelEditor — tunnel type selector (UISF2-002)", () => {
   beforeEach(() => {
@@ -156,5 +179,77 @@ describe("TunnelEditor — tunnel type selector (UISF2-002)", () => {
   it("has no a11y violations", async () => {
     await render();
     expect(await checkA11y(q("tunnel-editor-type-selector").parentElement!)).toHaveNoViolations();
+  });
+
+  it("says on each card what the type does, with its ssh flag (#6027)", async () => {
+    await render();
+    expect(q("tunnel-type-local").textContent).toBe(
+      "LocalReach something on the SSH server's side ssh -L"
+    );
+    expect(q("tunnel-type-remote").textContent).toBe(
+      "RemoteLet the SSH server reach something here ssh -R"
+    );
+    expect(q("tunnel-type-dynamic").textContent).toBe(
+      "DynamicSOCKS5 proxy through the SSH server ssh -D"
+    );
+    // The name a screen reader announces stays the plain type.
+    expect(getByRole("radio", "Remote", container)).toBe(q("tunnel-type-remote"));
+  });
+
+  it("explains a type on hover while another one is selected (#6027)", async () => {
+    await render();
+    expect(help("tunnel-type-remote")).toBeNull();
+    await hover(q("tunnel-type-remote"));
+    const text = help("tunnel-type-remote")?.textContent;
+    expect(text).toContain("Opens a port on the SSH server");
+    expect(text).toContain("a host and port this computer can reach");
+    expect(q("tunnel-type-local").getAttribute("aria-checked")).toBe("true");
+    expect(q("tunnel-type-local").getAttribute("data-state")).toBe("checked");
+  });
+
+  it("explains the selected type on keyboard focus and to screen readers (#6027)", async () => {
+    await render();
+    expect(description(q("tunnel-type-local"))).toContain("Opens a port on this computer");
+    act(() => q("tunnel-type-local").focus());
+    expect(help("tunnel-type-local")?.textContent).toContain(
+      "Use something on the SSH server's side as if it ran here."
+    );
+  });
+
+  it("explains the types for the agent that hosts the tunnel (#6027)", async () => {
+    seedAgentsRegion({
+      remoteAgents: [
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { id: "agent-1", name: "build-box", config: { host: "bb" } } as any,
+      ],
+    });
+    useAppStore.setState({
+      tunnels: [
+        {
+          id: "tun-agent",
+          name: "Agent tunnel",
+          sshConnectionId: "ssh-1",
+          host: { kind: "agent", agentId: "agent-1" },
+          autoStart: false,
+          reconnectOnDisconnect: false,
+          tunnelType: {
+            type: "local",
+            config: { localHost: "127.0.0.1", localPort: 1, remoteHost: "db", remotePort: 2 },
+          },
+        },
+      ],
+    });
+    await render("tun-agent");
+    for (const type of ["local", "remote", "dynamic"]) {
+      const text = description(q(`tunnel-type-${type}`));
+      expect(text).toContain("agent build-box");
+      expect(text).not.toContain("this computer");
+    }
+    expect(q("tunnel-type-remote").textContent).toContain("on the agent's side");
+    expect(q("tunnel-diagram").textContent).toContain("Agent build-box");
+    await hover(q("tunnel-type-dynamic"));
+    expect(help("tunnel-type-dynamic")?.textContent).toContain(
+      "Opens a SOCKS5 proxy on agent build-box."
+    );
   });
 });
