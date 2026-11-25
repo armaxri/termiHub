@@ -50,6 +50,8 @@ pub struct RestoredStart {
     pub switches: Vec<String>,
     /// An entry with this id is here now.
     pub exists_here: bool,
+    /// The entry here is the same; what it uses differs.
+    pub same_here: bool,
     /// It is on here now: the restore changes it, or what it starts.
     pub on_here: bool,
 }
@@ -276,9 +278,9 @@ fn switch_off<Tz: TimeZone>(
             let here = item["id"]
                 .as_str()
                 .and_then(|id| before.item(starter.section, starter.list, id));
-            let same = here.is_some_and(|here| {
-                was.of(starter.section, here) == will.of(starter.section, item)
-            });
+            let will_do = will.of(starter.section, item);
+            let was_doing = here.map(|here| was.of(starter.section, here));
+            let same = was_doing.as_ref() == Some(&will_do);
             let mut next = item.clone();
             let mut switches = Vec::new();
             for switch in starter.switches {
@@ -288,7 +290,8 @@ fn switch_off<Tz: TimeZone>(
                 }
             }
             if starter.section == "schedules" {
-                keep_schedule_state(&mut next, here.filter(|_| switches.is_empty()));
+                // A change unconfirms it even when it is off: turning it on must ask.
+                keep_schedule_state(&mut next, here.filter(|_| same));
             }
             if next != *item {
                 changes.push((starter, index, next));
@@ -301,6 +304,7 @@ fn switch_off<Tz: TimeZone>(
                     starts: describe(starter.section, item, &switches, after),
                     next_run_at: next_run(starter.section, item, now, tz),
                     exists_here: here.is_some(),
+                    same_here: was_doing.is_some_and(|w| w["own"] == will_do["own"]),
                     on_here: here.is_some_and(|h| starter.switches.iter().any(|s| is_on(h, s))),
                     switches,
                 });
@@ -322,17 +326,16 @@ fn switch_off<Tz: TimeZone>(
     off
 }
 
-/// A schedule that stays on keeps when it ran here, so that an older time of the
-/// backup does not make it catch up at once; one that is off was confirmed by nobody.
+/// A schedule that is the one here keeps when it ran and was confirmed here, so that
+/// an older time of the backup does not make it catch up at once; any other was
+/// confirmed by nobody.
 fn keep_schedule_state(next: &mut Value, here: Option<&Value>) {
     let Some(schedule) = next.as_object_mut() else {
         return;
     };
     let Some(here) = here else {
-        if schedule.get("enabled") != Some(&json!(true)) {
-            schedule.remove("confirmedAt");
-            schedule.remove("enabledAt");
-        }
+        schedule.remove("confirmedAt");
+        schedule.remove("enabledAt");
         return;
     };
     for key in SCHEDULE_STATE {
@@ -528,7 +531,7 @@ pub fn quieten(
         } else {
             // This machine's file, with only the switches changed: what a backup
             // would leave out of it (bookkeeping) stays.
-            let Some(doc) = switched_file(&config_dir.join(spec.file_name), id, &off) else {
+            let Some(doc) = switched_file(&config_dir.join(spec.file_name), id, &after) else {
                 continue;
             };
             doc
@@ -542,19 +545,24 @@ pub fn quieten(
     Ok(off)
 }
 
-/// A file of this machine with the switches in `off` turned off.
-fn switched_file(path: &Path, section: &str, off: &[RestoredStart]) -> Option<Value> {
+/// A file of this machine with what is off, or unconfirmed, in `after`.
+fn switched_file(path: &Path, section: &str, after: &Side) -> Option<Value> {
     let mut doc: Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
     let starter = STARTERS.iter().find(|s| s.section == section)?;
-    let items = doc[starter.list].as_array_mut()?;
-    for entry in off.iter().filter(|o| o.section == section) {
-        for item in items.iter_mut().filter(|i| i["id"] == entry.id.as_str()) {
-            for switch in &entry.switches {
-                item[switch.as_str()] = json!(false);
+    for item in doc[starter.list].as_array_mut()? {
+        let Some(next) = item["id"]
+            .as_str()
+            .and_then(|id| after.item(section, starter.list, id))
+        else {
+            continue;
+        };
+        for switch in starter.switches {
+            if is_on(item, switch) && !is_on(next, switch) {
+                item[*switch] = json!(false);
             }
-            if section == "schedules" {
-                keep_schedule_state(item, None);
-            }
+        }
+        if section == "schedules" && next["confirmedAt"].is_null() {
+            keep_schedule_state(item, None);
         }
     }
     Some(doc)

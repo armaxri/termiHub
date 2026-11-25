@@ -33,6 +33,10 @@ switches: Array<string>,
  */
 existsHere: boolean, 
 /**
+ * The entry here is the same; what it uses differs.
+ */
+sameHere: boolean, 
+/**
  * It is on here now: the restore changes it, or what it starts.
  */
 onHere: boolean, };

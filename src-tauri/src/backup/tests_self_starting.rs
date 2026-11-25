@@ -485,6 +485,7 @@ fn the_result_names_each_entry_and_what_would_start_it() {
         off[3].starts,
         ["When termiHub starts: opens port 8080 on 0.0.0.0"]
     );
+    assert!(!off[2].same_here);
     let here: Vec<_> = off.iter().map(|o| (o.exists_here, o.on_here)).collect();
     assert_eq!(
         here,
@@ -516,6 +517,7 @@ fn the_preview_says_it_before_anything_is_restored() {
         [("schedules", "Nightly"), ("tunnels", "DB")]
     );
     assert!(preview.switched_off[0].on_here);
+    assert!(preview.switched_off[0].same_here);
     assert_eq!(item(d, "schedules", "schedules", "mine")["enabled"], true);
 }
 
@@ -608,4 +610,48 @@ fn a_file_that_was_not_chosen_keeps_all_but_its_switches() {
     );
     library["automations"][0]["triggersEnabled"] = json!(false);
     assert_eq!(read_doc(d, "automations.json"), library);
+}
+
+/// One that is off here is enabled later without being asked about its hosts when its
+/// confirmation stays.
+#[test]
+fn a_changed_schedule_that_is_off_has_to_be_confirmed_again() {
+    let off = |host: &str| {
+        let mut off = schedule("s");
+        off["enabled"] = json!(false);
+        off["targets"]["connectionIds"] = json!([host]);
+        off
+    };
+    for (restored, confirmed) in [("Build Box", true), ("Other", false)] {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        here(d, "schedules", "schedules", json!([off("Build Box")]));
+        replace(
+            d,
+            vec![section("schedules", "schedules", json!([off(restored)]))],
+        );
+        let after = item(d, "schedules", "schedules", "s");
+        assert_eq!(after["confirmedAt"] != Value::Null, confirmed, "{restored}");
+    }
+    // Also in a file that was not chosen.
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    here(d, "schedules", "schedules", json!([off("Build Box")]));
+    here(
+        d,
+        "automations",
+        "automations",
+        json!([automation("a", "ls")]),
+    );
+    replace(
+        d,
+        vec![section(
+            "automations",
+            "automations",
+            json!([automation("a", "rm")]),
+        )],
+    );
+    let after = item(d, "schedules", "schedules", "s");
+    assert_eq!(after["confirmedAt"], Value::Null);
+    assert_eq!(after["lastRunAt"], "2026-01-02T00:00:00+00:00");
 }
