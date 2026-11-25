@@ -250,7 +250,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
           : undefined) ??
         pickableSshConnections[0]?.id ??
         "",
-      tunnelType: existingTunnel?.tunnelType ?? defaultTunnelType("local"),
+      tunnelType: existingTunnel?.tunnelType ?? defaultTunnelType(meta.tunnelType ?? "local"),
       // Which machine hosts this tunnel (S3, #2155). New tunnels default to This
       // computer — agent hosting is opt-in.
       host: hostChoice(existingTunnel?.host),

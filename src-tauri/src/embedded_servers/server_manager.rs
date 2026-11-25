@@ -47,7 +47,7 @@ use super::config::{
     EmbeddedServerConfig, EmbeddedServerStore, ServerState, ServerStats, ServerStatus,
 };
 use super::migration::{load_and_migrate, persist_store};
-use super::secrets::{self, ServerSecrets};
+use super::secrets::{self, ServerSecrets, TakenSecrets};
 use super::service::{service_id_for, EmbeddedServerService, STATUS_EVENT_KIND};
 use super::storage::EmbeddedServerStorage;
 use crate::agent_service::hosted::{
@@ -56,7 +56,7 @@ use crate::agent_service::hosted::{
 };
 use crate::agent_service::{
     agent_for_start, agent_is_ready, agent_is_removed, agent_rpc_client, agent_start_error,
-    not_reachable_reason, port_in_use_here, stopping_reason, unanswered_start_failed,
+    not_reachable_reason, poll_now, port_in_use_here, stopping_reason, unanswered_start_failed,
     waited_too_long, waiting_reason, AgentStatusPollDelegate, AgentStatusPoller, Reason,
     HOST_UNREADABLE,
 };
@@ -87,6 +87,13 @@ pub(super) struct HostedServers;
 
 impl HostedKind for HostedServers {
     type State = ServerState;
+
+    fn unknown_state(id: &str) -> ServerState {
+        ServerState {
+            status: ServerStatus::Running,
+            ..stopped_state(id)
+        }
+    }
 
     fn stop_request(id: &str) -> (&'static str, serde_json::Value) {
         let params = ServiceStopParams {
@@ -141,6 +148,8 @@ pub struct EmbeddedServerManager<R: Runtime = Wry> {
     /// (#6028): durable, so its row keeps saying it. Cleared by a good start,
     /// a stop, a save or a delete.
     refusals: Mutex<HashMap<String, Reason>>,
+    /// Servers whose delete can still be undone.
+    deleted: Mutex<HashMap<String, Deleted>>,
     /// The single periodic agent `service.status` poller (#2214). Runs while at
     /// least one agent-hosted server exists, self-reaping once none remain; the
     /// shared [`AgentStatusPoller`] owns the task lifecycle (DUP-020).
@@ -167,6 +176,7 @@ impl<R: Runtime> EmbeddedServerManager<R> {
             services: Mutex::new(HashMap::new()),
             hosted: HostedServices::default(),
             refusals: Mutex::new(HashMap::new()),
+            deleted: Mutex::new(HashMap::new()),
             // App-owned (ARCH-007, #3105): teardown cancels + awaits the poller.
             agent_status_poller: AgentStatusPoller::with_tasks(AppTasks::for_app(app_handle)),
             app_handle: app_handle.clone(),
@@ -254,7 +264,8 @@ impl<R: Runtime> EmbeddedServerManager<R> {
             .unwrap_or_default()
     }
 
-    /// Delete a configuration. Stops the server first if it is running.
+    /// Delete a configuration. Stops the server first if it is running. For
+    /// [`UNDO_KEPT`] it can be [brought back](Self::restore_deleted).
     pub fn delete_config(&self, server_id: &str) -> Result<(), TerminalError> {
         // An agent-hosted server is stopped on its agent; a desktop-hosted one
         // is shut down and dropped so its listen port closes (#1393).
@@ -263,13 +274,93 @@ impl<R: Runtime> EmbeddedServerManager<R> {
             remove_local_service(&mut services, server_id);
         }
         self.lock_refusals().remove(server_id);
-        self.secrets.forget(server_id);
+        let secrets = self.secrets.take(server_id);
         {
             let mut store = self.lock_configs()?;
-            store.servers.retain(|s| s.id != server_id);
-            self.persist(&store)?;
+            let index = store.servers.iter().position(|s| s.id == server_id);
+            if let Some(index) = index {
+                let config = store.servers.remove(index);
+                if let Err(e) = self.persist(&store) {
+                    store.servers.insert(index, config);
+                    self.secrets.put_back(server_id, secrets);
+                    return Err(e);
+                }
+                self.keep_for_undo(index, config, secrets);
+            }
         }
         self.announce();
+        Ok(())
+    }
+
+    fn lock_deleted(&self) -> std::sync::MutexGuard<'_, HashMap<String, Deleted>> {
+        self.deleted.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Keep what was deleted, its passwords included, in memory for the undo.
+    fn keep_for_undo(&self, index: usize, config: EmbeddedServerConfig, secrets: TakenSecrets) {
+        let id = config.id.clone();
+        let deleted = Deleted {
+            index,
+            config,
+            secrets,
+            at: Instant::now(),
+        };
+        self.lock_deleted().insert(id, deleted);
+        // Not app-owned (#3105): it only drops what a quitting app drops anyway.
+        let app = self.app_handle.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(UNDO_KEPT).await;
+            if let Some(manager) = app.try_state::<Arc<EmbeddedServerManager<R>>>() {
+                manager.forget_deleted(Instant::now());
+            }
+        });
+    }
+
+    /// Drop what can no longer be brought back at `now`.
+    fn forget_deleted(&self, now: Instant) {
+        self.lock_deleted()
+            .retain(|_, deleted| now.saturating_duration_since(deleted.at) < UNDO_KEPT);
+    }
+
+    /// Bring back a server that was just deleted, with its passwords and at its
+    /// place in the list. It is not started.
+    pub fn restore_deleted(&self, server_id: &str) -> Result<(), TerminalError> {
+        let Some(deleted) = self.lock_deleted().remove(server_id) else {
+            return Err(TerminalError::EmbeddedServerError(
+                "It can no longer be brought back.".to_string(),
+            ));
+        };
+        {
+            let mut store = self.lock_configs()?;
+            if store.servers.iter().all(|s| s.id != server_id) {
+                let index = deleted.index.min(store.servers.len());
+                store.servers.insert(index, deleted.config.clone());
+                if let Err(e) = self.persist(&store) {
+                    store.servers.remove(index);
+                    self.lock_deleted().insert(server_id.to_string(), deleted);
+                    return Err(e);
+                }
+            }
+        }
+        self.secrets.put_back(server_id, deleted.secrets);
+        self.announce();
+        Ok(())
+    }
+
+    /// Take back the stop of a server that its agent has not got (#6076).
+    pub fn keep_running(&self, server_id: &str) -> Result<(), TerminalError> {
+        let host = self
+            .get_configs()?
+            .into_iter()
+            .find(|config| config.id == server_id)
+            .map(|config| config.host);
+        let agent = host.as_ref().map(|host| host.choice());
+        if let Some(HostChoice::Agent(agent_id)) = agent {
+            if self.hosted.keep(agent_id, server_id) {
+                self.ensure_status_poller();
+                self.announce();
+            }
+        }
         Ok(())
     }
 
@@ -831,6 +922,12 @@ impl<R: Runtime> EmbeddedServerManager<R> {
         self.agent_status_poller.ensure(self.status_poll());
     }
 
+    /// Ask the agents about their servers now, instead of on the next tick.
+    /// Blocking.
+    pub fn check_again(&self) {
+        poll_now(&self.status_poll());
+    }
+
     fn status_poll(&self) -> EmbeddedServerPoll<R> {
         EmbeddedServerPoll {
             hosted: self.hosted.clone(),
@@ -1032,6 +1129,19 @@ fn remove_local_service(
         }
         None => false,
     }
+}
+
+/// How long a deleted server can be brought back. Longer than the Undo is
+/// offered (`UNDO_WINDOW_MS`), which waits while the pointer is on it.
+const UNDO_KEPT: Duration = Duration::from_secs(120);
+
+/// A server whose delete can still be undone.
+struct Deleted {
+    /// Its place in the list.
+    index: usize,
+    config: EmbeddedServerConfig,
+    secrets: TakenSecrets,
+    at: Instant,
 }
 
 /// What `error` says, without the prefix that says it is about a file server.

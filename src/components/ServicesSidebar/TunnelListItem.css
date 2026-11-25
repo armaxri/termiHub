@@ -1,0 +1,46 @@
+/*
+ * The row is the shared ServiceListItem (issue 6028). Only what a chained hop
+ * adds is here.
+ */
+
+/* ── Chained-hop pair (#2597) ─────────────────────────────────────────────── */
+
+/* A companion row nests under its parent. */
+/* The part on this computer hangs on its parent's line. */
+.tunnel-item--nested.sidebar-list-item {
+  margin-left: calc(var(--spacing-md) + var(--spacing-xs));
+  padding-left: var(--spacing-sm);
+  border-left: 1px solid var(--border-primary);
+}
+
+.tunnel-item__link-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+/* Redundant-hop notice. */
+.tunnel-item__redundant {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+  color: var(--color-warning);
+}
+
+.tunnel-item__redundant-icon {
+  flex-shrink: 0;
+}
+
+.tunnel-item__inline-action {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-link);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.tunnel-item__inline-action:hover {
+  color: var(--text-primary);
+}

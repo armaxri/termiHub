@@ -192,19 +192,30 @@ on the row is cut: it wraps, and an address or a machine's name that does not fi
 The row is `ServiceListItem`, its words are in `serviceModel.ts`. Rules for them
 ([#6063](https://github.com/armaxri/termiHub/issues/6063)):
 
-- The **state comes first**. What it is for names the server ("Reach something through Build Box")
+- The **state comes first**. What it is for names the ends ("Reach db through Build Box")
   and what others may really do ("Download only", "Download and upload"). The user's description
   takes its place. The technical name is at the end of the name's line ("Local", "FTP").
 - The **machine is named once**, under the name, on every row that runs elsewhere and on no other.
   Reasons say "its agent".
-- The address says **who reaches it**: "only this computer", "anyone on your network", "only on that
-  machine". An address nobody knows is said, never a `localhost` that is wrong for the reader.
+- The address says **who reaches it**: "only this computer", "anyone on your network with the
+  password", "only on that machine". An address nobody knows is said with its reason and the port,
+  never a `localhost` that is wrong for the reader.
 - **A remedy is a button** beside the reason, when it can be done now: Use 8081, Edit, Connect agent,
   Unlock, Edit connection, Retry now. The reason does not repeat it in words.
 - **Red** is for what needs the user, **amber** for what moves or is in doubt, a grey ring for what
   waits by itself.
-- The run button is a filled square (Stop) or triangle (Start), and a cross gives up waiting or
-  starting. Two actions never share a name; one that was pressed is not offered again.
+- The run button is a filled square (Stop) or triangle (Start). Giving up waiting or starting is the
+  word Cancel. Two actions never share a name; one that was pressed is not offered again.
+- The **New menu asks what it is for** ("Reach something through a server"), with an example and the
+  technical name under it. The search finds all of these words.
+- An **offline agent** with several services is said once, with all of them, whatever kind they are.
+- A **group's line says its problems**, also while it is closed; only without any it says how many run.
+- **Delete is undone, not warned about**: the same dialog and the same Undo for both kinds. It says what
+  breaks ("1 open connection") and, of a file server, that the folder and its files stay.
+- A **list says in numbers** what its rows say: running, error, not known, reconnecting, waiting.
+  Pressing a number shows only its rows, and says so ("Only errors.") with Show all. "Not known" is what may run: it is never counted as off.
+- **Stop and Restart ask only when someone is connected** right now, and say how many.
+- An **empty list** says what its things are for and what they need.
 
 Everything else is configuration or history and goes in the row's **tooltip**, the editor or a
 detail view, never on the row: host, user and port, the trigger and its target, step or command

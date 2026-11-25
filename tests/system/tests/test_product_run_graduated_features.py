@@ -1,11 +1,11 @@
-"""Product run: SSH tunnels, Services, Network tools and Automations are on by default (#5858).
+"""Product run: Services, Network tools and Automations are on by default (#5858).
 
 The live grade is hand-triggered only (``scripts/internal/product-run.sh``;
 deselected without ``--product-run``). The UI review of run
 ``20261123T215628Z`` found these advertised core features hidden behind
 Settings ▸ General ▸ Allow experimental features, a switch with an amber "may
 break" warning (R-007), so most users would never find them. They graduated:
-with experimental features OFF the activity bar shows SSH tunnels, Services,
+with experimental features OFF the activity bar shows Services,
 Network tools and, since the Automations merge (#5818), Automations, and each
 opens its sidebar. Macros and Workflows no longer show. A view the user hid stays hidden. The
 switch's hint lists what is still behind it.
@@ -56,14 +56,14 @@ def test_grade_missing_graduated_view_fails():
 def test_grade_a_replaced_view_fails(experimental):
     for view, test_id in REPLACED_VIEWS.items():
         problems = activity_bar_problems(ALL_GRADUATED | {test_id}, experimental=experimental)
-        assert problems == [f"{view}: shows, but the Automations view replaced it"]
+        assert problems == [f"{view}: shows, but another view replaced it"]
 
 
 def test_grade_user_hidden_view_must_stay_hidden():
-    present = ALL_GRADUATED - {"activity-bar-ssh-tunnels"}
-    assert activity_bar_problems(present, experimental=False, hidden_views={"tunnels"}) == []
-    problems = activity_bar_problems(ALL_GRADUATED, experimental=False, hidden_views={"tunnels"})
-    assert problems == ["tunnels: the user hid it, but the activity bar shows it"]
+    present = ALL_GRADUATED - {"activity-bar-services"}
+    assert activity_bar_problems(present, experimental=False, hidden_views={"services"}) == []
+    problems = activity_bar_problems(ALL_GRADUATED, experimental=False, hidden_views={"services"})
+    assert problems == ["services: the user hid it, but the activity bar shows it"]
 
 
 def test_grade_switch_hint_matches_the_app():
@@ -120,10 +120,11 @@ class TestProductRunGraduatedFeatures(ProductRunUi, SettingsUi, SidebarUi, TabsU
     def test_10_views_show_with_experimental_off(self):
         with self.step(
             "graduated.activity-bar",
-            "With experimental features off, the activity bar shows SSH tunnels, Services, "
-            "Network tools and Automations; Macros and Workflows are gone (#5858, #5818)",
-            expect="the activity bar with the SSH tunnels, Services, Network tools and one "
-            "Automations icon, no Macros or Workflows icon; Settings ▸ General ▸ Allow experimental features is off",
+            "With experimental features off, the activity bar shows Services, "
+            "Network tools and Automations; Macros, Workflows and SSH tunnels are gone "
+            "(#5858, #5818, #6028)",
+            expect="the activity bar with the Services, Network tools and one "
+            "Automations icon, no Macros, Workflows or SSH tunnels icon; Settings ▸ General ▸ Allow experimental features is off",
         ):
             self._set_experimental(False)
             hidden = self._hidden_views()
@@ -153,24 +154,24 @@ class TestProductRunGraduatedFeatures(ProductRunUi, SettingsUi, SidebarUi, TabsU
         with self.step(
             "graduated.user-hidden",
             "A graduated view the user hid from the activity bar stays hidden (#5858)",
-            expect="the activity bar without the SSH tunnels icon after hiding it via "
-            "right-click; Services and Network tools still shown",
+            expect="the activity bar without the Services icon after hiding it via "
+            "right-click; Network tools and Automations still shown",
         ):
             self._set_experimental(False)
-            was_hidden = "tunnels" in self._hidden_views()
+            was_hidden = "services" in self._hidden_views()
             if not was_hidden:
-                self._toggle_view("tunnels")
+                self._toggle_view("services")
             try:
                 hidden = self._hidden_views()
                 present = self._present()
                 self.evidence(f"activity-bar items {sorted(present)}, user-hidden {hidden}")
-                self.shot(label="tunnels-hidden")
+                self.shot(label="services-hidden")
                 problems = activity_bar_problems(present, experimental=False, hidden_views=hidden)
                 assert not problems, problems
-                assert "activity-bar-ssh-tunnels" not in present
+                assert "activity-bar-services" not in present
             finally:
                 if not was_hidden:
-                    self._toggle_view("tunnels")
+                    self._toggle_view("services")
 
     def _switch_hint(self) -> Optional[str]:
         items = self.driver.measure_element(SETTINGS_CONTENT, "text").get("items", [])

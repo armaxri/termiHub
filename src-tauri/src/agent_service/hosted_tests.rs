@@ -12,6 +12,9 @@ struct Kind;
 
 impl HostedKind for Kind {
     type State = u64;
+    fn unknown_state(_id: &str) -> u64 {
+        0
+    }
     fn stop_request(id: &str) -> (&'static str, Value) {
         ("stop", json!({"id": id}))
     }
@@ -534,4 +537,48 @@ fn a_stop_that_a_removed_agent_owes_is_forgotten() {
     );
     assert_eq!(view(&services), None);
     assert!(!services.any());
+}
+
+/// "Keep running" (#6076).
+#[test]
+fn a_stop_the_agent_has_not_got_can_be_taken_back() {
+    let (agent, answers) = agent();
+    let services = Services::default();
+    let now = Instant::now();
+    assert!(!services.keep("edge", "a"), "nothing to take back");
+    started(&services, "a");
+    assert!(!services.keep("edge", "a"), "it is not being stopped");
+    services.stop("a");
+    assert!(!services.keep("other", "a"), "owed elsewhere");
+    assert!(services.keep("edge", "a"));
+    assert!(matches!(view(&services), Some(View::NotReachable { .. })));
+    // The stop is not sent any more, and it is followed again.
+    assert!(services.send_owed_stop(agent.as_ref(), "edge", "a", now));
+    assert!(agent.requests().is_empty());
+    answers.lock().unwrap().insert("a".into(), Ok(json!(7)));
+    let targets = services.targets();
+    services.apply(Services::poll(agent.as_ref(), &targets), now);
+    assert!(matches!(
+        view(&services),
+        Some(View::Running { state: 7, .. })
+    ));
+}
+
+#[test]
+fn a_restart_is_not_a_stop_to_take_back() {
+    let services = Services::default();
+    started(&services, "a");
+    services.stop("a");
+    services.wait_to_restart("a", WaitFor::Agent("edge".into()), Instant::now());
+    assert!(!services.keep("edge", "a"));
+}
+
+#[test]
+fn what_runs_again_is_not_taken_back() {
+    let services = Services::default();
+    started(&services, "a");
+    services.stop("a");
+    started(&services, "a");
+    assert!(!services.keep("edge", "a"));
+    assert_eq!(view(&services), running(0));
 }

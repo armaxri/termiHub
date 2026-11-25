@@ -41,7 +41,7 @@ use crate::agent_service::hosted::{
 };
 use crate::agent_service::{
     agent_for_start, agent_is_ready, agent_is_removed, agent_rpc_client, agent_start_error,
-    not_reachable_reason, port_in_use_here, stopping_reason, unanswered_start_failed,
+    not_reachable_reason, poll_now, port_in_use_here, stopping_reason, unanswered_start_failed,
     waited_too_long, waiting_reason, AgentStatusPollDelegate, AgentStatusPoller, Reason,
 };
 use crate::app_tasks::AppTasks;
@@ -706,7 +706,7 @@ impl<R: Runtime> TunnelManager<R> {
                     TunnelState::desktop(
                         config.id.clone(),
                         TunnelStatus::Reconnecting,
-                        Some(reconnecting_reason(reconnecting.attempt).into()),
+                        Some(reconnecting_reason(reconnecting.attempt, reconnecting.at).into()),
                         TunnelStats::default(),
                     )
                 } else if let Some(status) = self.connection_refs.resting_status(config) {
@@ -1332,10 +1332,37 @@ impl<R: Runtime> TunnelManager<R> {
     /// lifecycle and the [`AgentTunnelPoll`] delegate supplies the tunnel-specific
     /// poll + stats write-back / projection republish (DUP-020).
     fn ensure_status_poller(&self) {
-        self.agent_stats_poller.ensure(AgentTunnelPoll {
+        self.agent_stats_poller.ensure(self.status_poll());
+    }
+
+    fn status_poll(&self) -> AgentTunnelPoll<R> {
+        AgentTunnelPoll {
             hosted: self.hosted.clone(),
             app: self.app_handle.clone(),
-        });
+        }
+    }
+
+    /// Take back the stop of a tunnel that its agent has not got (#6076).
+    pub fn keep_running(&self, tunnel_id: &str) -> Result<(), TerminalError> {
+        let host = self
+            .get_tunnels()?
+            .into_iter()
+            .find(|tunnel| tunnel.id == tunnel_id)
+            .map(|tunnel| tunnel.host);
+        let agent = host.as_ref().map(|host| host.choice());
+        if let Some(HostChoice::Agent(agent_id)) = agent {
+            if self.hosted.keep(agent_id, tunnel_id) {
+                self.emit_status(tunnel_id, TunnelStatus::NotReachable);
+                self.ensure_status_poller();
+            }
+        }
+        Ok(())
+    }
+
+    /// Ask the agents about their tunnels now, instead of on the next tick.
+    /// Blocking.
+    pub fn check_again(&self) {
+        poll_now(&self.status_poll());
     }
 
     /// Build the forwarder for a tunnel config, performing the SSH handshake.
@@ -2101,6 +2128,7 @@ async fn supervise<R: Runtime>(
             cancel: loop_cancel.clone(),
             retry_now: Arc::clone(&retry_now),
             attempt: 1,
+            at: Local::now(),
         };
         map.insert(tunnel_id.clone(), entry);
     }
@@ -2112,7 +2140,7 @@ async fn supervise<R: Runtime>(
         &TUNNEL_RECONNECT_POLICY,
         &mut jitter,
         |attempt, delay| {
-            note_attempt(&reconnecting, &tunnel_id, attempt);
+            note_attempt(&reconnecting, &tunnel_id, attempt, Local::now() + delay);
             tracing::info!(
                 "Tunnel {tunnel_id} reconnecting — attempt {attempt} of \
                  {RECONNECT_MAX_ATTEMPTS} (retry in {}s)",
@@ -2166,29 +2194,34 @@ struct Reconnecting {
     retry_now: Arc<Notify>,
     /// Which try comes next, or runs.
     attempt: u32,
+    /// When it was planned for, on the clock.
+    at: DateTime<Local>,
 }
 
-/// Keep which try of `tunnel_id` comes next, for its row.
+/// Keep which try of `tunnel_id` comes next, and when, for its row.
 fn note_attempt(
     reconnecting: &Mutex<HashMap<String, Reconnecting>>,
     tunnel_id: &str,
     attempt: u32,
+    at: DateTime<Local>,
 ) {
     if let Ok(mut map) = reconnecting.lock() {
         if let Some(entry) = map.get_mut(tunnel_id) {
             entry.attempt = attempt;
+            entry.at = at;
         }
     }
 }
 
 /// What the row of a reconnecting tunnel says.
-fn reconnecting_reason(attempt: u32) -> String {
+fn reconnecting_reason(attempt: u32, at: DateTime<Local>) -> String {
     let then = if attempt >= RECONNECT_MAX_ATTEMPTS {
-        ", then it gives up"
+        ", then start it yourself"
     } else {
         ""
     };
-    format!("Connection lost. Try {attempt} of {RECONNECT_MAX_ATTEMPTS}{then}.")
+    let at = at.format("%H:%M:%S");
+    format!("Connection lost. Try {attempt} of {RECONNECT_MAX_ATTEMPTS} at {at}{then}.")
 }
 
 /// Why a tunnel did not start on this computer: what is taken or who refused, in
@@ -2388,6 +2421,7 @@ mod tests {
     };
     use crate::tunnel::config::{LocalForwardConfig, TunnelConfig, TunnelStatus, TunnelType};
     use crate::utils::errors::TerminalError;
+    use chrono::{Local, TimeZone};
     use tauri::Manager;
     use termihub_core::backends::ssh::session_pool::{PooledRef, RefPool};
     use termihub_core::connection::{Capabilities, ConnectionTypeInfo, SettingsSchema};
@@ -3045,10 +3079,14 @@ mod tests {
 
     #[test]
     fn a_reconnecting_row_says_which_try_and_that_the_last_one_is_the_last() {
-        assert_eq!(reconnecting_reason(3), "Connection lost. Try 3 of 10.");
+        let at = Local.with_ymd_and_hms(2026, 11, 25, 14, 32, 8).unwrap();
         assert_eq!(
-            reconnecting_reason(10),
-            "Connection lost. Try 10 of 10, then it gives up."
+            reconnecting_reason(3, at),
+            "Connection lost. Try 3 of 10 at 14:32:08."
+        );
+        assert_eq!(
+            reconnecting_reason(10, at),
+            "Connection lost. Try 10 of 10 at 14:32:08, then start it yourself."
         );
     }
 

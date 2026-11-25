@@ -298,6 +298,24 @@ pub fn register_tunnel_intents(registry: &mut HandlerRegistry, app_handle: AppHa
         Ok(Vec::new())
     });
 
+    let handle = app_handle.clone();
+    registry.route("tunnel.keepRunning", move |intent, _projector| {
+        let id = tunnel_id(intent)?;
+        let manager = manager_of(&handle)?;
+        manager
+            .keep_running(&id)
+            .map_err(|e| ("failed".to_string(), e.to_string()))?;
+        Ok(Vec::new())
+    });
+
+    let handle = app_handle.clone();
+    registry.route("tunnel.checkAgain", move |_intent, _projector| {
+        let manager = manager_of(&handle)?;
+        // Waits for the agents' answers.
+        tauri::async_runtime::spawn_blocking(move || manager.check_again());
+        Ok(Vec::new())
+    });
+
     // PROD-023: a terminal session for a saved SSH connection just connected —
     // bring up the tunnels bound to it with `startWithConnection`. The selection
     // and the skip-if-already-active guard live in the manager, so a repeated

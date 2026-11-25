@@ -8,11 +8,11 @@ import {
   SERVICE_ACTION_ORDER,
   serviceCounts,
   tunnelModel,
+  withoutAgent,
   type ServiceActionId,
   type ServiceContext,
   type ServiceModel,
 } from "./serviceModel";
-import type { ServiceState } from "./serviceState";
 import type { PairStatus } from "./tunnelChain";
 
 const CONTEXT: ServiceContext = {
@@ -150,7 +150,7 @@ describe("actions are the same for both kinds", () => {
       tunnelModel(tunnel(), tunnelIn(status), CONTEXT).actions[0].label;
     expect(run("connected")).toBe("Stop");
     expect(run("connecting")).toBe("Cancel start");
-    expect(run("waiting")).toBe("Stop waiting");
+    expect(run("waiting")).toBe("Cancel waiting");
     expect(run("disconnected")).toBe("Start");
     expect(run("error")).toBe("Retry");
   });
@@ -167,7 +167,7 @@ describe("actions are the same for both kinds", () => {
 
 describe("what it is and where it runs", () => {
   it.each<[TunnelType, string, string]>([
-    [LOCAL, "Reach something through shop-web", "Local"],
+    [LOCAL, "Reach db through shop-web", "Local"],
     [remote(""), "Let shop-web reach this computer", "Remote"],
     [DYNAMIC, "Browse through shop-web (SOCKS5)", "Dynamic"],
   ])("a tunnel by the names of its ends", (tunnelType, what, technical) => {
@@ -182,7 +182,16 @@ describe("what it is and where it runs", () => {
     const onEdge = tunnelModel(tunnel({ tunnelType: remote(""), host: EDGE }), undefined, CONTEXT);
     expect(onEdge.what).toBe("Let shop-web reach that machine");
     const gone = tunnelModel(tunnel({ sshConnectionId: "gone" }), undefined, CONTEXT);
-    expect(gone.what).toBe("Reach something through the SSH server");
+    expect(gone.what).toBe("Reach db through the SSH server");
+    const at = (tunnelType: TunnelType) =>
+      tunnelModel(tunnel({ tunnelType }), undefined, CONTEXT).what;
+    // The server itself is the target.
+    for (const remoteHost of ["localhost", "127.0.0.1", "::1", " "]) {
+      const own = { ...LOCAL.config, remoteHost } as never;
+      expect(at({ type: "local", config: own })).toBe("Reach something on shop-web");
+    }
+    const nas = { ...remote("").config, localHost: "nas" } as never;
+    expect(at({ type: "remote", config: nas })).toBe("Let shop-web reach nas");
   });
 
   it.each([
@@ -277,7 +286,8 @@ describe("state, reason and next step", () => {
     ["error", "agentOffline", ["Connect agent"]],
     ["waiting", "agentOffline", ["Connect agent"]],
     ["notReachable", "agentOffline", ["Connect agent"]],
-    ["stopping", "agentOffline", ["Connect agent"]],
+    ["stopping", "agentOffline", ["Keep running", "Connect agent"]],
+    ["notReachable", "agentSilent", ["Check again"]],
     ["waiting", "storeLocked", ["Unlock"]],
     ["error", "storeLocked", ["Unlock"]],
     ["error", "connection", ["Edit connection"]],
@@ -327,7 +337,7 @@ describe("state, reason and next step", () => {
   it("only an agent that can be connected is offered", () => {
     const away = tunnelIn("notReachable", { cause: "agentOffline" });
     const gone = { kind: "agent", agentId: "gone" } as const;
-    expect(steps(tunnelModel(tunnel({ host: gone }), away, CONTEXT))).toEqual([]);
+    expect(steps(tunnelModel(tunnel({ host: gone }), away, CONTEXT))).toEqual(["Choose machine"]);
     for (const [connectionState, offered] of [
       ["disconnected", true],
       ["connecting", false],
@@ -361,9 +371,11 @@ describe("state, reason and next step", () => {
       });
     expect(parent("degraded")).toMatchObject({
       stateLabel: "Running",
-      reason: "Not reachable from this computer, see below.",
+      reason: "Does not work on this computer, see below.",
       dot: { tone: "warning" },
     });
+    expect(ids(parent("degraded"))).not.toContain("copyAddress");
+    expect(ids(parent("connected"))).toContain("copyAddress");
     for (const status of ["connected", "connecting", "none"] as const) {
       expect(parent(status).reason, status).toBeUndefined();
       expect(parent(status).dot.tone, status).toBe("success");
@@ -381,18 +393,139 @@ describe("state, reason and next step", () => {
       });
     expect(hop("Shop database (hop on this computer)").name).toBe("On this computer");
     expect(hop("My own name").name).toBe("My own name");
+    expect(hop("My own name").what).toBe("Brings it to this computer");
     expect(hop("x (hop on this computer)").address).toMatchObject({
       copy: "localhost:5432",
       reach: "only this computer",
     });
   });
 
-  it("a list says how many run and how many do not work", () => {
-    const list = (...states: ServiceState[]) => serviceCounts(states.map((state) => ({ state })));
-    expect(list("running", "stopped", "waiting", "stopping", "starting")).toBe("1 of 5 running");
-    expect(list("running", "error", "needsConnection", "notReachable", "reconnecting")).toBe(
-      "1 of 5 running, 4 not working"
+  it("a service on a removed agent is never green (T-007)", () => {
+    const gone = { kind: "agent", agentId: "gone" } as const;
+    const models = [
+      tunnelModel(tunnel({ host: gone }), tunnelIn("connected"), CONTEXT),
+      fileServerModel(server({ host: gone }), serverIn("running"), CONTEXT),
+    ];
+    for (const model of models) {
+      expect(model).toMatchObject({
+        state: "notReachable",
+        stateLabel: "Not reachable",
+        health: "notKnown",
+        reason: "Its agent was removed from termiHub. It may still run there.",
+        address: undefined,
+        counters: undefined,
+      });
+      expect(steps(model)).toEqual(["Choose machine"]);
+      expect(ids(model)).not.toContain("restart");
+    }
+    // Before the agents are known, none of them is missing.
+    const early = { ...CONTEXT, agents: [], agentsKnown: false };
+    const model = tunnelModel(tunnel({ host: gone }), tunnelIn("connected"), early);
+    expect(model.state).toBe("running");
+    expect(model.where.label).toBe("an agent");
+  });
+
+  it("the password is part of who reaches it (T-004)", () => {
+    const signIn = { type: "credentials", username: "u", password: "" } as const;
+    const reach = (over: Partial<EmbeddedServerConfig>) =>
+      fileServerModel(server(over), serverIn("running"), CONTEXT).address?.reach;
+    const open = { bindHost: "0.0.0.0" };
+    const ftp = { ...open, serverType: "ftp", ftpAuth: signIn } as const;
+    const web = { ...open, httpAuth: { username: "u", password: "" } };
+    expect(reach(ftp)).toBe("anyone on your network with the password");
+    expect(reach(web)).toBe("anyone on your network with the password");
+    expect(reach({ ...ftp, host: EDGE })).toBe(
+      "anyone who reaches that machine, with the password"
     );
+    expect(reach(open)).toBe("anyone on your network");
+    // An FTP sign-in left over says nothing about the web server.
+    expect(reach({ ...open, ftpAuth: signIn })).toBe("anyone on your network");
+    expect(reach({ ...web, bindHost: "127.0.0.1" })).toBe("only this computer");
+    // Why there is no address is said either way.
+    const offline = { ...CONTEXT, networkAddress: undefined };
+    const unknown = fileServerModel(server(ftp), serverIn("running"), offline).address;
+    expect(unknown?.reach).toContain("no network address now");
+  });
+
+  it("a list says how many run, and how many are in each state that is not on or off", () => {
+    const list = (...models: ServiceModel[]) => serviceCounts(models).map((c) => c.label);
+    const at = (status: TunnelStatus, cause?: ServiceCause) =>
+      tunnelModel(tunnel(), tunnelIn(status, { cause }), CONTEXT);
+    expect(list(at("connected"), at("disconnected"), at("connecting"), at("stopping"))).toEqual([
+      "1 of 4 running",
+    ]);
+    expect(
+      list(
+        at("waiting"),
+        at("reconnecting"),
+        at("notReachable"),
+        at("stopping", "agentOffline"),
+        at("error"),
+        at("missingConnection")
+      )
+    ).toEqual(["0 of 6 running", "2 errors", "2 not known", "1 reconnecting", "1 waiting"]);
+    expect(list(at("error"))).toEqual(["0 of 1 running", "1 error"]);
+    // Not errors of their own when all of them only need a connection.
+    const bare = at("missingConnection");
+    expect(list(bare)).toEqual(["0 of 1 running", "1 needs a connection"]);
+    expect(list(bare, bare)).toEqual(["0 of 2 running", "2 need a connection"]);
+  });
+
+  it("a taken port is said with the service that has it (#6076)", () => {
+    const portHolders = new Map([[8080, { id: "other", name: "Release builds" }]]);
+    const taken = {
+      ...serverIn("error"),
+      error: "Port 8080 is in use.",
+      cause: "portInUse" as const,
+    };
+    const says = (context: ServiceContext, over: Partial<EmbeddedServerConfig> = {}) =>
+      fileServerModel(server({ port: 8080, ...over }), taken, context).reason;
+    expect(says({ ...CONTEXT, portHolders })).toBe('Port 8080 is used by "Release builds".');
+    expect(says(CONTEXT)).toBe("Port 8080 is in use.");
+    expect(says({ ...CONTEXT, portHolders }, { port: 9 })).toBe("Port 8080 is in use.");
+    // Only when that is why, and while it did not start.
+    const other = { ...taken, cause: "other" as const };
+    expect(fileServerModel(server({ port: 8080 }), other, { ...CONTEXT, portHolders }).reason).toBe(
+      "Port 8080 is in use."
+    );
+    const open = { ...serverIn("running"), cause: "portInUse" as const };
+    expect(
+      fileServerModel(server({ port: 8080 }), open, { ...CONTEXT, portHolders }).reason
+    ).toBeUndefined();
+    // Another machine's port.
+    const there = { host: EDGE } as Partial<EmbeddedServerConfig>;
+    expect(says({ ...CONTEXT, portHolders }, there)).toBe("Port 8080 is in use.");
+  });
+
+  it("a server for devices says when none can reach it (#6076)", () => {
+    const tftp = (bindHost: string, over: Partial<EmbeddedServerConfig> = {}) =>
+      fileServerModel(
+        server({ serverType: "tftp", bindHost, port: 6969, ...over }),
+        serverIn("running"),
+        { ...CONTEXT, networkAddress: "192.168.1.20" }
+      );
+    const here = tftp("127.0.0.1");
+    expect(here.address?.reach).toBe("Only this computer, no device can reach it.");
+    expect(here.addressStep).toEqual({ id: "letReach", label: "Let devices reach it" });
+    const there = tftp("127.0.0.1", { host: EDGE } as Partial<EmbeddedServerConfig>);
+    expect(there.address?.reach).toBe("Only that machine, no device can reach it.");
+    const open = tftp("0.0.0.0");
+    expect(open.address?.reach).toBe("anyone on your network");
+    expect(open.addressStep).toBeUndefined();
+    const web = fileServerModel(server({ bindHost: "127.0.0.1" }), serverIn("running"), CONTEXT);
+    expect(web.address?.reach).toBe("only this computer");
+    expect(web.addressStep).toBeUndefined();
+  });
+
+  it("under its agent's line a pending stop says what will happen (#6076)", () => {
+    const pending = tunnelModel(
+      tunnel({ host: EDGE }),
+      tunnelIn("stopping", { cause: "agentOffline", error: "Its agent is offline. Long." }),
+      CONTEXT
+    );
+    const short = withoutAgent(pending);
+    expect(short.reason).toBe("Will be stopped when the agent is back.");
+    expect(steps(short)).toEqual(["Keep running"]);
   });
 
   it("counts only while it runs", () => {

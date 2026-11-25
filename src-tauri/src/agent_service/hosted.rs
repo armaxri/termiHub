@@ -60,6 +60,8 @@ pub trait HostedKind: Send + Sync + 'static {
     /// What the agent reports about a running one.
     type State: Clone + Send + 'static;
 
+    /// What is known of service `id` while its agent has not been asked.
+    fn unknown_state(id: &str) -> Self::State;
     /// The `*.stop` request for service `id`.
     fn stop_request(id: &str) -> (&'static str, Value);
     /// The `*.status` request for service `id`.
@@ -590,6 +592,32 @@ impl<K: HostedKind> HostedServices<K> {
         } else {
             StopPlan::Nothing
         }
+    }
+
+    /// Take back the stop that agent `agent_id` has not got for `id` ("Keep
+    /// running", #6076): what may run there is followed again. Returns whether
+    /// there was one.
+    pub fn keep(&self, agent_id: &str, id: &str) -> bool {
+        let mut inner = self.lock();
+        // A restart is that stop and a start: there is nothing to keep.
+        if inner.waits.contains_key(id) || inner.live.contains_key(id) {
+            return false;
+        }
+        let key = (agent_id.to_string(), id.to_string());
+        let Some(owed) = inner.owed.remove(&key) else {
+            return false;
+        };
+        let seq = inner.next_seq();
+        let live = Live {
+            agent_id: agent_id.to_string(),
+            state: K::unknown_state(id),
+            presence: Presence::Away(Away::Offline),
+            settle_at: owed.settle_at,
+            misses: 0,
+            seq,
+        };
+        inner.live.insert(id.to_string(), live);
+        true
     }
 
     /// Send the stop that agent `agent_id` owes for `id`. Returns whether the

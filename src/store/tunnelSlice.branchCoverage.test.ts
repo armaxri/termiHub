@@ -157,6 +157,18 @@ describe("tunnelSlice — residual branch coverage (TFE-006)", () => {
   });
 
   describe("reconnectTunnel re-entrancy guard (#1141, reconnect twin)", () => {
+    it("takes back a stop, and says when it cannot (#6076)", async () => {
+      dispatchMock.mockResolvedValueOnce(accepted);
+      await useAppStore.getState().keepTunnelRunning("tun-3");
+      expect(dispatchMock.mock.calls[0][0]).toMatchObject({
+        kind: "tunnel.keepRunning",
+        payload: { id: "tun-3" },
+      });
+      dispatchMock.mockRejectedValueOnce(new Error("gone"));
+      await expect(useAppStore.getState().keepTunnelRunning("tun-3")).rejects.toThrow("gone");
+      expect(toastMock.error).toHaveBeenCalledWith("Failed to keep it running: gone");
+    });
+
     it("no-ops a reconnect while a start for the same tunnel is in flight", async () => {
       useAppStore.setState({ tunnels: [makeTunnel("tun-1", "My Tunnel")] });
       const deferred = makeDeferred<IntentAck>();
@@ -187,6 +199,15 @@ describe("tunnelSlice — residual branch coverage (TFE-006)", () => {
       dispatchMock.mockRejectedValueOnce(new Error("gone"));
       await expect(useAppStore.getState().retryTunnelNow("tun-3")).rejects.toThrow("gone");
       expect(toastMock.error).toHaveBeenCalledWith("Failed to retry Third: gone");
+    });
+
+    it("asks the agents again, and says when it cannot (#6068)", async () => {
+      dispatchMock.mockResolvedValueOnce(accepted);
+      await useAppStore.getState().checkTunnelsAgain();
+      expect(dispatchedKinds()).toEqual(["tunnel.checkAgain"]);
+      dispatchMock.mockRejectedValueOnce(new Error("gone"));
+      await expect(useAppStore.getState().checkTunnelsAgain()).rejects.toThrow("gone");
+      expect(toastMock.error).toHaveBeenCalledWith("Failed to check again: gone");
     });
 
     it("no-ops a reconnect while a stop for the same tunnel is in flight", async () => {

@@ -1,16 +1,20 @@
 /* The row of a service (#6028). The layout is the shared SidebarListItem's;
-   names, the kind line and the reason wrap, they are never cut. An address and a
-   machine's name stay on one line and lose their middle (the whole is in a
+   names, the kind line, the address and the reason wrap, they are never cut. A
+   machine's name stays on one line and loses its middle (the whole is in a
    tooltip). Rows are dense: about eight healthy ones fit at 800x600 (#6063). */
 
 .service-row.sidebar-list-item {
-  padding-top: var(--spacing-xxs);
-  padding-bottom: var(--spacing-xs);
+  /* The dot and its gap: every line of a row starts under its name. */
+  --service-row-indent: calc(var(--spacing-sm) + var(--spacing-xs-sm));
+  /* One line of the row and the buttons on it. */
+  --service-row-line: calc(var(--control-height-sm) - var(--spacing-xs));
+  padding-top: var(--spacing-xs);
+  padding-bottom: var(--spacing-sm);
 }
 
 .service-row .sidebar-list-item__details {
   gap: 0;
-  padding: 0;
+  padding: 0 0 0 var(--service-row-indent);
 }
 
 .service-row .sidebar-list-item__name {
@@ -21,23 +25,33 @@
 
 .service-row .sidebar-list-item__header {
   align-items: flex-start;
+  min-height: var(--service-row-line);
+}
+
+/* The buttons are as tall as the line, and 24 px from each other. */
+.service-row .sidebar-list-item__actions .ui-btn {
+  height: var(--service-row-line);
+}
+
+.service-row .sidebar-list-item__more {
+  gap: var(--spacing-xs);
+  right: calc(var(--service-row-line) + var(--spacing-xs));
+  max-width: calc(100% - var(--service-row-line) - var(--spacing-xs));
 }
 
 /* The dot and a one-line name sit in the middle of the first line's height. */
 .service-row .sidebar-list-item__header > .status-dot {
-  margin-top: calc((var(--control-height-md) - var(--spacing-sm)) / 2);
+  margin-top: calc((var(--service-row-line) - var(--spacing-sm)) / 2);
 }
 
 .service-row .sidebar-list-item__header > .sidebar-list-item__name {
   align-self: baseline;
-  padding: var(--spacing-xs) 0;
+  padding: var(--spacing-xxs) 0;
 }
 
-.service-row__marked-name {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  min-width: 0;
+.service-row__marked-name svg {
+  vertical-align: middle;
+  margin-right: var(--spacing-xs);
 }
 
 .service-row__kind,
@@ -98,23 +112,27 @@
 .service-row__address {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   column-gap: var(--spacing-xs);
 }
 
 .service-row__address-text {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   min-width: 0;
   max-width: 100%;
   user-select: text;
 }
 
 .service-row__address-text code {
-  display: flex;
   min-width: 0;
+  overflow-wrap: anywhere;
   font-family: var(--font-mono);
   color: var(--text-primary);
+}
+
+.service-row__port {
+  white-space: nowrap;
 }
 
 /* Beside the text and no taller than its line. */
@@ -141,10 +159,34 @@
 }
 
 .service-counts {
-  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
   padding: var(--spacing-xs) var(--spacing-md);
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
+}
+
+/* A number that shows only its rows: a chip, so that it looks pressable. */
+.service-counts__count {
+  padding: 0 var(--spacing-sm);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-full);
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.service-counts__count:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.service-counts__count[aria-pressed="true"] {
+  border-color: var(--focus-border);
+  background: var(--bg-active);
+  color: var(--text-primary);
 }
 
 .service-row__next {
@@ -159,4 +201,9 @@
 
 .service-row__next:hover {
   color: var(--text-primary);
+}
+
+/* A list without rows, in line with where they would be. */
+.service-empty.service-empty {
+  padding: var(--spacing-sm) var(--spacing-md);
 }

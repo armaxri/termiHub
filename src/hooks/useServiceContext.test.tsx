@@ -48,9 +48,11 @@ describe("useServiceContext (#6028)", () => {
     await render(false);
     expect(seen).toEqual({
       agents,
+      agentsKnown: true,
       connections,
       networkAddress: undefined,
       usedPorts: new Set(),
+      portHolders: new Map(),
     });
     expect(listNetworkInterfaces).not.toHaveBeenCalled();
   });
@@ -76,6 +78,47 @@ describe("useServiceContext (#6028)", () => {
     useAppStore.setState(useAppStore.getInitialState());
   });
 
+  it("knows who has a port of this computer open now (#6076)", async () => {
+    const edge = { kind: "agent", agentId: "edge" };
+    const listening = (id: string, localPort: number, host?: unknown, type = "local") => ({
+      id,
+      name: `Tunnel ${id}`,
+      tunnelType: { type, config: { localPort } },
+      host,
+    });
+    const serving = (id: string, port: number, host?: unknown) => ({ id, name: id, port, host });
+    useAppStore.setState({
+      tunnels: [
+        listening("open", 15432),
+        listening("shut", 1080),
+        listening("there", 3000, undefined, "remote"),
+        listening("away", 5000, edge),
+      ] as never,
+      tunnelStates: {
+        open: { status: "connected" },
+        shut: { status: "connecting" },
+        there: { status: "connected" },
+        away: { status: "connected" },
+      } as never,
+      embeddedServers: [
+        serving("web", 8080),
+        serving("off", 8081),
+        serving("far", 9, edge),
+      ] as never,
+      embeddedServerStates: {
+        web: { status: "running" },
+        off: { status: "error" },
+        far: { status: "running" },
+      } as never,
+    });
+    await render(false);
+    expect([...seen.portHolders!]).toEqual([
+      [15432, { id: "open", name: "Tunnel open" }],
+      [8080, { id: "web", name: "web" }],
+    ]);
+    useAppStore.setState(useAppStore.getInitialState());
+  });
+
   it("reads this computer's address, not loopback and not all interfaces", async () => {
     listNetworkInterfaces.mockResolvedValue([
       { name: "Loopback", addr: "127.0.0.1" },
@@ -84,6 +127,30 @@ describe("useServiceContext (#6028)", () => {
     ]);
     await render(true);
     expect(seen.networkAddress).toBe("192.168.1.20");
+  });
+
+  it("asks again while there is none, and when this computer gets online (T-006)", async () => {
+    vi.useFakeTimers();
+    try {
+      listNetworkInterfaces.mockResolvedValue([]);
+      await render(true);
+      expect(listNetworkInterfaces).toHaveBeenCalledTimes(1);
+      await act(async () => void vi.advanceTimersByTime(10_000));
+      expect(listNetworkInterfaces).toHaveBeenCalledTimes(2);
+      listNetworkInterfaces.mockResolvedValue([{ name: "en0", addr: "192.168.1.20" }]);
+      await act(async () => void window.dispatchEvent(new Event("online")));
+      expect(seen.networkAddress).toBe("192.168.1.20");
+      // It is known: nothing to poll for.
+      listNetworkInterfaces.mockClear();
+      await act(async () => void vi.advanceTimersByTime(60_000));
+      expect(listNetworkInterfaces).not.toHaveBeenCalled();
+      // Another network.
+      listNetworkInterfaces.mockResolvedValue([{ name: "en0", addr: "10.0.0.9" }]);
+      await act(async () => void window.dispatchEvent(new Event("focus")));
+      expect(seen.networkAddress).toBe("10.0.0.9");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("goes without it when there is none or it cannot be read", async () => {

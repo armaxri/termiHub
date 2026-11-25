@@ -321,7 +321,7 @@ graph LR
 | **Terminal View**     | `src/components/Terminal/`         | Tab bar, split panels, xterm.js terminal instances                                                                                                                                                                                                                                 |
 | **File Editor**       | `src/components/FileEditor/`       | Monaco Editor for local and remote file editing                                                                                                                                                                                                                                    |
 | **Tunnel Editor**     | `src/components/TunnelEditor/`     | Visual SSH tunnel configuration with diagram                                                                                                                                                                                                                                       |
-| **Tunnel Sidebar**    | `src/components/TunnelSidebar/`    | Tunnel list with status indicators and actions                                                                                                                                                                                                                                     |
+| **Services Sidebar**  | `src/components/ServicesSidebar/`  | SSH tunnels and file servers in one list: groups, search, New by intent, rows (`ServiceListItem`)                                                                                                                                                                                  |
 | **DynamicForm**       | `src/components/DynamicForm/`      | Generic schema-driven form renderer — renders `SettingsField` definitions as UI widgets (text, password, select, file picker, key-value list, etc.)                                                                                                                                |
 | **Settings Panel**    | `src/components/Settings/`         | Two-panel settings with categories: General, Appearance, Terminal, External Files, Security, plus Customize Layout dialog                                                                                                                                                          |
 | **Log Viewer**        | `src/components/LogViewer/`        | Backend + frontend log entries, ordered by their `timestampMs` epoch-ms key (backlog merged chronologically on mount) and shown as locale `HH:MM:SS.mmm`; saved/copied logs use ISO-8601 UTC, secrets redacted (#4536)                                                             |
@@ -3139,7 +3139,7 @@ one runs, so the record keeps apart what a row must not mix up:
 stateDiagram-v2
   [*] --> Waiting: starts by itself, agent or credential store not there
   Waiting --> Starting: it is there
-  Waiting --> [*]: Stop waiting, or 30 minutes
+  Waiting --> [*]: Cancel waiting, or 30 minutes
   [*] --> Starting: Start
   Starting --> Running: the agent answered
   Starting --> NotReachable: no answer
@@ -3148,6 +3148,7 @@ stateDiagram-v2
   NotReachable --> [*]: the agent says it does not
   Running --> Stopping: Stop
   NotReachable --> Stopping: Stop
+  Stopping --> NotReachable: Keep running, before the agent got the stop
   Stopping --> [*]: the agent confirmed
 ```
 
@@ -3166,7 +3167,13 @@ An agent that is reconnecting is connected but not reachable (`AgentRpcClient::i
 request to it would only queue, and be sent when nobody expects it any more. The records are in
 memory: a stop that is still owed when the app quits is lost.
 
-In the frontend, `src/utils/serviceState.ts` maps both kinds onto the same nine states and holds
+In the frontend, `src/components/ServicesSidebar` shows both kinds in one list. Which rows it shows,
+in which groups and order, is `src/utils/serviceRows.ts` (pure): the services of each offline agent
+under one line of it, then two groups in a fixed order. In each the rows that need the user come first,
+else they are by name, and a chained pair stays together. While the pointer or the focus is in the list, the order on screen is held. The
+settings' hidden views were merged in settings v5 (`migrate_services_view`).
+
+`src/utils/serviceState.ts` maps both kinds onto the same nine states and holds
 their words, dots and run buttons.
 
 ### One Model of a Service (#6028)
@@ -3179,6 +3186,9 @@ arrives as a diff. While a server runs, its traffic is published once a second, 
 view sends nothing. A start that fails stays on the row with its reason until a stop, a save or the
 next start.
 
+A deleted file server is kept in memory for two minutes, with its password, so that its Undo brings back
+everything; the credential store forgets the password at once.
+
 `src/utils/serviceModel.ts` turns a config, its state and the machines around it into one
 `ServiceModel`: what it is for in plain words (`tunnelTypeHelp.ts`, `shareTypeHelp.ts`), where it
 runs, its state with the reason and the next step, its counters, its address and its actions. The
@@ -3189,7 +3199,8 @@ model is pure, and the rules live there, not in components:
   knows that one there is nothing to copy.
 - **Next steps** follow the cause that the backend sends with a reason (`ServiceCause` in
   `core/src/util/service_cause.rs`: port in use, agent offline, store locked, connection), never its
-  words. A cause of a newer build reads `other` and offers nothing. "Use another port" takes the next
+  words. "Check again" runs the status poll at once (`poll_now`). A service whose agent was removed is
+  never shown as running, whatever was last reported. A cause of a newer build reads `other` and offers nothing. "Use another port" takes the next
   one that no service of this computer is set to. "Connect agent" is `connectAgent.ts`, the same
   steps as on the agent's row. A cause is known for what runs on this computer; an agent's own start
   failures come as text only.

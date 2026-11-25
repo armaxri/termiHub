@@ -153,7 +153,10 @@ export interface TabOpenersSlice {
    * `options.sshConnectionId` pre-selects the SSH connection of a NEW tunnel —
    * used by the connection editor's "Port Forwarding" section (PROD-023).
    */
-  openTunnelEditorTab: (tunnelId: string | null, options?: { sshConnectionId?: string }) => void;
+  openTunnelEditorTab: (
+    tunnelId: string | null,
+    options?: Pick<TunnelEditorMeta, "sshConnectionId" | "tunnelType">
+  ) => void;
 
   // Plugins — installed-plugin list, derived backend/theme registries, and the
   // load/install/enable/disable/settings actions live in PluginsSlice (#2115).
@@ -657,6 +660,7 @@ export const createTabOpenersSlice: StateCreator<AppState, [], [], TabOpenersSli
         // A new tunnel pre-bound to a connection (PROD-023) is only the "same"
         // editor as an open new-tunnel tab pre-bound to that same connection.
         const prefillConnectionId = tunnelId === null ? options?.sshConnectionId : undefined;
+        const prefillType = tunnelId === null ? options?.tunnelType : undefined;
 
         // Look for an existing tunnel-editor tab for this tunnel
         for (const leaf of allLeaves) {
@@ -664,7 +668,8 @@ export const createTabOpenersSlice: StateCreator<AppState, [], [], TabOpenersSli
             (t) =>
               t.contentType === "tunnel-editor" &&
               t.tunnelEditorMeta?.tunnelId === tunnelId &&
-              t.tunnelEditorMeta?.sshConnectionId === prefillConnectionId
+              t.tunnelEditorMeta?.sshConnectionId === prefillConnectionId &&
+              t.tunnelEditorMeta?.tunnelType === prefillType
           );
           if (existing) {
             const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
@@ -689,9 +694,11 @@ export const createTabOpenersSlice: StateCreator<AppState, [], [], TabOpenersSli
         }
 
         const dummyConfig: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
-        const meta: TunnelEditorMeta = prefillConnectionId
-          ? { tunnelId, sshConnectionId: prefillConnectionId }
-          : { tunnelId };
+        const meta: TunnelEditorMeta = {
+          tunnelId,
+          ...(prefillConnectionId ? { sshConnectionId: prefillConnectionId } : {}),
+          ...(prefillType ? { tunnelType: prefillType } : {}),
+        };
         const newTab = createTab(title, "local", dummyConfig, targetPanelId, "tunnel-editor");
         newTab.tunnelEditorMeta = meta;
 

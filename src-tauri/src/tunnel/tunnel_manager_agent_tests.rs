@@ -103,6 +103,8 @@ fn cause_of(said: &str) -> Option<ServiceCause> {
     ];
     if offline.iter().any(|words| said.contains(words)) {
         Some(ServiceCause::AgentOffline)
+    } else if said.contains("keeps asking") {
+        Some(ServiceCause::AgentSilent)
     } else if said.contains("credential store") {
         Some(ServiceCause::StoreLocked)
     } else {
@@ -283,6 +285,14 @@ async fn a_start_without_an_answer_is_unknown_and_the_agent_decides() {
     run.tick();
     run.assert_row(TunnelStatus::Connected, "");
 
+    // "Check again" (#6068) does not wait for the tick.
+    let run = db_on_edge(|_| {});
+    run.agent.push(TUNNEL_START, timed_out());
+    run.manager.start_tunnel("db").unwrap();
+    run.machine.forwards.lock().unwrap().insert("db".into());
+    run.manager.check_again();
+    run.assert_row(TunnelStatus::Connected, "");
+
     let run = db_on_edge(|t| t["reconnectOnDisconnect"] = json!(true));
     run.agent.push(TUNNEL_START, timed_out());
     run.manager.start_tunnel("db").unwrap();
@@ -385,7 +395,7 @@ async fn a_stop_while_the_agent_is_gone_wins_when_it_is_back() {
     run.manager.stop_tunnel("db").unwrap();
     run.assert_row(
         TunnelStatus::Stopping,
-        "Its agent is offline. It may still run there; it is stopped when",
+        "Its agent is offline. It may still run there; it will be stopped when",
     );
     run.manager.start_connection_tunnels("ssh");
     run.manager.start_auto_tunnels();
@@ -536,10 +546,13 @@ async fn retrying_a_reconnecting_tunnel_now_keeps_it_reconnecting() {
             cancel: cancel.clone(),
             retry_now: Arc::clone(&retry_now),
             attempt: 1,
+            at: chrono::Local::now(),
         },
     );
-    super::note_attempt(&run.manager.reconnecting, "db", 3);
-    run.assert_row(TunnelStatus::Reconnecting, "Connection lost. Try 3 of 10.");
+    let at = chrono::Local::now() + Duration::from_secs(8);
+    super::note_attempt(&run.manager.reconnecting, "db", 3, at);
+    let shown = format!("Try 3 of 10 at {}.", at.format("%H:%M:%S"));
+    run.assert_row(TunnelStatus::Reconnecting, &shown);
 
     run.manager.restart_tunnel("db").unwrap();
     tokio::time::timeout(Duration::from_secs(1), retry_now.notified())
@@ -548,4 +561,20 @@ async fn retrying_a_reconnecting_tunnel_now_keeps_it_reconnecting() {
     assert!(!cancel.is_cancelled());
     run.assert_row(TunnelStatus::Reconnecting, "Try 3 of 10");
     assert_eq!(run.sent(TUNNEL_START), 0);
+}
+
+/// "Keep running" (#6076).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pending_stop_can_be_taken_back() {
+    let run = db_on_edge(|_| {});
+    run.manager.start_tunnel("db").unwrap();
+    run.online(false);
+    run.manager.stop_tunnel("db").unwrap();
+    run.assert_row(TunnelStatus::Stopping, "Its agent is offline");
+    run.manager.keep_running("db").unwrap();
+    run.assert_row(TunnelStatus::NotReachable, "Its agent is offline");
+    run.online(true);
+    run.tick();
+    run.assert_row(TunnelStatus::Connected, "");
+    assert!(run.machine.forwards("db"), "not stopped");
 }

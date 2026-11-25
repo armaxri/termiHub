@@ -30,7 +30,6 @@ export const SIDEBARS = [
   "recent-sessions",
   "workspaces",
   "automations",
-  "tunnels",
   "services",
   "network-tools",
   "plugins",
@@ -75,7 +74,7 @@ export const SIDEBAR_ROWS: readonly SidebarRowKind[] = [
   },
   {
     kind: "tunnel",
-    view: "tunnels",
+    view: "services",
     row: "[data-testid^=tunnel-item-]",
     name: ".sidebar-list-item__name",
     actions: ".sidebar-list-item__actions button",
@@ -84,7 +83,7 @@ export const SIDEBAR_ROWS: readonly SidebarRowKind[] = [
   {
     kind: "service",
     view: "services",
-    row: ".sidebar-list-item",
+    row: "[data-testid^=server-item-]",
     name: ".sidebar-list-item__name",
     actions: ".sidebar-list-item__actions button",
     wraps: true,

@@ -131,7 +131,7 @@ afterEach(() => {
 
 describe("what the row says", () => {
   it.each([
-    ["tunnel", tunnelIn("connected"), "Running · Reach something through the SSH server"],
+    ["tunnel", tunnelIn("connected"), "Running · Reach db through the SSH server"],
     ["server", serverIn("running"), "Running · Open a folder in a browser"],
     [
       "server",
@@ -162,11 +162,20 @@ describe("what the row says", () => {
   });
 
   it("keeps the end of a long machine's name, and all of it for a screen reader", () => {
-    const where = { label: "agent x", agentId: "x", name: "Edge gateway in the Frankfurt rack" };
-    render({ ...serverIn("stopped"), where });
-    const chip = q("server-machine-s")!;
-    expect(chip.textContent).toBe(where.name);
-    expect(chip.querySelector(".middle-ellipsis__tail")?.textContent).toBe("urt rack");
+    const tailOf = (machine: string) => {
+      render({ ...serverIn("stopped"), machine });
+      const chip = q("server-machine-s")!;
+      expect(chip.textContent).toBe(machine);
+      return chip.querySelector(".middle-ellipsis__tail")?.textContent;
+    };
+    // Not cut inside a word (#6076), when there are words.
+    expect(tailOf("Edge gateway in the Frankfurt rack")).toBe(" Frankfurt rack");
+    expect(tailOf("Edge gateway, Frankfurt datacenter rack")).toBe(" datacenter rack");
+    expect(tailOf("edge-gateway-frankfurt-rack")).toBe("urt-rack");
+    expect(tailOf("edge gateway-frankfurt-rack")).toBe("urt-rack");
+    // A last word too short to tell two machines apart.
+    expect(tailOf("edge-gateway-frankfurt rack")).toBe("urt rack");
+    expect(tailOf("Edge box")).toBeUndefined();
   });
 
   it("says the state once to a screen reader: the dot's name", () => {
@@ -217,7 +226,9 @@ describe("what the row says", () => {
   it("no address, and nothing to copy, while nobody knows it", async () => {
     const model = serverIn("running", { bindHost: "0.0.0.0" });
     render(model);
-    expect(q("server-address-s")?.textContent).toBe("Open to your network. Address not known yet.");
+    expect(q("server-address-s")?.textContent).toContain(
+      "This computer has no network address now; it appears here once you are connected. Port 8080."
+    );
     expect(q("server-copy-address-s")).toBeNull();
     expect(await openMenu(model)).not.toContain(" Copy address");
   });
@@ -225,6 +236,13 @@ describe("what the row says", () => {
   it("that anyone may upload", () => {
     render({ ...serverIn("running"), risk: "Anyone on your network can upload" });
     expect(q("server-risk-s")?.textContent).toBe("Anyone on your network can upload");
+    // It says who reaches it, so nothing else does.
+    expect(q("server-address-s")?.textContent).toBe("http://localhost:8080");
+    // Without an address, why there is none is said, too.
+    const open = serverIn("running", { bindHost: "0.0.0.0" });
+    render({ ...open, risk: "Anyone on your network can upload" });
+    expect(q("server-address-s")?.textContent).toContain("no network address now");
+    expect(q("server-risk-s")).not.toBeNull();
     render(serverIn("running"));
     expect(q("server-risk-s")).toBeNull();
   });
@@ -256,18 +274,36 @@ describe("what the row says", () => {
     expect(onClick).not.toHaveBeenCalled();
   });
 
-  it("the icons: a filled square stops, a cross gives up waiting or starting", () => {
-    const icon = (model: ServiceModel) => {
+  it("the icons: a filled square stops; giving up what has not started is a word", () => {
+    const button = (model: ServiceModel) => {
       render(model);
-      const svg = q("server-primary-s")!.querySelector("svg")!;
-      return `${svg.getAttribute("class")?.match(/lucide-(square|play|x|rotate-cw)/)?.[1]} ${svg.getAttribute("fill")}`;
+      return q("server-primary-s")!.querySelector("button")!;
+    };
+    const icon = (model: ServiceModel) => {
+      const svg = button(model).querySelector("svg")!;
+      return `${svg.getAttribute("class")?.match(/lucide-(square|play|rotate-cw)/)?.[1]} ${svg.getAttribute("fill")}`;
     };
     expect(icon(serverIn("running"))).toBe("square currentColor");
     expect(icon(serverIn("notReachable"))).toBe("square currentColor");
     expect(icon(serverIn("stopped"))).toBe("play currentColor");
-    expect(icon(serverIn("starting"))).toBe("x none");
-    expect(icon(serverIn("waiting"))).toBe("x none");
     expect(icon(serverIn("error"))).toBe("rotate-cw none");
+    for (const [status, label] of [
+      ["starting", "Cancel start"],
+      ["waiting", "Cancel waiting"],
+    ] as const) {
+      const cancel = button(serverIn(status));
+      expect(cancel.textContent).toBe("Cancel");
+      expect(cancel.querySelector("svg")).toBeNull();
+      expect(cancel.getAttribute("aria-label")).toBe(label);
+    }
+  });
+
+  it("only Copy flashes: a Stop may only have asked", async () => {
+    render(serverIn("running"));
+    await act(async () => q("server-stop-s")!.click());
+    expect(q("server-stop-s")!.className).not.toContain("success");
+    await act(async () => q("server-copy-address-s")!.click());
+    expect(q("server-copy-address-s")!.className).toContain("success");
   });
 
   it("the user's description, the extras and the open activity", () => {

@@ -74,7 +74,7 @@ const CHROME_SCOPED_REDIRECTS: [string, string][] = [
   ["Terminal/TerminalSearchBar.css", ".terminal-search-bar"],
   ["FileEditor/SudoPromptDialog.css", ".sudo-prompt__facts"],
   ["TransferQueue/TransferQueue.css", ".transfer-queue"],
-  ["EmbeddedServerSidebar/EmbeddedServerSidebar.css", ".server-activity"],
+  ["ServicesSidebar/EmbeddedServer.css", ".server-activity"],
 ];
 
 const CHROME_DIRECT_OVERRIDES: [string, string][] = [

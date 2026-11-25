@@ -592,7 +592,7 @@
       <header class="concept-header">
         <h1>Services: one view for SSH tunnels and file servers</h1>
         <div class="concept-meta">
-          <span class="concept-status">Backlog · slices 1 to 4 of 14 implemented</span
+          <span class="concept-status">Backlog · slices 1 to 5 of 14 implemented</span
           ><span
             >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/6028">#6028</a></span
           ><span><code>docs/concepts/backlog/services.html</code></span>
@@ -629,10 +629,11 @@
             one New menu, one list, one editor style, one status and log view.
           </li>
           <li>
-            Proposal: users pick <b>what they want to do</b> ("Reach something on a server", "Give
-            files to a device"), the technical name stands beside it. A row shows name, state and,
-            while it runs, the address to use. Both kinds get the same states, actions in one order,
-            an editor tab with Settings and Activity, Undo, and a log that answers "why is it down".
+            Proposal: users pick <b>what they want to do</b> ("Reach something through a server",
+            "Give files to a device"), the technical name stands beside it. A row shows name, state
+            and, while it runs, the address to use. Both kinds get the same states, actions in one
+            order, an editor tab with Settings and Activity, Undo, and a log that answers "why is it
+            down".
           </li>
           <li>
             Stored data stays in its two files. One optional field is added: where a file server
@@ -1588,7 +1589,7 @@
             </thead>
             <tbody>
               <tr>
-                <td>Reach something on a server</td>
+                <td>Reach something through a server</td>
                 <td>SSH tunnel, local (ssh -L)</td>
                 <td>tunnel, local</td>
               </tr>
@@ -1757,7 +1758,7 @@
                   minutes. The line says which. There is no "Start now": the wait tries every
                   second, so it would do nothing the wait does not
                 </td>
-                <td>Stop waiting</td>
+                <td>Cancel waiting</td>
                 <td></td>
               </tr>
               <tr>
@@ -1824,7 +1825,7 @@ stateDiagram-v2
   [*] --> Stopped
   Stopped --> Waiting: auto-start, agent or store not ready
   Waiting --> Starting: it is ready
-  Waiting --> Stopped: Stop waiting
+  Waiting --> Stopped: Cancel waiting
   Stopped --> Starting: Start
   Starting --> Running: port open, signed in
   Starting --> Error: failed
@@ -2009,7 +2010,7 @@ stateDiagram-v2
               <tr>
                 <td>
                   <ol>
-                    <li>Services ▸ New service ▸ "Reach something on a server".</li>
+                    <li>Services ▸ New service ▸ "Reach something through a server".</li>
                     <li>
                       Picks the server, types <code>db.internal</code> and 5432. "Open it here on
                       port" follows. Reads the sentence: "On this computer, localhost:5432 reaches
@@ -2099,7 +2100,9 @@ stateDiagram-v2
                   <div class="svc-menu__label">Connect through SSH</div>
                   <div class="svc-menu__item">
                     <svg class="li" style="width: 14px; height: 14px"><use href="#i-log-in" /></svg>
-                    <div>Reach something on a server<small>SSH tunnel, local (ssh -L)</small></div>
+                    <div>
+                      Reach something through a server<small>SSH tunnel, local (ssh -L)</small>
+                    </div>
                   </div>
                   <div class="svc-menu__item">
                     <svg class="li" style="width: 14px; height: 14px">
@@ -2284,7 +2287,7 @@ stateDiagram-v2
                   </div>
                 </div>
                 <div class="svc-form">
-                  <h4>Reach something on a server</h4>
+                  <h4>Reach something through a server</h4>
                   <p class="svc-sub">
                     SSH tunnel, local (ssh -L). Use something on the SSH server's side as if it ran
                     here.
@@ -3617,7 +3620,9 @@ stateDiagram-v2
                 </div>
                 <div class="svc-form">
                   <h4>Shop database</h4>
-                  <p class="svc-sub">Reach something on a server · SSH tunnel, local (ssh -L)</p>
+                  <p class="svc-sub">
+                    Reach something through a server · SSH tunnel, local (ssh -L)
+                  </p>
                   <div class="svc-tabs"><span>Settings</span><span class="on">Activity</span></div>
                   <div class="svc-err">
                     <svg class="li" style="width: 12px; height: 12px">
@@ -4421,7 +4426,23 @@ flowchart LR
           failing hop, causes of a start that failed on an agent, a taken port on an agent or on the
           SSH server, a deleted folder, and the same remedies in Activity and Open connections. The
           dialog got the words and the order of slice 7's form, not its tab; until slice 5 the
-          second sidebar is called File servers. Slices 5 to 14 are not started. Step 0 of
+          second sidebar is called File servers. A second round (<a
+            href="https://github.com/armaxri/termiHub/issues/6068"
+            >#6068</a
+          >) made the numbers of a list agree with its rows and filter it, told a password from
+          none, asks before a stop only when someone is connected (from slice 11), and keeps a
+          service on a removed agent from looking green. Slice 5 (one sidebar) is implemented: one
+          Services view with two groups, search, numbers that filter and the New menu by intent,
+          settings v5, and the palette entries of slice 6 that show the view and make a service.
+          Beyond section 3.2, problem rows come first in their group, except while the pointer or
+          the focus is in the list, and the services of an offline agent stand under one line of it.
+          The sidebar's "…" with Stop all and Open connections comes with slice 6. A third round (<a
+            href="https://github.com/armaxri/termiHub/issues/6076"
+            >#6076</a
+          >) put each offline agent with the services of both kinds above the groups, made a group
+          say its problems also while it is closed, brought Undo for file servers (from slice 11)
+          and "Keep running", and presets nobody for a TFTP server (from slice 7). Slices 6 to 14
+          are not started. Step 0 of
           <a href="https://github.com/armaxri/termiHub/issues/6028">#6028</a>.
         </p>
         <p>

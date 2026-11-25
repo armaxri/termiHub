@@ -171,6 +171,37 @@ pub async fn stop_embedded_server(
     off_main_thread(app_handle, move |manager| manager.stop_server(&server_id)).await
 }
 
+/// Bring back a server that was just deleted.
+#[tauri::command]
+pub async fn restore_embedded_server(
+    server_id: String,
+    app_handle: AppHandle,
+) -> Result<(), TerminalError> {
+    off_main_thread(app_handle, move |manager| {
+        manager.restore_deleted(&server_id)
+    })
+    .await
+}
+
+/// Take back the stop of a server that its agent has not got yet.
+#[tauri::command]
+pub async fn keep_embedded_server_running(
+    server_id: String,
+    app_handle: AppHandle,
+) -> Result<(), TerminalError> {
+    off_main_thread(app_handle, move |manager| manager.keep_running(&server_id)).await
+}
+
+/// Ask the agents about the servers they run, now.
+#[tauri::command]
+pub async fn check_embedded_servers(app_handle: AppHandle) -> Result<(), TerminalError> {
+    off_main_thread(app_handle, |manager| {
+        manager.check_again();
+        Ok(())
+    })
+    .await
+}
+
 /// Create a new server configuration and immediately start it.
 ///
 /// If the requested port is in use, up to 10 sequential ports are tried. This

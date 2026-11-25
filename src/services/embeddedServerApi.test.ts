@@ -12,6 +12,9 @@ import {
   deleteEmbeddedServer,
   startEmbeddedServer,
   stopEmbeddedServer,
+  checkEmbeddedServers,
+  restoreEmbeddedServer,
+  keepEmbeddedServerRunning,
   createAndStartServer,
   listNetworkInterfaces,
   getEmbeddedServerActivity,
@@ -69,6 +72,23 @@ describe("embeddedServerApi", () => {
 
       expect(mockedInvoke).toHaveBeenCalledWith("stop_embedded_server", { serverId: "srv-1" });
     });
+  });
+
+  describe("checkEmbeddedServers", () => {
+    it("invokes check_embedded_servers", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+      await checkEmbeddedServers();
+      expect(mockedInvoke).toHaveBeenCalledWith("check_embedded_servers");
+    });
+  });
+
+  it.each([
+    [restoreEmbeddedServer, "restore_embedded_server"],
+    [keepEmbeddedServerRunning, "keep_embedded_server_running"],
+  ])("%o invokes %s with the server", async (call, command) => {
+    mockedInvoke.mockResolvedValue(undefined);
+    await call("s1");
+    expect(mockedInvoke).toHaveBeenCalledWith(command, { serverId: "s1" });
   });
 
   describe("createAndStartServer", () => {

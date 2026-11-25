@@ -177,6 +177,46 @@ describe("CommandPalette", () => {
     expect(connectSpy).not.toHaveBeenCalled();
   });
 
+  describe("services (#6028)", () => {
+    const keys = () =>
+      Array.from(document.querySelectorAll('[data-testid^="command-palette-item-"]')).map((row) =>
+        row.getAttribute("data-testid")?.replace("command-palette-item-", "")
+      );
+
+    it.each(["tunnel", "server", "forward", "proxy", "share", "embedded", "socks", "ftp"])(
+      "are found as %s",
+      (word) => {
+        typeInto(word);
+        expect(keys()).toContain("command:show-services");
+      }
+    );
+
+    it("shows the view, and leaves it when it shows", () => {
+      const setSidebarView = vi.fn();
+      setStore({ setSidebarView, sidebarView: "files", sidebarCollapsed: false });
+      typeInto("show services");
+      keydown("Enter");
+      expect(setSidebarView.mock.calls).toEqual([["services"]]);
+
+      setStore({ sidebarView: "services", commandPaletteOpen: true });
+      act(() => typeInto("show services"));
+      keydown("Enter");
+      expect(setSidebarView).toHaveBeenCalledTimes(1);
+    });
+
+    it("makes a new one", () => {
+      const openTunnelEditorTab = vi.fn();
+      setStore({ openTunnelEditorTab });
+      typeInto("reach something through");
+      const label = "New service: Reach something through a server · SSH tunnel, local (ssh -L)";
+      expect(activeLabel()).toBe(label);
+      typeInto("such as a database");
+      expect(activeLabel()).toBe(label);
+      keydown("Enter");
+      expect(openTunnelEditorTab).toHaveBeenCalledWith(null, { tunnelType: "local" });
+    });
+  });
+
   describe("automations (#5818, slice 11)", () => {
     const steps: Automation = automation("wf-1", "Deploy", {
       steps: [{ kind: "send-command", command: "echo hi" }],

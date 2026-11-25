@@ -3,6 +3,8 @@ import type { ConfirmDontAskAgain } from "@/components/ui";
 
 interface ConfirmDeleteDialogProps {
   open: boolean;
+  /** What is deleted, as a question. */
+  title?: string;
   message: string;
   onConfirm: () => void;
   onCancel: () => void;
@@ -13,6 +15,7 @@ interface ConfirmDeleteDialogProps {
 /** Themed confirmation dialog for destructive delete actions. */
 export function ConfirmDeleteDialog({
   open,
+  title = "Confirm delete",
   message,
   onConfirm,
   onCancel,
@@ -21,7 +24,7 @@ export function ConfirmDeleteDialog({
   return (
     <ConfirmDialog
       open={open}
-      title="Confirm delete"
+      title={title}
       variant="danger"
       message={message}
       confirmLabel="Delete"

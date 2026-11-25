@@ -3,6 +3,7 @@ import { StateCreator } from "zustand";
 import {
   saveEmbeddedServer as apiSaveEmbeddedServer,
   deleteEmbeddedServer as apiDeleteEmbeddedServer,
+  restoreEmbeddedServer as apiRestoreEmbeddedServer,
   startEmbeddedServer as apiStartEmbeddedServer,
   stopEmbeddedServer as apiStopEmbeddedServer,
   createAndStartServer as apiCreateAndStartServer,
@@ -15,6 +16,8 @@ import {
 } from "@/types/embeddedServer";
 import { createTransport, ProjectionClient } from "@/services/transport";
 import { THIS_COMPUTER } from "@/types/tunnel";
+import { toast } from "@/components/ui";
+import { showUndoToast } from "@/utils/undoableDelete";
 import { frontendLog } from "@/utils/frontendLog";
 
 import type { AppState } from "../appStore";
@@ -45,6 +48,7 @@ export interface EmbeddedServersSlice {
   embeddedServerStates: Record<string, EmbeddedServerState>;
   loadEmbeddedServers: () => Promise<void>;
   saveEmbeddedServer: (config: EmbeddedServerConfig) => Promise<void>;
+  /** Delete a server; the toast offers to undo it. */
   deleteEmbeddedServer: (serverId: string) => Promise<void>;
   startEmbeddedServer: (serverId: string) => Promise<void>;
   stopEmbeddedServer: (serverId: string) => Promise<void>;
@@ -86,17 +90,24 @@ export const createEmbeddedServersSlice: StateCreator<AppState, [], [], Embedded
   },
 
   deleteEmbeddedServer: async (serverId) => {
+    const name = get().embeddedServers.find((s) => s.id === serverId)?.name ?? "file server";
     try {
       await apiDeleteEmbeddedServer(serverId);
     } catch (err) {
-      // Propagate the failure so the caller (EmbeddedServerSidebar) can show
-      // an error toast (#1427).
+      // Propagate the failure so the caller can show an error toast (#1427).
       frontendLog(
         "embedded_server",
         `Failed to delete embedded server ${serverId}: ${errorMessage(err)}`
       );
       throw err;
     }
+    showUndoToast(`Deleted ${name}`, {
+      testId: "server-delete-undo-toast",
+      onUndo: () =>
+        void apiRestoreEmbeddedServer(serverId).catch((err: unknown) =>
+          toast.error(`Failed to restore ${name}`, { description: errorMessage(err) })
+        ),
+    });
   },
 
   startEmbeddedServer: async (serverId) => {
