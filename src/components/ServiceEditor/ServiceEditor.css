@@ -43,19 +43,22 @@
 }
 
 .service-editor__footer {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--spacing-sm);
-  padding: var(--spacing-sm) var(--spacing-xl);
   border-top: 1px solid var(--border-primary);
 }
 
 /* As wide as the fields, so that Save is below them. */
+.service-editor__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-sm);
+  max-width: 600px;
+  padding: var(--spacing-sm) var(--spacing-xl);
+}
+
 .service-editor__note {
   flex: 1;
   min-width: 0;
-  max-width: 600px;
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
 }

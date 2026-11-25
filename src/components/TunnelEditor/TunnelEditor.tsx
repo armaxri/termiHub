@@ -74,6 +74,14 @@ interface TunnelEditorProps {
   isVisible: boolean;
 }
 
+/** The test ids of the hosts and ports. */
+const FIELD_TEST_IDS = {
+  localHost: { "data-testid": "tunnel-editor-local-host" },
+  localPort: { "data-testid": "tunnel-editor-local-port" },
+  remoteHost: { "data-testid": "tunnel-editor-remote-host" },
+  remotePort: { "data-testid": "tunnel-editor-remote-port" },
+};
+
 /** The traffic of a tunnel that a preview is about. */
 const NO_TRAFFIC = { bytesSent: 0, bytesReceived: 0, activeConnections: 0, totalConnections: 0 };
 
@@ -586,9 +594,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
         value={value}
         onValueChange={(v) => updateConfig(field, v)}
         error={!!errors[field]}
-        data-testid={
-          field === "localPort" ? "tunnel-editor-local-port" : "tunnel-editor-remote-port"
-        }
+        {...FIELD_TEST_IDS[field]}
       />
     </Field>
   );
@@ -601,9 +607,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
         onChange={(e) => updateConfig(field, e.target.value)}
         onBlur={nameAfterTarget}
         error={!!errors[field]}
-        data-testid={
-          field === "localHost" ? "tunnel-editor-local-host" : "tunnel-editor-remote-host"
-        }
+        {...FIELD_TEST_IDS[field]}
       />
     </Field>
   );
@@ -650,14 +654,14 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   const check = (
     name: "autoStart" | "startWithConnection" | "reconnectOnDisconnect",
     label: string,
-    testId: string
+    testId: { "data-testid": string }
   ) => (
     <label className="service-editor__check">
       <Checkbox
         checked={form[name]}
         onCheckedChange={(checked) => setValue(name, checked === true)}
         aria-label={label}
-        data-testid={testId}
+        {...testId}
       />
       <span>{label}</span>
     </label>
@@ -869,15 +873,19 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
 
       <div className="service-editor__group">
         <span className="service-editor__label">{t("tunnel.editor.start")}</span>
-        {check("autoStart", t("tunnel.editor.autoStart"), "tunnel-editor-auto-start")}
+        {check("autoStart", t("tunnel.editor.autoStart"), {
+          "data-testid": "tunnel-editor-auto-start",
+        })}
         {check(
           "startWithConnection",
           tf("tunnel.editor.startWithConnection", {
             server: sshLabel ?? t("service.what.unknownServer"),
           }),
-          "tunnel-editor-start-with-connection"
+          { "data-testid": "tunnel-editor-start-with-connection" }
         )}
-        {check("reconnectOnDisconnect", t("tunnel.editor.reconnect"), "tunnel-editor-reconnect")}
+        {check("reconnectOnDisconnect", t("tunnel.editor.reconnect"), {
+          "data-testid": "tunnel-editor-reconnect",
+        })}
       </div>
 
       <div className="service-editor__group">

@@ -75,15 +75,17 @@ export function ServiceEditorShell({
       >
         <div className="service-editor__fields">{children}</div>
       </div>
-      <div
-        className="service-editor__footer"
-        data-testid={`${testId}-actions`}
-        {...TOAST_AVOID_PROPS}
-      >
-        <span className="service-editor__note" data-testid={`${testId}-note`}>
-          {note}
-        </span>
-        {actions}
+      <div className="service-editor__footer">
+        <div
+          className="service-editor__actions"
+          data-testid={`${testId}-actions`}
+          {...TOAST_AVOID_PROPS}
+        >
+          <span className="service-editor__note" data-testid={`${testId}-note`}>
+            {note}
+          </span>
+          {actions}
+        </div>
       </div>
     </div>
   );

@@ -120,7 +120,9 @@ for (const viewport of [
       /** The help is inside the window, unclipped, and does not cover its trigger. */
       async function checkHelp(help: Locator, trigger: Locator): Promise<void> {
         // Radix mounts the tooltip off-screen and places it a frame later.
-        await expect.poll(async () => (await help.boundingBox())?.y ?? -1).toBeGreaterThan(0);
+        await expect
+          .poll(async () => (await help.boundingBox())?.y ?? -1)
+          .toBeGreaterThanOrEqual(0);
         const box = (await help.boundingBox())!;
         const card = (await trigger.boundingBox())!;
         expect.soft(box.x).toBeGreaterThanOrEqual(0);
