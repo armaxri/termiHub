@@ -123,7 +123,7 @@ for (const viewport of [
       await type(page, ["git pull", "\r"]);
       const badge = page.locator("[data-testid^=tab-recording-badge-]");
       await expect(badge).toBeVisible();
-      await expect(page.locator(id("terminal-view-active-recording"))).toHaveText("Recording");
+      await expect(page.locator(id("terminal-view-active-recording"))).toHaveText("Stop recording");
       await check(page, "chip", id("terminal-view-active-recording"));
       await stop(page);
       await page.locator(DIALOG).waitFor();
@@ -143,7 +143,7 @@ for (const viewport of [
       await type(page, ["sudo -v\r"]);
       await type(page, ["h", "u", "n"], "[sudo] password for arne: ");
       await expect(page.locator(id("terminal-view-active-recording"))).toHaveText(
-        "Recording: password prompt"
+        "Stop recording (password kept apart)"
       );
       await check(page, "prompt", id("terminal-view-active-recording"));
       await type(page, ["\r"], "[sudo] password for arne: ");
