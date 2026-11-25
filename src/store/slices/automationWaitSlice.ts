@@ -51,6 +51,8 @@ export interface AutomationWait {
   unchecked?: boolean;
   /** Continue was pressed while another window or computer controls the terminal. */
   elsewhere?: boolean;
+  /** Continue was pressed again, and the terminal had changed since it was told. */
+  askedAgain?: boolean;
   /** Its terminal showed a password prompt since it waits. */
   prompted?: boolean;
   /** That prompt is gone: the password was typed (C-006). */
@@ -110,20 +112,30 @@ function forgetPin(runId: string): void {
 /** Runs whose Continue is being decided. */
 const deciding = new Set<string>();
 
+/** What a look at the terminal found. */
+interface Looked {
+  /** The text in front of the cursor; `null` when it cannot be told. */
+  before: string | null;
+  /** Whether it is all that had arrived: `false` for a prompt seen on the way. */
+  settled: boolean;
+}
+
 /**
  * Read the prompt of terminal `tabId` with all output that has arrived when `then` is
- * called: while output arrives, it is read again. `null` when that cannot be told
- * within {@link PROMPT_CHECK_LIMIT_MS}. `slow` is called when it takes long enough to
- * notice.
+ * called: while output arrives, or another terminal took over the tab, it is read
+ * again. When that does not settle within {@link PROMPT_CHECK_LIMIT_MS}, a password
+ * prompt seen on the way is the answer (#6077), else `null`. `slow` is called when it
+ * takes long enough to notice.
  */
-function readPrompt(tabId: string, slow: () => void, then: (before: string | null) => void): void {
+function readPrompt(tabId: string, slow: () => void, then: (looked: Looked) => void): void {
   let done = false;
+  let seen: string | null = null;
   const timers: ReturnType<typeof setTimeout>[] = [];
-  const finish = (before: string | null) => {
+  const finish = (before: string | null, settled = true) => {
     if (done) return;
     done = true;
     timers.forEach(clearTimeout);
-    then(before);
+    then({ before, settled });
   };
   const read = () => {
     const terminal = promptOfTerminal(tabId);
@@ -131,8 +143,10 @@ function readPrompt(tabId: string, slow: () => void, then: (before: string | nul
     try {
       readTerminalPrompt(tabId, (before) => {
         if (done) return;
+        if (before !== null && isPasswordPrompt(before)) seen = before;
         // More is in the app than was looked at, and it may be a prompt.
-        if (before !== null && terminal?.arrived() !== arrived) read();
+        const more = terminal?.arrived() !== arrived || promptOfTerminal(tabId) !== terminal;
+        if (before !== null && more) read();
         else finish(before);
       });
     } catch (err) {
@@ -141,7 +155,7 @@ function readPrompt(tabId: string, slow: () => void, then: (before: string | nul
     }
   };
   timers.push(setTimeout(slow, PROMPT_CHECK_SHOWS_MS));
-  timers.push(setTimeout(() => finish(null), PROMPT_CHECK_LIMIT_MS));
+  timers.push(setTimeout(() => finish(seen, seen === null), PROMPT_CHECK_LIMIT_MS));
   read();
 }
 
@@ -214,7 +228,7 @@ export const createAutomationWaitSlice: StateCreator<AppState, [], [], Automatio
       // A press while one is being decided is the same press.
       if (!wait || deciding.has(runId)) return;
       deciding.add(runId);
-      const decide = (before: string | null) => {
+      const decide = ({ before, settled }: Looked) => {
         deciding.delete(runId);
         if (waitOf(runId)?.checking) change(runId, { checking: false });
         // It may have ended, or the user may have gone elsewhere meanwhile.
@@ -232,11 +246,15 @@ export const createAutomationWaitSlice: StateCreator<AppState, [], [], Automatio
           }
         } else if (isPasswordPrompt(before)) {
           // Insisting counts for the prompt it was said of, not for the next one.
-          if (!now.stillAsking || heldBackBy.get(runId)?.holds() !== true) {
+          // A prompt seen on the way is no insisted one: the screen goes on changing.
+          const insisted = now.stillAsking && settled;
+          if (!insisted || heldBackBy.get(runId)?.holds() !== true) {
             forgetPin(runId);
             const pin = promptOfTerminal(now.tabId)?.pin();
             if (pin) heldBackBy.set(runId, pin);
-            change(runId, { stillAsking: true, unchecked: false, elsewhere: false });
+            // Pressed again, but the screen changed since it was said (#6077).
+            const askedAgain = now.stillAsking;
+            change(runId, { stillAsking: true, askedAgain, unchecked: false, elsewhere: false });
             return;
           }
         }
@@ -257,6 +275,7 @@ export const createAutomationWaitSlice: StateCreator<AppState, [], [], Automatio
             prompted,
             answered: prompted && !asking,
             stillAsking: w.stillAsking && asking,
+            askedAgain: w.askedAgain === true && asking,
             unchecked: w.unchecked === true && asking,
             elsewhere:
               w.elsewhere === true &&

@@ -303,7 +303,10 @@ describe("what is typed at a password prompt", () => {
     recorder.push("w", (then) => ((late = then), undefined));
     const recorded = recorder.finish();
     late("Password: pw");
-    expect(recorded.secrets).toEqual([{ start: 0, end: 2, prompt: "Password:" }]);
+    expect(recorded.secrets).toEqual([
+      { start: 0, end: 1, prompt: "Password:" },
+      { start: 1, end: 2, prompt: "" },
+    ]);
   });
 
   it("is not looked for without a screen to read", () => {
