@@ -144,6 +144,37 @@ class ProcessTreeSampler:
 # ── Statistics (pure) ─────────────────────────────────────────────────────────
 
 
+def describe_process_tree(pid: int, interval: float = 1.0) -> str:
+    """One line per process of ``pid``'s tree, with its CPU use over ``interval``
+    seconds, and the host's: whether a start hangs, spins or only starves (#6074).
+    Never raises: it describes a failure that must not be masked."""
+    try:
+        root = psutil.Process(pid)
+        procs = [root, *root.children(recursive=True)]
+        psutil.cpu_percent()
+        for proc in procs:
+            try:
+                proc.cpu_percent()
+            except psutil.Error:
+                pass
+        time.sleep(interval)
+        lines = [f"  host: {psutil.cpu_percent():.0f}% of {psutil.cpu_count()} CPUs"]
+        for proc in procs:
+            try:
+                with proc.oneshot():
+                    lines.append(
+                        f"  {proc.pid} (parent {proc.ppid()}) {proc.name()}: {proc.status()}, "
+                        f"{time.time() - proc.create_time():.0f}s old, "
+                        f"{proc.num_threads()} threads, CPU {proc.cpu_percent():.0f}% now, "
+                        f"{sum(proc.cpu_times()[:2]):.1f}s in all"
+                    )
+            except psutil.Error as exc:
+                lines.append(f"  {proc.pid}: {exc}")
+        return "\n".join(lines)
+    except Exception as exc:  # noqa: BLE001 - diagnostics must never raise
+        return f"  (not readable: {exc})"
+
+
 def percentile(values: Sequence[float], pct: float) -> float:
     """The ``pct`` percentile (0–100) by nearest rank; ``0.0`` for no values."""
     if not values:
