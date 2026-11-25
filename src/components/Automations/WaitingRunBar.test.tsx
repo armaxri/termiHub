@@ -343,6 +343,32 @@ describe("Continue", () => {
     expect(query("automation-wait-message-a")?.textContent).toContain("still asks for a password");
   });
 
+  it("does not take a prompt seen on the way as the one insisted on (#6077)", () => {
+    vi.useFakeTimers();
+    let arrived = 0;
+    let busy = false;
+    const read = (then: (before: string | null) => void) => {
+      if (busy) arrived += 1;
+      then("Password: ");
+    };
+    takeBack.push(registerTerminalPrompt("a", { read, arrived: () => arrived, pin }));
+    const wait = startWait();
+    click("automation-wait-continue-a");
+    expect(query("automation-wait-continue-a")?.textContent).toBe("Continue anyway");
+    busy = true;
+    click("automation-wait-continue-a");
+    act(() => void vi.advanceTimersByTime(PROMPT_CHECK_LIMIT_MS));
+    expect(wait.result).toBeUndefined();
+    // Told that it changed, and once it shows no prompt, no longer.
+    expect(query("automation-wait-message-a")?.textContent).toContain("asks for a password again");
+    busy = false;
+    takeBack.push(
+      registerTerminalPrompt("a", { read: (then) => then("$ "), arrived: () => arrived, pin })
+    );
+    act(() => store().recheckWaitingPrompts());
+    expect(query("automation-wait-message-a")?.textContent).not.toContain("again");
+  });
+
   it("says that it looks when it takes a moment, and asks when it takes too long (#6070)", () => {
     vi.useFakeTimers();
     takeBack.push(registerTerminalPrompt("a", { read: () => {}, arrived: () => 0, pin }));
