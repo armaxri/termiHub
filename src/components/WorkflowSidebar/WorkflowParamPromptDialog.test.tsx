@@ -53,7 +53,13 @@ function openPrompt(parameters: WorkflowParameter[]) {
   const resolve = vi.fn<(values: WorkflowParamValues | null) => void>();
   act(() => {
     useAppStore.setState({
-      workflowParamPrompt: { workflowName: "Deploy", parameters, resolve },
+      workflowParamPrompt: {
+        workflowName: "Deploy",
+        parameters,
+        targets: ["bash"],
+        steps: [],
+        resolve,
+      },
     });
   });
   return resolve;

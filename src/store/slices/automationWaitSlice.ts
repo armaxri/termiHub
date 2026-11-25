@@ -52,8 +52,8 @@ export interface AutomationWaitSlice {
     signal?: WorkflowStepSignal
   ) => Promise<WaitForUserResult>;
   /**
-   * Go on with a waiting run. While its terminal shows a password prompt, the
-   * first call only says so.
+   * Go on with a waiting run. Only from its own terminal: from elsewhere the call
+   * shows it. While the terminal shows a password prompt, the first call only says so.
    */
   continueAutomationWait: (runId: string) => void;
   /** End the waits whose terminal was closed, moved away or disconnected. */
@@ -110,7 +110,7 @@ export const createAutomationWaitSlice: StateCreator<AppState, [], [], Automatio
           id: toastId,
           duration: Infinity,
           action: {
-            label: "Show terminal",
+            label: tf("automation.wait.show", { tab: request.tabTitle }),
             testId: "automation-wait-show",
             onClick: () => show(tabId),
           },
@@ -125,6 +125,12 @@ export const createAutomationWaitSlice: StateCreator<AppState, [], [], Automatio
     if (Date.now() >= wait.until) {
       // The timer sleeps while the computer does: too late is too late.
       pending.get(runId)?.end("timed-out");
+      return;
+    }
+    // Nobody continues into a terminal they do not see (B-001): the first press only
+    // shows it, whatever it came from.
+    if (getActiveTab(get())?.id !== wait.tabId) {
+      show(wait.tabId);
       return;
     }
     if (!wait.stillAsking && isPasswordPrompt(promptOfTerminal(wait.tabId))) {

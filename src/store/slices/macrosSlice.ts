@@ -30,6 +30,7 @@ import {
   recordMacroRun,
   type PlaybackOrigin,
 } from "./macroRunHistory";
+import { typedProgress } from "@/utils/runProgress";
 
 /** UI-facing metadata describing an in-flight macro playback (#1675). */
 export interface MacroPlaybackState {
@@ -142,11 +143,6 @@ export interface MacrosSlice {
   cancelMacroPlaybackOnTab: (tabId: string) => void;
 }
 
-/** How much was typed, as a share: the parts of a recording are keys and pastes (A-003). */
-function typedShare(typed: number, total: number): string {
-  return `${total > 0 ? Math.floor((typed / total) * 100) : 0} %`;
-}
-
 export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (set, get) => {
   /** A macro the local library does not hold yet (made in another window). */
   const fetchMacro = async (macroId: string): Promise<Macro | undefined> => {
@@ -192,7 +188,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
     const total = macro.steps.length;
     const title = `Running automation “${macro.name}” on ${targets.length} terminals…`;
     const progress: Record<string, number> = Object.fromEntries(targets.map((id) => [id, 0]));
-    toast.loading(title, { id: toastId, description: `0 / ${total} steps` });
+    toast.loading(title, { id: toastId, description: typedProgress(0, total) });
     set({
       macroPlayback: {
         macroId: macro.id,
@@ -236,7 +232,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
           );
           toast.loading(title, {
             id: toastId,
-            description: `${furthest} / ${total} steps`,
+            description: typedProgress(furthest, total),
           });
         },
         // A target whose run ended (finished, stopped or dropped) loses its
@@ -365,7 +361,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
       const startedAt = new Date();
       toast.loading(`Running automation “${macro.name}”…`, {
         id: toastId,
-        description: `${typedShare(0, total)} typed`,
+        description: `${typedProgress(0, total)} in ${targetLabel}`,
       });
       set({
         macroPlayback: {
@@ -388,7 +384,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
           );
           toast.loading(`Running automation “${macro.name}”…`, {
             id: toastId,
-            description: `${typedShare(played, stepTotal)} typed`,
+            description: `${typedProgress(played, stepTotal)} in ${targetLabel}`,
           });
         },
       });
@@ -409,12 +405,12 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
         // toast-policy: explains-outcome — says how far the canceled playback got
         toast.info(`“${macro.name}” stopped`, {
           id: toastId,
-          description: `Stopped: ${typedShare(result.stepsPlayed, total)} was typed`,
+          description: `${typedProgress(result.stepsPlayed, total)} in ${targetLabel}`,
         });
       } else {
         toast.error(`“${macro.name}” failed: the terminal is no longer connected`, {
           id: toastId,
-          description: `${typedShare(result.stepsPlayed, total)} was typed`,
+          description: `${typedProgress(result.stepsPlayed, total)} in ${targetLabel}`,
           ...failedRunActions(macroId),
         });
       }

@@ -4,17 +4,34 @@ import { Button } from "@/components/ui";
 import { t, tf } from "@/i18n/catalog";
 import { getActiveTab, useAppStore } from "@/store/appStore";
 import { useLayoutRenderTree, useLayoutTabGroups } from "@/store/layoutSelectors";
-import { SHOW_WAITING_TERMINAL_EVENT } from "@/store/slices/automationWaitSlice";
+import {
+  SHOW_WAITING_TERMINAL_EVENT,
+  type AutomationWait,
+} from "@/store/slices/automationWaitSlice";
 import { useProjectedSessionLifecycleMaps } from "@/store/useSessionLifecycle";
 import { formatTimeOfDay } from "@/utils/formatters";
 import { showTerminal } from "@/utils/showTerminal";
 import "./WaitingRunBar.css";
 
+/** What to do now: in the terminal, or first to see it. */
+function waitText(wait: AutomationWait, hidden: boolean): string {
+  const message = wait.message?.trim().replace(/[.!]+$/, "");
+  const password = message === t("automation.wait.password");
+  if (hidden) {
+    if (password) return t("automation.wait.passwordHidden");
+    return message ? tf("automation.wait.hidden", { message }) : t("automation.wait.messageHidden");
+  }
+  if (wait.stillAsking) return t("automation.wait.stillAsking");
+  if (password) return t("automation.wait.passwordThen");
+  return message ? tf("automation.wait.then", { message }) : t("automation.wait.messageThen");
+}
+
 /**
  * The strip above the terminals while an automation waits for the user (#6025):
  * which one, where, what to do there, and Continue and Stop. The terminal keeps
- * the focus, so the user types at once. Nothing but Continue goes on, and not
- * while the terminal still shows a password prompt unless it is pressed again.
+ * the focus, so the user types at once. While the terminal does not show, the bar offers to show
+ * it and nothing else. Nothing but Continue goes on, and not while the terminal still
+ * shows a password prompt unless it is pressed again.
  */
 export function WaitingRunBar() {
   const waits = useAppStore((s) => s.automationWaits);
@@ -41,7 +58,7 @@ export function WaitingRunBar() {
   return (
     <div className="waiting-runs" data-testid="automation-waits">
       {waits.map((wait) => {
-        const message = wait.message?.trim() || t("automation.wait.message");
+        const hidden = wait.tabId !== activeTabId;
         return (
           <div
             key={wait.runId}
@@ -63,25 +80,13 @@ export function WaitingRunBar() {
                 {tf("automation.wait.title", { name: wait.automationName, tab: wait.tabTitle })}
               </span>{" "}
               <span data-testid={`automation-wait-message-${wait.tabId}`}>
-                {wait.stillAsking
-                  ? t("automation.wait.stillAsking")
-                  : tf("automation.wait.then", { message: message.replace(/[.!]+$/, "") })}
+                {waitText(wait, hidden)}
               </span>{" "}
               <span>
                 {tf("automation.wait.until", { time: formatTimeOfDay(new Date(wait.until)) })}
               </span>
             </span>
             <span className="waiting-run__actions">
-              {wait.tabId !== activeTabId && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => showTerminal(wait.tabId)}
-                  data-testid={`automation-wait-show-${wait.tabId}`}
-                >
-                  Show terminal
-                </Button>
-              )}
               <Button
                 variant="secondary"
                 size="sm"
@@ -90,14 +95,26 @@ export function WaitingRunBar() {
               >
                 Stop
               </Button>
-              <Button
-                variant={wait.stillAsking ? "secondary" : "primary"}
-                size="sm"
-                onClick={() => continueWait(wait.runId)}
-                data-testid={`automation-wait-continue-${wait.tabId}`}
-              >
-                {wait.stillAsking ? "Continue anyway" : "Continue"}
-              </Button>
+              {/* Continue types into a terminal: only with that terminal in view (B-001). */}
+              {hidden ? (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => showTerminal(wait.tabId)}
+                  data-testid={`automation-wait-show-${wait.tabId}`}
+                >
+                  {tf("automation.wait.show", { tab: wait.tabTitle })}
+                </Button>
+              ) : (
+                <Button
+                  variant={wait.stillAsking ? "secondary" : "primary"}
+                  size="sm"
+                  onClick={() => continueWait(wait.runId)}
+                  data-testid={`automation-wait-continue-${wait.tabId}`}
+                >
+                  {wait.stillAsking ? "Continue anyway" : "Continue"}
+                </Button>
+              )}
             </span>
           </div>
         );

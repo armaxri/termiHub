@@ -51,7 +51,7 @@ export function RowLines({
           {targets.map((target) => (
             <li
               key={target.key}
-              className="automation-item__line"
+              className="automation-item__line automation-item__line--target"
               data-testid={`automation-target-${target.key}`}
               {...keepOffRow}
             >
@@ -68,7 +68,7 @@ export function RowLines({
               {several && (
                 <Button
                   variant="ghost"
-                  size="sm"
+                  size="xs"
                   iconOnly
                   aria-label={tf("automation.stop.target", { target: target.label })}
                   data-testid={`automation-target-stop-${target.key}`}

@@ -120,6 +120,25 @@
   font-size: var(--font-size-sm);
 }
 
+/* A way on inside a line. */
+.schedules__link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-link);
+  font: inherit;
+  cursor: pointer;
+}
+
+.schedules__link:hover {
+  text-decoration: underline;
+}
+
+.schedules__link:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
 .schedule-confirm {
   display: flex;
   flex-direction: column;

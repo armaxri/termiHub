@@ -73,6 +73,7 @@ import { failedRunActions } from "./automationRunActions";
 import { automationForRun, recordAutomationRun } from "./automationStoreState";
 import { collectNestedRun, nestedRunRecord, workflowToAutomation } from "./automationViews";
 import type { LocalProcessAuthDecision, WorkflowRunOutputLine } from "./workflowsSlice";
+import { stepProgress } from "@/utils/runProgress";
 
 /**
  * Default timeout (ms) applied to a `run-local-process` step from the frontend.
@@ -187,6 +188,12 @@ export interface WorkflowTargetRun {
   sessionless?: boolean;
 }
 
+/** "Step 1 was run." / "Steps 1 to 3 were run.": what a failed run did before (B-010). */
+function ranBefore(failedIndex: number, result: WorkflowRunResult): string {
+  if (result.notStarted || failedIndex === 0) return "";
+  return failedIndex === 1 ? "Step 1 was run." : `Steps 1 to ${failedIndex} were run.`;
+}
+
 /**
  * Show the terminal toast for a single-target run's outcome. A clean outcome
  * replaces the previous run's clean outcome; a failure stays (#5675).
@@ -217,7 +224,7 @@ export function toastRunOutcome(
     // toast-policy: explains-outcome — says how far the canceled run got
     toast.info(`“${workflowName}” stopped`, {
       id: toastId,
-      description: `Stopped after ${result.stepsCompleted} of ${total} steps`,
+      description: `${result.stepsCompleted} of ${total} steps were run`,
     });
     collapseWorkflowRunOutcome(toastId);
   } else {
@@ -233,7 +240,7 @@ export function toastRunOutcome(
         : `“${workflowName}” failed at step ${index + 1}${what}`,
       {
         id: toastId,
-        description: result.error,
+        description: [ranBefore(index, result), result.error].filter(Boolean).join(" "),
         ...(automation ? failedRunActions(automation.id) : {}),
       }
     );
@@ -546,17 +553,15 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
 
   // A "Wait for you" step (#6025): the run stops here until the user continues.
   const waitForUser: WorkflowWaitForUserSeam = (message, { signal }) => {
-    const note = t("automation.wait.note");
-    if (fanout) fanout.onProgress?.(0, note);
-    else
-      toast.loading(`Running automation “${workflow.name}”…`, { id: toastId, description: note });
-    const tab = collectLiveTabs(get()).find((x) => x.id === targetTabId);
+    // The bar above the terminals says it (B-004); the next step brings the toast back.
+    if (fanout) fanout.onProgress?.(0, t("automation.wait.note"));
+    else toast.dismiss(toastId);
     return get().waitForUser(
       {
         runId,
         tabId: targetTabId,
         sessionId: targetSessionId,
-        tabTitle: targetLabel || tab?.title || "Terminal",
+        tabTitle,
         automationName: workflow.name,
         message,
       },
@@ -569,6 +574,10 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
   // (PROD-047, #3418).
   const toastId = `workflow-run-${workflowId}-${targetTabId}`;
   const total = workflow.steps.length;
+  const tabTitle =
+    targetLabel || collectLiveTabs(get()).find((x) => x.id === targetTabId)?.title || "Terminal";
+  const stepNote = (completed: number): string =>
+    `${stepProgress(completed, total)} in ${tabTitle}`;
   // Captured up front so the persisted history record (PROD-0046) carries the
   // real run duration; `triggeredBy` defaults to a manual launch.
   const startedAt = new Date().toISOString();
@@ -576,7 +585,7 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
     claimWorkflowRunToast(toastId);
     toast.loading(`Running automation “${workflow.name}”…`, {
       id: toastId,
-      description: `0 / ${total} steps`,
+      description: stepNote(0),
     });
     // Clear any prior run's frontend-owned streamed content when a fresh run
     // starts; a new panel is created lazily only if this run spawns a local
@@ -642,7 +651,7 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
         }
         toast.loading(`Running automation “${workflow.name}”…`, {
           id: toastId,
-          description: `${completed} / ${total} steps`,
+          description: stepNote(completed),
         });
       },
       // Per-step error handling (PROD-045): surface each retry in the progress

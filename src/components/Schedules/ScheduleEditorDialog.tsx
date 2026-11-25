@@ -77,7 +77,19 @@ export interface ScheduleEditorDialogProps {
   previewNextRun?: PreviewNextRun;
   onOpenChange: (open: boolean) => void;
   /** Persist the schedule; may reject (the dialog then stays open). */
-  onSave: (input: ScheduleInput) => void | Promise<void>;
+  onSave: (input: ScheduleInput, then: { switchOn: boolean }) => void | Promise<void>;
+  /** Open the automation that cannot run on a schedule. */
+  onEditAutomation?: (automation: Automation) => void;
+  /** Start at the connections, to repair them (B-017). */
+  startAtConnections?: boolean;
+}
+
+/** What is still to be given before it can be saved, in words (B-032). */
+function missingParts(errors: Partial<Record<keyof ScheduleFormValues, string>>): string[] {
+  const parts = (
+    ["name", "automationId", "connectionIds", "groupId", "ifClosed", "days", "description"] as const
+  ).flatMap((field) => (errors[field] ? [t(`schedule.missing.${field}`)] : []));
+  return errors.everyMinutes || errors.time ? [...parts, t("schedule.missing.when")] : parts;
 }
 
 /**
@@ -85,9 +97,9 @@ export interface ScheduleEditorDialogProps {
  * #5818), on which saved connections (or broadcast group), what to do when one
  * of them is closed (a new schedule must choose, #6024), and when (every N
  * minutes, daily, or on chosen weekdays at a local time). The footer says when
- * and where it runs next before it is saved. New schedules are saved **off**;
- * they are switched on in the schedules list, which asks for confirmation of the
- * target hosts first.
+ * and where it would run next, or what is still missing. New schedules are saved
+ * **off**; "Save and switch on…" asks for confirmation of the target hosts right
+ * after, as the list does (B-030).
  *
  * A schedule whose automation was deleted keeps its id: the picker shows it
  * as "Deleted automation" so saving never rewrites the action silently.
@@ -105,6 +117,8 @@ export function ScheduleEditorDialog({
   previewNextRun,
   onOpenChange,
   onSave,
+  onEditAutomation,
+  startAtConnections = false,
 }: ScheduleEditorDialogProps) {
   // The shared RHF + zod scaffold (UISF2-003): `watched` is a complete, stable
   // snapshot of the form, and `errors` / `canSave` update on the same render as
@@ -157,6 +171,17 @@ export function ScheduleEditorDialog({
     if (next !== ids) setValue("connectionIds", next, { shouldValidate: true });
   }, open);
 
+  // After the dialog has put the focus on the name.
+  useEffect(() => {
+    if (!open || !startAtConnections) return;
+    const timer = window.setTimeout(() => {
+      const box = document.getElementById("schedule-editor-connections");
+      box?.scrollIntoView?.({ block: "nearest" });
+      box?.focus();
+    });
+    return () => window.clearTimeout(timer);
+  }, [open, startAtConnections, scheduleId]);
+
   const isDirty = baselineKey !== null && draftKey(watched) !== baselineKey;
 
   // With experimental features off, an automation that can run a local process
@@ -201,20 +226,21 @@ export function ScheduleEditorDialog({
     next,
     rule: ruleOf(watched),
     targets: targetNames,
-    targetCount:
-      watched.targetsKind === "connections"
-        ? watched.connectionIds.length
-        : Number(watched.groupId !== ""),
-    cannotRun,
+    cannotRun: cannotRun !== null,
+    missing: [
+      ...missingParts(allErrors),
+      ...(pickRefused ? [t("schedule.missing.pick")] : []),
+      ...(targetsRefused ? [t("schedule.missing.targets")] : []),
+    ],
     ifClosed: watched.ifClosed,
     isOn: schedule !== null && enabled,
     switchesOff: schedule !== null && enabled && needsNewConfirmation(schedule, current),
     paused,
   });
 
-  const handleSave = () => {
-    // Save stays reachable while invalid (aria-disabled, not disabled):
-    // activating it then points at the problem instead of saving.
+  const handleSave = (switchOn: boolean) => {
+    // Save stays enabled while invalid: activating it then points at the problem
+    // instead of saving, and the footer says what is missing (B-032).
     if (!canSave) {
       revealAndFocus();
       return;
@@ -227,9 +253,12 @@ export function ScheduleEditorDialog({
       document.getElementById("schedule-editor-connections")?.focus();
       return;
     }
-    return onSave(current);
+    return onSave(current, { switchOn });
   };
-  const saveBlocked = !canSave || pickRefused || targetsRefused;
+  const isOn = schedule !== null && enabled;
+  const staysOff = !isOn || (schedule !== null && needsNewConfirmation(schedule, current));
+  // Only what would run then can be switched on from here.
+  const offerSwitchOn = staysOff && cannotRun === null && targetNames.gone === null;
 
   return (
     <Modal
@@ -259,15 +288,23 @@ export function ScheduleEditorDialog({
             </Button>
           </ModalClose>
           <Button
-            variant="primary"
-            onClick={handleSave}
-            aria-disabled={saveBlocked}
-            data-invalid={saveBlocked || undefined}
+            variant={offerSwitchOn ? "secondary" : "primary"}
+            onClick={() => handleSave(false)}
             errorToast={false}
             data-testid="schedule-editor-save"
           >
             Save
           </Button>
+          {offerSwitchOn && (
+            <Button
+              variant="primary"
+              onClick={() => handleSave(true)}
+              errorToast={false}
+              data-testid="schedule-editor-save-on"
+            >
+              {t("schedule.save.andSwitchOn")}
+            </Button>
+          )}
         </>
       }
     >
@@ -302,7 +339,23 @@ export function ScheduleEditorDialog({
                 label="Automation"
                 htmlFor="schedule-editor-automation"
                 error={pickRefused ? (blockedPick ?? undefined) : errorFor("automationId")}
-                hint={pickRefused ? undefined : (automationNote ?? undefined)}
+                hint={
+                  pickRefused || automationNote === null ? undefined : (
+                    <>
+                      {automationNote}{" "}
+                      {cannotRun !== null && picked && onEditAutomation ? (
+                        <button
+                          type="button"
+                          className="schedules__link"
+                          onClick={() => onEditAutomation(picked)}
+                          data-testid="schedule-editor-edit-automation"
+                        >
+                          {t("schedule.editAutomation")}
+                        </button>
+                      ) : null}
+                    </>
+                  )
+                }
                 hintVariant={automationNote === defaultsNote ? "default" : "warning"}
                 hintTestId="schedule-editor-automation-note"
               >
@@ -456,7 +509,11 @@ export function ScheduleEditorDialog({
             name="missedRuns"
             control={control}
             render={({ field }) => (
-              <Field label="If a run is missed" htmlFor="schedule-editor-missed">
+              <Field
+                label="If a run is missed"
+                htmlFor="schedule-editor-missed"
+                hint={t(field.value === "skip" ? "schedule.missed.skip" : "schedule.missed.once")}
+              >
                 <Select
                   id="schedule-editor-missed"
                   value={field.value}

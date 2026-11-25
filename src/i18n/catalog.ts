@@ -138,7 +138,7 @@ const en = {
   "schedule.gone.pick": "All chosen connections were deleted. Pick another one.",
   "schedule.blocked": "Will not run: {reason}.",
   "schedule.unattended.missing":
-    "Will not run: it asks for “{name}”, which has no default value. Give it one in the automation.",
+    "Will not run on a schedule: it asks for “{name}”, which has no default value. Give it one in the automation.",
   "schedule.unattended.defaults": "Does not ask, it uses the default values: {list}.",
   "schedule.unattended.emptyValue": "(empty)",
   "schedule.unattended.password":
@@ -146,7 +146,7 @@ const en = {
   "schedule.unattended.passwordWait":
     "It waits for a password question. Nobody is there to answer it, so the run cannot finish.",
   "schedule.unattended.waits":
-    "Will not run: it stops to let you type in the terminal, and nobody is there on a schedule.",
+    "Will not run on a schedule: step {step} waits for you. Choose another automation, or remove that step.",
   "schedule.skip.waits":
     "It stops to let you type in the terminal, and nobody is there on a schedule",
   "schedule.skip.noneOpen": "None of its connections was open",
@@ -154,7 +154,11 @@ const en = {
     "None of its connections was open, and the schedule is set to skip closed ones",
   "schedule.skip.missingValue":
     "It asks for “{name}”, which has no default value. Nobody is there to enter one",
-  "schedule.onlyWhileOpen": "Runs only while termiHub is open on this computer.",
+  "schedule.onlyWhileOpen": "Runs only while termiHub is open and this computer is awake.",
+  "schedule.missed.skip":
+    "A run that is due while termiHub is closed or the computer sleeps is skipped.",
+  "schedule.missed.once":
+    "A run that is due while termiHub is closed or the computer sleeps is made up once, when both are back.",
   "schedule.state.off": "Off",
   "schedule.state.neverOn": "Off until you switch it on",
   "schedule.state.on": "On",
@@ -186,7 +190,32 @@ const en = {
   "schedule.summary.nextAfter": "Next run: {when}, on {targets}.",
   "schedule.summary.afterMinute": "1 minute after you switch it on",
   "schedule.summary.afterMinutes": "{count} minutes after you switch it on",
-  "schedule.summary.noTarget": "Next run: {when}, but no connection is chosen.",
+  "schedule.summary.whenOn": "When switched on: next run {when} on {targets}.",
+  "schedule.summary.onNext": "On. Next run: {when} on {targets}.",
+  "schedule.summary.cannot": "Will not run on a schedule.",
+  "schedule.summary.toSave": "To save: {list}.",
+  "schedule.missing.name": "give it a name",
+  "schedule.missing.automationId": "choose an automation",
+  "schedule.missing.connectionIds": "choose a connection",
+  "schedule.missing.groupId": "choose a broadcast group",
+  "schedule.missing.ifClosed": "choose what happens if a connection is closed",
+  "schedule.missing.days": "choose a day",
+  "schedule.missing.when": "correct when it runs",
+  "schedule.missing.description": "shorten the description",
+  "schedule.missing.targets": "choose a connection that still exists",
+  "schedule.missing.pick": "choose an automation that may run here",
+  "schedule.save.andSwitchOn": "Save and switch on…",
+  "schedule.switchOn": "Switch on…",
+  "schedule.repair": "Choose a connection",
+  "schedule.editAutomation": "Edit the automation",
+  "schedule.confirm.does": "What it types there ({steps}):",
+  "schedule.short.localProcess": "it needs experimental features",
+  "schedule.short.waits": "a step waits for you",
+  "schedule.short.missing": "it asks for a value",
+  "schedule.next.missed":
+    "Keep termiHub open and the computer awake at that time, or set “If a run is missed” to run it later.",
+  "schedule.next.closed":
+    "Open the connection before that time, or set “If a connection is closed” to connect it.",
   "schedule.summary.off": "Off until you switch it on in the list.",
   "schedule.summary.switchesOff":
     "Saving switches it off, because what it may do changes. Switch it on again in the list.",
@@ -196,12 +225,11 @@ const en = {
   "schedule.saved.offHint": "Switch it on in the Schedules list.",
   "schedule.confirm.title": "Switch on “{name}”?",
   "schedule.confirm.message":
-    "{rule}, termiHub runs {action} and types into every connected terminal of these connections, without asking:",
+    "{rule}, termiHub runs “{action}” and types into every connected terminal of these connections, without asking:",
   "schedule.confirm.next": "First run: {when}.",
   "schedule.confirm.skips": "A connection that is closed at that time is skipped.",
   "schedule.confirm.gone": "Nothing will run: {reason}.",
-  "schedule.confirm.foot":
-    "It only runs while termiHub is open. You can switch it off, or pause all schedules, at any time.",
+  "schedule.confirm.foot": "You can switch it off, or pause all schedules, at any time.",
   "schedule.confirm.accept": "Switch on",
   "schedule.connect.confirm":
     "A connection that is closed is connected first, with saved credentials only and never asking. The tabs opened for the run close when it ends.",
@@ -547,9 +575,10 @@ const en = {
   "automation.run.labelPick": "Run {name} on…",
   "automation.stop.label": "Stop {name}",
   "automation.stop.allLabel": "Stop {name} on every terminal",
+  "automation.stop.all": "Stop all {count}",
   "automation.stop.target": "Stop on {target}",
   "automation.triggers.on": "Triggers on: {triggers}",
-  "automation.triggers.off": "Triggers off: not on {triggers}. You can still run it.",
+  "automation.triggers.off": "Triggers off: {triggers} does not start it. You can still run it.",
   "automation.triggers.onState": "Triggers on",
   "automation.triggers.offState": "Triggers off",
   "automation.triggers.editorOn":
@@ -559,12 +588,15 @@ const en = {
   "automation.triggers.toggleOff": "Turn off the triggers of {name}",
   "automation.triggers.toggleOn": "Turn on the triggers of {name}",
   "automation.triggers.toggleFailed": "The triggers of “{name}” could not be changed",
+  "automation.triggers.offMany": "Triggers off: {triggers} do not start it. You can still run it.",
   "automation.trigger.hotkey": "hotkey {keys}",
   "automation.trigger.onConnect": "connecting to {connections}",
   "automation.trigger.onDisconnect": "disconnecting from {connections}",
   "automation.trigger.onOutputMatch": "matching output in {connections}",
   "automation.schedule.next": "Next run {when}",
   "automation.schedule.nextOf": "Next run {when} ({count} schedules)",
+  "automation.schedule.still": "Schedule still on: next run {when}",
+  "automation.schedule.blocked": "Schedule will not run: {reason}",
   "automation.schedule.paused": "Schedules paused",
   "automation.schedule.on": "Schedule on",
   "automation.blocked.unknownStep":
@@ -687,6 +719,14 @@ const en = {
     "It waits for you. Schedules, On disconnect and On output match do not start it; a run On connect ends if nobody presses Continue within 5 minutes.",
   "automation.wait.title": "“{name}” waits for you in {tab}.",
   "automation.wait.then": "{message}, then Continue.",
+  "automation.wait.passwordThen":
+    "Type your password and press Enter in the terminal, then Continue.",
+  "automation.wait.messageThen":
+    "Type what the terminal asks for and press Enter there, then Continue.",
+  "automation.wait.passwordHidden": "Show it, type your password and press Enter.",
+  "automation.wait.messageHidden": "Show it and type what it asks for.",
+  "automation.wait.hidden": "Show it first: {message}.",
+  "automation.wait.show": "Show {tab}",
   "automation.wait.until": "Stops at {time} if you do nothing.",
   "automation.wait.stillAsking":
     "The terminal still asks for a password. Type it and press Enter first, or the next keys go into the prompt.",
@@ -700,7 +740,7 @@ const en = {
   "terminalToolbar.record.start": "Record automation",
   "terminalToolbar.record.stop": "Stop recording",
   "terminalToolbar.play.start": "Run automation…",
-  "terminalToolbar.play.stop": "Stop automation ({played}/{total})",
+  "terminalToolbar.play.stop": "Stop automation ({percent} % typed)",
   "terminalToolbar.chip.broadcast": "Broadcasting",
   "terminalToolbar.chip.logging": "Logging",
   "terminalToolbar.chip.recording": "Stop recording",
@@ -710,6 +750,7 @@ const en = {
     "Stop recording (password kept apart). You choose whether to store it when you save",
   "terminalToolbar.chip.recordingPaused": "Stop recording (not connected)",
   "terminalToolbar.chip.playback": "Stop “{name}” ({percent} % typed)",
+  "terminalToolbar.chip.playbackSeveral": "Stop “{name}” in {count} terminals",
 } as const;
 
 /** A stable id naming one catalog message. */

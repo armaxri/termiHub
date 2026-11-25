@@ -204,6 +204,8 @@ export interface WindowCloseRun {
   key: string;
   name: string;
   tabTitle: string;
+  /** It waits for the user there. */
+  waiting?: boolean;
 }
 
 /**

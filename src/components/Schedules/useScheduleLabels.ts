@@ -8,7 +8,7 @@ import type { ScheduleAction, ScheduleTargets } from "@/types/schedule";
 
 import { t, tf } from "@/i18n/catalog";
 import { localProcessBlockedReason } from "@/utils/localProcessGate";
-import { unattendedBlockedReason } from "@/utils/unattended";
+import { unattendedBlockedReason, waitingStep } from "@/utils/unattended";
 
 import { describeTargetNames } from "./scheduleForm";
 
@@ -51,5 +51,24 @@ export function useScheduleLabels() {
     [automations, experimental, targets]
   );
 
-  return { automations, connections, groups, actionLabel, blockedReason, targets };
+  /** The same in a few words, for a line about something else (B-016). */
+  const blockedShort = useCallback(
+    (s: { action: ScheduleAction; targets: ScheduleTargets }): string | null => {
+      const find = (id: string) => automations.find((x) => x.id === id);
+      const automation = find(s.action.automationId);
+      if (!automation) return t("schedule.gone.automation");
+      if (localProcessBlockedReason(automation, find, experimental)) {
+        return t("schedule.short.localProcess");
+      }
+      if (unattendedBlockedReason(automation, find)) {
+        return t(
+          waitingStep(automation, find) !== null ? "schedule.short.waits" : "schedule.short.missing"
+        );
+      }
+      return targets(s.targets).gone;
+    },
+    [automations, experimental, targets]
+  );
+
+  return { automations, connections, groups, actionLabel, blockedReason, blockedShort, targets };
 }

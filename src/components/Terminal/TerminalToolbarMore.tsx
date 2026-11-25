@@ -11,6 +11,7 @@ import {
   MenuSeparator,
   Tooltip,
 } from "@/components/ui";
+import { typedPercent } from "@/utils/runProgress";
 import { t, tf } from "@/i18n/catalog";
 import { getActionAccelerator, withActionAccelerator } from "@/services/keybindings";
 
@@ -23,6 +24,8 @@ export interface PlaybackProgress {
   macroName: string;
   played: number;
   total: number;
+  /** The terminals it still runs in, when there were several. */
+  targetTabIds?: readonly string[];
 }
 
 /** State and callbacks of the actions that live in the "…" menu. */
@@ -77,12 +80,16 @@ export function TerminalToolbarMore(props: TerminalToolbarMoreProps) {
     onStopPlayback,
   } = props;
   const moreLabel = t("terminalToolbar.more");
-  const playbackLabel = playback
-    ? tf("terminalToolbar.chip.playback", {
-        name: playback.macroName,
-        percent: Math.round((100 * playback.played) / Math.max(1, playback.total)),
-      })
-    : "";
+  const terminals = playback?.targetTabIds?.length ?? 1;
+  // It stops the run in every terminal, so it says in how many (B-003).
+  const playbackLabel = !playback
+    ? ""
+    : terminals > 1
+      ? tf("terminalToolbar.chip.playbackSeveral", { name: playback.macroName, count: terminals })
+      : tf("terminalToolbar.chip.playback", {
+          name: playback.macroName,
+          percent: typedPercent(playback.played, playback.total),
+        });
   const activeCount =
     Number(broadcastActive) +
     Number(loggingActive) +
@@ -241,8 +248,7 @@ function MoreMenuItems({
       >
         {playback
           ? tf("terminalToolbar.play.stop", {
-              played: playback.played,
-              total: playback.total,
+              percent: typedPercent(playback.played, playback.total),
             })
           : t("terminalToolbar.play.start")}
       </MenuItem>
