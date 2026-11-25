@@ -238,6 +238,8 @@ describe("uploads that anyone may make (S-002)", () => {
     expect(model.risk).toBeDefined();
     // Nothing to copy or open then.
     expect(ids(model)).not.toContain("copyAddress");
+    const web = fileServerModel(server({ ...OPEN }), serverIn("running"), noNetwork);
+    expect(ids(web)).not.toContain("openInBrowser");
   });
 
   it.each<[string, Partial<EmbeddedServerConfig>, ServerStatus?]>([
@@ -316,6 +318,8 @@ describe("state, reason and next step", () => {
   it("a port on another machine is not this computer's to change", () => {
     const state = tunnelIn("error", { cause: "portInUse" });
     expect(steps(tunnelModel(tunnel({ host: EDGE }), state, CONTEXT))).toEqual(["Edit"]);
+    const away = { ...serverIn("error"), cause: "portInUse" } as const;
+    expect(steps(fileServerModel(server({ host: EDGE }), away, CONTEXT))).toEqual(["Edit"]);
     const onServer = tunnel({ tunnelType: remote("") });
     expect(steps(tunnelModel(onServer, state, CONTEXT))).toEqual(["Edit"]);
   });
@@ -364,6 +368,12 @@ describe("state, reason and next step", () => {
       expect(parent(status).reason, status).toBeUndefined();
       expect(parent(status).dot.tone, status).toBe("success");
     }
+    // The other half says its own reason.
+    const broken = tunnelModel(tunnel(), tunnelIn("error"), CONTEXT, {
+      role: "hop",
+      status: "degraded",
+    });
+    expect(broken).toMatchObject({ reason: "why", dot: { tone: "error" } });
     const hop = (name: string) =>
       tunnelModel(tunnel({ name }), tunnelIn("connected"), CONTEXT, {
         role: "hop",

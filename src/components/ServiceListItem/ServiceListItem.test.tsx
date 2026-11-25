@@ -205,7 +205,13 @@ describe("what the row says", () => {
     expect(q("server-address-s")?.textContent).toBe("http://localhost:8080only on that machine");
     await act(async () => q("server-copy-address-s")!.click());
     expect(writeText).toHaveBeenCalledWith("http://localhost:8080");
-    expect(toastSuccess.mock.calls).toEqual([["Copied. Works only on Edge box"]]);
+    const warned = ["Copied. Works only on Edge box"];
+    expect(toastSuccess.mock.calls).toEqual([warned]);
+    // From the menu, too, and nothing more.
+    await openMenu(serverIn("running"));
+    await act(async () => q("ctx-copy-url-s")!.click());
+    await flush();
+    expect(toastSuccess.mock.calls).toEqual([warned, warned]);
   });
 
   it("no address, and nothing to copy, while nobody knows it", async () => {

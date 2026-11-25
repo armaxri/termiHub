@@ -527,6 +527,30 @@ describe("EmbeddedServerDialog", () => {
     expect(document.querySelector(".ui-modal__title")?.textContent).toBe("Edit file server");
   });
 
+  it("does not name this computer's networks for a server on an agent", async () => {
+    vi.mocked(listNetworkInterfaces).mockResolvedValueOnce([{ name: "en0", addr: "10.9.8.7" }]);
+    await render(
+      <EmbeddedServerDialog
+        {...baseProps}
+        runLocation={{ kind: "agent", agentId: "edge" }}
+        agents={[{ id: "edge", name: "Edge box" } as never]}
+        config={
+          {
+            id: "s",
+            name: "There",
+            serverType: "http",
+            rootDirectory: "/srv",
+            port: 80,
+            autoStart: false,
+            readOnly: false,
+            bindHost: "10.9.8.7",
+          } as EmbeddedServerConfig
+        }
+      />
+    );
+    expect(field("server-dialog-bind-host").textContent).toBe("Anyone who reaches 10.9.8.7");
+  });
+
   it("asks about uploads only where there are some", async () => {
     await render(<EmbeddedServerDialog {...baseProps} />);
     expect(field("server-dialog-readonly")).toBeNull();
