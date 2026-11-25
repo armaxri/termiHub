@@ -34,6 +34,10 @@ let version = 9000;
 let prompt = "$ ";
 /** Where the cursor is, for a prompt that shows again further down. */
 let cursorLine = 0;
+const pin = () => {
+  const at = cursorLine;
+  return { holds: () => at === cursorLine, dispose: () => {} };
+};
 let takeBack: (() => void)[] = [];
 
 const store = () => useAppStore.getState();
@@ -98,10 +102,8 @@ beforeEach(async () => {
   takeBack = ["a", "b"].map((id) =>
     registerTerminalPrompt(id, {
       read: (then) => then(prompt),
-      pin: () => {
-        const at = cursorLine;
-        return () => at === cursorLine;
-      },
+      arrived: () => 0,
+      pin,
     })
   );
   vi.spyOn(toast, "info").mockReturnValue("t");
@@ -231,7 +233,7 @@ describe("Continue", () => {
       act(() => store().recheckWaitingPrompts());
     };
     takeBack = [
-      registerTerminalPrompt("a", { read: (then) => then(prompt), pin: () => () => true }),
+      registerTerminalPrompt("a", { read: (then) => then(prompt), arrived: () => 0, pin }),
     ];
     read("$ ");
     expect(query("automation-wait-message-a")?.textContent).not.toContain("It cannot be told");
@@ -267,15 +269,38 @@ describe("Continue", () => {
     expect(wait.result).toBe("continued");
   });
 
+  it("can be pressed again when reading the terminal fails (#6070)", async () => {
+    let fails = true;
+    takeBack.push(
+      registerTerminalPrompt("a", {
+        read: (then) => {
+          if (fails) throw new Error("disposed");
+          then("$ ");
+        },
+        arrived: () => 0,
+        pin,
+      })
+    );
+    const wait = startWait();
+    click("automation-wait-continue-a");
+    expect(query("automation-wait-message-a")?.textContent).toContain("It cannot be told yet");
+    fails = false;
+    click("automation-wait-continue-a");
+    await flushAsync();
+    expect(wait.result).toBe("continued");
+  });
+
   it("says that it looks when it takes a moment, and asks when it takes too long (#6070)", () => {
     vi.useFakeTimers();
-    takeBack.push(registerTerminalPrompt("a", { read: () => {}, pin: () => () => true }));
+    takeBack.push(registerTerminalPrompt("a", { read: () => {}, arrived: () => 0, pin }));
     startWait();
     click("automation-wait-continue-a");
     expect(query("automation-wait-message-a")?.textContent).toContain("Type your password");
     act(() => void vi.advanceTimersByTime(PROMPT_CHECK_SHOWS_MS));
     expect(query("automation-wait-message-a")?.textContent).toContain("Looking at");
-    expect((query("automation-wait-continue-a") as HTMLButtonElement).disabled).toBe(true);
+    // It keeps the focus of who pressed it.
+    expect(query("automation-wait-continue-a")?.getAttribute("aria-disabled")).toBe("true");
+    expect((query("automation-wait-continue-a") as HTMLButtonElement).disabled).toBe(false);
     act(() => void vi.advanceTimersByTime(PROMPT_CHECK_LIMIT_MS));
     expect(query("automation-wait-message-a")?.textContent).toContain("It cannot be told yet");
   });

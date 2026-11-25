@@ -233,6 +233,21 @@ describe("executeStep", () => {
       expect(vi.mocked(wait).mock.calls).toEqual(waited === undefined ? [] : [[waited]]);
     });
 
+    it("a stopped wait leaves no timer behind (#6070)", async () => {
+      vi.useFakeTimers();
+      let stop = () => {};
+      const whenCancelled = new Promise<void>((resolve) => (stop = resolve));
+      const step = executeStep({ kind: "wait", delayMs: 600_000 }, deps({ wait: undefined }), {
+        isCancelled: () => false,
+        whenCancelled,
+      });
+      expect(vi.getTimerCount()).toBe(1);
+      stop();
+      await step;
+      expect(vi.getTimerCount()).toBe(0);
+      vi.useRealTimers();
+    });
+
     it("a long wait ends at once when the run is stopped (#6008)", async () => {
       let stop = () => {};
       const whenCancelled = new Promise<void>((resolve) => (stop = resolve));

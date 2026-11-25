@@ -183,6 +183,19 @@ describe("ordered transform pipeline", () => {
     expect(out).toEqual(["a", "|", "b"]);
   });
 
+  it("goes on when a mark throws", () => {
+    const out: string[] = [];
+    enqueueSandboxTransform("s1", enc("a"), (b) => out.push(dec(b)));
+    enqueueSandboxMarker("s1", () => {
+      throw new Error("broken");
+    });
+    enqueueSandboxTransform("s1", enc("b"), (b) => out.push(dec(b)));
+    for (const { seq } of fake.postsOfType("transform")) {
+      fake.emit({ t: "transformResult", seq, changed: false });
+    }
+    expect(out).toEqual(["a", "b"]);
+  });
+
   it("never reaches a mark of a discarded session", () => {
     const reached = vi.fn();
     enqueueSandboxTransform("s1", enc("a"), () => {});

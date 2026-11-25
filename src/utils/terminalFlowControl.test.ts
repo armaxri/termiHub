@@ -251,6 +251,21 @@ describe("who waits for the output received so far (#6070)", () => {
     expect(then).not.toHaveBeenCalled();
   });
 
+  it("is not stopped by one that throws", () => {
+    const { flow } = makeFlow();
+    flow.push(bytes(5));
+    const broken = vi.fn(() => {
+      throw new Error("broken");
+    });
+    const then = vi.fn();
+    flow.whenShown(broken);
+    flow.whenShown(then);
+    expect(() => flow.written(flow.takeBatch()!.length)).not.toThrow();
+    expect(broken).toHaveBeenCalledOnce();
+    expect(then).toHaveBeenCalledOnce();
+    expect(() => flow.whenShown(broken)).not.toThrow();
+  });
+
   it("does not hold back the final drain", () => {
     const { flow } = makeFlow();
     flow.push(bytes(5));

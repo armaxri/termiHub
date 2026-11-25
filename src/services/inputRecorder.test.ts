@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { InputRecorder, recordedParts, withoutSecrets } from "./inputRecorder";
+import {
+  InputRecorder,
+  PROMPT_READ_LIMIT_MS,
+  recordedParts,
+  withoutSecrets,
+} from "./inputRecorder";
 import type { PromptReader } from "./passwordPrompt";
 
 /** A recorder on a clock and a screen the test sets. */
@@ -190,12 +195,53 @@ describe("what is typed at a password prompt", () => {
     const recorder = new InputRecorder(() => 0, judged);
     for (const data of ["sudo\r", "pw\r", "ls\r"])
       recorder.push(data, (then) => answers.push(then));
-    answers[2]("$ ");
-    answers[1]("Password: ");
-    expect(recorder.atPrompt).toBe(false);
     answers[0]("$ ");
+    answers[1]("Password: ");
+    answers[2]("$ ");
     expect(judged).toHaveBeenCalledTimes(3);
     expect(recorder.finish().secrets).toEqual([{ start: 1, end: 2, prompt: "Password:" }]);
+  });
+
+  it.each([
+    ["a later one is answered", (later: () => void) => later()],
+    ["it takes too long", () => void vi.advanceTimersByTime(PROMPT_READ_LIMIT_MS)],
+  ])("keeps only the chunk apart whose answer is lost, once %s (#6070)", (_, lose) => {
+    vi.useFakeTimers();
+    const answers: ((before: string) => void)[] = [];
+    const recorder = new InputRecorder(() => 0);
+    recorder.push("a", (then) => then("$ "));
+    recorder.push("?", () => {});
+    recorder.push("b", (then) => answers.push(then));
+    lose(() => answers[0]("$ a"));
+    answers[0]("$ a");
+    recorder.push("c", (then) => then("$ ab"));
+    expect(recorder.finish().secrets).toEqual([{ start: 1, end: 2, prompt: "" }]);
+    vi.useRealTimers();
+  });
+
+  it("keeps a lost chunk with the password it belongs to (#6070)", () => {
+    const recorder = new InputRecorder(() => 0);
+    recorder.push("p", (then) => then("Password: "));
+    recorder.push("w", (then) => then(null));
+    recorder.push("\r", (then) => then("Password: "));
+    recorder.push("l", (then) => then("$ "));
+    expect(recorder.finish().secrets).toEqual([{ start: 0, end: 3, prompt: "Password:" }]);
+  });
+
+  it("keeps nothing in memory once it is finished or dropped (#6070)", () => {
+    vi.useFakeTimers();
+    for (const end of ["finish", "dispose"] as const) {
+      const recorder = new InputRecorder(() => 0);
+      let late = (_: string) => {};
+      recorder.push("hunter2", (then) => ((late = then), undefined));
+      const slot = recorder.reserve((then) => then("$ "));
+      recorder[end]();
+      slot.fill("pasted secret");
+      late("$ ");
+      expect(JSON.stringify(recorder)).not.toMatch(/hunter2|pasted/);
+    }
+    expect(vi.getTimerCount()).toBe(0);
+    vi.useRealTimers();
   });
 
   it("ends an answer with the Enter of a paste that was read meanwhile (#6070)", () => {

@@ -17,7 +17,7 @@ import { TerminalPortalProvider } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
 import { __emitSessionViewForTest, type ProjectedSessionLifecycle } from "@/store/sessionBridge";
 import { bytesToBase64, terminalDispatcher } from "@/services/events";
-import { promptOfTerminal } from "@/services/passwordPrompt";
+import { promptOfTerminal, readTerminalPrompt } from "@/services/passwordPrompt";
 import type { WaitForUserResult } from "@/services/workflowRunner";
 import {
   __resetSandboxHost,
@@ -54,6 +54,11 @@ vi.mock("@xterm/xterm", async (importOriginal) => {
     }
     registerMarker(offset?: number) {
       return this.real.registerMarker(offset);
+    }
+    /** The parser takes one of what it was given. */
+    step() {
+      const next = this.queued.shift();
+      if (next) this.real.write(...next);
     }
     /** The parser gets to what it was given. */
     unblock() {
@@ -146,6 +151,7 @@ interface Engine {
   real: RealTerminal;
   typed: (data: string) => void;
   unblock: () => void;
+  step: () => void;
   write: Mock;
 }
 const engine = () => terminals.list[terminals.list.length - 1] as Engine;
@@ -273,6 +279,9 @@ function slowParser(): () => void {
   };
 }
 
+let release = () => {};
+/** What a repaint shows: nothing that came later. */
+const snapshot = () => ({ data: encoder.encode("$\r\n"), endOffset: streamed, epoch: 1 });
 const lose = () => act(() => store().setSessionOwners({ [SID]: "win-1" }));
 const regain = () => act(() => store().setSessionOwners({ [SID]: "main" }));
 
@@ -418,14 +427,137 @@ describe("Continue sees a prompt that has arrived (#6070)", () => {
     expect(state.result).toBe("continued");
   });
 
-  it("does not wait for output that never ends", async () => {
+  it("which arrives while it looks", async () => {
     const state = startWait();
-    const flood = setInterval(() => arrive("y\r\n"), 1);
+    terminals.block = true;
+    arrive("building\r\n");
     await settle();
     pressContinue();
-    await settle(120);
+    await settle();
+    arrive(PROMPT);
+    engine().unblock();
+    await heldBack(state);
+  });
+
+  it("which arrives while it looks behind a repaint", async () => {
+    const state = startWait();
+    let shown = (_: unknown) => {};
+    mockReplay.mockReturnValue(new Promise((resolve) => (shown = resolve)));
+    lose();
+    regain();
+    pressContinue();
+    const { real } = engine();
+    const end = streamed;
+    await act(async () => {
+      shown({ data: encoder.encode("$ \r\n"), endOffset: end, epoch: 1 });
+      arrive("working\r\n");
+    });
+    terminals.block = true;
+    arrive(PROMPT);
+    expect(real).toBe(engine().real);
+    engine().unblock();
+    await heldBack(state);
+  });
+
+  it("which replaces the one that was insisted on while it looks", async () => {
+    const state = startWait();
+    arrive(PROMPT);
+    pressContinue();
+    await heldBack(state);
+    terminals.block = true;
+    // Says nothing of the prompt, and has to be looked at.
+    arrive("\x1b[0m");
+    await settle();
+    pressContinue();
+    arrive(`\r\nSorry, try again.\r\n${PROMPT}`);
+    engine().unblock();
+    await settle(60);
+    expect(state.result).toBeUndefined();
+    expect(wait()?.stillAsking).toBe(true);
+  });
+
+  it("goes on in a terminal that prints every now and then", async () => {
+    const state = startWait();
+    const busy = setInterval(() => arrive("tick\r\n"), 25);
+    await settle();
+    pressContinue();
+    await vi.waitFor(() => expect(state.result).toBe("continued"), { timeout: 900 });
+    clearInterval(busy);
+  });
+
+  it("asks in one that never stops printing, and an insisting press goes on", async () => {
+    const state = startWait();
+    terminals.block = true;
+    // Whatever is taken in, more has arrived by then.
+    const keepPrinting = () => {
+      arrive("y\r\n");
+      engine().step();
+    };
+    const flood = setInterval(keepPrinting, 1);
+    await settle();
+    pressContinue();
+    await vi.waitFor(() => expect(wait()?.unchecked).toBe(true), { timeout: 2000 });
+    expect(state.result).toBeUndefined();
+    pressContinue();
+    await vi.waitFor(() => expect(state.result).toBe("continued"), { timeout: 2000 });
     clearInterval(flood);
+  });
+
+  it("insists on a prompt of the alternate screen only while nothing arrives", async () => {
+    const state = startWait();
+    arrive(`\x1b[?1049h\x1b[H${PROMPT}`);
+    await settle();
+    pressContinue();
+    await heldBack(state);
+    arrive(`\x1b[H${PROMPT}`);
+    await settle();
+    pressContinue();
+    await settle();
+    expect(state.result).toBeUndefined();
+    pressContinue();
+    await settle();
     expect(state.result).toBe("continued");
+  });
+
+  it("leaves no marker of the prompts that held it back", async () => {
+    const state = startWait();
+    const { real } = engine();
+    arrive(PROMPT);
+    pressContinue();
+    await heldBack(state);
+    expect(real.markers).toHaveLength(1);
+    arrive(`\r\n${PROMPT}`);
+    pressContinue();
+    await heldBack(state);
+    expect(real.markers).toHaveLength(1);
+    pressContinue();
+    await settle();
+    expect(state.result).toBe("continued");
+    expect(real.markers).toHaveLength(0);
+  });
+
+  it.each([
+    ["staged output", () => {}],
+    ["a repaint", () => (mockReplay.mockResolvedValue(snapshot()), lose(), regain())],
+    ["a parser", () => void (release = slowParser())],
+  ])("the terminal goes on showing output when a reader behind %s throws", async (_, behind) => {
+    release = () => {};
+    const thrown = vi.fn(() => {
+      throw new Error("a reader that fails");
+    });
+    behind();
+    arrive("one ");
+    act(() => promptOfTerminal(tabId)!.read(thrown));
+    arrive("two ");
+    await settle();
+    release();
+    await settle(60);
+    arrive("three");
+    await settle();
+    release();
+    await settle();
+    expect(thrown).toHaveBeenCalled();
+    expect(line()).toBe("one two three");
   });
 
   it("asks when it cannot tell in time, and an insisting press goes on", async () => {
@@ -564,6 +696,30 @@ describe("The recorder sees a prompt that has arrived (#6070)", () => {
     await typed("secret?");
     const { secrets } = await stopped();
     expect(secrets).toEqual([{ start: 0, end: 1, prompt: "" }]);
+  });
+
+  it("judges a key typed during a repaint by what was there then", async () => {
+    let shown = (_: unknown) => {};
+    mockReplay.mockReturnValue(new Promise((resolve) => (shown = resolve)));
+    lose();
+    regain();
+    const end = streamed;
+    arrive(PROMPT);
+    await typed("pw\r");
+    arrive("\r\n$ ");
+    await typed("ls\r");
+    await act(async () => shown({ data: encoder.encode("$\r\n"), endOffset: end, epoch: 1 }));
+    const { secrets } = await stopped();
+    expect(secrets).toEqual([{ start: 0, end: 1, prompt: PROMPT.trim() }]);
+  });
+
+  it("goes on after a terminal that was gone for a key", async () => {
+    await typed("a");
+    act(() => store().recordInput(tabId, "?", (then) => readTerminalPrompt("gone", then)));
+    await typed("b", "\r");
+    const { data, secrets } = await stopped();
+    expect(data.join("")).toBe("a?b\r");
+    expect(secrets).toEqual([{ start: 1, end: 2, prompt: "" }]);
   });
 
   it("leaves ordinary typing as it is while output arrives", async () => {
