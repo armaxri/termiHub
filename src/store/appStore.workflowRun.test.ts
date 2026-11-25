@@ -164,6 +164,7 @@ import type { AutomationStep } from "@/types/generated/AutomationStep";
 import { automationLibraryState } from "./slices/automationStoreState";
 import { workflowToAutomation } from "./slices/automationViews";
 import { layoutState, seedLayoutState } from "@/test/layoutState";
+import { serializeAutomations } from "@/services/automationFileIo";
 import { checkLocalProcess } from "@/services/localProcessApi";
 import { currentSettingsView } from "./settingsBridge";
 import {
@@ -788,6 +789,48 @@ describe("appStore — workflow run slice (#1852)", () => {
           });
         }
       );
+
+      describe("slice 11's one way to run, and an imported automation", () => {
+        const library = [auto("w1", [lpStep])];
+        type RunOptions = Parameters<ReturnType<typeof useAppStore.getState>["runAutomation"]>[1];
+        const ways: [string, RunOptions][] = [
+          ["row, editor or palette", undefined],
+          ["palette", { origin: "palette" }],
+          ["hotkey", { origin: "hotkey" }],
+          ["picked terminals or broadcast", { targetTabIds: ["tab-active"] }],
+          ["one after another", { targetTabIds: ["tab-active"], parallel: false }],
+        ];
+        const refuse = () =>
+          vi
+            .mocked(checkLocalProcess)
+            .mockImplementationOnce((() =>
+              Promise.resolve({ status: "refused", reason: "backend says no" })) as never);
+
+        it.each(ways)("%s: the backend's refusal starts nothing", async (_name, options) => {
+          refuse();
+          seedConnectedTerminal();
+          enableLocalProcess(["make"]);
+          useAppStore.setState(automationLibraryState(library));
+          await useAppStore.getState().runAutomation("w1", options);
+          expect(checkLocalProcess).toHaveBeenLastCalledWith("make");
+          expect(invokeRunLocalProcess).not.toHaveBeenCalled();
+          await vi.waitFor(() => expect(recordedRuns[0]?.error).toContain("backend says no"));
+        });
+
+        it("an import adds no program to the list and is asked about", async () => {
+          seedConnectedTerminal();
+          enableLocalProcess([]);
+          const json = serializeAutomations([auto("imported", [lpStep])]);
+          const { automations } = await useAppStore.getState().importAutomations(json);
+          expect(currentSettingsView().workflowLocalProcessAllowlist).toEqual([]);
+          const run = useAppStore.getState().runAutomation(automations[0].id);
+          await vi.waitFor(() => expect(useAppStore.getState().localProcessPrompt).not.toBeNull());
+          expect(invokeRunLocalProcess).not.toHaveBeenCalled();
+          useAppStore.getState().resolveLocalProcessPrompt("cancel");
+          await run;
+          expect(invokeRunLocalProcess).not.toHaveBeenCalled();
+        });
+      });
 
       it("a canceled question starts nothing", async () => {
         await runsOnce("cancel");

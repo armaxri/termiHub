@@ -242,7 +242,7 @@ async fn execute_local_process(
     }
 
     let mut child = command.spawn().map_err(|e| {
-        TerminalError::WorkflowError(format!("failed to spawn local process '{shown}': {e}"))
+        TerminalError::AutomationError(format!("failed to spawn local process '{shown}': {e}"))
     })?;
 
     let stdout_task = spawn_reader(child.stdout.take(), "stdout", output_tx.clone());
@@ -277,7 +277,7 @@ async fn execute_local_process(
             cancelled: false,
         },
         Ending::WaitErr(e) => {
-            return Err(TerminalError::WorkflowError(format!(
+            return Err(TerminalError::AutomationError(format!(
                 "failed while waiting for local process '{shown}': {e}"
             )));
         }
@@ -334,7 +334,7 @@ pub async fn run_local_process<R: Runtime>(
     )
     .map_err(|reason| {
         warn!(run_id, reason, "refused local-process step");
-        TerminalError::WorkflowError(reason)
+        TerminalError::AutomationError(reason)
     })?;
 
     let timeout = resolve_timeout(timeout_ms);

@@ -137,7 +137,7 @@ pub fn judge(
     if !settings.workflow_local_process_enabled {
         return Err(format!(
             "\"{name}\" was not started: local programs are off. Turn on Settings ▸ Security ▸ \
-             Allow workflows to run local programs."
+             Allow automations to run local programs."
         ));
     }
     let program = resolve(name, env)?;
@@ -269,13 +269,23 @@ fn resolve(name: &str, env: &SearchEnv) -> Result<Program, String> {
     } else {
         search(&file_name, env).ok_or_else(not_found)?
     };
-    if !path.is_absolute() || !path.is_file() {
+    if !path.is_absolute() || !is_program_file(&path, env.windows) {
         return Err(not_found());
     }
     Ok(Program {
         path,
         bare_name: (!is_path).then(|| name.to_string()),
     })
+}
+
+/// Whether `path` is a file that can be started. A Windows app execution alias (the
+/// Store's `python.exe`, `winget.exe`) is a reparse point that only the OS can
+/// follow, so reading what it stands for fails while it starts fine.
+fn is_program_file(path: &Path, windows: bool) -> bool {
+    match path.metadata() {
+        Ok(metadata) => metadata.is_file(),
+        Err(_) => windows && path.symlink_metadata().is_ok_and(|m| !m.is_dir()),
+    }
 }
 
 /// Search a bare name in the absolute directories of `PATH`.

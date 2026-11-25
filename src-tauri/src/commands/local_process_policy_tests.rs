@@ -236,6 +236,26 @@ fn only_an_existing_file_is_a_program() {
     assert!(judge(Some(&settings(&["plain"])), "plain", &env).is_err());
 }
 
+/// A Windows app execution alias cannot be followed by reading it; a dangling link
+/// stands in for one.
+#[test]
+#[cfg(unix)]
+fn a_windows_app_alias_is_a_program() {
+    let dir = TempDir::new().unwrap();
+    let alias = dir.path().join("alias.exe");
+    std::os::unix::fs::symlink(dir.path().join("only-the-os-knows"), &alias).unwrap();
+    std::fs::create_dir(dir.path().join("folder.exe")).unwrap();
+    assert!(is_program_file(&alias, true));
+    assert!(
+        !is_program_file(&alias, false),
+        "elsewhere a dangling link is nothing"
+    );
+    for windows in [true, false] {
+        assert!(!is_program_file(&dir.path().join("folder.exe"), windows));
+        assert!(!is_program_file(&dir.path().join("missing.exe"), windows));
+    }
+}
+
 #[test]
 fn names_that_do_not_read_as_what_they_are_are_refused() {
     for (name, why) in [
@@ -336,7 +356,7 @@ fn every_switch_is_required_also_for_an_approved_program() {
     for (experimental, enabled, names) in [
         (None, true, "Allow experimental features"),
         (Some(false), true, "Allow experimental features"),
-        (Some(true), false, "Allow workflows to run local programs"),
+        (Some(true), false, "Allow automations to run local programs"),
     ] {
         let off = AppSettings {
             experimental_features_enabled: experimental,
@@ -429,13 +449,23 @@ fn on_windows_a_bare_name_is_the_exe_on_path() {
     assert!(by_path.listed.is_ok());
     for other in [
         format!("{full}."),
-        format!("{full} "),
+        format!("{full} ."),
         format!("{full}::$DATA"),
+        format!(r"\\?\{full}"),
     ] {
-        let refused = match judge(Some(&settings(&[&full])), &other, &env) {
-            Ok(judged) => judged.listed.is_err() || other.trim() == full,
-            Err(_) => true,
-        };
-        assert!(refused, "{other}");
+        assert!(
+            judge(Some(&settings(&[&full])), &other, &env).is_err(),
+            "{other}"
+        );
+    }
+    // The same file under another spelling opens, but is not the entry.
+    let dir = judged.program.path.parent().unwrap().display().to_string();
+    for other in [
+        full.to_uppercase(),
+        full.to_lowercase(),
+        format!(r"{dir}\.\cmd.exe"),
+    ] {
+        let judged = judge(Some(&settings(&[&full])), &other, &env).unwrap();
+        assert_eq!(judged.listed.is_ok(), other == full, "{other}");
     }
 }

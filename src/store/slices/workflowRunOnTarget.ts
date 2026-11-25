@@ -275,7 +275,7 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
     if (!currentSettingsView().workflowLocalProcessEnabled) {
       toast.error("Local process execution is disabled", {
         description:
-          "Enable it in Settings → Security before this workflow can run a local program.",
+          "Enable it in Settings → Security before this automation can run a local program.",
       });
       return { ok: false };
     }
