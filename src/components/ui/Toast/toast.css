@@ -103,6 +103,9 @@
 }
 
 .th-toast [data-icon] {
+  /* sonner centers its loading icon in the nearest positioned box: the icon's, not
+     the toast, where it lay on the text. */
+  position: relative;
   grid-column: 1;
   grid-row: 1;
   display: inline-flex;
@@ -268,6 +271,8 @@
   border-left-color: var(--accent-color);
 }
 .th-toast[data-type="loading"] [data-icon] {
+  min-width: 16px;
+  min-height: 16px;
   color: var(--text-accent);
 }
 

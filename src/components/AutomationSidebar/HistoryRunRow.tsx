@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { ChevronRight } from "lucide-react";
 import { StatusDot, TruncatedText } from "@/components/ui";
 import type { RunSchedule } from "./historyEntries";
@@ -31,9 +32,15 @@ export interface HistoryRunRowProps {
 export function HistoryRunRow({ run, schedule, expanded, onToggle }: HistoryRunRowProps) {
   const detailsId = `automation-run-details-${run.id}`;
   const targets = automationRunTargets(run);
+  const row = useRef<HTMLDivElement>(null);
+  // What it opened shows, also in a short window.
+  useEffect(() => {
+    if (expanded) row.current?.scrollIntoView?.({ block: "nearest" });
+  }, [expanded]);
 
   return (
     <div
+      ref={row}
       className="automation-history__run"
       role="listitem"
       data-testid={`automation-run-${run.id}`}

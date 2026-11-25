@@ -626,6 +626,15 @@ describe("markers", () => {
 });
 
 describe("row actions", () => {
+  it("keeps Edit in place when the press selects the row, or no click would follow", async () => {
+    await render();
+    const edit = query("automation-edit-workflow-1")!;
+    act(() => query("automation-item-workflow-1")!.focus());
+    expect(query("automation-item-workflow-1")!.tabIndex).toBe(0);
+    expect(query("automation-edit-workflow-1")).toBe(edit);
+    expect(query("automation-primary-workflow-1")!.contains(edit)).toBe(true);
+  });
+
   it.each(["macro-1", "workflow-1"])(
     "opens the editor on %s, from the button and the menu",
     async (id) => {

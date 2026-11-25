@@ -1,4 +1,3 @@
-import type React from "react";
 import { AlertTriangle, Ban, Hand, MoreHorizontal, Pencil, Play, Square } from "lucide-react";
 import {
   Button,
@@ -236,9 +235,12 @@ export function AutomationRow({
     </Tooltip>
   );
 
+  // Always in the same place: pressing it focuses and so selects the row, and a
+  // button that moved between press and release would never be clicked.
   const editButton = (
     <Tooltip content="Edit" side="top">
       <Button
+        className={selected ? undefined : "automation-item__edit"}
         variant="ghost"
         size="sm"
         iconOnly
@@ -292,7 +294,7 @@ export function AutomationRow({
           primaryAction={
             <>
               {markers}
-              {selected ? editButton : null}
+              {editButton}
               {runControl}
             </>
           }
@@ -300,7 +302,6 @@ export function AutomationRow({
           moreActionsTestId={`automation-more-group-${id}`}
           actions={
             <>
-              {selected ? null : editButton}
               <DropdownMenuRoot>
                 <Tooltip content="More actions" side="top">
                   <DropdownMenuTrigger asChild>

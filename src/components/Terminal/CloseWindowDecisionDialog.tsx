@@ -274,7 +274,7 @@ export function CloseWindowDecisionDialog() {
             <>
               {" "}
               {runs.length === 1 ? "The running automation" : "The running automations"} would be
-              stopped, also when the tabs move.
+              stopped{showMove ? ", also when the tabs move" : ""}.
             </>
           )}
         </p>
@@ -321,7 +321,7 @@ export function CloseWindowDecisionDialog() {
         {recording && (
           <div className="close-window-decision__row" data-testid="close-window-decision-recording">
             <CircleDot className="li close-window-decision__row-icon" aria-hidden="true" />
-            <span className="close-window-decision__row-name">
+            <span className="close-window-decision__row-name close-window-decision__row-name--wrap">
               Recording in {recording.tabTitle}
             </span>
             <span className="close-window-decision__pill close-window-decision__pill--terminate">
@@ -344,7 +344,7 @@ export function CloseWindowDecisionDialog() {
             data-testid={`close-window-decision-run-${run.key}`}
           >
             <Zap className="li close-window-decision__row-icon" aria-hidden="true" />
-            <span className="close-window-decision__row-name">
+            <span className="close-window-decision__row-name close-window-decision__row-name--wrap">
               “{run.name}” is running in {run.tabTitle}
             </span>
             <span className="close-window-decision__pill close-window-decision__pill--terminate">

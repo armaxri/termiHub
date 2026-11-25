@@ -137,7 +137,7 @@ describe("TerminalToolbarMore (#5756)", () => {
       "Stop logging output (Shift+Alt+L)"
     );
     expect(q("terminal-view-active-playback")!.getAttribute("aria-label")).toBe(
-      "Stop “Deploy” (1 of 3) (Ctrl+F5)"
+      "Stop “Deploy” (33 % typed) (Ctrl+F5)"
     );
   });
 

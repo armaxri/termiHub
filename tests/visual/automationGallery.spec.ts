@@ -45,8 +45,11 @@ const BUILD_BOX = "Work/Build Box";
 const STATES = {
   "sidebar--empty": "First visit: understand what an automation is and make one.",
   "sidebar--filled": "Find an automation among several and see which ones start by themselves.",
-  "sidebar--running": "See that something is running, where, and stop it.",
-  "sidebar--switched-off": "See that a trigger and a hotkey are off, and turn one on.",
+  "sidebar--selected": "The selected automation: change it.",
+  "sidebar--running": "Something runs in another tab: see where and which step, get there.",
+  "sidebar--two-runs": "Two automations run in three terminals: tell them apart, stop one.",
+  "sidebar--waiting": "One run waits for the user, another one goes on: which needs something?",
+  "sidebar--switched-off": "Triggers were just switched off: what no longer happens?",
   "sidebar--search-empty": "A search finds nothing: get back to the list.",
   "editor--new-steps": "Make an automation step by step.",
   "editor--new-keys": "Make one that only types keys; nothing else should be in the way.",
@@ -73,15 +76,18 @@ const STATES = {
   "recording--save": "Name the recording, or add it to an automation.",
   "recording--save-password": "Decide what happens to the password that was typed.",
   "recording--unsaved": "The dialog was closed: the recording is still there.",
+  "recording--quit": "Quit while recording: do not lose what was typed.",
   "recording--record-steps": "Record the next step for the editor, and get back.",
   "run--target-picker": "Choose where to run.",
   "run--confirmation": "About to type into several terminals: check which.",
   "run--running": "The automation types into this terminal: see progress, stop it.",
+  "run--program": "A step wants to start a program on this computer: allow it or not.",
+  "run--quit": "Quit while automations run: know what is stopped.",
   "run--password-wait": "The run waits for a password: type it, then go on.",
   "run--password-still-asked": "Continue was pressed too early: the terminal still asks.",
   "run--password-wait-elsewhere": "A run waits in a terminal that does not show.",
   "run--values": "The automation asks for a value before it runs.",
-  "run--failed": "A run was refused or failed: see why.",
+  "run--failed": "A run failed: see which step and why, and what to do.",
   "run--history": "Find out what ran, when, where and how it ended.",
   "editor--triggers-deleted": "The connection a trigger watched was deleted: see and fix it.",
   "schedules--list": "See what runs by itself and when; turn one off.",
@@ -99,8 +105,9 @@ const STATES = {
   "schedules--editor-asks": "Schedule an automation that asks for a value: can it run alone?",
   "schedules--editor-password": "Schedule an automation that may meet a password prompt.",
   "schedules--editor-waits": "Schedule an automation that waits for the user.",
-  "palette--automations": "Find an automation by name and see where it will run.",
-  "import--notes": "After an import: what was switched off, left out, refused.",
+  "palette--automations": "Find an automation by name and know what Enter does.",
+  "palette--no-terminal": "The same without a terminal, with one that cannot run.",
+  "import--notes": "After an import: what came in, was switched off, left out, refused.",
 } as const;
 type State = keyof typeof STATES;
 
@@ -177,7 +184,6 @@ const LIBRARY = [
     id: "off-hotkey",
     name: "Restart the proxy",
     triggers: [{ kind: "hotkey", binding: "Ctrl+Alt+P" }],
-    triggersEnabled: false,
   }),
   automation({
     id: "unknown",
@@ -394,6 +400,54 @@ const IMPORT = JSON.stringify({
   ],
 });
 
+/** Automations that keep running: a wait that does not end while the page is shot. */
+const running = {
+  automations: [
+    automation({
+      id: "health",
+      name: "Health check",
+      steps: [
+        { kind: "send-command", command: "curl -sf localhost/health" },
+        { kind: "wait", delayMs: 600_000 },
+        { kind: "send-command", command: "systemctl status nginx" },
+      ],
+    }),
+    automation({
+      id: "typing",
+      name: "Deploy staging",
+      description: "Pull, build and restart the web tier",
+      steps: [
+        {
+          kind: "type-keys",
+          chunks: [
+            { data: "git pull\r", delayMs: 0 },
+            { data: "make deploy\r", delayMs: 600_000 },
+          ],
+          timing: "recorded",
+          recorded: true,
+        },
+      ],
+    }),
+    ...BODIES.filter((a) => (a as { id?: string }).id === "password"),
+    automation({
+      id: "program",
+      name: "Announce a release",
+      steps: [{ kind: "run-local-process", program: "notify-send", args: ["released"] }],
+    }),
+    automation({
+      id: "missing",
+      name: "Deploy and check",
+      steps: [
+        { kind: "send-command", command: "make deploy" },
+        { kind: "run-automation", automationId: "deleted" },
+      ],
+    }),
+    LIBRARY[0],
+  ],
+  runs: [],
+  schedules: { paused: false, schedules: [] },
+};
+
 /** The store actions and fields the states are set up with. */
 interface GalleryState {
   sidebarView: string;
@@ -406,6 +460,7 @@ interface GalleryState {
     action?: { kind: string; automationId: string };
   }): void;
   openSettingsTab(target: { category: string }): void;
+  prepareAppQuit(): string;
   setCommandPaletteOpen(open: boolean): void;
   recordInput(tabId: string, data: string, readPrompt?: () => string): void;
   recording: { tabId: string } | null;
@@ -497,6 +552,16 @@ async function runOn(page: Page, automationId: string): Promise<void> {
   await page.locator(id("run-targets-dialog")).waitFor();
 }
 
+/** Quit the app, as its menu does. */
+async function requestQuit(page: Page): Promise<void> {
+  const asked = await page.evaluate(() =>
+    (window.__visual.store.getState() as unknown as GalleryState).prepareAppQuit()
+  );
+  expect(asked).toBe("prompt");
+  await page.locator(QUIT).waitFor();
+}
+
+const QUIT = id("close-window-decision-dialog");
 const EDITOR = id("automation-editor-dialog");
 const SIDEBAR = id("automation-sidebar");
 const SAVE = id("recording-save-dialog");
@@ -544,9 +609,19 @@ for (const viewport of WINDOWS) {
         await boot(page, theme);
         await expect(page.locator("[role=treeitem]")).toHaveCount(LIBRARY.length);
         await shot(page, "sidebar--filled", SIDEBAR);
-        await page.locator(id("automation-item-off-trigger")).scrollIntoViewIfNeeded();
-        await expect(page.locator(id("automation-armed-off-hotkey"))).toHaveText("Off");
+        for (const automationId of ["full", "off-hotkey"]) {
+          await page.locator(id(`automation-arm-toggle-${automationId}`)).click();
+          await expect(page.locator(id(`automation-armed-${automationId}`))).toHaveAttribute(
+            "data-armed",
+            "false"
+          );
+        }
+        await page.locator(id("automation-armed-off-hotkey")).scrollIntoViewIfNeeded();
         await shot(page, "sidebar--switched-off", SIDEBAR);
+        await page.locator(id("automation-name-full")).click();
+        await expect(page.locator(id("automation-edit-full"))).toBeVisible();
+        await page.locator(id("automation-item-keys")).scrollIntoViewIfNeeded();
+        await shot(page, "sidebar--selected", SIDEBAR);
         await page.locator(id("automation-search")).fill("kubernetes");
         await page.locator(id("automation-no-results")).waitFor();
         await shot(page, "sidebar--search-empty", SIDEBAR);
@@ -584,10 +659,51 @@ for (const viewport of WINDOWS) {
             },
           });
         });
-        await page.locator(id("automation-running-keys")).waitFor();
-        await shot(page, "sidebar--running", SIDEBAR);
         await page.locator(id("terminal-view-active-playback")).waitFor();
+        // Only the terminal shows it: the sidebar is on something else.
+        await page.locator(id("activity-bar-connections")).click();
         await shot(page, "run--running", id("terminal-view-toolbar-actions"));
+      });
+
+      test("running elsewhere, two at once", async ({ page }) => {
+        await bootWithTerminals(page, theme, 3, { automationData: running });
+        await runOn(page, "health");
+        await page.locator(id("run-targets-run")).click();
+        await page.locator("[role=tab]").first().click();
+        await expect(page.locator(id("automation-running-health"))).toBeVisible();
+        await shot(page, "sidebar--running", SIDEBAR);
+        await runOn(page, "typing");
+        await page.locator(id("run-targets-target-pick")).click();
+        await page
+          .locator(`${id("run-targets-terminal-list")} [role=checkbox]`)
+          .nth(1)
+          .click();
+        await page.locator(id("run-targets-run")).click();
+        await page.locator(id("run-targets-run")).click();
+        await expect(page.locator(id("automation-running-typing"))).toContainText("2");
+        await shot(page, "sidebar--two-runs", SIDEBAR);
+      });
+
+      test("waiting, and quit", async ({ page }) => {
+        await bootWithTerminals(page, theme, 2, { automationData: running });
+        await page.locator(id("automation-start-password")).click();
+        await page.locator("[role=tab]").first().click();
+        await page.locator(id("automation-start-typing")).click();
+        await expect(page.locator(id("automation-running-password"))).toHaveText("Waiting for you");
+        await expect(page.locator(id("automation-running-typing"))).toHaveText("Running");
+        await shot(page, "sidebar--waiting", SIDEBAR);
+        await requestQuit(page);
+        await shot(page, "run--quit", QUIT);
+      });
+
+      test("running a program", async ({ page }) => {
+        await bootWithTerminals(page, theme, 1, {
+          automationData: running,
+          localProcessAsk: true,
+        });
+        await page.locator(id("automation-start-program")).click();
+        await page.locator("[role=dialog]").waitFor();
+        await shot(page, "run--program", "[role=dialog]");
       });
 
       test("editor", async ({ page }) => {
@@ -730,6 +846,9 @@ for (const viewport of WINDOWS) {
         await page.locator(id("terminal-view-active-recording")).click();
         await page.locator(SAVE).waitFor();
         await shot(page, "recording--save", SAVE);
+        await page.keyboard.press("Escape");
+        await requestQuit(page);
+        await shot(page, "recording--quit", QUIT);
       });
 
       test("recording into the editor", async ({ page }) => {
@@ -785,9 +904,9 @@ for (const viewport of WINDOWS) {
       });
 
       test("run, failed", async ({ page }) => {
-        await bootWithTerminals(page, theme, 1);
-        await page.locator(id("automation-start-unknown")).click();
-        await expect(page.locator(id("toast-region"))).toContainText("From a newer version");
+        await bootWithTerminals(page, theme, 1, { automationData: running });
+        await page.locator(id("automation-start-missing")).click();
+        await expect(page.locator(id("toast-region"))).toContainText("failed at step 2");
         await shot(page, "run--failed", SIDEBAR);
       });
 
@@ -940,13 +1059,22 @@ for (const viewport of WINDOWS) {
         await shot(page, "palette--automations", id("command-palette"));
       });
 
+      test("palette, no terminal", async ({ page }) => {
+        await boot(page, theme);
+        await page.evaluate(() =>
+          (window.__visual.store.getState() as unknown as GalleryState).setCommandPaletteOpen(true)
+        );
+        await page.locator(id("command-palette-input")).fill("ne");
+        await page.locator(id("command-palette-item-automation:unknown")).waitFor();
+        await shot(page, "palette--no-terminal", id("command-palette"));
+      });
+
       test("import", async ({ page }) => {
         await boot(page, theme, { openFile: { path: "/tmp/in.json", text: IMPORT } });
         await page.locator(id("automation-new-btn")).click();
         await page.locator(id("automation-files-btn")).click();
         await page.locator(id("import-migration-automations-import-btn")).click();
-        await page.locator(id("automation-import-note-refused")).waitFor();
-        await page.locator(id("automation-import-note-left-out")).waitFor();
+        await expect(page.locator(id("automation-import-dialog"))).toContainText("Imported 2 of 3");
         await shot(page, "import--notes", id("automation-import-dialog"));
       });
     });

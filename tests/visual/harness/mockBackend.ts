@@ -976,6 +976,16 @@ export function handleCommand(cmd: string, args: Args): unknown {
     }
     case "list_automations":
       return scenario.automationData?.automations ?? (populated ? AUTOMATIONS : []);
+    case "save_automation": {
+      // Stored, so that a switch or an edit stays on the screen.
+      const saved = args?.automation as { id: string };
+      const data = (scenario.automationData ??= {});
+      const list = (data.automations ?? (populated ? AUTOMATIONS : [])) as { id: string }[];
+      data.automations = list.some((a) => a.id === saved.id)
+        ? list.map((a) => (a.id === saved.id ? saved : a))
+        : [...list, saved];
+      return saved;
+    }
     case "list_automation_runs":
       return [
         ...recordedRuns,

@@ -884,6 +884,10 @@ async function typeKeys(
   }
 }
 
+/** Why a "Run automation" step fails whose automation does not exist. */
+const MISSING_AUTOMATION_REASON =
+  "The automation this step runs was deleted. Choose another one in the step.";
+
 /**
  * Run another automation's steps inline for a `run-automation` step (#5818),
  * on the same target and under the same cancel signal and error-handling
@@ -918,7 +922,7 @@ async function runNestedAutomation(
     };
   }
   const callee = deps.resolveAutomation(automationId);
-  if (!callee) return { ok: false, error: `automation “${automationId}” was not found` };
+  if (!callee) return { ok: false, error: MISSING_AUTOMATION_REASON };
 
   const chain = [...callChain, automationId];
   const values = calleeParamValues(callee, paramValues);

@@ -243,7 +243,9 @@ describe("run-automation", () => {
     const { deps } = setup([outer]);
     const result = await runAutomation(outer, deps).done;
     expect(result.status).toBe("failed");
-    expect(result.error).toBe("automation “ghost” was not found");
+    expect(result.error).toBe(
+      "The automation this step runs was deleted. Choose another one in the step."
+    );
   });
 
   it("fails without an automation lookup", async () => {

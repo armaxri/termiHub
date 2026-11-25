@@ -60,9 +60,13 @@
   color: var(--text-secondary);
 }
 
+.run-targets__types li.run-targets__more {
+  list-style: none;
+}
+
 .run-targets__types ol {
   margin: 0;
-  padding-left: var(--spacing-lg);
+  padding-left: var(--spacing-xl);
   max-height: 160px;
   overflow: auto;
   font-family: var(--font-mono);

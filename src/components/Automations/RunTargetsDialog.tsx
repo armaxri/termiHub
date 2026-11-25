@@ -25,7 +25,7 @@ import {
 } from "./runTargetChoice";
 import { runBlockedReason } from "@/utils/runBlocked";
 import { useRunTargets } from "./useRunTargets";
-import { runPreview, stepCountText } from "./runPreview";
+import { RUN_PREVIEW_STEPS, runPreview, stepCountText } from "./runPreview";
 import "./RunTargetsDialog.css";
 
 /** An automation the picker can run. */
@@ -248,7 +248,9 @@ export function RunTargetsDialog({
           <p>What it does there ({stepCountText(automation.steps.length)}):</p>
           <ol>
             {runPreview(automation, library).map((line, i) => (
-              <li key={i}>{line}</li>
+              <li key={i} className={i < RUN_PREVIEW_STEPS ? undefined : "run-targets__more"}>
+                {line}
+              </li>
             ))}
           </ol>
         </div>
