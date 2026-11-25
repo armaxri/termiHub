@@ -208,7 +208,9 @@ describe("kinds this build does not know", () => {
     expect(kinds).toEqual(["on-connect", "on-disconnect", "on-output-match"]);
     const name = (id: string) => id;
     expect(triggerSummary(bare, name)).not.toContain("undefined");
-    expect(triggerState(bare, name)?.text).not.toContain("undefined");
+    expect(
+      triggerState(bare, { connectionName: name, resolve: () => undefined })?.text
+    ).not.toContain("undefined");
     expect(automationRowTooltip(bare, name).join()).not.toContain("undefined");
   });
 });

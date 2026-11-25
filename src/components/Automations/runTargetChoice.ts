@@ -53,6 +53,11 @@ export interface RunTargetOptions {
   groups: { id: string; name: string; tabIds: string[] }[];
 }
 
+/** The split holds every terminal of the group, so choosing it is choosing all. */
+export function samePanelAsAll(options: Pick<RunTargetOptions, "panel" | "all">): boolean {
+  return options.panel.length === options.all.length;
+}
+
 /** The default choice: the active terminal, run in parallel. */
 export const DEFAULT_RUN_TARGET_CHOICE: RunTargetChoice = { kind: "active", parallel: true };
 
@@ -95,6 +100,7 @@ export function initialRunTargetChoice(
     case "broadcast":
       return options.broadcast ? remembered : fallback;
     case "panel":
+      if (options.active && samePanelAsAll(options)) return { ...remembered, kind: "all" };
       return options.active ? remembered : fallback;
     case "group":
       return options.groups.some((g) => g.id === remembered.groupId) ? remembered : fallback;

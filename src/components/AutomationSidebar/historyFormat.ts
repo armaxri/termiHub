@@ -94,9 +94,9 @@ export function automationRunTargets(run: AutomationRun): string[] {
   return run.targetLabel ? [run.targetLabel] : [];
 }
 
-/** "1 tolerated failure" / "2 tolerated failures". */
+/** "1 step failed, the run went on". */
 export function toleratedText(count: number): string {
-  return `${count} tolerated failure${count === 1 ? "" : "s"}`;
+  return `${count} step${count === 1 ? "" : "s"} failed, the run went on`;
 }
 
 /** The automation of a run as it is now, if it still exists. */
@@ -155,7 +155,7 @@ const NEXT_STEPS: readonly [RegExp, MessageId][] = [
   ],
   [/wait-for-output timed out/, "automationHistory.next.pattern"],
   [
-    /is not authorized|was not allowed to run|is not an allowed program/,
+    /is not authorized|was not allowed to run|You did not allow|is not an allowed program/,
     "automationHistory.next.allow",
   ],
   [/exited with code/, "automationHistory.next.program"],

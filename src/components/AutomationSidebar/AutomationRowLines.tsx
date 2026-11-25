@@ -57,7 +57,9 @@ export function RowLines({
           {targets.map((target) => (
             <li
               key={target.key}
-              className="automation-item__line automation-item__line--target"
+              className={`automation-item__line automation-item__line--target${
+                target.waiting ? " automation-item__line--waiting" : ""
+              }`}
               data-testid={`automation-target-${target.key}`}
               {...keepOffRow}
             >
@@ -118,12 +120,14 @@ export function RowLines({
       {triggers !== null && (
         <div
           className={
-            triggers.on
+            triggers.effective
               ? "automation-item__line automation-item__line--on"
-              : "automation-item__line"
+              : triggers.on
+                ? "automation-item__line automation-item__line--warning"
+                : "automation-item__line"
           }
         >
-          {triggers.on ? (
+          {triggers.effective ? (
             <Zap size={10} aria-hidden="true" />
           ) : (
             <ZapOff size={10} aria-hidden="true" />

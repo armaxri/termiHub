@@ -69,6 +69,8 @@ export function RecordingSaveDialog({
 
   const chunks = keepSecrets ? take.chunks : plain;
   const preview = useMemo(() => recordingPreview(take, keepSecrets), [take, keepSecrets]);
+  // Replayed, it types its last line and stops there (C-013).
+  const noEnter = chunks.length > 0 && !/[\r\n]$/.test(chunks[chunks.length - 1].data);
   const nothingLeft = chunks.length === 0;
   const nameError = to === "new" && name.trim() === "" ? "Name is required." : undefined;
   const automationError = to === "existing" && !automationId ? "Choose an automation." : undefined;
@@ -166,6 +168,11 @@ export function RecordingSaveDialog({
             </pre>
           )}
         </div>
+        {noEnter && (
+          <p className="recording-save__note" data-testid="recording-save-no-enter">
+            {t("recording.noEnter")}
+          </p>
+        )}
         {hasSecrets && (
           <div className="recording-save__secrets" data-testid="recording-save-secrets">
             <KeyRound size={14} aria-hidden="true" />

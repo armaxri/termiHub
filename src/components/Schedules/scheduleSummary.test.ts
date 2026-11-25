@@ -43,8 +43,8 @@ describe("scheduleSummary: what will happen, before saving (A-046)", () => {
       "To save: give it a name and choose a connection.",
     ]);
     expect(summary({ missing: ["give it a name"], cannotRun: true })).toEqual([
-      "To save: give it a name.",
       "Will not run on a schedule.",
+      "To save: give it a name.",
     ]);
   });
 
@@ -61,7 +61,7 @@ describe("scheduleSummary: what will happen, before saving (A-046)", () => {
 
   it("says what keeps it from running", () => {
     expect(summary({ targets: { label: "x", hosts: ["x"], gone: "it is gone" } })[0]).toBe(
-      "Will not run: it is gone."
+      "Will not run: it is gone. Choose a connection, or remove the schedule."
     );
     expect(summary({ cannotRun: true })).toEqual(["Will not run on a schedule."]);
     expect(summary({ paused: true })).toContain("All schedules are paused.");

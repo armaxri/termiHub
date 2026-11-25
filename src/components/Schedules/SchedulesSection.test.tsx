@@ -134,7 +134,7 @@ describe("SchedulesSection (PROD-043)", () => {
       } as ScheduleView["lastResult"];
       const failed = { at: "", outcome: "failed" } as ScheduleView["lastResult"];
       await render([view({ enabled: true, lastResult: missed })], false, closed);
-      expect(query("schedules-section-toggle")!.textContent).toBe("Schedules (1) · 1 not run");
+      expect(query("schedules-concern")!.textContent).toBe("1 not run");
       await render(
         [
           view({ enabled: true, lastResult: missed }),
@@ -143,7 +143,10 @@ describe("SchedulesSection (PROD-043)", () => {
         false,
         closed
       );
-      expect(query("schedules-section-toggle")!.textContent).toBe("Schedules (2) · 1 failed");
+      // Both: the one must not hide the other (C-002), and the header keeps its words.
+      expect(query("schedules-concern")!.textContent).toBe("1 failed, 1 not run");
+      expect(query("schedules-section-toggle")!.textContent).toBe("Schedules (2)");
+      expect(query("schedules-pause-toggle")!.textContent).toBe("Pause all");
     });
 
     it("keeps the header, its count and New schedule, and hides the list", async () => {
@@ -173,14 +176,14 @@ describe("SchedulesSection (PROD-043)", () => {
         catchUp: false,
       } as ScheduleView["lastResult"];
       await render([view({ enabled: true, lastResult: failed })], false, closed);
-      expect(query("schedules-section-toggle")!.textContent).toContain("1 failed");
+      expect(query("schedules-concern")!.textContent).toBe("1 failed");
       await render([view({ enabled: false, lastResult: failed })], false, closed);
-      expect(query("schedules-section-toggle")!.textContent).not.toContain("failed");
+      expect(query("schedules-concern")).toBeNull();
       await render([view({ enabled: true, lastResult: failed })], false, {
         expanded: true,
         onChange,
       });
-      expect(query("schedules-section-toggle")!.textContent).toContain("1 failed");
+      expect(query("schedules-concern")!.textContent).toBe("1 failed");
     });
 
     it("offers Pause all only with something to pause, or to undo a pause (R-135)", async () => {

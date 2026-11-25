@@ -277,7 +277,11 @@ export function ScheduleEditorDialog({
       footer={
         <>
           <div
-            className="schedule-editor__summary"
+            className={
+              cannotRun !== null
+                ? "schedule-editor__summary schedule-editor__summary--cannot"
+                : "schedule-editor__summary"
+            }
             role="status"
             data-testid="schedule-editor-summary"
           >
@@ -329,7 +333,7 @@ export function ScheduleEditorDialog({
                   value={field.value}
                   onChange={(e) => field.onChange(e.target.value)}
                   onBlur={field.onBlur}
-                  placeholder="Nightly health check"
+                  placeholder={picked ? `${picked.name}, daily` : "Nightly health check"}
                   data-testid="schedule-editor-name"
                 />
               </Field>

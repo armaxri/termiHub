@@ -110,3 +110,10 @@ export function lastRunAttention(s: ScheduleView): "error" | "warning" | null {
   if (kind === "failed") return "error";
   return kind === "skipped" || kind === "missed" || kind === "partly" ? "warning" : null;
 }
+
+/** "1 failed, 1 not run": both, or the one hides the other (C-002). `""` without any. */
+export function concernText(failed: number, notRun: number): string {
+  return [failed > 0 ? `${failed} failed` : "", notRun > 0 ? `${notRun} not run` : ""]
+    .filter(Boolean)
+    .join(", ");
+}

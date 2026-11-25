@@ -1,5 +1,6 @@
 import { AlertTriangle } from "lucide-react";
 import { Modal, Button } from "@/components/ui";
+import { t } from "@/i18n/catalog";
 import { useAppStore } from "@/store/appStore";
 import "./LocalProcessAuthDialog.css";
 
@@ -100,8 +101,10 @@ export function LocalProcessAuthDialog() {
           </div>
           <p className="local-process-auth__note">
             &ldquo;Always allow&rdquo; remembers this file, with any arguments and for every
-            automation; manage or revoke it later under Settings &rarr; Security. If you do not
-            allow it, the step fails and the run stops, unless the step continues on error.
+            automation; manage or revoke it later under Settings &rarr; Security.
+          </p>
+          <p className="local-process-auth__refuse" data-testid="local-process-auth-refuse">
+            {t(prompt.goesOn ? "automation.program.goesOn" : "automation.program.stops")}
           </p>
         </div>
       )}

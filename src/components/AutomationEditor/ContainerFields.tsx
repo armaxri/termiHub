@@ -124,13 +124,7 @@ export function ConditionalFields({ draft, step, path, error, onChange }: Condit
         onChange={(condition) => onChange({ ...draft, step: { ...step, condition } })}
       />
       <NestedList draft={draft} path={path} list="then" label="Then" onChange={onChange} />
-      <NestedList
-        draft={draft}
-        path={path}
-        list="else"
-        label="Otherwise (optional)"
-        onChange={onChange}
-      />
+      <NestedList draft={draft} path={path} list="else" label="Otherwise" onChange={onChange} />
     </div>
   );
 }

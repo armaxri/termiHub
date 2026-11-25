@@ -134,12 +134,10 @@ describe("the bar", () => {
     expect(toast.info).not.toHaveBeenCalled();
   });
 
-  it("says in a message which terminal waits when it does not show", async () => {
+  it("leads to the terminal that waits when it does not show, and says it once", async () => {
     const wait = startWait("b");
-    expect(toast.info).toHaveBeenCalledWith(
-      "“Deploy” waits for you in db-1",
-      expect.objectContaining({ duration: Infinity })
-    );
+    // The bar is enough: no message beside it (C-009).
+    expect(toast.info).not.toHaveBeenCalled();
     // Shown first: Continue would type into a terminal nobody sees (B-001).
     expect(query("automation-wait-continue-b")).toBeNull();
     expect(query("automation-wait-show-b")?.textContent).toBe("Show db-1");
@@ -152,7 +150,6 @@ describe("the bar", () => {
     click("automation-wait-continue-b");
     await flushAsync();
     expect(wait.result).toBe("continued");
-    expect(toast.dismiss).toHaveBeenCalledWith("automation-wait-run-b");
   });
 
   it("keeps the waits of several terminals apart", async () => {
@@ -198,6 +195,13 @@ describe("Continue", () => {
     prompt = "$ ";
     act(() => store().recheckWaitingPrompts());
     expect(query("automation-wait-continue-a")?.textContent).toBe("Continue");
+    // Else a doubting user types it again, into a shell (C-006).
+    expect(query("automation-wait-message-a")?.textContent).toBe(
+      "No password prompt any more. Press Continue to go on."
+    );
+    prompt = "Password: ";
+    act(() => store().recheckWaitingPrompts());
+    expect(query("automation-wait-message-a")?.textContent).toContain("Type your password");
     expect(wait.result).toBeUndefined();
   });
 

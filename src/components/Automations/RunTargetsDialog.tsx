@@ -19,6 +19,7 @@ import {
   rememberRunTargetChoice,
   rememberedRunTargetChoice,
   resolveRunTargetChoice,
+  samePanelAsAll,
   type RunTargetChoice,
   type RunTargetKind,
   type RunTargetOptions,
@@ -81,7 +82,8 @@ function targetOptions(options: RunTargetOptions): RadioGroupOption[] {
       "data-testid": "run-targets-target-broadcast",
     });
   }
-  if (active) {
+  // Without a split the two would be the same choice (C-012).
+  if (active && !samePanelAsAll(options)) {
     list.push({
       value: "panel",
       label: `Terminals in this split: ${names(options.panel)}`,
@@ -275,7 +277,7 @@ export function RunTargetsDialog({
           />
         </Field>
       )}
-      <Field label="On">
+      <Field label="Run in">
         <RadioGroup
           value={choice.kind}
           onValueChange={setKind}

@@ -41,6 +41,7 @@ import {
   type WorkflowParamValues,
 } from "@/services/workflowRunner";
 import type { Automation } from "@/types/generated/Automation";
+import type { AutomationStep } from "@/types/generated/AutomationStep";
 import type { AutomationRun } from "@/types/generated/AutomationRun";
 import type { AutomationRunOrigin } from "@/types/generated/AutomationRunOrigin";
 import type { Workflow } from "@/types/workflow";
@@ -53,7 +54,7 @@ import {
   localProcessRefusal,
   localProcessRefusalToastId,
 } from "../localProcessRefusal";
-import { t } from "@/i18n/catalog";
+import { t, tf } from "@/i18n/catalog";
 import { LOCAL_PROCESS_REASON } from "@/utils/localProcessGate";
 import type { AppState } from "../appStore";
 import { collectLiveTabs } from "../layoutHelpers";
@@ -188,6 +189,16 @@ export interface WorkflowTargetRun {
   sessionless?: boolean;
 }
 
+/** " (Run command: make)": what a step is, so the user need not count in the editor. */
+function stepWhat(step: AutomationStep): string {
+  return ` (${[stepKindLabel(step.kind), stepSummary(step)].filter(Boolean).join(": ")})`;
+}
+
+/** How the reason starts when the user did not allow a program. */
+function refusedStart(): string {
+  return t("automation.program.refused").split("{")[0];
+}
+
 /** "Step 1 was run." / "Steps 1 to 3 were run.": what a failed run did before (B-010). */
 function ranBefore(failedIndex: number, result: WorkflowRunResult): string {
   if (result.notStarted || failedIndex === 0) return "";
@@ -203,7 +214,9 @@ export function toastRunOutcome(
   result: WorkflowRunResult,
   total: number,
   toastId: string,
-  automation?: Pick<Automation, "id" | "steps">
+  automation?: Pick<Automation, "id" | "steps">,
+  /** The terminal it ran in. */
+  where?: string
 ): void {
   const tolerated = result.continuedFailures ?? [];
   if (result.status === "completed" && tolerated.length === 0) {
@@ -222,18 +235,26 @@ export function toastRunOutcome(
     keepWorkflowRunFailure(toastId);
   } else if (result.status === "cancelled") {
     // toast-policy: explains-outcome — says how far the canceled run got
+    const at = automation?.steps[result.stepsCompleted];
     toast.info(`“${workflowName}” stopped`, {
       id: toastId,
-      description: `${result.stepsCompleted} of ${total} steps were run`,
+      // Something of the step it was at may have been typed (C-004).
+      description: [
+        `Stopped${where ? ` in ${where}` : ""} at ${stepProgress(result.stepsCompleted, total).toLowerCase()}${
+          at ? stepWhat(at) : ""
+        }.`,
+        ranBefore(result.stepsCompleted, result),
+      ]
+        .filter(Boolean)
+        .join(" "),
+      ...(automation ? { action: failedRunActions(automation.id).cancel } : {}),
     });
     collapseWorkflowRunOutcome(toastId);
   } else {
     const index = result.failedStepIndex ?? result.stepsCompleted;
     const step = automation?.steps[index];
     // What the step is, so the user need not count in the editor (#6026).
-    const what = step
-      ? ` (${[stepKindLabel(step.kind), stepSummary(step)].filter(Boolean).join(": ")})`
-      : "";
+    const what = step ? stepWhat(step) : "";
     toast.error(
       result.notStarted
         ? `“${workflowName}” was not run`
@@ -241,7 +262,10 @@ export function toastRunOutcome(
       {
         id: toastId,
         description: [ranBefore(index, result), result.error].filter(Boolean).join(" "),
-        ...(automation ? failedRunActions(automation.id) : {}),
+        // Nothing is wrong with the automation when its program was refused (C-003).
+        ...(automation
+          ? failedRunActions(automation.id, result.error?.startsWith(refusedStart()) === true)
+          : {}),
       }
     );
     keepWorkflowRunFailure(toastId);
@@ -330,7 +354,8 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
   // imported automation adds nothing to the list. Fails closed.
   const askAuthorization = async (
     program: string,
-    args: string[]
+    args: string[],
+    goesOn: boolean
   ): Promise<LocalProcessDecision> => {
     if (!currentSettingsView().workflowLocalProcessEnabled) {
       toast.error("Local process execution is disabled", {
@@ -360,7 +385,7 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
     if (!fanout) toast.dismiss(toastId);
     const decision = await new Promise<LocalProcessAuthDecision>((resolve) => {
       set({
-        localProcessPrompt: { program, path, args, workflowName: workflow.name, resolve },
+        localProcessPrompt: { program, path, args, goesOn, workflowName: workflow.name, resolve },
       });
     });
     set({ localProcessPrompt: null });
@@ -368,7 +393,9 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
       toast.loading(`Running automation “${workflow.name}”…`, { id: toastId });
     }
 
-    if (decision === "cancel") return { ok: false };
+    if (decision === "cancel") {
+      return { ok: false, reason: tf("automation.program.refused", { program }) };
+    }
     if (decision === "always") {
       const current = currentSettingsView();
       const nextAllowlist = [...(current.workflowLocalProcessAllowlist ?? [])];
@@ -383,7 +410,11 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
   };
   // The files the user approved for this run, by program + args.
   const approvedPaths = new Map<string, string>();
-  const authorizeLocalProcess: WorkflowAuthorizeLocalProcessSeam = async (program, args) => {
+  const authorizeLocalProcess: WorkflowAuthorizeLocalProcessSeam = async (
+    program,
+    args,
+    goesOn = false
+  ) => {
     // The run was checked before it started; this catches an automation or the
     // switch that changed while it runs (#5988). Before the shared decisions, so
     // a fan-out cannot reuse one made while the switch was on. The backend
@@ -401,7 +432,7 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
     let decision = fanout?.authDecisions?.get(key);
     if (!decision) {
       // One prompt slot: queue behind any prompt a concurrent target has open.
-      decision = authPromptQueue.then(() => askAuthorization(program, args));
+      decision = authPromptQueue.then(() => askAuthorization(program, args, goesOn));
       // The caller awaiting `decision` handles its rejection; the queue only has to
       // settle so the next prompt is not blocked. Trace it here too (#4520).
       authPromptQueue = decision.catch((err: unknown) =>
@@ -734,6 +765,6 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
   );
 
   // A fan-out run summarises all targets once at the end instead (PROD-047).
-  if (!fanout) toastRunOutcome(workflow.name, result, total, toastId, automation);
+  if (!fanout) toastRunOutcome(workflow.name, result, total, toastId, automation, tabTitle);
   return { ...result, historyRunId: runRecord.id };
 }

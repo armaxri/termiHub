@@ -328,6 +328,11 @@
   gap: var(--spacing-xxs);
   flex-shrink: 0;
   font-size: var(--font-size-xs);
+  color: var(--text-primary);
+}
+
+/* The colour on the icon: the words need 4.5:1 in light too (C-026). */
+.automation-step__blocked > svg {
   color: var(--color-warning);
 }
 

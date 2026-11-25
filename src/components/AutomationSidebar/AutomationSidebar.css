@@ -24,7 +24,8 @@
 /* An open section takes the room; the list keeps a few rows (B-034). */
 .automation-sidebar:has(> [data-open="true"]) > .automation-sidebar__list {
   flex: 0 0 auto;
-  height: 25%;
+  height: 15%;
+  min-height: 72px;
 }
 
 .automation-sidebar > [data-open="true"] {
@@ -132,6 +133,11 @@
   background: var(--bg-selected);
 }
 
+/* Off, the track has the row's own tone here; its edge shows it (C-026). */
+.automation-item--selected .ui-toggle[data-state="unchecked"] {
+  border-color: var(--text-secondary);
+}
+
 /*
  * The row just saved from an editor (#5687): an accent tint and leading bar so
  * the user sees which automation changed. It holds, then fades out over
@@ -203,6 +209,11 @@
 
 .automation-item__line--blocked > svg {
   color: var(--color-error);
+}
+
+.automation-item__line--waiting > svg,
+.automation-item__line--waiting .automation-item__where {
+  color: var(--color-warning);
 }
 
 .automation-item__line--warning > svg {

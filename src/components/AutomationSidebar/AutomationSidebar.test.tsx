@@ -353,9 +353,7 @@ describe("toolbar (R-037)", () => {
         },
       })
     );
-    expect(query("automation-record-btn")!.textContent).toBe("Record");
-    click("automation-record-btn");
-    expect(storeFns.toggleRecording).not.toHaveBeenCalled();
+    expect(query("automation-record-btn")).toBeNull();
   });
 
   it("folds Record into one menu only below the smallest sidebar", async () => {
@@ -578,7 +576,11 @@ describe("markers", () => {
     });
     useAppStore.setState({ automationWaits: [{ runId: "r1" }] as never });
     await render();
-    expect(query("automation-running-workflow-1")!.textContent).toBe("Waiting for you");
+    // In words on the line under the name, which keeps its room (C-008).
+    expect(query("automation-running-workflow-1")!.getAttribute("aria-label")).toBe(
+      "Waiting for you"
+    );
+    expect(query("automation-target-r1")!.textContent).toContain("step 2 of 2 waits for you");
   });
 
   it("reports a failed disarm", async () => {
@@ -695,6 +697,7 @@ describe("row actions", () => {
     expect(query("confirm-delete-dialog")!.textContent).toContain(
       "Delete automation “Deploy prep”? This cannot be undone."
     );
+    expect(query("confirm-delete-dialog")!.textContent).not.toContain("It is used by");
     click("confirm-delete-confirm");
     await flushAsync();
     expect(storeFns.deleteAutomationFromBackend).toHaveBeenCalledWith("workflow-1");

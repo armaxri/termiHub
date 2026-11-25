@@ -4,6 +4,7 @@ import { createRoot, Root } from "react-dom/client";
 import { withTooltip } from "@/test/tooltip";
 import type { SavedConnection } from "@/types/connection";
 import type { ScheduleAction, ScheduleInput } from "@/types/schedule";
+import { pick } from "@/test/automationEditorHarness";
 import type { Automation } from "@/types/generated/Automation";
 import { LOCAL_PROCESS_REASON } from "@/utils/localProcessGate";
 import { ScheduleEditorDialog } from "./ScheduleEditorDialog";
@@ -117,6 +118,9 @@ function render(props: {
   });
 }
 
+/** A new schedule starts with Daily (C-023). */
+const everyMinutes = () => pick("schedule-editor-rule-kind", "Every N minutes");
+
 describe("ScheduleEditorDialog (PROD-043)", () => {
   beforeEach(() => {
     experimental.on = false;
@@ -160,6 +164,7 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
     render({ onSave });
     setInput("schedule-editor-name", "  Ping  ");
     act(() => query("schedule-editor-connection-c1")!.click());
+    await everyMinutes();
     setInput("schedule-editor-every", "5");
     choose("skip");
     await act(async () => query("schedule-editor-save")!.click());
@@ -296,6 +301,7 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
       await flushAsync();
       setInput("schedule-editor-name", "Nightly");
       choose("connect");
+      await everyMinutes();
       setInput("schedule-editor-every", "5");
       await flushAsync();
       expect(preview).toHaveBeenLastCalledWith({ kind: "interval", everyMinutes: 5 });
@@ -357,7 +363,9 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
       expect(query("schedule-editor-connection-deleted-0")!.textContent).toContain(
         "Deleted connection “Old Box”"
       );
-      expect(summary()[0]).toBe("Will not run: its connections were deleted.");
+      expect(summary()[0]).toBe(
+        "Will not run: its connections were deleted. Choose a connection, or remove the schedule."
+      );
       // A rename of it stays possible; its targets are saved as they were.
       setInput("schedule-editor-name", "Renamed");
       await act(async () => query("schedule-editor-save")!.click());
@@ -427,8 +435,9 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
     });
   });
 
-  it("shows an inline error for an out-of-range interval", () => {
+  it("shows an inline error for an out-of-range interval", async () => {
     render({});
+    await everyMinutes();
     setInput("schedule-editor-every", "0");
     leaveField(query("schedule-editor-every"));
     expect(document.body.textContent).toContain("At least 1 minute.");

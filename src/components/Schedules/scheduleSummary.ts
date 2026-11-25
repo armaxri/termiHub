@@ -47,8 +47,8 @@ export function scheduleSummary(s: ScheduleSummaryInput): string[] {
   const lines: string[] = [];
   const staysOn = s.isOn && !s.switchesOff;
   if (s.missing.length > 0) {
-    lines.push(tf("schedule.summary.toSave", { list: joinWords(s.missing) }));
     if (s.cannotRun) lines.push(t("schedule.summary.cannot"));
+    lines.push(tf("schedule.summary.toSave", { list: joinWords(s.missing) }));
     return lines;
   }
   if (s.cannotRun) {
@@ -65,8 +65,11 @@ export function scheduleSummary(s: ScheduleSummaryInput): string[] {
             { count: s.rule.everyMinutes }
           )
         : formatDayTime(s.next);
-    if (s.targets.gone) lines.push(tf("schedule.blocked", { reason: s.targets.gone }));
-    else {
+    if (s.targets.gone) {
+      lines.push(
+        `${tf("schedule.blocked", { reason: s.targets.gone })} ${t("schedule.summary.repair")}`
+      );
+    } else {
       // Off is off: the next run is only what would happen then (B-030).
       const key = fromSwitch
         ? "schedule.summary.nextAfter"

@@ -147,8 +147,7 @@ export function AutomationImportDialog({ result, onClose, onShow }: AutomationIm
                 <ul className="automation-import__notes">
                   <li>
                     It needs a newer termiHub ({kind}). Update termiHub, then import the file again.
-                    {count > 0 &&
-                      " What came in now comes a second time then, under another name: delete one."}
+                    {count > 0 && " What came in now is then there twice: delete the copies."}
                   </li>
                 </ul>
               </div>

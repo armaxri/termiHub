@@ -103,7 +103,7 @@ describe("Record steps", () => {
   it("without a terminal opens one and records there (A-034)", async () => {
     seedTabs([]);
     await open();
-    expect(query("automation-editor-record")?.textContent).toBe("Open a terminal to record steps");
+    expect(query("automation-editor-record")?.textContent).toBe("Record steps in a new terminal");
     const addLocalShellTab = vi.fn(() => {
       seedTabs([tab("a", "bash")]);
       return "a";
