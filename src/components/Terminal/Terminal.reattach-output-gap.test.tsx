@@ -18,6 +18,12 @@ import { Terminal } from "./Terminal";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
 import { bytesToBase64, terminalDispatcher } from "@/services/events";
+import {
+  __resetSandboxHost,
+  __setSandboxWorkerFactory,
+  loadPluginInSandbox,
+} from "@/plugins/sandbox/pluginSandboxHost";
+import type { HostToWorkerMessage, WorkerToHostMessage } from "@/plugins/sandbox/protocol";
 import { mockXtermInstances as xtermInstances } from "@/test/mockXterm";
 
 vi.mock("@xterm/xterm", async () => (await import("@/test/mockXterm")).createMockXtermModule());
@@ -52,16 +58,9 @@ vi.mock("@/themes", () => ({
 }));
 
 const mockNotifySessionStart = vi.hoisted(() => vi.fn());
-/** Set: output goes through a protocol parser, which answers by hand. */
-const parser = vi.hoisted(() => ({
-  answers: null as (() => void)[] | null,
-}));
 vi.mock("@/plugins/sandbox/pluginSandboxHost", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/plugins/sandbox/pluginSandboxHost")>()),
   sandboxNotifySessionStart: mockNotifySessionStart,
-  sandboxHasParsers: () => parser.answers !== null,
-  enqueueSandboxTransform: (_sid: string, data: Uint8Array, done: (out: Uint8Array) => void) =>
-    parser.answers?.push(() => done(data)),
 }));
 const imageHold = vi.hoisted(() => ({ on: false }));
 vi.mock("./inlineImages", async (importOriginal) => ({
@@ -157,7 +156,6 @@ beforeEach(async () => {
   });
   mockSetLineEnding.mockReturnValue(held);
   xtermInstances.length = 0;
-  parser.answers = null;
   imageHold.on = false;
   streamed = 0;
   epoch = 1;
@@ -547,20 +545,103 @@ describe("Terminal — a window that regains a session keeps the repaint's outpu
     expect(shown().endsWith("xbehind it after")).toBe(true);
   });
 
+  /** A protocol parser that returns output unchanged, once told to. */
+  function startParser(): () => void {
+    type Listener = (event: { data: WorkerToHostMessage }) => void;
+    let toHost: Listener = () => {};
+    const asked: HostToWorkerMessage[] = [];
+    const worker = {
+      addEventListener: (type: string, listener: Listener) => {
+        if (type === "message") toHost = listener;
+      },
+      postMessage: (message: HostToWorkerMessage) => asked.push(message),
+      terminate: () => {},
+    };
+    __setSandboxWorkerFactory(() => worker as unknown as Worker);
+    loadPluginInSandbox("parser", ["plugin://localhost/load/parser/index.js"]);
+    toHost({ data: { t: "parsersActive", active: true } });
+    return () => {
+      for (const message of asked.splice(0)) {
+        if (message.t !== "transform") continue;
+        toHost({ data: { t: "transformResult", seq: message.seq, changed: false } });
+      }
+    };
+  }
+
   it("shows output that a protocol parser still has once", async () => {
     const answers = await mountWithHeldRepaints();
-    parser.answers = [];
-    emitOutput("one ");
+    const answer = startParser();
+    try {
+      emitOutput("one ");
+      regain();
+      await act(async () => {
+        answers[0](snapshot("one "));
+        await wait(60);
+      });
+      emitOutput("two");
+      act(() => answer());
+      act(() => endStream());
+      await settle();
+    } finally {
+      __resetSandboxHost();
+      __setSandboxWorkerFactory(null);
+    }
+
+    expect(shown()).toMatch(/^one two\s[^]*connection lost/i);
+  });
+
+  it("keeps output that waits for the screen when the session ends as the repaint lands", async () => {
+    const answers = await mountWithHeldRepaints();
+    const xterm = xtermInstances[xtermInstances.length - 1];
+    imageHold.on = true;
+    emitOutput("kept ");
     regain();
+    // xterm still works on earlier output when the snapshot arrives.
+    let landed: () => void = () => {};
+    xterm.write.mockImplementationOnce((_data: unknown, done?: () => void) => {
+      landed = () => done?.();
+    });
     await act(async () => {
-      answers[0](snapshot("one "));
+      answers[0](snapshot("stale"));
+      await wait(0);
+    });
+    imageHold.on = false;
+    act(() => endStream());
+    await act(async () => {
+      landed();
       await wait(60);
     });
-    emitOutput("two");
-    act(() => parser.answers?.splice(0).forEach((answer) => answer()));
-    await settle();
 
-    expect(shown()).toBe("one two");
+    expect(shown()).toMatch(/kept [^]*connection lost/i);
+    expect(shown()).not.toContain("stale");
+  });
+
+  it("writes nothing under a repaint while it lands", async () => {
+    const answers = await mountWithHeldRepaints();
+    const xterm = xtermInstances[xtermInstances.length - 1];
+    imageHold.on = true;
+    emitOutput("one ");
+    regain();
+    let landed: () => void = () => {};
+    xterm.write.mockImplementationOnce((_data: unknown, done?: () => void) => {
+      landed = () => done?.();
+    });
+    await act(async () => {
+      answers[0](snapshot("one "));
+      await wait(0);
+    });
+    const writes = xterm.write.mock.calls.length;
+    imageHold.on = false;
+    await settle();
+    expect(xterm.write.mock.calls.length, "what xterm gets now would survive the reset").toBe(
+      writes
+    );
+    await act(async () => {
+      landed();
+      await wait(60);
+    });
+
+    expect(shown()).toBe("one ");
   });
 
   it("keeps output that waits for the screen when the session ends before the repaint", async () => {

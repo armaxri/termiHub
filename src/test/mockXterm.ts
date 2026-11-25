@@ -76,7 +76,6 @@ export class MockXTerm {
   dispose: Mock = vi.fn();
   loadAddon: Mock = vi.fn();
   onData: Mock = vi.fn(() => ({ dispose: vi.fn() }));
-  onKey: Mock = vi.fn(() => ({ dispose: vi.fn() }));
   onResize: Mock = vi.fn(() => ({ dispose: vi.fn() }));
   onScroll: Mock = vi.fn(() => ({ dispose: vi.fn() }));
   onCursorMove: Mock = vi.fn(() => ({ dispose: vi.fn() }));

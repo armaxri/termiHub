@@ -37,6 +37,10 @@ const SERIALIZED_SCROLLBACK = "\x1b[32mlocal scrollback snapshot\x1b[0m\r\n";
 // Every xterm instance created, in order, with its write() spy — so a test can
 // inspect what the fresh (final) instance rendered. The shared mock records each
 // constructed instance in `mockXtermInstances`.
+const inputFrom = vi.hoisted(() => ({ user: true }));
+vi.mock("./xtermUserInput", () => ({
+  trackUserInput: () => ({ take: () => inputFrom.user, dispose: () => undefined }),
+}));
 vi.mock("@xterm/xterm", async () => (await import("@/test/mockXterm")).createMockXtermModule());
 vi.mock("@xterm/addon-fit", () => {
   class M {
@@ -295,22 +299,13 @@ describe("Terminal — agent tab Reconnect after a user Disconnect (#5953)", () 
 });
 
 /** Type into the tab: every data listener that is still registered gets it. */
-function type(data: string): void {
+function type(data: string, fromUser = true): void {
+  inputFrom.user = fromUser;
   const { onData } = xtermInstances[xtermInstances.length - 1];
   onData.mock.calls.forEach(([listener], i) => {
     const { dispose } = onData.mock.results[i].value as { dispose: ReturnType<typeof vi.fn> };
     if (dispose.mock.calls.length === 0) (listener as (data: string) => void)(data);
   });
-}
-
-/** Press a key: xterm reports it as a key and then as data. */
-function typeKey(key: string): void {
-  const { onKey } = xtermInstances[xtermInstances.length - 1];
-  onKey.mock.calls.forEach(([listener], i) => {
-    const { dispose } = onKey.mock.results[i].value as { dispose: ReturnType<typeof vi.fn> };
-    if (dispose.mock.calls.length === 0) (listener as (event: { key: string }) => void)({ key });
-  });
-  type(key);
 }
 
 /** How often `text` is in what the tab's terminal was given since its reset. */
@@ -398,7 +393,7 @@ describe("Terminal — a resumed session and the tab's own scrollback (#5990)", 
     expect(mockSendInput, "the session is not wired yet").not.toHaveBeenCalled();
     // The repaint asks the terminal something: xterm answers as it parses it.
     fresh.write.mockImplementationOnce((_data: unknown, done?: () => void) => {
-      type("\x1b[0n");
+      type("\x1b[0n", false);
       done?.();
     });
     await act(async () => {
@@ -458,8 +453,8 @@ describe("Terminal — a resumed session and the tab's own scrollback (#5990)", 
     mockGetAgentSessionBuffer.mockImplementation(() => {
       const fresh = xtermInstances[xtermInstances.length - 1];
       fresh.write.mockImplementationOnce((_data: unknown, done?: () => void) => {
-        typeKey("a");
-        type("\x1b[0n");
+        type("a");
+        type("\x1b[0n", false);
         done?.();
       });
       return Promise.resolve({
@@ -471,13 +466,13 @@ describe("Terminal — a resumed session and the tab's own scrollback (#5990)", 
     });
     await disconnectAndReconnect(tabId);
     mockSendInput.mockClear();
-    typeKey("b");
-    type("\x1b[?1;2c");
+    type("b");
+    type("\x1b[?1;2c", false);
     await act(async () => {
       wired();
       await wait(40);
     });
-    typeKey("c");
+    type("c");
 
     expect(mockSendInput.mock.calls.map((call) => call[1])).toEqual(["a", "b", "c"]);
   });
