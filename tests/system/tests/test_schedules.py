@@ -133,6 +133,8 @@ class TestScheduledRuns(
         missing = self.driver.get_text("schedule-editor-summary")
         assert "if a connection is closed" in missing, f"the choice is preset: {missing!r}"
         self.driver.click("schedule-editor-closed-skip")
+        self.driver.select("schedule-editor-rule-kind", "interval")  # it starts as daily (#6050)
+        self.wait(lambda: self.driver.exists("schedule-editor-every"), what="the minutes")
         self.driver.type("schedule-editor-every", "1")
         self.wait(
             lambda: "To save:" not in self.driver.get_text("schedule-editor-summary"),

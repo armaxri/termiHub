@@ -228,7 +228,9 @@ export function RunTargetsDialog({
         ? "This automation has no steps to run."
         : count === 0
           ? choice.kind === "active"
-            ? "This terminal is not connected."
+            ? options.terminals.length === 0
+              ? "No terminal is connected. Open one first."
+              : "This terminal is not connected."
             : "No live terminals in this choice."
           : null;
 

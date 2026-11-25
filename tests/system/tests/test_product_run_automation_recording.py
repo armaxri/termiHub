@@ -317,8 +317,8 @@ class TestProductRunAutomationRecording(
         with self.step(
             "automation-recording.password",
             "What is typed at a password prompt is announced while recording and not stored",
-            expect="the bar 'Password prompt: what you type now is not recorded …'; then Save recording naming the "
-            "prompt, with 'Leave it out' chosen",
+            expect="the bar 'Password prompt: what you type now is kept out of the recording …'; "
+            "then Save recording naming the prompt, with 'Leave it out' chosen",
             screenshot=False,
         ):
             self.require("automation-recording.toolbar")
@@ -397,6 +397,12 @@ class TestProductRunAutomationRecording(
             self.shot(label="still-asking")
             self._press(f"{secret}\r")
             self.wait_for_output(f"PR_WAIT_{len(secret)}", tab_id=tab)
+            # Continue is the way on again, and the bar says so (#6050).
+            self.wait(
+                lambda: "No password prompt any more" in self.driver.get_text(bar),
+                what="the bar to see the password was typed",
+            )
+            self.shot(label="answered")
             self.driver.click(go_on)
             self.wait(lambda: not self.driver.exists(bar), what="the run to go on")
             self.wait(lambda: "uid=" in self._after_prompt(tab), what="the keys after the password")

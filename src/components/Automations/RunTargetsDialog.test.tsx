@@ -142,6 +142,14 @@ describe("RunTargetsDialog (#5818 slice 5)", () => {
     expect(onRun).toHaveBeenCalledWith("m1", ["a"], { parallel: true });
   });
 
+  it("says to open a terminal when there is none", () => {
+    seedTabs([{ ...term("a", null), contentType: "settings" }]);
+    render();
+    expect(document.body.textContent).toContain("This terminal (none active)");
+    expect(document.body.textContent).toContain("No terminal is connected. Open one first.");
+    expect(runButton().disabled).toBe(true);
+  });
+
   it("counts live terminals for this panel and all terminals", () => {
     seedTabs([term("a", "s-a"), term("b", "s-b"), term("c", null)]);
     render();
