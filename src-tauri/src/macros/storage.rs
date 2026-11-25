@@ -94,9 +94,11 @@ mod tests {
                 steps: vec![MacroStep {
                     data: "ls -la\r".to_string(),
                     delay_ms: 100,
+                    extra: Default::default(),
                 }],
                 created_at: "2026-07-19T00:00:00Z".to_string(),
                 updated_at: "2026-07-19T00:00:00Z".to_string(),
+                extra: Default::default(),
             }],
         }
     }

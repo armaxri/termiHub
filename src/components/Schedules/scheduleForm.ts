@@ -179,6 +179,43 @@ export function formToScheduleInput(id: string, v: ScheduleFormValues): Schedule
   };
 }
 
+/**
+ * `edited` with every field the user left alone taken from the `stored`
+ * schedule instead of rebuilt from the form (#5983). The form cannot hold
+ * everything a stored schedule can (a weekday order, `legacySource`), and a
+ * rebuilt value that differs would re-time or disable the schedule. `stored` is
+ * the latest one, so a save also does not revert what another window changed.
+ * `loaded` are the values the form started from.
+ */
+export function keepUntouched(
+  stored: ScheduleInput,
+  loaded: ScheduleFormValues,
+  values: ScheduleFormValues,
+  edited: ScheduleInput
+): ScheduleInput {
+  const untouched = (...fields: (keyof ScheduleFormValues)[]) =>
+    fields.every((f) => JSON.stringify(values[f]) === JSON.stringify(loaded[f]));
+  const pick = <T>(kept: boolean, was: T, now: T): T => (kept ? was : now);
+  return {
+    id: edited.id,
+    name: pick(untouched("name"), stored.name, edited.name),
+    description: pick(untouched("description"), stored.description, edited.description),
+    action: pick(untouched("automationId"), stored.action, edited.action),
+    targets: pick(
+      untouched("targetsKind", "connectionIds", "groupId"),
+      stored.targets,
+      edited.targets
+    ),
+    rule: pick(untouched("ruleKind", "everyMinutes", "time", "days"), stored.rule, edited.rule),
+    missedRuns: pick(untouched("missedRuns"), stored.missedRuns, edited.missedRuns),
+    connectIfNeeded: pick(
+      untouched("connectIfNeeded"),
+      stored.connectIfNeeded,
+      edited.connectIfNeeded
+    ),
+  } satisfies { [K in keyof Required<ScheduleInput>]: ScheduleInput[K] };
+}
+
 /** "Every 15 minutes", "Daily at 09:00", "Mon, Fri at 18:30". */
 export function describeRule(rule: ScheduleRule): string {
   switch (rule.kind) {

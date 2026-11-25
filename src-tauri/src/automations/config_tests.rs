@@ -37,6 +37,7 @@ fn type_keys_step_defaults_to_recorded_timing_and_not_recorded() {
             chunks: vec![TypeKeysChunk {
                 data: "x".to_string(),
                 delay_ms: 0,
+                extra: Default::default()
             }],
             timing: TypingSpeed::Recorded,
             fixed_delay_ms: None,

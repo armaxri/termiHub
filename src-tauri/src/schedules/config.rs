@@ -272,6 +272,11 @@ pub struct Schedule {
     /// RFC 3339 last-update time.
     #[serde(default)]
     pub updated_at: String,
+    /// Keys of this schedule that this build does not know, kept verbatim
+    /// (PER-010, #5983): an edit, an enable or a run rewrites the file.
+    #[serde(flatten, default)]
+    #[cfg_attr(test, ts(skip))]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Top-level schema for `schedules.json`.

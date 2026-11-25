@@ -187,10 +187,15 @@ pub struct WorkflowStepRetry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub backoff: Option<WorkflowRetryBackoff>,
+    /// Keys this build does not know, kept verbatim (#6009).
+    #[serde(flatten, default)]
+    #[cfg_attr(test, ts(skip))]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Optional per-step error handling shared by every [`WorkflowStep`] kind
-/// (PROD-045), flattened into the step's JSON object next to its `kind`. Both
+/// (PROD-045), flattened into the step's JSON object next to its `kind`. As the
+/// one part every step kind has, it also keeps the step's unknown keys. Both
 /// fields are omitted when absent, so a step authored before this feature
 /// round-trips byte-identically and keeps today's behaviour (no retry, the
 /// first failure stops the run).
@@ -207,6 +212,10 @@ pub struct WorkflowStepErrorHandling {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub retry: Option<WorkflowStepRetry>,
+    /// Keys this build does not know, kept verbatim (#6009).
+    #[serde(flatten, default)]
+    #[cfg_attr(test, ts(skip))]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// How a [`WorkflowStep::Loop`] is bounded (PROD-044). Either a fixed iteration
@@ -224,12 +233,20 @@ pub enum WorkflowLoopMode {
     Count {
         /// The fixed number of iterations.
         count: u32,
+        /// Keys this build does not know, kept verbatim (#6009).
+        #[serde(flatten, default)]
+        #[cfg_attr(test, ts(skip))]
+        extra: serde_json::Map<String, serde_json::Value>,
     },
     /// Repeat the body while `condition` holds, bounded by the safety cap.
     #[serde(rename_all = "camelCase")]
     While {
         /// The structured comparison re-evaluated before each iteration.
         condition: WorkflowCondition,
+        /// Keys this build does not know, kept verbatim (#6009).
+        #[serde(flatten, default)]
+        #[cfg_attr(test, ts(skip))]
+        extra: serde_json::Map<String, serde_json::Value>,
     },
 }
 
@@ -276,6 +293,10 @@ pub struct WorkflowCondition {
     pub op: WorkflowComparisonOp,
     /// The right-hand operand (may reference `${param}`).
     pub right: String,
+    /// Keys this build does not know, kept verbatim (#6009).
+    #[serde(flatten, default)]
+    #[cfg_attr(test, ts(skip))]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// A trigger that launches a workflow. The complete v1 union is defined here up
@@ -294,6 +315,10 @@ pub enum WorkflowTrigger {
         /// Connection ids this trigger is bound to.
         #[serde(default)]
         connection_ids: Vec<String>,
+        /// Keys this build does not know, kept verbatim (#6009).
+        #[serde(flatten, default)]
+        #[cfg_attr(test, ts(skip))]
+        extra: serde_json::Map<String, serde_json::Value>,
     },
 
     /// Fires when a user-assigned keybinding is pressed while a session is
@@ -302,6 +327,10 @@ pub enum WorkflowTrigger {
     Hotkey {
         /// The keybinding string (e.g. `Ctrl+Alt+H`).
         binding: String,
+        /// Keys this build does not know, kept verbatim (#6009).
+        #[serde(flatten, default)]
+        #[cfg_attr(test, ts(skip))]
+        extra: serde_json::Map<String, serde_json::Value>,
     },
 
     /// Fires once when a session for one of the named connections ends
@@ -316,6 +345,10 @@ pub enum WorkflowTrigger {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[cfg_attr(test, ts(optional))]
         when: Option<WorkflowDisconnectCause>,
+        /// Keys this build does not know, kept verbatim (#6009).
+        #[serde(flatten, default)]
+        #[cfg_attr(test, ts(skip))]
+        extra: serde_json::Map<String, serde_json::Value>,
     },
 
     /// Fires when a session for one of the named connections prints output
@@ -341,6 +374,10 @@ pub enum WorkflowTrigger {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[cfg_attr(test, ts(optional))]
         max_fires_per_session: Option<u32>,
+        /// Keys this build does not know, kept verbatim (#6009).
+        #[serde(flatten, default)]
+        #[cfg_attr(test, ts(skip))]
+        extra: serde_json::Map<String, serde_json::Value>,
     },
 }
 
@@ -350,7 +387,7 @@ impl WorkflowTrigger {
     /// that are not bound to connections.
     pub fn connection_ids_mut(&mut self) -> Option<&mut Vec<String>> {
         match self {
-            WorkflowTrigger::OnConnect { connection_ids }
+            WorkflowTrigger::OnConnect { connection_ids, .. }
             | WorkflowTrigger::OnDisconnect { connection_ids, .. }
             | WorkflowTrigger::OnOutputMatch { connection_ids, .. } => Some(connection_ids),
             WorkflowTrigger::Manual | WorkflowTrigger::Hotkey { .. } => None,
@@ -429,6 +466,10 @@ pub struct WorkflowParameter {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub options: Option<Vec<String>>,
+    /// Keys this build does not know, kept verbatim (#6009).
+    #[serde(flatten, default)]
+    #[cfg_attr(test, ts(skip))]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// An authored, ordered list of typed steps launched by zero or more triggers.
@@ -480,6 +521,10 @@ pub struct Workflow {
     /// RFC 3339 timestamp of the workflow's last update.
     #[serde(default)]
     pub updated_at: String,
+    /// Keys this build does not know, kept verbatim (#6009).
+    #[serde(flatten, default)]
+    #[cfg_attr(test, ts(skip))]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Serde default for [`Workflow::triggers_enabled`]: a workflow is armed.
@@ -565,7 +610,9 @@ mod tests {
                         count: 3,
                         delay_ms: Some(500),
                         backoff: Some(WorkflowRetryBackoff::Exponential),
+                        extra: Default::default()
                     }),
+                    extra: Default::default()
                 },
                 command: "ls".to_string(),
             }
@@ -698,13 +745,16 @@ mod tests {
             WorkflowTrigger::Manual,
             WorkflowTrigger::OnConnect {
                 connection_ids: vec!["prod-web-1".to_string(), "prod-web-2".to_string()],
+                extra: Default::default(),
             },
             WorkflowTrigger::Hotkey {
                 binding: "Ctrl+Alt+H".to_string(),
+                extra: Default::default(),
             },
             WorkflowTrigger::OnDisconnect {
                 connection_ids: vec!["prod-web-1".to_string()],
                 when: Some(WorkflowDisconnectCause::UserClose),
+                extra: Default::default(),
             },
             WorkflowTrigger::OnOutputMatch {
                 connection_ids: vec!["prod-web-1".to_string()],
@@ -712,6 +762,7 @@ mod tests {
                 is_regex: Some(true),
                 cooldown_ms: Some(5_000),
                 max_fires_per_session: Some(3),
+                extra: Default::default(),
             },
         ];
         let json = serde_json::to_string(&triggers).unwrap();
@@ -745,6 +796,7 @@ mod tests {
             triggers_enabled: true,
             created_at: "2026-07-24T00:00:00Z".to_string(),
             updated_at: "2026-07-24T00:00:00Z".to_string(),
+            extra: Default::default(),
         };
         let json = serde_json::to_string(&wf).unwrap();
         assert!(json.contains("\"createdAt\""));
@@ -765,6 +817,7 @@ mod tests {
                 WorkflowTrigger::OnDisconnect {
                     connection_ids: Vec::new(),
                     when: None,
+                    extra: Default::default()
                 },
                 WorkflowTrigger::OnOutputMatch {
                     connection_ids: Vec::new(),
@@ -772,6 +825,7 @@ mod tests {
                     is_regex: None,
                     cooldown_ms: None,
                     max_fires_per_session: None,
+                    extra: Default::default()
                 },
             ]
         );
@@ -792,13 +846,16 @@ mod tests {
             WorkflowTrigger::Manual,
             WorkflowTrigger::Hotkey {
                 binding: "Ctrl+H".to_string(),
+                extra: Default::default(),
             },
             WorkflowTrigger::OnConnect {
                 connection_ids: vec!["a".to_string()],
+                extra: Default::default(),
             },
             WorkflowTrigger::OnDisconnect {
                 connection_ids: vec!["b".to_string()],
                 when: None,
+                extra: Default::default(),
             },
             WorkflowTrigger::OnOutputMatch {
                 connection_ids: vec!["c".to_string()],
@@ -806,6 +863,7 @@ mod tests {
                 is_regex: None,
                 cooldown_ms: None,
                 max_fires_per_session: None,
+                extra: Default::default(),
             },
         ];
         let bound: Vec<String> = triggers
@@ -833,9 +891,11 @@ mod tests {
                         WorkflowTrigger::Manual,
                         WorkflowTrigger::OnConnect {
                             connection_ids: vec!["c1".to_string()],
+                            extra: Default::default()
                         },
                         WorkflowTrigger::Hotkey {
                             binding: "Ctrl+Alt+H".to_string(),
+                            extra: Default::default()
                         },
                     ]
                 );
@@ -909,6 +969,7 @@ mod tests {
             triggers_enabled: true,
             created_at: String::new(),
             updated_at: String::new(),
+            extra: Default::default(),
         };
         let json = serde_json::to_string(&wf).unwrap();
         assert!(!json.contains("parameters"));
@@ -924,6 +985,7 @@ mod tests {
                 default: Some(serde_json::json!("localhost")),
                 required: Some(true),
                 options: None,
+                extra: Default::default(),
             },
             WorkflowParameter {
                 name: "port".to_string(),
@@ -932,6 +994,7 @@ mod tests {
                 default: Some(serde_json::json!(22)),
                 required: None,
                 options: None,
+                extra: Default::default(),
             },
             WorkflowParameter {
                 name: "env".to_string(),
@@ -940,6 +1003,7 @@ mod tests {
                 default: Some(serde_json::json!("dev")),
                 required: None,
                 options: Some(vec!["dev".to_string(), "prod".to_string()]),
+                extra: Default::default(),
             },
         ];
         let wf = Workflow {
@@ -956,6 +1020,7 @@ mod tests {
             triggers_enabled: true,
             created_at: String::new(),
             updated_at: String::new(),
+            extra: Default::default(),
         };
         let json = serde_json::to_string(&wf).unwrap();
         // `type` is the wire key; the value is lowercase; camelCase fields.
@@ -975,6 +1040,7 @@ mod tests {
                 left: "${env}".to_string(),
                 op: WorkflowComparisonOp::Eq,
                 right: "prod".to_string(),
+                extra: Default::default(),
             },
             then: vec![WorkflowStep::SendCommand {
                 error_handling: Default::default(),
@@ -1004,6 +1070,7 @@ mod tests {
                 left: "a".to_string(),
                 op: WorkflowComparisonOp::Ne,
                 right: "b".to_string(),
+                extra: Default::default(),
             },
             then: vec![],
             otherwise: vec![],
@@ -1028,6 +1095,7 @@ mod tests {
                 left: "1".to_string(),
                 op: WorkflowComparisonOp::Lt,
                 right: "2".to_string(),
+                extra: Default::default(),
             },
             then: vec![WorkflowStep::Wait {
                 error_handling: Default::default(),
@@ -1041,6 +1109,7 @@ mod tests {
                 left: "x".to_string(),
                 op: WorkflowComparisonOp::Contains,
                 right: "y".to_string(),
+                extra: Default::default(),
             },
             then: vec![inner],
             otherwise: vec![],
@@ -1084,7 +1153,10 @@ mod tests {
     fn loop_count_step_round_trips_with_kind_and_camel_case() {
         let step = WorkflowStep::Loop {
             error_handling: Default::default(),
-            mode: WorkflowLoopMode::Count { count: 3 },
+            mode: WorkflowLoopMode::Count {
+                count: 3,
+                extra: Default::default(),
+            },
             body: vec![WorkflowStep::SendCommand {
                 error_handling: Default::default(),
                 command: "echo ${iteration}".to_string(),
@@ -1108,7 +1180,9 @@ mod tests {
                     left: "${iteration}".to_string(),
                     op: WorkflowComparisonOp::Lt,
                     right: "5".to_string(),
+                    extra: Default::default(),
                 },
+                extra: Default::default(),
             },
             body: vec![WorkflowStep::Wait {
                 error_handling: Default::default(),
@@ -1131,7 +1205,10 @@ mod tests {
             parsed,
             WorkflowStep::Loop {
                 error_handling: Default::default(),
-                mode: WorkflowLoopMode::Count { count: 2 },
+                mode: WorkflowLoopMode::Count {
+                    count: 2,
+                    extra: Default::default()
+                },
                 body: vec![],
             }
         );
@@ -1142,7 +1219,10 @@ mod tests {
         // A loop's body is an ordinary step list, so a loop can contain a loop.
         let inner = WorkflowStep::Loop {
             error_handling: Default::default(),
-            mode: WorkflowLoopMode::Count { count: 2 },
+            mode: WorkflowLoopMode::Count {
+                count: 2,
+                extra: Default::default(),
+            },
             body: vec![WorkflowStep::SendCommand {
                 error_handling: Default::default(),
                 command: "inner".to_string(),
@@ -1155,7 +1235,9 @@ mod tests {
                     left: "a".to_string(),
                     op: WorkflowComparisonOp::Ne,
                     right: "b".to_string(),
+                    extra: Default::default(),
                 },
+                extra: Default::default(),
             },
             body: vec![inner],
         };
@@ -1219,6 +1301,7 @@ mod tests {
             default: None,
             required: None,
             options: None,
+            extra: Default::default(),
         };
         let json = serde_json::to_string(&param).unwrap();
         assert!(!json.contains("label"));

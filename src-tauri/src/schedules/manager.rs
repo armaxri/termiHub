@@ -100,6 +100,16 @@ fn parse_ts(s: Option<&str>) -> Option<DateTime<Utc>> {
         .map(|d| d.with_timezone(&Utc))
 }
 
+/// `targets` without blank or repeated connection ids.
+fn normalized_targets(targets: &ScheduleTargets) -> ScheduleTargets {
+    let mut targets = targets.clone();
+    if let ScheduleTargets::Connections { connection_ids } = &mut targets {
+        let mut seen = BTreeSet::new();
+        connection_ids.retain(|c| !c.trim().is_empty() && seen.insert(c.clone()));
+    }
+    targets
+}
+
 /// The interval origin: when the schedule was (last) enabled or re-timed.
 pub(super) fn anchor_of(s: &Schedule, now: DateTime<Utc>) -> DateTime<Utc> {
     parse_ts(s.enabled_at.as_deref())
@@ -240,10 +250,7 @@ impl ScheduleManager {
         validate_input(&input)?;
         input.name = input.name.trim().to_string();
         input.description = normalize_description(input.description.take());
-        if let ScheduleTargets::Connections { connection_ids } = &mut input.targets {
-            let mut seen = BTreeSet::new();
-            connection_ids.retain(|c| !c.trim().is_empty() && seen.insert(c.clone()));
-        }
+        input.targets = normalized_targets(&input.targets);
         if input.id.trim().is_empty() {
             input.id = format!("schedule-{}", uuid::Uuid::new_v4());
         }
@@ -253,6 +260,15 @@ impl ScheduleManager {
         let idx = match inner.store.schedules.iter().position(|s| s.id == input.id) {
             Some(i) => {
                 let s = &mut inner.store.schedules[i];
+                // What an editor cannot show is kept, not read as a change
+                // (#5983): the pending legacy kind of the same automation, and
+                // the stored spelling of the same targets.
+                if input.action.automation_id() == s.action.automation_id() {
+                    input.action = s.action.clone();
+                }
+                if normalized_targets(&s.targets) == input.targets {
+                    input.targets = s.targets.clone();
+                }
                 // Newly connecting targets unattended is a wider reach than
                 // before, so it needs a fresh confirmation too (#3527);
                 // turning it off never does.
@@ -297,6 +313,7 @@ impl ScheduleManager {
                     history: Vec::new(),
                     created_at: stamp.clone(),
                     updated_at: stamp,
+                    extra: serde_json::Map::new(),
                 });
                 inner.store.schedules.len() - 1
             }
@@ -595,3 +612,7 @@ mod connect_tests;
 #[cfg(test)]
 #[path = "manager_description_tests.rs"]
 mod description_tests;
+
+#[cfg(test)]
+#[path = "manager_edit_tests.rs"]
+mod edit_tests;

@@ -3,7 +3,8 @@ import type { WorkflowStepRetry } from "./WorkflowStepRetry";
 
 /**
  * Optional per-step error handling shared by every [`WorkflowStep`] kind
- * (PROD-045), flattened into the step's JSON object next to its `kind`. Both
+ * (PROD-045), flattened into the step's JSON object next to its `kind`. As the
+ * one part every step kind has, it also keeps the step's unknown keys. Both
  * fields are omitted when absent, so a step authored before this feature
  * round-trips byte-identically and keeps today's behaviour (no retry, the
  * first failure stops the run).

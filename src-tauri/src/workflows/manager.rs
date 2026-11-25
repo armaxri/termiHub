@@ -168,6 +168,7 @@ mod tests {
             triggers_enabled: true,
             created_at: String::new(),
             updated_at: String::new(),
+            extra: Default::default(),
         }
     }
 
@@ -314,6 +315,7 @@ mod tests {
     fn on_connect(ids: &[&str]) -> WorkflowTrigger {
         WorkflowTrigger::OnConnect {
             connection_ids: ids.iter().map(|s| s.to_string()).collect(),
+            extra: Default::default(),
         }
     }
 }

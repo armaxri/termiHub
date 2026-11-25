@@ -1193,7 +1193,9 @@ export async function executeStep(
     default: {
       // Exhaustiveness guard: a new step kind must add a case above.
       const _exhaustive: never = resolved;
-      return { ok: false, error: `unknown workflow step kind: ${JSON.stringify(_exhaustive)}` };
+      // Only the kind: the error is kept in the run history, the step is not.
+      const { kind } = _exhaustive as { kind: string };
+      return { ok: false, error: `unknown workflow step kind: "${kind}"` };
     }
   }
 }
