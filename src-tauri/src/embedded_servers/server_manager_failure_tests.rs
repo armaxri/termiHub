@@ -18,9 +18,10 @@ use termihub_core::util::service_cause::ServiceCause;
 use termihub_core::util::service_host::ServiceHost;
 
 use super::host_tests::watch;
-use super::EmbeddedServerManager;
+use super::{EmbeddedServerManager, UNDO_KEPT};
 use crate::embedded_servers::config::{EmbeddedServerConfig, ServerState, ServerStatus};
 use crate::embedded_servers::secrets::tests::{http, FakeStore, LOCKED, UNLOCKED};
+use crate::embedded_servers::secrets::{credential_key, AuthSlot};
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::test_support::FakeAgent;
 use crate::utils::config_paths::ConfigDirOverride;
@@ -342,4 +343,79 @@ fn a_second_start_on_an_agent_is_rejected_until_stopped() {
         .start_server("web")
         .expect("a stopped server restarts");
     h.manager.stop_all();
+}
+
+// ─── Undo of a delete (#6076) ────────────────────────────────────────────────
+
+fn ids(h: &Harness) -> Vec<String> {
+    let configs = h.manager.get_configs().unwrap();
+    configs.into_iter().map(|config| config.id).collect()
+}
+
+fn password(h: &Harness, id: &str) -> Option<String> {
+    h.store.raw(&credential_key(id, AuthSlot::HttpBasic))
+}
+
+#[test]
+fn a_deleted_server_comes_back_at_its_place_with_its_password() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let h = harness(dir.path(), None);
+    for id in ["a", "b", "c"] {
+        h.manager.save_config(http_on(id, 0, root.path())).unwrap();
+    }
+    h.manager.start_server("b").unwrap();
+    h.manager.delete_config("b").unwrap();
+    assert_eq!(ids(&h), ["a", "c"]);
+    assert_eq!(password(&h, "b"), None, "not kept in the store");
+
+    h.manager.restore_deleted("b").unwrap();
+    assert_eq!(ids(&h), ["a", "b", "c"]);
+    assert_eq!(password(&h, "b").as_deref(), Some("pw"));
+    let state = h.state_of("b");
+    assert_eq!(state.status, ServerStatus::Stopped, "not started");
+    h.manager.start_server("b").expect("starts as before");
+    h.manager.stop_all();
+    // Written, too.
+    let again = harness(dir.path(), None);
+    assert_eq!(ids(&again), ["a", "b", "c"]);
+    // Once.
+    h.manager.restore_deleted("b").expect_err("nothing to undo");
+    assert_eq!(ids(&h), ["a", "b", "c"]);
+}
+
+#[test]
+fn a_password_comes_back_when_the_store_was_locked_meanwhile() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let h = harness(dir.path(), None);
+    h.manager.save_config(http_on("a", 0, root.path())).unwrap();
+    h.manager.delete_config("a").unwrap();
+    h.store.set_status(LOCKED);
+    h.manager.restore_deleted("a").unwrap();
+    // It starts in this session, and is stored after the unlock.
+    h.manager.start_server("a").expect("held in memory");
+    h.store.set_status(UNLOCKED);
+    h.manager.sync_secrets();
+    assert_eq!(password(&h, "a").as_deref(), Some("pw"));
+    h.manager.stop_all();
+}
+
+#[test]
+fn a_delete_is_final_after_a_while() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let h = harness(dir.path(), None);
+    h.manager.save_config(http_on("a", 0, root.path())).unwrap();
+    h.manager.delete_config("a").unwrap();
+    h.manager
+        .forget_deleted(Instant::now() + UNDO_KEPT - Duration::from_secs(1));
+    assert!(h.manager.lock_deleted().contains_key("a"));
+    h.manager.forget_deleted(Instant::now() + UNDO_KEPT);
+    let err = h.manager.restore_deleted("a").expect_err("too late");
+    assert!(
+        err.to_string().contains("no longer be brought back"),
+        "{err}"
+    );
+    assert!(ids(&h).is_empty());
 }

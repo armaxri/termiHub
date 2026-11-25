@@ -61,6 +61,10 @@ impl HostedTunnel {
 impl HostedKind for HostedTunnels {
     type State = HostedTunnel;
 
+    fn unknown_state(_id: &str) -> HostedTunnel {
+        HostedTunnel::default()
+    }
+
     fn stop_request(id: &str) -> (&'static str, Value) {
         let params = TunnelStopParams {
             tunnel_id: id.to_string(),
