@@ -484,6 +484,32 @@ fn on_windows_a_bare_name_is_the_exe_on_path() {
     }
 }
 
+/// A program of this system, its file, and an interpreter.
+struct Here {
+    env: SearchEnv,
+    program: &'static str,
+    path: String,
+    interpreter: &'static str,
+}
+
+fn here() -> Here {
+    let (env, program, interpreter) = if cfg!(windows) {
+        (SearchEnv::current(), "where", "cmd")
+    } else {
+        (env(), "true", "sh")
+    };
+    let path = judge(Some(&settings(&[])), program, &env)
+        .unwrap()
+        .program
+        .path;
+    Here {
+        path: path.to_str().unwrap().to_string(),
+        env,
+        program,
+        interpreter,
+    }
+}
+
 fn unconfirmed(_: &Path) -> Standing {
     Standing::Unconfirmed {
         names: vec!["Outer".into(), "Inner".into()],
@@ -492,11 +518,11 @@ fn unconfirmed(_: &Path) -> Standing {
 
 /// #6019: the list is for the user's own automations.
 #[test]
-#[cfg(unix)]
 fn the_list_does_not_count_for_an_automation_that_is_not_ones_own() {
-    let on = settings(&["true", "/usr/bin/true"]);
+    let here = here();
+    let on = settings(&[here.program, &here.path]);
     let start = |standing: Standing, approved: Option<&str>| {
-        authorize(Some(&on), "true", approved, &env(), |_| standing)
+        authorize(Some(&on), here.program, approved, &here.env, |_| standing)
     };
     assert!(start(Standing::Own, None).is_ok());
     let reason = start(unconfirmed(Path::new("")), None).unwrap_err();
@@ -504,70 +530,78 @@ fn the_list_does_not_count_for_an_automation_that_is_not_ones_own() {
         reason.contains("“Outer” and “Inner” came from a file"),
         "{reason}"
     );
-    assert!(reason.contains("/usr/bin/true"), "{reason}");
+    assert!(reason.contains(&here.path), "{reason}");
     let reason = start(Standing::Unknown, None).unwrap_err();
     assert!(
         reason.contains("does not belong to a saved automation"),
         "{reason}"
     );
     // The user's answer to the question, for this run and this file only.
+    let another = format!("{}x", here.path);
     for standing in [unconfirmed(Path::new("")), Standing::Unknown] {
-        assert!(start(standing.clone(), Some("/usr/bin/true")).is_ok());
-        assert!(start(standing, Some("/usr/bin/false")).is_err());
+        assert!(start(standing.clone(), Some(&here.path)).is_ok());
+        assert!(start(standing, Some(&another)).is_err());
     }
 }
 
 /// A confirmed command needs no entry of the list, but both switches.
 #[test]
-#[cfg(unix)]
 fn a_confirmed_command_starts_without_being_listed() {
-    let confirmed = |_: &Path| Standing::Confirmed;
-    assert!(authorize(Some(&settings(&[])), "true", None, &env(), confirmed).is_ok());
+    let here = here();
+    let start = |settings: &AppSettings| {
+        authorize(Some(settings), here.program, None, &here.env, |_| {
+            Standing::Confirmed
+        })
+    };
+    assert!(start(&settings(&[])).is_ok());
     let off = AppSettings {
         workflow_local_process_enabled: false,
-        ..settings(&["true"])
+        ..settings(&[here.program])
     };
-    assert!(authorize(Some(&off), "true", None, &env(), confirmed).is_err());
+    assert!(start(&off).is_err());
     let not_experimental = AppSettings {
         experimental_features_enabled: None,
-        ..settings(&["true"])
+        ..settings(&[here.program])
     };
-    assert!(authorize(Some(&not_experimental), "true", None, &env(), confirmed).is_err());
+    assert!(start(&not_experimental).is_err());
 }
 
 /// The question is about the file that starts.
 #[test]
-#[cfg(unix)]
 fn the_standing_is_asked_for_the_resolved_file() {
+    let here = here();
+    let spaced = format!(" {} ", here.program);
     let mut asked = None;
-    let _ = authorize(Some(&settings(&[])), " true ", None, &env(), |path| {
+    let _ = authorize(Some(&settings(&[])), &spaced, None, &here.env, |path| {
         asked = Some(path.to_path_buf());
         Standing::Own
     });
-    assert_eq!(asked.as_deref(), Some(Path::new("/usr/bin/true")));
+    assert_eq!(asked.as_deref(), Some(Path::new(&here.path)));
 }
 
 #[test]
-#[cfg(unix)]
 fn the_check_says_what_always_would_remember() {
+    let here = here();
     let ask = |program: &str, standing: Standing| {
-        serde_json::to_value(check(Some(&settings(&[])), program, &env(), |_| standing)).unwrap()
+        let answer = check(Some(&settings(&[])), program, &here.env, |_| standing);
+        serde_json::to_value(answer).unwrap()
     };
-    let mine = ask("true", Standing::Own);
+    let mine = ask(here.program, Standing::Own);
     assert_eq!(mine["remember"], "program");
     assert_eq!(mine["imported"], serde_json::json!([]));
     assert_eq!(mine["interpreter"], false);
-    let theirs = ask("sh", unconfirmed(Path::new("")));
+    let theirs = ask(here.interpreter, unconfirmed(Path::new("")));
     assert_eq!(theirs["status"], "ask");
     assert_eq!(theirs["remember"], "command");
     assert_eq!(theirs["imported"], serde_json::json!(["Outer", "Inner"]));
     assert_eq!(theirs["interpreter"], true);
-    assert_eq!(ask("true", Standing::Unknown)["remember"], "nothing");
+    assert_eq!(ask(here.program, Standing::Unknown)["remember"], "nothing");
     // Listed, and still a question.
-    let listed = check(Some(&settings(&["true"])), "true", &env(), unconfirmed);
+    let on = settings(&[here.program]);
+    let listed = check(Some(&on), here.program, &here.env, unconfirmed);
     assert!(matches!(listed, LocalProcessCheck::Ask { .. }));
     assert!(matches!(
-        check(Some(&settings(&[])), "true", &env(), |_| {
+        check(Some(&settings(&[])), here.program, &here.env, |_| {
             Standing::Confirmed
         }),
         LocalProcessCheck::Allowed { .. }
