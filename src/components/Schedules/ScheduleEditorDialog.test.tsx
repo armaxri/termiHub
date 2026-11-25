@@ -301,6 +301,20 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
       expect(summary()).toEqual(["Skipped where the connection is closed."]);
     });
 
+    it("drops an answer once the rule changed, until the new one is known", async () => {
+      preview.mockImplementation((rule) =>
+        rule.kind === "daily" && rule.time === "02:00"
+          ? Promise.resolve(tomorrow.toISOString())
+          : new Promise(() => {})
+      );
+      render({ schedule: nightly, enabled: true, previewNextRun: preview });
+      await flushAsync();
+      expect(summary()[0]).toBe("Next run: tomorrow 02:00 on web-2.");
+      setInput("schedule-editor-time", "03:00");
+      await flushAsync();
+      expect(summary()).toEqual(["Skipped where the connection is closed."]);
+    });
+
     it("says it when all schedules are paused", async () => {
       render({ schedule: nightly, enabled: true, paused: true, previewNextRun: preview });
       await flushAsync();
