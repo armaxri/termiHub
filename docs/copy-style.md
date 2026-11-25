@@ -214,6 +214,10 @@ The row is `ServiceListItem`, its words are in `serviceModel.ts`. Rules for them
   for first, Save always on screen with the reason beside it while it cannot save. Who can open it is
   said in words, with the address that comes out of it. A **new file server is for this computer only and
   to download**, and whenever others can reach one, an amber warning says who and what they can do.
+- **A port is preset free**: an editor never presets a port that another service of this computer is set
+  to, and says it of a typed one with the free one beside it ("Port 8080 is used by "Release builds". Use
+  8081"). Where devices expect a port of their own (TFTP, 69), the editor says so and what opening it
+  needs.
 - **Delete is undone, not warned about**: the same dialog and the same Undo for both kinds. It says what
   breaks ("1 open connection") and, of a file server, that the folder and its files stay.
 - A **list says in numbers** what its rows say: running, error, not known, reconnecting, waiting.

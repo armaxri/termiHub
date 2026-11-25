@@ -368,6 +368,57 @@ describe("who can open it", () => {
   });
 });
 
+describe("its port (V-002, V-003)", () => {
+  it("is one that no service of this computer is set to", async () => {
+    seed([
+      DOCS,
+      { ...DOCS, id: "srv-2", port: 8081 },
+      { ...DOCS, id: "far", port: 8082, host: { kind: "agent", agentId: "a1" } as never },
+    ]);
+    await render({ serverType: "http" });
+    expect((field("port") as HTMLInputElement).value).toBe("8082");
+    expect(byTestId("server-dialog-port-taken")).toBeNull();
+    // The kind's preset moves with it.
+    await act(async () => byTestId("server-editor-change-type")!.click());
+    await press("proto-ftp");
+    expect((field("port") as HTMLInputElement).value).toBe("2121");
+  });
+
+  it("that another service is set to is said, with a free one", async () => {
+    seed([DOCS]);
+    await render({ serverType: "http" });
+    type("port", "8080");
+    expect(byTestId("server-dialog-port-taken")?.textContent).toBe(
+      'Port 8080 is used by "Docs". Use 8081'
+    );
+    await press("use-port");
+    expect((field("port") as HTMLInputElement).value).toBe("8081");
+    expect(byTestId("server-dialog-port-taken")).toBeNull();
+  });
+
+  it("of the server itself is not taken, nor one on another machine", async () => {
+    seed([DOCS]);
+    await render({ serverId: "srv-1" });
+    expect(byTestId("server-dialog-port-taken")).toBeNull();
+    await act(async () => byTestId("pick-agent")!.click());
+    type("port", "8080");
+    expect(byTestId("server-dialog-port-taken")).toBeNull();
+  });
+
+  it("of a TFTP server says that devices ask on 69", async () => {
+    await render({ serverType: "tftp" });
+    expect(byTestId("server-dialog-tftp-port")?.textContent).toBe(
+      "Devices usually ask on port 69. Set the device to port 6969, or use 69 here."
+    );
+    type("port", "69");
+    expect(byTestId("server-dialog-tftp-port")?.textContent).toContain(
+      "Devices ask on this port by default."
+    );
+    await render({ serverType: "http" }, "tab-2");
+    expect(byTestId("server-dialog-tftp-port")).toBeNull();
+  });
+});
+
 describe("the sign-in", () => {
   it("asks for both, and saves them for the kind", async () => {
     await render({ serverType: "http" });

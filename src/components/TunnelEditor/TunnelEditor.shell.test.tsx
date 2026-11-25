@@ -240,6 +240,39 @@ describe("who can open it", () => {
   });
 });
 
+describe("its port (V-002)", () => {
+  it("is one that no service of this computer is set to", async () => {
+    seed(DB);
+    useAppStore.setState({ embeddedServers: [{ id: "s", name: "Docs", port: 8080 } as never] });
+    await render({ tunnelType: "local" });
+    expect(field("local-port").value).toBe("8081");
+    type("local-port", "15432");
+    expect(text("port-taken")).toBe('Port 15432 is used by "Shop database". Use 15433');
+    await press("use-port");
+    expect(field("local-port").value).toBe("15433");
+  });
+
+  it("of the tunnel itself is not taken, nor the server's of a remote one", async () => {
+    seed(DB);
+    await render({ tunnelId: "db" });
+    expect(byTestId("tunnel-editor-port-taken")).toBeNull();
+  });
+
+  it("of a remote tunnel is the server's", async () => {
+    seed(DB);
+    await render({ tunnelType: "remote" });
+    type("remote-port", "15432");
+    expect(byTestId("tunnel-editor-port-taken")).toBeNull();
+  });
+
+  it("names a remote and a dynamic tunnel by what they are for (V-008)", async () => {
+    await render({ tunnelType: "dynamic" });
+    leaveField(field("local-port"));
+    expect(field("name").value).toBe("Browse through Build Box");
+    expect(field("name").placeholder).toBe("e.g. Office network");
+  });
+});
+
 describe("a running tunnel", () => {
   it("says when changes apply, and can be restarted with them", async () => {
     seed(DB, "connected");
