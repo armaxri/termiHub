@@ -780,7 +780,9 @@ jobs:
         # frontmost, and the right-click and keyboard grades failed the same way
         # (#5031). The bulk step above excludes them; here they run in their own
         # session at `-n 1`, after the bulk session has exited, so no other test
-        # app is on the desktop. `-n 1` keeps the hang guard armed and, with one
+        # app is on the desktop. test_os_input_desktop.py runs first: it ends an app
+        # the bulk session leaked and fails naming its test, so one leak is one
+        # failure (#6046). `-n 1` keeps the hang guard armed and, with one
         # worker, the harness uses the uncontended deadlines.
         #
         # !cancelled(): runs even when the bulk step failed, so a bulk red never
@@ -791,7 +793,7 @@ jobs:
         shell: bash
         env:
           TERMIHUB_SKIP_GUARD_LANE: ${{ matrix.os == 'macos-latest' && 'os-input-macos' || 'os-input-windows' }}
-        run: ./tests/system/pytest.sh -m integration tests/test_os_input_keyboard.py tests/test_os_input_pointer.py tests/test_os_input_macos_app.py tests/test_os_input_native_drag.py -n 1 --dist loadscope -v --durations=25 --reruns 2 --reruns-delay 1 -r aR --rerun-show-tracebacks
+        run: ./tests/system/pytest.sh -m integration tests/test_os_input_desktop.py tests/test_os_input_keyboard.py tests/test_os_input_pointer.py tests/test_os_input_macos_app.py tests/test_os_input_native_drag.py -n 1 --dist loadscope -v --durations=25 --reruns 2 --reruns-delay 1 -r aR --rerun-show-tracebacks
 
       - name: macOS Quit delivery probe (debug bundle)
         # The macOS release smoke quits the installed app by clicking its own

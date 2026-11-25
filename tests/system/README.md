@@ -647,6 +647,11 @@ the old WebdriverIO find-by-title lookups. Tab lookups use the `TabsUi` mixin's
   each instance pins its WebView2 user-data folder (via `WEBVIEW2_USER_DATA_FOLDER`)
   so `stop()` can reap the `msedgewebview2.exe` hosts, which live outside the app
   process tree and would otherwise leak across back-to-back runs (issue #1022).
+  An app that outlives its test is ended after that test and reported; one that outlives its
+  whole session is ended at the session's end (#5086, #6046). What a *finished* session still
+  left behind is ended by `test_os_input_desktop.py`, which fails and names the test that
+  launched it. Only an app of this checkout's `target/` with a harness config dir, a bridge
+  port and an owner session that is over is ever ended; anything else is only named.
   Each Windows instance also gives its PowerShells a private PSReadLine history
   with predictions off (#5055, `termihub_harness.psreadline`): a shim module named
   `PSReadLine` goes first on the app's `PSModulePath`, loads the real one and sets

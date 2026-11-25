@@ -92,6 +92,9 @@ class FakeInput(OsInput):
         #: Descriptions the exclusive-desktop guard reports (#5467); none by default.
         self.foreign: list[str] = []
 
+    def _end_own_leaks(self):
+        pass  # the process table is not read here
+
     def _foreign_apps(self, timeout):
         self.calls.append(("foreign-check",))
         return list(self.foreign)
@@ -743,10 +746,14 @@ def test_the_real_guard_waits_on_the_allowed_pids(monkeypatch):
         return []
 
     monkeypatch.setattr(app_leaks, "wait_for_foreign_apps", fake_wait)
+    monkeypatch.setattr(
+        app_leaks, "end_leaks_of_gone_sessions", lambda allowed: seen.append(set(allowed)) or []
+    )
     backend = OsInput(100, env=CI)
     backend.allow_pid(300)
     backend.require_exclusive_desktop(timeout=1.5)
-    assert seen == [({100, 300}, 1.5)]
+    # A leak of a finished session is ended before the rest is judged (#6046).
+    assert seen == [{100, 300}, ({100, 300}, 1.5)]
 
 
 def test_a_multi_worker_session_is_not_exclusive():

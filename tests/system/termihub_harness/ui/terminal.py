@@ -36,6 +36,16 @@ SESSION_LIFECYCLE_REGION = "session-lifecycle"
 _EXITED_STATUSES = frozenset({"disconnected", "failed", "sessionLost"})
 
 
+#: Lines of a terminal a failed wait shows.
+TAIL_LINES = 15
+
+
+def terminal_tail(text: str, lines: int = TAIL_LINES) -> str:
+    """The last non-blank ``lines`` of a terminal, for a failure message."""
+    shown = [line.rstrip() for line in text.splitlines() if line.strip()]
+    return "\n".join(f"  | {line}" for line in shown[-lines:]) or "  | (nothing)"
+
+
 class TerminalUi(HarnessMixin):
     """Create a terminal, send commands, and poll its output."""
 
@@ -231,10 +241,18 @@ class TerminalUi(HarnessMixin):
     ) -> str:
         """Poll a terminal until it contains ``needle``; return the full text.
 
-        Reads the active terminal unless ``tab_id`` names a specific one.
+        Reads the active terminal unless ``tab_id`` names a specific one. On a
+        timeout the error ends with what the terminal shows (#6046): only the
+        last attempt of a rerun test keeps its ``terminal.txt``.
         """
-        return self.wait(
-            lambda: (lambda t: t if needle in t else None)(self.driver.read_terminal(tab_id)),
-            timeout=timeout,
-            what=f"{needle!r} in terminal output",
-        )
+        last = ""
+
+        def found() -> Optional[str]:
+            nonlocal last
+            last = self.driver.read_terminal(tab_id)
+            return last if needle in last else None
+
+        try:
+            return self.wait(found, timeout=timeout, what=f"{needle!r} in terminal output")
+        except AssertionError as exc:
+            raise AssertionError(f"{exc}\nthe terminal shows:\n{terminal_tail(last)}") from None

@@ -398,7 +398,7 @@ class AppInstance:
             self._binary = binary
             self._owns_config_dir = config_dir is None
             self._config_dir = config_dir or Path(
-                tempfile.mkdtemp(prefix="termihub-app-config-")
+                tempfile.mkdtemp(prefix=app_leaks.CONFIG_DIR_PREFIX)
             )
             self._scratch_dir = self._config_dir
             if sandbox_profile:
@@ -516,7 +516,7 @@ class AppInstance:
         env["TERMIHUB_LOG_DIR"] = str(self.log_dir)
         env["TERMIHUB_SPAWN_ENDPOINT"] = self.spawn_endpoint
         # A CLI run that falls through to a full launch is found as a leak (#5086).
-        env[app_leaks.OWNER_ENV] = app_leaks.launch_tag()
+        env.update(app_leaks.launch_env())
         env.update(self._profile_overrides())
         env.update(known_hosts.app_env())
         env.update(self._extra_env)
@@ -651,7 +651,7 @@ class AppInstance:
         env["TERMIHUB_SPAWN_ENDPOINT"] = self.spawn_endpoint
         # Tag the app (and any relaunch, which inherits it) with this pytest
         # process, so one it outlives its instance is found and reaped (#5086).
-        env[app_leaks.OWNER_ENV] = app_leaks.launch_tag()
+        env.update(app_leaks.launch_env())
         app_leaks.register(self)
         # Pin WebView2 to a per-instance user-data folder so teardown can reap
         # only this instance's msedgewebview2.exe hosts (issue #1022). The app
