@@ -98,6 +98,19 @@ async function openMenu(model: ServiceModel): Promise<string[]> {
   return Array.from(document.querySelectorAll("[role=menuitem]")).map((i) => i.textContent ?? "");
 }
 
+async function openMore(model: ServiceModel): Promise<string[]> {
+  const more = q(`${model.kind === "tunnel" ? "tunnel" : "server"}-more-${model.id}`)!;
+  act(() => {
+    more.dispatchEvent(
+      new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 })
+    );
+  });
+  await flush();
+  return Array.from(document.querySelectorAll("[role=menuitem]")).map((i) =>
+    (i.textContent ?? "").trim()
+  );
+}
+
 function press(el: HTMLElement, key: string, init: KeyboardEventInit = {}) {
   const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init });
   act(() => void el.dispatchEvent(event));
@@ -122,8 +135,8 @@ describe("what the row says", () => {
     ["server", serverIn("running"), "Running · Open a folder in a browser"],
     [
       "server",
-      serverIn("running", { host: { kind: "agent", agentId: "edge" } }),
-      "Running · Open a folder in a browser · agent Edge box",
+      serverIn("stopped", { host: { kind: "agent", agentId: "edge" } }),
+      "Stopped · Open a folder in a browser · agent Edge box",
     ],
   ])("what and where, after the state in words (%s)", (kind, model, line) => {
     render(model);
@@ -161,6 +174,13 @@ describe("what the row says", () => {
     }
   });
 
+  it("the machine beside an address that opens elsewhere, which is not copied", async () => {
+    render(serverIn("running", { host: { kind: "agent", agentId: "edge" } }));
+    expect(q("server-address-s")?.textContent).toBe("http://localhost:8080 on Edge box");
+    await act(async () => q("server-copy-address-s")!.click());
+    expect(writeText).toHaveBeenCalledWith("http://localhost:8080");
+  });
+
   it("the next step of a deleted connection", () => {
     const onNextStep = vi.fn();
     render(tunnelIn("missingConnection"), { onNextStep });
@@ -186,25 +206,20 @@ describe("what the row offers", () => {
   it("the run control at rest, the rest on hover, all in the model's order", () => {
     render(tunnelIn("connected"));
     expect(q("tunnel-primary-t")?.querySelector("button")?.getAttribute("aria-label")).toBe("Stop");
-    expect(onRow()).toEqual(["Edit", "Reconnect", "Duplicate", "Delete"]);
+    expect(onRow()).toEqual(["Edit", "More"]);
     render(serverIn("running"));
-    expect(onRow()).toEqual([
-      "Open in browser",
-      "Activity",
-      "Edit",
-      "Restart",
-      "Duplicate",
-      "Delete",
-    ]);
+    expect(onRow()).toEqual(["Activity", "Edit", "More"]);
   });
 
   it.each([tunnelIn("connected"), serverIn("running"), serverIn("error"), tunnelIn("waiting")])(
-    "the menu offers everything, in the same order and words (%#)",
+    "both menus offer everything, in the same order and words (%#)",
     async (model) => {
       render(model);
-      expect((await openMenu(model)).map((text) => text.trim())).toEqual(
-        model.actions.map((a) => a.label)
-      );
+      const words = model.actions.map((a) => a.label);
+      expect((await openMenu(model)).map((text) => text.trim())).toEqual(words);
+      press(document.querySelector<HTMLElement>("[role=menu]")!, "Escape");
+      await flush();
+      expect(await openMore(model)).toEqual(words);
     }
   );
 
@@ -223,7 +238,9 @@ describe("what the row offers", () => {
 
   it("opens the address in a browser", async () => {
     render(serverIn("running"));
-    await act(async () => q("server-open-browser-s")!.click());
+    await openMore(serverIn("running"));
+    await act(async () => q("server-more-open-browser-s")!.click());
+    await flush();
     expect(openUrl).toHaveBeenCalledWith("http://localhost:8080");
     expect(onAction).not.toHaveBeenCalled();
   });
@@ -296,11 +313,59 @@ describe("keys on the focused row", () => {
     expect(onAction).toHaveBeenCalledTimes(1);
   });
 
-  it("Space on a button inside is the button's", () => {
+  it.each([" ", "Enter", "Delete", "x"])("%j on a button inside is the button's", (key) => {
+    const list = vi.fn();
     const model = tunnelIn("connected");
-    render(model);
-    press(q("tunnel-delete-t")!, " ");
+    act(() => {
+      root.render(
+        withTooltip(
+          <div onKeyDown={list}>
+            <ServiceListItem model={model} tooltip={[]} onAction={onAction} />
+          </div>
+        )
+      );
+    });
+    const event = press(q("tunnel-edit-t")!, key);
     expect(onAction).not.toHaveBeenCalled();
+    // The list would take Enter, edit, and keep the button from being pressed.
+    expect(list).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("the arrows on a button inside move in the list", () => {
+    const list = vi.fn();
+    const model = tunnelIn("connected");
+    act(() => {
+      root.render(
+        withTooltip(
+          <div onKeyDown={list}>
+            <ServiceListItem model={model} tooltip={[]} onAction={onAction} />
+          </div>
+        )
+      );
+    });
+    press(q("tunnel-edit-t")!, "ArrowDown");
+    expect(list).toHaveBeenCalledTimes(1);
+  });
+
+  it("the keys of an open menu stay in it", async () => {
+    const list = vi.fn();
+    const model = tunnelIn("connected");
+    act(() => {
+      root.render(
+        withTooltip(
+          <div onKeyDown={list}>
+            <ServiceListItem model={model} tooltip={[]} onAction={onAction} />
+          </div>
+        )
+      );
+    });
+    await openMore(model);
+    press(document.querySelector<HTMLElement>("[role=menu]")!, "ArrowDown");
+    await openMenu(model);
+    for (const menu of Array.from(document.querySelectorAll<HTMLElement>("[role=menu]")))
+      press(menu, "ArrowDown");
+    expect(list).not.toHaveBeenCalled();
   });
 
   it("announces them, and only those that act", () => {

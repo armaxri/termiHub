@@ -87,16 +87,9 @@ describe("EmbeddedServerItem — run control and labelled dot (#5852)", () => {
     expect(dotEl.getAttribute("title")).toBe(dot);
   });
 
-  it("puts activity, edit, duplicate and delete in the hover group", () => {
+  it("puts activity, edit and the menu in the hover group", () => {
     render("running");
-    expect(labels(".sidebar-list-item__more")).toEqual([
-      "Open in browser",
-      "Activity",
-      "Edit",
-      "Restart",
-      "Duplicate",
-      "Delete",
-    ]);
+    expect(labels(".sidebar-list-item__more")).toEqual(["Activity", "Edit", "More"]);
     expect(q('[role="group"]')!.getAttribute("aria-label")).toBe("More actions for Docs share");
   });
 });

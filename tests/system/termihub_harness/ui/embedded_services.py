@@ -124,7 +124,7 @@ class EmbeddedServicesUi(HarnessMixin):
     def _confirm_delete(self) -> None:
         """Answer the delete-service confirmation dialog (#1393).
 
-        Both the inline ``server-delete-*`` button and the context-menu
+        Both the row's "…" menu item ``server-delete-*`` and the context-menu
         ``ctx-delete-*`` item now only *arm* a confirm dialog; without clicking
         its confirm button the delete never reaches the backend, which surfaced as
         a silent timeout on the now-live nightly lane (#2670).
@@ -137,7 +137,8 @@ class EmbeddedServicesUi(HarnessMixin):
 
     def delete_server(self, server_id: str, name: str) -> None:
         """Delete a server and wait for it to vanish from the store."""
-        self.driver.click(f"server-delete-{server_id}")
+        self.open_server_menu(server_id)
+        self.driver.click(f"ctx-delete-{server_id}")
         self._confirm_delete()
         self.wait(lambda: self.find_server(name) is None, what="the server to be deleted")
 

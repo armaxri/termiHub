@@ -29,7 +29,7 @@
 
 .service-row__kind,
 .service-row__reason,
-.service-row__address-text {
+.service-row__address {
   overflow-wrap: anywhere;
 }
 
@@ -42,18 +42,19 @@
   color: var(--color-error);
 }
 
-.service-row__address {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  min-width: 0;
+.service-row__address-text {
+  user-select: text;
+}
+
+.service-row__address-text code {
+  font-family: var(--font-mono);
   color: var(--text-primary);
 }
 
-.service-row__address-text {
-  font-family: var(--font-mono);
-  min-width: 0;
-  user-select: text;
+/* Copy follows the address like a word of it, so it never squeezes it. */
+.service-row__address .ui-btn {
+  vertical-align: middle;
+  margin-left: var(--spacing-xxs);
 }
 
 .service-row__next {

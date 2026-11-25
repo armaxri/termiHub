@@ -71,6 +71,8 @@ export interface ServiceWhere {
   label: string;
   /** On an agent, reachable or not. */
   agentId?: string;
+  /** The agent's name, when it is known. */
+  name?: string;
 }
 
 export interface ServiceModel {
@@ -172,6 +174,7 @@ function whereOf(host: HostChoice, agents: ServiceContext["agents"]): ServiceWhe
       ? tf("service.where.agent", { agent: agent.name })
       : t("service.where.agentRemoved"),
     agentId: host.agentId,
+    name: agent?.name,
   };
 }
 
@@ -182,8 +185,21 @@ function listenerOn(host: HostChoice, context: ServiceContext): Listener {
   return { on: "there", name: agent?.name ?? host.agentId, host: agent?.config?.host };
 }
 
-function kindLine(what: string, host: HostChoice, where: ServiceWhere): string {
-  return host.kind === "thisComputer" ? what : tf("service.kindLine", { what, where: where.label });
+/**
+ * What it is, and where unless that is this computer or the row says it anyway,
+ * beside the address or in the reason.
+ */
+function kindLine(
+  what: string,
+  host: HostChoice,
+  where: ServiceWhere,
+  said: readonly (string | undefined)[]
+): string {
+  const { name } = where;
+  const named = name !== undefined && said.some((text) => text?.includes(name));
+  return host.kind === "thisComputer" || named
+    ? what
+    : tf("service.kindLine", { what, where: where.label });
 }
 
 /** The address of a running tunnel: where others connect to it. */
@@ -230,6 +246,9 @@ export function tunnelModel(
   const running = serviceState === "running";
   const address = running ? tunnelAddress(config, state, host, context) : undefined;
   const needsConnection = serviceState === "needsConnection";
+  const reason = needsConnection
+    ? t("service.reason.needsConnection")
+    : serviceReason(serviceState, state?.error);
   const stats = running ? state?.stats : undefined;
   return {
     id: config.id,
@@ -239,11 +258,9 @@ export function tunnelModel(
     description: config.description,
     what,
     where,
-    kindLine: kindLine(what, host, where),
+    kindLine: kindLine(what, host, where, [address?.on, reason]),
     state: serviceState,
-    reason: needsConnection
-      ? t("service.reason.needsConnection")
-      : serviceReason(serviceState, state?.error),
+    reason,
     nextStep: needsConnection
       ? { id: "chooseConnection", label: t("service.next.chooseConnection") }
       : undefined,
@@ -281,6 +298,7 @@ export function fileServerModel(
   offered.add("activity");
   // Not for one that opens elsewhere: the browser here would find another localhost.
   if (address && !address.on && config.serverType === "http") offered.add("openInBrowser");
+  const reason = serviceReason(serviceState, state?.error);
   const stats = running ? state?.stats : undefined;
   return {
     id: config.id,
@@ -290,9 +308,9 @@ export function fileServerModel(
     description: config.description,
     what,
     where,
-    kindLine: kindLine(what, host, where),
+    kindLine: kindLine(what, host, where, [address?.on, reason]),
     state: serviceState,
-    reason: serviceReason(serviceState, state?.error),
+    reason,
     address,
     counters: stats && {
       sent: stats.bytesSent,

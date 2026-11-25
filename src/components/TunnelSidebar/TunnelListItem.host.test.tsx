@@ -102,6 +102,6 @@ describe("TunnelListItem — where it runs, on the row and in the tooltip (#2155
   it("names the agent for an agent-hosted tunnel", () => {
     renderItem({ ...BASE, host: { kind: "agent", agentId: "agent-1" } });
     expect(rowTooltip()).toContain("Hosted on agent build-box");
-    expect(row().textContent).toContain("· agent build-box");
+    expect(row().textContent).toContain("on build-box");
   });
 });

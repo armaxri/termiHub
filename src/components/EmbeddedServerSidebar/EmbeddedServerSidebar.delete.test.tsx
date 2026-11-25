@@ -16,6 +16,7 @@ import { useAppStore } from "@/store/appStore";
 import type { EmbeddedServerConfig, ServerState } from "@/types/embeddedServer";
 import { TooltipProvider } from "@/components/ui";
 import { EmbeddedServerSidebar } from "./EmbeddedServerSidebar";
+import { serviceMenuItem } from "@/test/serviceMenu";
 
 const toastSuccess = vi.fn();
 const toastError = vi.fn();
@@ -105,7 +106,7 @@ async function renderSidebar() {
 }
 
 async function clickDelete(id: string) {
-  const delBtn = container.querySelector<HTMLButtonElement>(`[data-testid="server-delete-${id}"]`);
+  const delBtn = serviceMenuItem(`server-delete-${id}`);
   await act(async () => {
     delBtn!.click();
   });

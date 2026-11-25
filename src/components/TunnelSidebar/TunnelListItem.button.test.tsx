@@ -15,6 +15,7 @@ import { TunnelListItem } from "./TunnelListItem";
 import { NO_CONTEXT } from "@/test/serviceContext";
 import { withTooltip } from "@/test/tooltip";
 import type { TunnelConfig, TunnelState } from "@/types/tunnel";
+import { serviceMenuItem } from "@/test/serviceMenu";
 
 const TUNNEL: TunnelConfig = {
   id: "tun-1",
@@ -93,12 +94,7 @@ describe("TunnelListItem — shared Button primitive (#1259)", () => {
     renderItem(undefined);
     await flush();
 
-    const ids = [
-      "tunnel-start-tun-1",
-      "tunnel-edit-tun-1",
-      "tunnel-duplicate-tun-1",
-      "tunnel-delete-tun-1",
-    ];
+    const ids = ["tunnel-start-tun-1", "tunnel-edit-tun-1", "tunnel-more-tun-1"];
     for (const id of ids) {
       const btn = container.querySelector<HTMLButtonElement>(`[data-testid="${id}"]`);
       expect(btn, id).not.toBeNull();
@@ -163,37 +159,20 @@ describe("TunnelListItem — shared Button primitive (#1259)", () => {
   });
 
   it("offers a force-Reconnect on a connected tunnel that fires onReconnect (#1243)", async () => {
-    let resolveReconnect!: () => void;
-    const onReconnect = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          resolveReconnect = resolve;
-        })
-    );
+    const onReconnect = vi.fn(() => Promise.resolve());
     renderItem({ tunnelId: "tun-1", status: "connected" } as TunnelState, { onReconnect });
     await flush();
 
-    const reconnect = container.querySelector<HTMLButtonElement>(
-      '[data-testid="tunnel-reconnect-tun-1"]'
-    )!;
-    expect(reconnect).toBeTruthy();
+    const reconnect = serviceMenuItem("tunnel-reconnect-tun-1")!;
+    expect(reconnect.textContent).toContain("Reconnect");
     click(reconnect);
     await flush();
-
     expect(onReconnect).toHaveBeenCalledWith("tun-1");
-    expect(reconnect.classList.contains("ui-btn--pending")).toBe(true);
-
-    await act(async () => {
-      resolveReconnect();
-      await Promise.resolve();
-    });
-
-    expect(reconnect.classList.contains("ui-btn--pending")).toBe(false);
   });
 
   it("does not offer Reconnect on a disconnected tunnel", () => {
     renderItem(undefined);
-    expect(container.querySelector('[data-testid="tunnel-reconnect-tun-1"]')).toBeNull();
+    expect(serviceMenuItem("tunnel-reconnect-tun-1")).toBeNull();
   });
 
   it("drives the Button async lifecycle on Retry when the tunnel is in error", async () => {

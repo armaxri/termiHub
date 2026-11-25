@@ -14,6 +14,7 @@ import { useAppStore } from "@/store/appStore";
 import type { TunnelConfig, TunnelState } from "@/types/tunnel";
 import { TooltipProvider } from "@/components/ui";
 import { TunnelSidebar } from "./TunnelSidebar";
+import { serviceMenuItem } from "@/test/serviceMenu";
 
 const mockStopTunnel = vi.fn(() => Promise.resolve());
 const mockReconnectTunnel = vi.fn(() => Promise.resolve());
@@ -156,9 +157,7 @@ describe("TunnelSidebar — stop/reconnect confirmation (UX-021)", () => {
     seedStore(makeTunnel("tun-1", "Live Tunnel"), makeState("tun-1", "connected"));
     await renderSidebar();
 
-    const reconnectBtn = container.querySelector<HTMLButtonElement>(
-      '[data-testid="tunnel-reconnect-tun-1"]'
-    );
+    const reconnectBtn = serviceMenuItem("tunnel-reconnect-tun-1");
     expect(reconnectBtn).not.toBeNull();
     await act(async () => reconnectBtn!.click());
     await flush();

@@ -83,8 +83,7 @@ const CONVERTED_ACTIONS: Array<{ testid: string; label: string; running: boolean
   { testid: "server-start-srv-1", label: "Start", running: false },
   { testid: "server-stop-srv-1", label: "Stop", running: true },
   { testid: "server-edit-srv-1", label: "Edit", running: false },
-  { testid: "server-duplicate-srv-1", label: "Duplicate", running: false },
-  { testid: "server-delete-srv-1", label: "Delete", running: false },
+  { testid: "server-more-srv-1", label: "More", running: false },
 ];
 
 describe("EmbeddedServerItem tooltip adoption", () => {

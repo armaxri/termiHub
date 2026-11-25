@@ -84,12 +84,9 @@ describe("TunnelListItem — tooltip adoption (#1114)", () => {
     // Disconnected → Start is shown (not Stop).
     const start = container.querySelector<HTMLButtonElement>('[data-testid="tunnel-start-tun-1"]');
     const edit = container.querySelector<HTMLButtonElement>('[data-testid="tunnel-edit-tun-1"]');
-    const dup = container.querySelector<HTMLButtonElement>(
-      '[data-testid="tunnel-duplicate-tun-1"]'
-    );
-    const del = container.querySelector<HTMLButtonElement>('[data-testid="tunnel-delete-tun-1"]');
+    const more = container.querySelector<HTMLButtonElement>('[data-testid="tunnel-more-tun-1"]');
 
-    for (const btn of [start, edit, dup, del]) {
+    for (const btn of [start, edit, more]) {
       expect(btn).not.toBeNull();
       expect(btn?.getAttribute("aria-label")).toBeTruthy();
       // The tooltip must not leak into the accessible name as a bare title.

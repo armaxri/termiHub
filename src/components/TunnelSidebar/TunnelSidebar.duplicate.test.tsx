@@ -13,6 +13,7 @@ import { useAppStore } from "@/store/appStore";
 import type { TunnelConfig } from "@/types/tunnel";
 import { TooltipProvider } from "@/components/ui";
 import { TunnelSidebar } from "./TunnelSidebar";
+import { serviceMenuItem } from "@/test/serviceMenu";
 
 const toastSuccess = vi.fn();
 const toastError = vi.fn();
@@ -91,7 +92,7 @@ async function renderSidebar() {
 }
 
 async function clickDuplicate() {
-  const btn = container.querySelector<HTMLButtonElement>('[data-testid="tunnel-duplicate-tun-1"]');
+  const btn = serviceMenuItem("tunnel-duplicate-tun-1");
   expect(btn).not.toBeNull();
   await act(async () => {
     btn!.click();

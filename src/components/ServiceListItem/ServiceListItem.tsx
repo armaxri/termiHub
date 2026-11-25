@@ -3,6 +3,7 @@ import {
   Activity,
   Clipboard,
   Copy,
+  Ellipsis,
   ExternalLink,
   Pencil,
   Play,
@@ -19,6 +20,9 @@ import {
   ContextMenuContent,
   ContextMenuRoot,
   ContextMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuRoot,
+  DropdownMenuTrigger,
   MenuItem,
   MenuSeparator,
   StatusDot,
@@ -74,6 +78,10 @@ const ICONS: Record<ServiceActionId, LucideIcon> = {
 
 /** The run control, always visible on the row's trailing edge (#5852). */
 const RUN: ReadonlySet<ServiceActionId> = new Set(["start", "stop", "stopWaiting", "retry"]);
+/** On the row, revealed on hover and focus; the rest is in its "…" menu. */
+const ON_ROW: ReadonlySet<ServiceActionId> = new Set(["activity", "edit"]);
+/** Keys that move in the list. */
+const MOVES: ReadonlySet<string> = new Set(["ArrowUp", "ArrowDown", "Home", "End"]);
 /** In the menu, a line goes before these. */
 const GROUP_STARTS: ReadonlySet<ServiceActionId> = new Set(["activity", "edit", "delete"]);
 
@@ -159,10 +167,17 @@ export function ServiceListItem({
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    // Keys on the buttons inside are theirs.
-    if (e.target === e.currentTarget && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (e.target !== e.currentTarget) {
+      // Keys on a button inside are the button's: the list would take its Enter
+      // and edit. Moving on from it is the list's, but not out of the open menu.
+      const inside = e.currentTarget.contains(e.target as Node);
+      if (inside && MOVES.has(e.key)) rowProps?.onKeyDown?.(e);
+      else e.stopPropagation();
+      return;
+    }
+    if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key !== "Enter") {
       const wanted = e.key === " " ? "Space" : e.key;
-      const action = model.actions.find((a) => a.shortcut === wanted && wanted !== "Enter");
+      const action = model.actions.find((a) => a.shortcut === wanted);
       if (action) {
         e.preventDefault();
         e.stopPropagation();
@@ -173,11 +188,47 @@ export function ServiceListItem({
     rowProps?.onKeyDown?.(e);
   };
 
-  const onRow = model.actions.filter(
-    (action) => !RUN.has(action.id) && action.id !== "copyAddress"
-  );
+  const onRow = model.actions.filter((action) => ON_ROW.has(action.id));
   const copy = model.actions.find((action) => action.id === "copyAddress");
   const shortcuts = [...new Set(model.actions.flatMap((a) => a.shortcut ?? []))].join(" ");
+
+  /** Every action, in the model's order. */
+  const menuItems = (testIds: Record<ServiceActionId, string>) =>
+    model.actions.map((action, index) => {
+      const Icon = ICONS[action.id];
+      return (
+        <MenuEntry key={action.id} separated={index > 0 && GROUP_STARTS.has(action.id)}>
+          <MenuItem
+            danger={action.id === "delete"}
+            onSelect={() => performFromMenu(action.id)}
+            data-testid={testIds[action.id]}
+          >
+            <Icon size={14} /> {action.label}
+          </MenuItem>
+        </MenuEntry>
+      );
+    });
+
+  const moreMenu = (
+    <DropdownMenuRoot>
+      <Tooltip content={t("service.more")} side="top">
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
+            aria-label={t("service.more")}
+            data-testid={ids.moreTestId}
+            icon={<Ellipsis size={12} />}
+            onClick={(e) => e.stopPropagation()}
+          />
+        </DropdownMenuTrigger>
+      </Tooltip>
+      <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+        {menuItems(ids.moreItemTestIds)}
+      </DropdownMenuContent>
+    </DropdownMenuRoot>
+  );
 
   const details = (
     <>
@@ -195,7 +246,10 @@ export function ServiceListItem({
       </span>
       {address && (
         <span className="service-row__address" data-testid={ids.addressTestId}>
-          <span className="service-row__address-text">{address.text}</span>
+          <span className="service-row__address-text">
+            <code>{address.copy}</code>
+            {address.on && ` ${tf("service.address.onMachine", { machine: address.on })}`}
+          </span>
           {copy && button(copy)}
         </span>
       )}
@@ -259,25 +313,21 @@ export function ServiceListItem({
           primaryAction={run && button(run)}
           primaryActionTestId={ids.primaryTestId}
           moreActionsLabel={tf("service.moreActions", { name: model.name })}
-          actions={<>{onRow.map(button)}</>}
+          actions={
+            <>
+              {onRow.map(button)}
+              {moreMenu}
+            </>
+          }
           details={details}
         />
       </ContextMenuTrigger>
-      <ContextMenuContent aria-label={t("service.menu")}>
-        {model.actions.map((action, index) => {
-          const Icon = ICONS[action.id];
-          return (
-            <MenuEntry key={action.id} separated={index > 0 && GROUP_STARTS.has(action.id)}>
-              <MenuItem
-                danger={action.id === "delete"}
-                onSelect={() => performFromMenu(action.id)}
-                data-testid={ids.menuTestIds[action.id]}
-              >
-                <Icon size={14} /> {action.label}
-              </MenuItem>
-            </MenuEntry>
-          );
-        })}
+      <ContextMenuContent
+        aria-label={t("service.menu")}
+        // Its keys are its own, not the list's.
+        onKeyDown={(e) => e.stopPropagation()}
+      >
+        {menuItems(ids.menuTestIds)}
       </ContextMenuContent>
     </ContextMenuRoot>
   );

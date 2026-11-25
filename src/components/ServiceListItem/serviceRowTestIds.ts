@@ -15,8 +15,12 @@ export interface ServiceRowTestIds {
   addressTestId: string;
   reasonTestId: string;
   nextStepTestId: string;
+  /** The button of the "…" menu. */
+  moreTestId: string;
   /** Buttons on the row. */
   actionTestIds: Record<ServiceActionId, string>;
+  /** Items of the "…" menu. */
+  moreItemTestIds: Record<ServiceActionId, string>;
   /** Items of the context menu. */
   menuTestIds: Record<ServiceActionId, string>;
 }
@@ -33,6 +37,7 @@ function tunnelTestIds(id: string): ServiceRowTestIds {
     addressTestId: `tunnel-address-${id}`,
     reasonTestId: `tunnel-reason-${id}`,
     nextStepTestId: `tunnel-choose-connection-${id}`,
+    moreTestId: `tunnel-more-${id}`,
     actionTestIds: {
       start: `tunnel-start-${id}`,
       stop: `tunnel-stop-${id}`,
@@ -42,6 +47,19 @@ function tunnelTestIds(id: string): ServiceRowTestIds {
       openInBrowser: `tunnel-open-browser-${id}`,
       activity: `tunnel-activity-${id}`,
       edit: `tunnel-edit-${id}`,
+      restart: `tunnel-reconnect-${id}`,
+      duplicate: `tunnel-duplicate-${id}`,
+      delete: `tunnel-delete-${id}`,
+    },
+    moreItemTestIds: {
+      start: `tunnel-more-start-${id}`,
+      stop: `tunnel-more-stop-${id}`,
+      stopWaiting: `tunnel-more-stop-${id}`,
+      retry: `tunnel-more-retry-${id}`,
+      copyAddress: `tunnel-more-copy-address-${id}`,
+      openInBrowser: `tunnel-more-open-browser-${id}`,
+      activity: `tunnel-more-activity-${id}`,
+      edit: `tunnel-more-edit-${id}`,
       restart: `tunnel-reconnect-${id}`,
       duplicate: `tunnel-duplicate-${id}`,
       delete: `tunnel-delete-${id}`,
@@ -74,6 +92,7 @@ function serverTestIds(id: string): ServiceRowTestIds {
     addressTestId: `server-address-${id}`,
     reasonTestId: `server-reason-${id}`,
     nextStepTestId: `server-next-step-${id}`,
+    moreTestId: `server-more-${id}`,
     actionTestIds: {
       start: `server-start-${id}`,
       stop: `server-stop-${id}`,
@@ -83,6 +102,19 @@ function serverTestIds(id: string): ServiceRowTestIds {
       openInBrowser: `server-open-browser-${id}`,
       activity: `server-activity-toggle-${id}`,
       edit: `server-edit-${id}`,
+      restart: `server-restart-${id}`,
+      duplicate: `server-duplicate-${id}`,
+      delete: `server-delete-${id}`,
+    },
+    moreItemTestIds: {
+      start: `server-more-start-${id}`,
+      stop: `server-more-stop-${id}`,
+      stopWaiting: `server-more-stop-${id}`,
+      retry: `server-more-retry-${id}`,
+      copyAddress: `server-more-copy-address-${id}`,
+      openInBrowser: `server-more-open-browser-${id}`,
+      activity: `server-more-activity-${id}`,
+      edit: `server-more-edit-${id}`,
       restart: `server-restart-${id}`,
       duplicate: `server-duplicate-${id}`,
       delete: `server-delete-${id}`,

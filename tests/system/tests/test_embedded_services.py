@@ -181,7 +181,8 @@ class TestEmbeddedServices(
     def test_duplicate_server(self):
         name = unique_name("dup")
         server = self.create_server(name, proto="http", port=self.free_port())
-        self.driver.click(f"server-duplicate-{server['id']}")
+        self.open_server_menu(server["id"])
+        self.driver.click(f"ctx-duplicate-{server['id']}")
         self.require_server(f"Copy of {name}")
 
     # ── SVC-07: delete restores empty state ──────────────────────────────────
