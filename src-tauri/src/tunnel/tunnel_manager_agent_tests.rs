@@ -382,7 +382,13 @@ async fn a_stop_is_sent_without_waiting_for_the_agent_on_the_callers_thread() {
     let _open = gate.open_on_drop();
     run.agent
         .push(TUNNEL_STOP, Step::Hang(gate.clone(), Box::new(Step::Ok)));
-    run.manager.stop_tunnel("db").unwrap();
+    let manager = run.manager.clone();
+    let stop = tokio::task::spawn_blocking(move || manager.stop_tunnel("db"));
+    let returned = tokio::time::timeout(Duration::from_secs(10), stop).await;
+    if returned.is_err() {
+        gate.open();
+        panic!("waits for the agent");
+    }
     run.assert_row(
         TunnelStatus::Stopping,
         "Waiting for agent Edge box to stop it",
