@@ -24,6 +24,7 @@ import type { BroadcastGroup } from "@/types/terminal";
 import {
   blankScheduleForm,
   formToScheduleInput,
+  keepUntouched,
   MAX_INTERVAL_MINUTES,
   MIN_INTERVAL_MINUTES,
   scheduleFormSchema,
@@ -142,11 +143,13 @@ export function ScheduleEditorDialog({
   // The loaded values, to tell an edited form from an untouched one (UX2-004).
   const [baselineKey, setBaselineKey] = useState<string | null>(null);
   latest.current = { schedule, initialAction };
+  const loaded = useRef<ScheduleFormValues | null>(null);
   const loadedId = schedule?.id ?? null;
   useEffect(() => {
     if (!open) return;
     const { schedule: current, initialAction: action } = latest.current;
     const initial = current ? scheduleToForm(current) : blankScheduleForm(action);
+    loaded.current = initial;
     reset(initial);
     rebaseline(initial);
     setBaselineKey(draftKey(initial));
@@ -188,7 +191,11 @@ export function ScheduleEditorDialog({
       document.getElementById("schedule-editor-automation")?.focus();
       return;
     }
-    return onSave(formToScheduleInput(scheduleId, getValues()));
+    const values = getValues();
+    const edited = formToScheduleInput(scheduleId, values);
+    return onSave(
+      schedule && loaded.current ? keepUntouched(schedule, loaded.current, values, edited) : edited
+    );
   };
 
   return (
