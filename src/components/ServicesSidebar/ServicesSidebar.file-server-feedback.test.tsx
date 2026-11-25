@@ -98,38 +98,6 @@ async function renderSidebar() {
   await flush();
 }
 
-async function openNewDialogAndFill() {
-  const newBtn = container.querySelector<HTMLButtonElement>(
-    '[data-testid="services-empty-server-http"]'
-  );
-  await act(async () => {
-    newBtn!.click();
-  });
-  await flush();
-
-  const nameInput = document.querySelector<HTMLInputElement>('[data-testid="server-dialog-name"]');
-  const rootInput = document.querySelector<HTMLInputElement>('[data-testid="server-dialog-root"]');
-  setInputValue(nameInput!, "New Share");
-  setInputValue(rootInput!, "/srv/share");
-  await flush();
-}
-
-function setInputValue(el: HTMLInputElement, value: string) {
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
-  act(() => {
-    setter.call(el, value);
-    el.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-}
-
-async function clickDialogSave() {
-  const saveBtn = document.querySelector<HTMLButtonElement>('[data-testid="server-dialog-save"]');
-  await act(async () => {
-    saveBtn!.click();
-  });
-  await flush();
-}
-
 describe("EmbeddedServerSidebar — save & duplicate feedback (#1342)", () => {
   beforeEach(() => {
     container = document.createElement("div");
@@ -142,34 +110,6 @@ describe("EmbeddedServerSidebar — save & duplicate feedback (#1342)", () => {
     act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
-  });
-
-  it("closes the dialog without a toast when save succeeds (#5859)", async () => {
-    const saveEmbeddedServer = vi.fn(() => Promise.resolve());
-    seedStore(saveEmbeddedServer);
-    await renderSidebar();
-    await openNewDialogAndFill();
-    await clickDialogSave();
-
-    expect(saveEmbeddedServer).toHaveBeenCalledTimes(1);
-    expect(toastSuccess).not.toHaveBeenCalled();
-    expect(toastError).not.toHaveBeenCalled();
-    // Dialog closed.
-    expect(document.querySelector('[data-testid="server-dialog-save"]')).toBeNull();
-  });
-
-  it("shows an error toast and keeps the dialog open when save fails", async () => {
-    const saveEmbeddedServer = vi.fn(() => Promise.reject(new Error("port in use")));
-    seedStore(saveEmbeddedServer);
-    await renderSidebar();
-    await openNewDialogAndFill();
-    await clickDialogSave();
-
-    expect(saveEmbeddedServer).toHaveBeenCalledTimes(1);
-    expect(toastError).toHaveBeenCalledTimes(1);
-    expect(toastSuccess).not.toHaveBeenCalled();
-    // Dialog stays open so the user can retry.
-    expect(document.querySelector('[data-testid="server-dialog-save"]')).not.toBeNull();
   });
 
   it("raises no toast when duplication succeeds (#5859)", async () => {
@@ -218,40 +158,25 @@ describe("EmbeddedServerSidebar — save & duplicate feedback (#1342)", () => {
   });
 
   it.each([
-    [
-      { serverType: "http", httpAuth: { username: "web", password: "" } },
-      "server-dialog-http-password",
-    ],
-    [
-      { serverType: "ftp", ftpAuth: { type: "credentials", username: "u", password: "" } },
-      "server-dialog-ftp-password",
-    ],
+    { serverType: "http", httpAuth: { username: "web", password: "" } },
+    { serverType: "ftp", ftpAuth: { type: "credentials", username: "u", password: "" } },
   ] as const)(
-    "asks for the password of a copy, which does not have one (#6028, F-4)",
-    async (auth, passwordId) => {
+    "a copy that needs a password opens in the editor instead of being saved (#6028, F-4)",
+    async (auth) => {
       const saveEmbeddedServer = vi.fn((_c: EmbeddedServerConfig) => Promise.resolve());
-      const host = { kind: "agent", agentId: "a1" } as const;
+      const openServerEditorTab = vi.fn();
       seedStore(saveEmbeddedServer, [
-        { ...makeServer("srv-1", "Original"), ...auth, host } as EmbeddedServerConfig,
+        { ...makeServer("srv-1", "Original"), ...auth } as EmbeddedServerConfig,
       ]);
+      (useAppStore as unknown as { setState: (p: object) => void }).setState({
+        openServerEditorTab,
+      });
       await renderSidebar();
       const item = serviceMenuItem("server-duplicate-srv-1")!;
       await act(async () => item.click());
       await flush();
-      // Nothing is saved yet: the copy opens in the editor.
       expect(saveEmbeddedServer).not.toHaveBeenCalled();
-      expect(
-        document.querySelector('[data-testid="server-dialog-copy-hint"]')?.textContent
-      ).toContain("password");
-      const password = document.querySelector<HTMLInputElement>(`[data-testid="${passwordId}"]`)!;
-      expect(password.placeholder).not.toContain("leave blank to keep");
-      setInputValue(password, "new-secret");
-      await clickDialogSave();
-      const copy = saveEmbeddedServer.mock.calls[0][0];
-      expect(copy).toMatchObject({ name: "Copy of Original", host, autoStart: false });
-      expect(copy.id).not.toBe("srv-1");
-      expect(copy.id).not.toBe("");
-      expect(JSON.stringify(copy)).toContain("new-secret");
+      expect(openServerEditorTab).toHaveBeenCalledWith(null, { copyOf: "srv-1" });
     }
   );
 });

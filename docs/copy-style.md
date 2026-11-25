@@ -210,6 +210,10 @@ The row is `ServiceListItem`, its words are in `serviceModel.ts`. Rules for them
   technical name under it. The search finds all of these words.
 - An **offline agent** with several services is said once, with all of them, whatever kind they are.
 - A **group's line says its problems**, also while it is closed; only without any it says how many run.
+- An **editor is a tab** (`ServiceEditorShell`): titled by what the user wants to do, the fields one came
+  for first, Save always on screen with the reason beside it while it cannot save. Who can open it is
+  said in words, with the address that comes out of it. A **new file server is for this computer only and
+  to download**, and whenever others can reach one, an amber warning says who and what they can do.
 - **Delete is undone, not warned about**: the same dialog and the same Undo for both kinds. It says what
   breaks ("1 open connection") and, of a file server, that the folder and its files stay.
 - A **list says in numbers** what its rows say: running, error, not known, reconnecting, waiting.

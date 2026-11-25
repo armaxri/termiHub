@@ -210,6 +210,7 @@ describe("appStore — comprehensive tabContent map for every tab type (#2283 sl
     ["editor", () => useAppStore.getState().openScratchEditorTab("N", "n.md", "x")],
     ["connection-editor", () => useAppStore.getState().openConnectionEditorTab("new")],
     ["tunnel-editor", () => useAppStore.getState().openTunnelEditorTab(null)],
+    ["server-editor", () => useAppStore.getState().openServerEditorTab(null)],
     ["workspace-editor", () => useAppStore.getState().openWorkspaceEditorTab(null)],
     ["plugin-detail", () => useAppStore.getState().selectPlugin("p1")],
   ])("%s: open tracks content, close prunes it", (type, open) => {

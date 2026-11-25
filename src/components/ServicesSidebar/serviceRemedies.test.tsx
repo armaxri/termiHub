@@ -71,6 +71,7 @@ const actions = {
   checkTunnelsAgain: vi.fn(async () => {}),
   keepTunnelRunning: vi.fn(async (_id: string) => {}),
   openTunnelEditorTab: vi.fn(),
+  openServerEditorTab: vi.fn(),
   openConnectionEditorTab: vi.fn(),
   saveEmbeddedServer: vi.fn(async (_server: EmbeddedServerConfig) => {}),
   startEmbeddedServer: vi.fn(async (_id: string) => {}),
@@ -167,7 +168,7 @@ describe("Use another port", () => {
     expect(actions.openTunnelEditorTab).toHaveBeenCalledWith("t");
     await server({}, { cause: "portInUse" });
     await press("server-edit-port-s");
-    expect(q("server-dialog-port")).not.toBeNull();
+    expect(actions.openServerEditorTab).toHaveBeenCalledWith("s");
   });
 });
 
@@ -218,7 +219,7 @@ describe("the others", () => {
     await server({ serverType: "tftp" }, { status: "running" });
     expect(document.body.textContent).toContain("Only this computer, no device can reach it.");
     await press("server-let-reach-s");
-    expect(document.querySelector('[data-testid="server-dialog-name"]')).not.toBeNull();
+    expect(actions.openServerEditorTab).toHaveBeenCalledWith("s");
   });
 
   it("Choose machine opens the editor of a service whose agent is gone", async () => {
@@ -228,7 +229,7 @@ describe("the others", () => {
     expect(actions.openTunnelEditorTab).toHaveBeenCalledWith("t");
     await server({ host: gone }, { status: "running" });
     await press("server-choose-machine-s");
-    expect(q("server-dialog-runloc")).not.toBeNull();
+    expect(actions.openServerEditorTab).toHaveBeenCalledWith("s");
   });
 
   it("Unlock opens the unlock dialog", async () => {

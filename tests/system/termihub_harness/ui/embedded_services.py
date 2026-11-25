@@ -18,7 +18,8 @@ from .base import HarnessMixin
 class EmbeddedServicesUi(HarnessMixin):
     """Open the Services sidebar (tunnels and file servers) and drive file servers."""
 
-    # Sidebar + dialog testids.
+    # Sidebar + editor testids (a tab since #6028; its fields kept the dialog's ids).
+    EDITOR = "server-editor"
     ACTIVITY = "activity-bar-services"
     SIDEBAR = "services-sidebar"
     NEW_BTN = "service-new-btn"
@@ -28,11 +29,12 @@ class EmbeddedServicesUi(HarnessMixin):
     DIALOG_NAME = "server-dialog-name"
     DIALOG_ROOT = "server-dialog-root"
     DIALOG_PORT = "server-dialog-port"
-    DIALOG_BIND = "server-dialog-bind-host"
+    #: Who can open it: ``here``, ``network`` or ``address``.
+    BIND_HERE = "server-dialog-bind-here"
+    BIND_NETWORK = "server-dialog-bind-network"
+    WARNING = "server-dialog-warning"
     DIALOG_SAVE = "server-dialog-save"
     DIALOG_CANCEL = "server-dialog-cancel"
-    LAN_CONFIRM = "lan-warning-confirm"
-    LAN_CANCEL = "lan-warning-cancel"
     # Confirm button of the delete-service confirmation dialog. Deleting an
     # embedded server became guarded by a confirm dialog in #1393; it renders
     # through the shared ``ConfirmDialog`` with the default ``testIdBase``, so the
@@ -80,29 +82,27 @@ class EmbeddedServicesUi(HarnessMixin):
         return self.server_status(server_id) == "running"
 
     # ── Dialog / CRUD ────────────────────────────────────────────────────────
-    def open_new_dialog(self) -> None:
-        """Open the dialog of a new file server and wait for its name field."""
+    def open_new_editor(self, proto: str = "http") -> None:
+        """Open the editor tab of a new file server and wait for its name field."""
         self.open_services_sidebar()
-        self.choose_new_service("server-http")
-        self.wait(lambda: self.driver.exists(self.DIALOG_NAME), what="the file server dialog")
+        self.choose_new_service(f"server-{proto}")
+        self.wait(lambda: self.driver.exists(self.DIALOG_NAME), what="the file server editor")
 
-    def fill_dialog(
+    def fill_editor(
         self,
         name: str,
         *,
-        proto: str = "http",
         root: str = "/tmp",
         port: Optional[int] = None,
         description: Optional[str] = None,
     ) -> None:
-        """Fill the (already-open) service dialog. Does not submit."""
+        """Fill the (already-open) file server editor. Does not submit."""
         self.driver.type(self.DIALOG_NAME, name)
         if description is not None:
             self.driver.type("server-dialog-description", description)
-        self.driver.click(f"server-dialog-proto-{proto}")
-        if proto == "tftp":
+        if self.driver.get_attribute(self.BIND_HERE, "aria-checked") != "true":
             # A server for devices starts with nobody chosen (#6076).
-            self.driver.select(self.DIALOG_BIND, "127.0.0.1")
+            self.driver.click(self.BIND_HERE)
         self.driver.type(self.DIALOG_ROOT, root)
         if port is not None:
             self.driver.type(self.DIALOG_PORT, str(port))
@@ -116,9 +116,9 @@ class EmbeddedServicesUi(HarnessMixin):
         port: Optional[int] = None,
         description: Optional[str] = None,
     ) -> dict[str, Any]:
-        """Create a server through the dialog and return its persisted config."""
-        self.open_new_dialog()
-        self.fill_dialog(name, proto=proto, root=root, port=port, description=description)
+        """Create a server through its editor and return its persisted config."""
+        self.open_new_editor(proto)
+        self.fill_editor(name, root=root, port=port, description=description)
         self.driver.click(self.DIALOG_SAVE)
         return self.require_server(name)
 

@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 import { toast } from "@/components/ui";
 import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
 import type { ServiceLifecycleConfirm } from "@/hooks/useServiceLifecycleConfirm";
@@ -9,9 +9,8 @@ import {
 import { t, tf } from "@/i18n/catalog";
 import { newId } from "@/services/transport/ids";
 import { useAppStore } from "@/store/appStore";
-import type { EmbeddedServerConfig, ServerType } from "@/types/embeddedServer";
+import type { EmbeddedServerConfig } from "@/types/embeddedServer";
 import { errorMessage } from "@/utils/errorMessage";
-import { hostChoice, sameHost, type HostChoice } from "@/utils/hostChoice";
 import { serviceDeleteEffect } from "@/utils/serviceDelete";
 import type { ServiceModel } from "@/utils/serviceModel";
 import { isServiceActive, serverServiceState } from "@/utils/serviceState";
@@ -21,19 +20,9 @@ function hasPassword(config: EmbeddedServerConfig): boolean {
   return !!config.httpAuth || config.ftpAuth?.type === "credentials";
 }
 
-/** What the dialog edits. */
-interface Editing {
-  config: EmbeddedServerConfig | null;
-  /** A copy that has to be given its password before it is saved (#6028, F-4). */
-  draft: EmbeddedServerConfig | null;
-  initialType: ServerType;
-}
-
-const NOTHING: Editing = { config: null, draft: null, initialType: "http" };
-
 type ModelOf = (id: string) => Pick<ServiceModel, "name" | "counters">;
 
-/** What the rows of the file servers do, and their dialogs. */
+/** What the rows of the file servers do, and their delete dialog. */
 export function useFileServerActions(
   modelOf: ModelOf,
   requestLifecycle: ServiceLifecycleConfirm["request"]
@@ -45,52 +34,8 @@ export function useFileServerActions(
   const start = useAppStore((s) => s.startEmbeddedServer);
   const stopEmbeddedServer = useAppStore((s) => s.stopEmbeddedServer);
   const restartEmbeddedServer = useAppStore((s) => s.restartEmbeddedServer);
-  const [dialogOpen, setOpen] = useState(false);
-  const [editing, setEditing] = useState<Editing>(NOTHING);
-
-  const show = useCallback((next: Partial<Editing>) => {
-    setEditing({ ...NOTHING, ...next });
-    setOpen(true);
-  }, []);
-
-  const create = useCallback((initialType: ServerType) => show({ initialType }), [show]);
-
-  const edit = useCallback(
-    (id: string) => {
-      const config = servers.find((server) => server.id === id);
-      if (config) show({ config });
-    },
-    [servers, show]
-  );
-
-  /**
-   * Persist a server from the dialog. Resolves `true` when the save succeeded
-   * (so the dialog closes) and `false` on failure (dialog stays open to retry).
-   *
-   * The host goes along only when the user chose another machine (#6028): the
-   * backend keeps the stored one otherwise, so a list that is out of date in
-   * this window cannot move the server.
-   */
-  const save = useCallback(
-    async (config: EmbeddedServerConfig, location: HostChoice): Promise<boolean> => {
-      const isNew = !config.id;
-      const { host: stored, ...rest } = config;
-      const moved = location.kind !== "unreadable" && !sameHost(hostChoice(stored), location);
-      const saved: EmbeddedServerConfig = {
-        ...rest,
-        ...(isNew ? { id: newId("srv") } : {}),
-        ...(location.kind !== "unreadable" && (isNew || moved) ? { host: location } : {}),
-      };
-      try {
-        await saveEmbeddedServer(saved);
-        return true;
-      } catch (err) {
-        toast.error(`Failed to save "${saved.name}"`, { description: errorMessage(err) });
-        return false;
-      }
-    },
-    [saveEmbeddedServer]
-  );
+  const openServerEditorTab = useAppStore((s) => s.openServerEditorTab);
+  const edit = useCallback((id: string) => openServerEditorTab(id), [openServerEditorTab]);
 
   const duplicate = useCallback(
     async (id: string) => {
@@ -105,7 +50,7 @@ export function useFileServerActions(
       // The password stays with the original, so a copy that needs one opens in
       // the editor instead of being saved in a state that cannot start.
       if (hasPassword(original)) {
-        show({ draft: { ...copy, id: "" } });
+        openServerEditorTab(null, { copyOf: id });
         return;
       }
       try {
@@ -114,7 +59,7 @@ export function useFileServerActions(
         toast.error(`Failed to duplicate "${original.name}"`, { description: errorMessage(err) });
       }
     },
-    [servers, saveEmbeddedServer, show]
+    [servers, saveEmbeddedServer, openServerEditorTab]
   );
 
   // "Use 8081" beside "Port 8080 is already in use" (#6063).
@@ -177,12 +122,10 @@ export function useFileServerActions(
   const pendingState = pending ? stateOf(pending.id) : "stopped";
   const open = (pending && states[pending.id]?.stats.activeConnections) ?? 0;
 
-  const stored = editing.config ?? editing.draft;
   return {
     start,
     stop,
     restart,
-    create,
     edit,
     duplicate,
     usePort,
@@ -197,16 +140,6 @@ export function useFileServerActions(
         t("service.delete.undo"),
       ].join(" "),
       dontAskAgain: isServiceActive(pendingState) ? undefined : optOut.dontAskAgain,
-    },
-    editDialogProps: {
-      open: dialogOpen,
-      onOpenChange: setOpen,
-      ...editing,
-      onSave: save,
-      running:
-        editing.config !== null &&
-        isServiceActive(serverServiceState(states[editing.config.id]?.status)),
-      runLocation: hostChoice(stored?.host),
     },
   };
 }

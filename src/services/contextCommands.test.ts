@@ -172,6 +172,7 @@ describe("close-tab — unsaved-editor guard (#4410)", () => {
     "connection-editor",
     "settings",
     "tunnel-editor",
+    "server-editor",
     "workspace-editor",
   ] as const;
 

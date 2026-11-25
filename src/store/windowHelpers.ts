@@ -155,6 +155,7 @@ function serializeHandoffTab(tab: TerminalTab): HandoffTab {
 const FORM_DRAFT_KINDS: ReadonlySet<string> = new Set<FormDraftKind>([
   "connection-editor",
   "tunnel-editor",
+  "server-editor",
   "workspace-editor",
   "settings",
 ]);
@@ -194,6 +195,7 @@ function tabMetaHandoffFields(
   HandoffTab,
   | "connectionEditorMeta"
   | "tunnelEditorMeta"
+  | "serverEditorMeta"
   | "workspaceEditorMeta"
   | "networkDiagnosticMeta"
   | "pluginDetailMeta"
@@ -202,6 +204,7 @@ function tabMetaHandoffFields(
   return {
     ...(tab.connectionEditorMeta ? { connectionEditorMeta: tab.connectionEditorMeta } : {}),
     ...(tab.tunnelEditorMeta ? { tunnelEditorMeta: tab.tunnelEditorMeta } : {}),
+    ...(tab.serverEditorMeta ? { serverEditorMeta: tab.serverEditorMeta } : {}),
     ...(tab.workspaceEditorMeta ? { workspaceEditorMeta: tab.workspaceEditorMeta } : {}),
     ...(tab.networkDiagnosticMeta ? { networkDiagnosticMeta: tab.networkDiagnosticMeta } : {}),
     ...(tab.pluginDetailMeta ? { pluginDetailMeta: tab.pluginDetailMeta } : {}),
@@ -213,8 +216,8 @@ function tabMetaHandoffFields(
  * Whether a tab without a live session reopens in another window when "Move
  * tabs" closes its window (#4501): everything a hand-off record can describe
  * in full. File editors, Settings, the log viewer, network diagnostics, plugin
- * details, the agent-error placeholder, the connection, tunnel and workspace
- * forms and the transfer view move. A transfer view stays paired with its
+ * details, the agent-error placeholder, the connection, tunnel, file server and
+ * workspace forms and the transfer view move. A transfer view stays paired with its
  * terminal when that terminal moves too, and reopens unpaired otherwise
  * (#4751, {@link pairBatchHandoffRecord}).
  *
@@ -237,6 +240,8 @@ export function canMoveTabWithoutSession(tab: TerminalTab): boolean {
       return !!tab.connectionEditorMeta;
     case "tunnel-editor":
       return !!tab.tunnelEditorMeta;
+    case "server-editor":
+      return !!tab.serverEditorMeta;
     case "workspace-editor":
       return !!tab.workspaceEditorMeta;
     case "agent-error":

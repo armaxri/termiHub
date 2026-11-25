@@ -20,6 +20,7 @@ export const SELF_PROMPTING_CONTENT_TYPES: ReadonlySet<TabContentType> = new Set
   "connection-editor",
   "settings",
   "tunnel-editor",
+  "server-editor",
   "workspace-editor",
 ]);
 

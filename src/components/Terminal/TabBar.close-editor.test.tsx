@@ -184,7 +184,7 @@ describe("TabBar — close file editor tab with unsaved changes", () => {
 });
 
 describe("TabBar — tunnel and workspace editors use their own unsaved prompt (UX2-004)", () => {
-  it.each(["tunnel-editor", "workspace-editor"] as const)(
+  it.each(["tunnel-editor", "server-editor", "workspace-editor"] as const)(
     "routes a dirty %s tab close through setPendingCloseRequest",
     async (contentType) => {
       const closeTab = vi.fn();

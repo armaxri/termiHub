@@ -7,6 +7,7 @@ import {
   SquarePen,
   FileText,
   ArrowLeftRight,
+  FolderUp,
   Puzzle,
   Columns2,
   Eraser,
@@ -294,11 +295,13 @@ export function Tab({
             ? SquarePen
             : tab.contentType === "tunnel-editor"
               ? ArrowLeftRight
-              : tab.contentType === "plugin-detail"
-                ? Puzzle
-                : tab.contentType === "transfer-view"
-                  ? Columns2
-                  : null;
+              : tab.contentType === "server-editor"
+                ? FolderUp
+                : tab.contentType === "plugin-detail"
+                  ? Puzzle
+                  : tab.contentType === "transfer-view"
+                    ? Columns2
+                    : null;
   const isTerminalTab = tab.contentType === "terminal";
 
   // Keyboard handling on the focused tab itself (`e.target === e.currentTarget`,

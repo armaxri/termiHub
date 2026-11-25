@@ -11,7 +11,6 @@ import { t, type MessageId } from "@/i18n/catalog";
 import { useAppStore } from "@/store/appStore";
 import type { ServerType } from "@/types/embeddedServer";
 import type { TunnelTypeKind } from "@/utils/tunnelTypeHelp";
-import { showServicesView, useServicesView } from "./servicesView";
 
 /** One way to make a service, named by what the user wants to do (#6028). */
 export interface NewServiceEntry {
@@ -66,10 +65,7 @@ function server(
     technical: t(technical),
     icon,
     words: ["file server", "share a folder", ...words],
-    open: () => {
-      useServicesView.getState().requestFileServer(type);
-      showServicesView();
-    },
+    open: () => useAppStore.getState().openServerEditorTab(null, { serverType: type }),
   };
 }
 

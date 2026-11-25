@@ -1,12 +1,7 @@
 /**
- * Where a file server runs (#2191, #6028): the choice is stored with the server,
- * a save that did not touch it leaves it out (an old list in another window must
- * not move the server), and a machine that cannot be read or is gone is never
- * shown as this computer. The selector lives in the editor, not on the row
- * (#5770): a row shows names, not settings.
- *
- * The Radix-backed selector is replaced with a trivial harness so the wiring is
- * tested without driving Radix's portal/pointer machinery in jsdom.
+ * Where a file server runs (#2191, #6028), as its row tells it: a machine that
+ * cannot be read or is gone is never shown as this computer. The choice is in the
+ * editor (`FileServerEditor.test.tsx`).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
@@ -32,30 +27,6 @@ vi.mock("@/components/ui", async () => {
     },
   };
 });
-
-vi.mock("@/components/RunLocationSelect", () => ({
-  RunLocationSelect: ({
-    value,
-    onChange,
-    ...rest
-  }: {
-    value: { kind: string; agentId?: string };
-    onChange: (loc: { kind: string; agentId?: string }) => void;
-    "data-testid"?: string;
-  }) => (
-    <div
-      data-testid={rest["data-testid"]}
-      data-value={value.kind === "agent" ? `agent:${value.agentId}` : value.kind}
-    >
-      <button data-testid="pick-agent" onClick={() => onChange({ kind: "agent", agentId: "a1" })}>
-        agent
-      </button>
-      <button data-testid="pick-this" onClick={() => onChange({ kind: "thisComputer" })}>
-        this
-      </button>
-    </div>
-  ),
-}));
 
 vi.mock("@/services/embeddedServerApi", () => ({
   listNetworkInterfaces: vi.fn(() => Promise.resolve([{ name: "Loopback", addr: "127.0.0.1" }])),
@@ -125,17 +96,6 @@ async function render() {
   await flush();
 }
 
-async function openEditor() {
-  act(() => q("server-edit-srv-1")!.click());
-  await flush();
-}
-
-async function pickAndSave(pick?: "pick-agent" | "pick-this") {
-  if (pick) act(() => q(pick)!.click());
-  act(() => q("server-dialog-save")!.click());
-  await flush();
-}
-
 describe("where a file server runs", () => {
   beforeEach(() => {
     container = document.createElement("div");
@@ -158,50 +118,12 @@ describe("where a file server runs", () => {
     expect(q("server-item-srv-1")?.textContent).not.toContain("Run on");
   });
 
-  it("saves the chosen agent with the server, in one save", async () => {
-    await render();
-    await openEditor();
-    expect(q("server-dialog-runloc")?.getAttribute("data-value")).toBe("thisComputer");
-    await pickAndSave("pick-agent");
-    expect(saveEmbeddedServer).toHaveBeenCalledTimes(1);
-    expect(saveEmbeddedServer.mock.calls[0][0].host).toEqual({ kind: "agent", agentId: "a1" });
-  });
-
-  it("keeps the choice while the sidebar re-renders (live states do that)", async () => {
-    await render();
-    await openEditor();
-    act(() => q("pick-agent")!.click());
-    await render();
-    expect(q("server-dialog-runloc")?.getAttribute("data-value")).toBe("agent:a1");
-  });
-
-  it("leaves the host out of a save that did not change it", async () => {
-    seedStore([makeServer("srv-1", "Docs", { kind: "agent", agentId: "a1" })]);
-    await render();
-    await openEditor();
-    expect(q("server-dialog-runloc")?.getAttribute("data-value")).toBe("agent:a1");
-    await pickAndSave();
-    expect(saveEmbeddedServer.mock.calls[0][0]).not.toHaveProperty("host");
-  });
-
-  it("moves it back to this computer only when the user picks that", async () => {
-    seedStore([makeServer("srv-1", "Docs", { kind: "agent", agentId: "a1" })]);
-    await render();
-    await openEditor();
-    await pickAndSave("pick-this");
-    expect(saveEmbeddedServer.mock.calls[0][0].host).toEqual({ kind: "thisComputer" });
-  });
-
-  it("does not show a host it cannot read as this computer, and keeps it on save", async () => {
-    seedStore([makeServer("srv-1", "Docs", { kind: "cluster", clusterId: "x" })]);
+  it("says when nobody can read where it runs", async () => {
+    seedStore([makeServer("srv-1", "Docs", { kind: "moon" })]);
     await render();
     expect(q("server-item-srv-1")?.getAttribute("aria-description")).toContain(
       "termiHub cannot read where it runs"
     );
-    await openEditor();
-    expect(q("server-dialog-runloc")?.getAttribute("data-value")).toBe("unreadable");
-    await pickAndSave();
-    expect(saveEmbeddedServer.mock.calls[0][0]).not.toHaveProperty("host");
   });
 
   it.each([
@@ -226,29 +148,5 @@ describe("where a file server runs", () => {
     });
     await render();
     expect(q("server-item-srv-1")?.textContent).toContain(error);
-  });
-
-  it("says nothing of stopping when the server is not running", async () => {
-    await render();
-    await openEditor();
-    act(() => q("pick-agent")!.click());
-    expect(q("server-dialog-move-hint")).toBeNull();
-  });
-
-  it("warns that moving a running server stops it", async () => {
-    seedStore([makeServer("srv-1", "Docs")], {
-      "srv-1": {
-        serverId: "srv-1",
-        status: "running",
-        stats: { activeConnections: 0, totalConnections: 0, bytesSent: 0, bytesReceived: 0 },
-      },
-    });
-    await render();
-    await openEditor();
-    expect(q("server-dialog-move-hint")).toBeNull();
-    act(() => q("pick-agent")!.click());
-    expect(q("server-dialog-move-hint")?.textContent).toBe(
-      "It is running. Saving stops it; start it again to run it on the machine you chose."
-    );
   });
 });

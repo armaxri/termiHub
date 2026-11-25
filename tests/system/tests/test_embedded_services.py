@@ -60,9 +60,9 @@ class TestEmbeddedServices(
 
     def reset_before_rerun(self) -> None:
         # The per-test teardown cleans servers and tabs best-effort, but cannot get
-        # past a New/Edit Service dialog, LAN warning or delete confirm that a
-        # failed attempt left open. Close those, then retry the cleanup (#4834).
-        self.dismiss_modals("server-dialog-cancel", "lan-warning-cancel", "server-delete-confirm")
+        # past a delete confirm or an unsaved-changes prompt that a failed attempt
+        # left open. Close those, then retry the cleanup (#4834).
+        self.dismiss_modals("server-delete-confirm", "unsaved-changes-just-close")
         self.open_services_sidebar()
         self.cleanup_all_servers()
 
@@ -100,12 +100,12 @@ class TestEmbeddedServices(
         assert self.driver.exists(self.NEW_BTN)
         assert self.driver.exists(self.EMPTY), "empty-state message should show with no servers"
 
-    # ── SVC-02: New Service dialog (open, cancel, create HTTP) ───────────────
-    def test_new_dialog_opens_and_cancels(self):
-        self.open_new_dialog()
+    # ── SVC-02: New file server editor (open, cancel, create HTTP) ───────────────
+    def test_new_editor_opens_and_cancels(self):
+        self.open_new_editor()
         assert self.driver.exists(self.DIALOG_NAME)
         self.driver.click(self.DIALOG_CANCEL)
-        self.wait(lambda: not self.driver.exists(self.DIALOG_NAME), what="the dialog to close")
+        self.wait(lambda: not self.driver.exists(self.DIALOG_NAME), what="the editor to close")
         assert self.driver.exists(self.EMPTY), "cancel must not create a server"
 
     def test_create_http_server(self):
@@ -168,8 +168,8 @@ class TestEmbeddedServices(
         server = self.create_server(name, proto="http", port=self.free_port())
 
         self.driver.click(f"server-edit-{server['id']}")
-        self.wait(lambda: self.driver.exists(self.DIALOG_NAME), what="the edit dialog")
-        assert self.driver.get_value(self.DIALOG_NAME) == name, "dialog should pre-populate"
+        self.wait(lambda: self.driver.exists(self.DIALOG_NAME), what="the editor")
+        assert self.driver.get_value(self.DIALOG_NAME) == name, "the editor should pre-populate"
 
         renamed = unique_name("renamed")
         self.driver.type(self.DIALOG_NAME, renamed)
@@ -290,29 +290,31 @@ class TestEmbeddedServices(
             pytest.skip(str(exc))
         assert downloaded.decode("utf-8").strip() == "termihub-quickshare-tftp-ok"
 
-    # ── SVC-11: bind-address dropdown + LAN security warning ─────────────────
-    def test_bind_address_lan_warning(self):
-        self.open_new_dialog()
-        assert self.driver.exists(self.DIALOG_BIND)
-        assert self.driver.get_value(self.DIALOG_BIND) == "127.0.0.1", "default bind is loopback"
-
-        # Selecting 0.0.0.0 raises the LAN security warning (proves the option exists).
-        self.driver.select(self.DIALOG_BIND, "0.0.0.0")
-        self.wait(lambda: self.driver.exists(self.LAN_CONFIRM), what="the LAN security warning")
-        self.driver.click(self.LAN_CANCEL)
+    # ── SVC-11: who can open it + the warning whenever others can ─────────────
+    def test_open_to_the_network_warns(self):
+        self.open_new_editor()
+        assert self.driver.get_attribute(self.BIND_HERE, "aria-checked") == "true"
+        assert not self.driver.exists(self.WARNING), "nobody else can open it yet"
+        self.driver.click(self.BIND_NETWORK)
+        self.wait(lambda: self.driver.exists(self.WARNING), what="the warning")
+        # Unsaved changes are asked about.
         self.driver.click(self.DIALOG_CANCEL)
+        self.wait(
+            lambda: self.driver.exists("unsaved-changes-just-close"), what="the unsaved prompt"
+        )
+        self.driver.click("unsaved-changes-just-close")
+        self.wait(lambda: not self.driver.exists(self.DIALOG_NAME), what="the editor to close")
 
-    def test_bind_to_all_interfaces_after_confirm(self):
+    def test_open_to_the_network_is_saved(self):
         name = unique_name("bind-all")
-        self.open_new_dialog()
-        self.fill_dialog(name, proto="http", port=self.free_port())
-        self.driver.select(self.DIALOG_BIND, "0.0.0.0")
-        self.wait(lambda: self.driver.exists(self.LAN_CONFIRM), what="the LAN security warning")
-        self.driver.click(self.LAN_CONFIRM)
+        self.open_new_editor()
+        self.fill_editor(name, port=self.free_port())
+        self.driver.click(self.BIND_NETWORK)
         self.driver.click(self.DIALOG_SAVE)
 
         server = self.require_server(name)
-        assert server.get("bindHost") == "0.0.0.0", "confirmed bind should be 0.0.0.0"
+        assert server.get("bindHost") == "0.0.0.0"
+        assert server.get("readOnly") is True, "a new server is download only"
 
     # ── SVC-12: FTP actual file transfer (stdlib ftplib) ─────────────────────
     def test_ftp_file_transfer(self):
@@ -429,8 +431,8 @@ class TestEmbeddedServices(
         root = self._serve_dir("auto.txt", "termihub-autostart-ok")
         port = self.free_port()
         name = unique_name("auto")
-        self.open_new_dialog()
-        self.fill_dialog(name, proto="http", root=str(root), port=port)
+        self.open_new_editor()
+        self.fill_editor(name, root=str(root), port=port)
         self.driver.click("server-dialog-autostart")
         self.driver.click(self.DIALOG_SAVE)
         server = self.require_server(name)
@@ -448,8 +450,8 @@ class TestEmbeddedServices(
         root = self._serve_dir("agent.txt", "termihub-must-not-be-served")
         port = self.free_port()
         name = unique_name("on-agent")
-        self.open_new_dialog()
-        self.fill_dialog(name, proto="http", root=str(root), port=port)
+        self.open_new_editor()
+        self.fill_editor(name, root=str(root), port=port)
         self.driver.click("server-dialog-autostart")
         self.driver.click(self.DIALOG_SAVE)
         server = self.require_server(name)

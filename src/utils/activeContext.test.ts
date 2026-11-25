@@ -38,6 +38,7 @@ describe("activeContextFromTab", () => {
   it.each<TabContentType>([
     "connection-editor",
     "tunnel-editor",
+    "server-editor",
     "workspace-editor",
     "settings",
     "network-diagnostic",

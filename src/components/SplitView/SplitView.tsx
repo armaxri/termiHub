@@ -17,6 +17,7 @@ import {
   SquarePen,
   FileText,
   ArrowLeftRight,
+  FolderUp,
   LayoutGrid,
   Pencil,
   FileDown,
@@ -184,6 +185,11 @@ const ConnectionEditor = lazy(() =>
 );
 const LogViewer = lazy(() =>
   import("@/components/LogViewer/LogViewer").then((m) => ({ default: m.LogViewer }))
+);
+const FileServerEditor = lazy(() =>
+  import("@/components/ServiceEditor/FileServerEditor").then((m) => ({
+    default: m.FileServerEditor,
+  }))
 );
 const TunnelEditor = lazy(() =>
   import("@/components/TunnelEditor/TunnelEditor").then((m) => ({ default: m.TunnelEditor }))
@@ -439,6 +445,8 @@ export function SplitView() {
                 <SquarePen size={14} />
               ) : zoomedTab.contentType === "tunnel-editor" ? (
                 <ArrowLeftRight size={14} />
+              ) : zoomedTab.contentType === "server-editor" ? (
+                <FolderUp size={14} />
               ) : zoomedTab.contentType === "workspace-editor" ? (
                 <LayoutGrid size={14} />
               ) : zoomedTab.contentType === "network-diagnostic" ? (
@@ -583,6 +591,13 @@ export function SplitView() {
                   key={`zoom-${zoomedTabId}`}
                   tabId={zoomedTabId}
                   meta={zoomedTab.tunnelEditorMeta}
+                  isVisible={true}
+                />
+              ) : zoomedTab.contentType === "server-editor" && zoomedTab.serverEditorMeta ? (
+                <FileServerEditor
+                  key={`zoom-${zoomedTabId}`}
+                  tabId={zoomedTabId}
+                  meta={zoomedTab.serverEditorMeta}
                   isVisible={true}
                 />
               ) : zoomedTab.contentType === "workspace-editor" && zoomedTab.workspaceEditorMeta ? (
@@ -866,6 +881,14 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
               <TunnelEditor
                 tabId={tab.id}
                 meta={tab.tunnelEditorMeta}
+                isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
+              />
+            </Suspense>
+          ) : tab.contentType === "server-editor" && tab.serverEditorMeta ? (
+            <Suspense key={tab.id} fallback={<LazyPanelFallback />}>
+              <FileServerEditor
+                tabId={tab.id}
+                meta={tab.serverEditorMeta}
                 isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
               />
             </Suspense>
@@ -1217,13 +1240,15 @@ function TabDragOverlay({ tab }: { tab: TerminalTab }) {
             ? SquarePen
             : tab.contentType === "tunnel-editor"
               ? ArrowLeftRight
-              : tab.contentType === "workspace-editor"
-                ? LayoutGrid
-                : tab.contentType === "network-diagnostic"
-                  ? Stethoscope
-                  : tab.contentType === "transfer-view"
-                    ? Columns2
-                    : null;
+              : tab.contentType === "server-editor"
+                ? FolderUp
+                : tab.contentType === "workspace-editor"
+                  ? LayoutGrid
+                  : tab.contentType === "network-diagnostic"
+                    ? Stethoscope
+                    : tab.contentType === "transfer-view"
+                      ? Columns2
+                      : null;
   return (
     <div className="tab tab--drag-overlay">
       {NonTerminalIcon ? (

@@ -411,7 +411,13 @@ export function Modal({
 }
 
 /** What holds the unsaved changes, which picks the {@link UnsavedChangesDialog} copy. */
-export type UnsavedChangesSubject = "connection" | "file" | "tunnel" | "workspace" | "form";
+export type UnsavedChangesSubject =
+  | "connection"
+  | "file"
+  | "file server"
+  | "tunnel"
+  | "workspace"
+  | "form";
 
 /** Props for the shared {@link UnsavedChangesDialog}. */
 export interface UnsavedChangesDialogProps {

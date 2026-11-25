@@ -18,6 +18,7 @@ const CONTEXT_BY_CONTENT_TYPE: Record<TabContentType, ActiveContext> = {
   editor: "editor",
   "connection-editor": "form",
   "tunnel-editor": "form",
+  "server-editor": "form",
   "workspace-editor": "form",
   settings: "form",
   "network-diagnostic": "form",

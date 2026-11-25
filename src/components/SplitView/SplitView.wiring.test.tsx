@@ -114,6 +114,9 @@ vi.mock("@/components/ConnectionEditor/ConnectionEditor", () => ({
 }));
 vi.mock("@/components/LogViewer/LogViewer", () => ({ LogViewer: stub("log-viewer") }));
 vi.mock("@/components/TunnelEditor/TunnelEditor", () => ({ TunnelEditor: stub("tunnel-editor") }));
+vi.mock("@/components/ServiceEditor/FileServerEditor", () => ({
+  FileServerEditor: stub("server-editor"),
+}));
 vi.mock("@/components/WorkspaceEditor/WorkspaceEditor", () => ({
   WorkspaceEditor: stub("workspace-editor"),
 }));
@@ -155,6 +158,8 @@ function metaFor(contentType: ContentType): Partial<TerminalTab> {
       };
     case "tunnel-editor":
       return { tunnelEditorMeta: { tunnelId: "t1" } as TerminalTab["tunnelEditorMeta"] };
+    case "server-editor":
+      return { serverEditorMeta: { serverId: "s1" } };
     case "workspace-editor":
       return {
         workspaceEditorMeta: { workspaceId: "w1" } as TerminalTab["workspaceEditorMeta"],
@@ -465,6 +470,7 @@ describe("SplitView drag start / cancel (#5171)", () => {
     "editor",
     "connection-editor",
     "tunnel-editor",
+    "server-editor",
     "workspace-editor",
     "network-diagnostic",
     "transfer-view",
@@ -665,6 +671,7 @@ describe("SplitView zoomed tab menu and dialogs (#5171)", () => {
     "editor",
     "connection-editor",
     "tunnel-editor",
+    "server-editor",
     "workspace-editor",
     "network-diagnostic",
     "transfer-view",
@@ -747,6 +754,7 @@ describe("SplitView panel surfaces (#5171)", () => {
     "editor",
     "connection-editor",
     "tunnel-editor",
+    "server-editor",
     "workspace-editor",
     "network-diagnostic",
     "transfer-view",

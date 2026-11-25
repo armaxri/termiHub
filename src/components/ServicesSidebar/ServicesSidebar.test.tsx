@@ -56,6 +56,7 @@ let container: HTMLDivElement;
 let root: Root;
 const openTunnelEditorTab = vi.fn();
 const openConnectionEditorTab = vi.fn();
+const openServerEditorTab = vi.fn();
 
 function seed(
   tunnels: [TunnelConfig, TunnelStatus, object?][],
@@ -117,6 +118,7 @@ beforeEach(() => {
     ...useAppStore.getInitialState(),
     openTunnelEditorTab,
     openConnectionEditorTab,
+    openServerEditorTab,
   });
   useServicesView.setState(useServicesView.getInitialState());
   seedAgentsRegion({ remoteAgents: [{ id: "edge", name: "Edge box", config: {} } as never] });
@@ -375,7 +377,7 @@ describe("the keys", () => {
     act(() => q("server-item-s")!.focus());
     key(q("server-item-s")!, "Enter");
     await flushAsync();
-    expect(q("server-dialog-name")).not.toBeNull();
+    expect(openServerEditorTab).toHaveBeenCalledWith("s");
   });
 
   it("closes and opens a group", () => {
@@ -463,19 +465,10 @@ describe("making one", () => {
     expect(openTunnelEditorTab).toHaveBeenCalledWith(null, { tunnelType: type });
   });
 
-  it.each([
-    ["http", "8080"],
-    ["ftp", "2121"],
-    ["tftp", "6969"],
-  ])("a %s server opens its dialog", async (type, port) => {
+  it.each(["http", "ftp", "tftp"])("a %s server opens its editor", async (type) => {
     await render();
     await click(`services-empty-server-${type}`);
-    expect(
-      q(`server-dialog-proto-${type}`)?.getAttribute("aria-checked") ??
-        q(`server-dialog-proto-${type}`)?.getAttribute("data-state")
-    ).toMatch(/true|checked/);
-    expect((q("server-dialog-port") as HTMLInputElement).value).toBe(port);
-    expect(useServicesView.getState().requested).toBeNull();
+    expect(openServerEditorTab).toHaveBeenCalledWith(null, { serverType: type });
   });
 
   it("a list without rows says what services are for", async () => {
@@ -497,16 +490,5 @@ describe("making one", () => {
     await flushAsync();
     expect(q("services-empty-connection")).toBeNull();
     expect(q("services-empty")?.textContent).not.toContain("needs a saved SSH connection");
-  });
-
-  it("a request from elsewhere is taken up when the sidebar opens, once", async () => {
-    useServicesView.getState().requestFileServer("ftp");
-    await render();
-    expect(q("server-dialog-name")).not.toBeNull();
-    await click("server-dialog-cancel");
-    act(() => root.unmount());
-    root = createRoot(container);
-    await render();
-    expect(q("server-dialog-name")).toBeNull();
   });
 });

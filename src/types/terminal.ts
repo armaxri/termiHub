@@ -1,5 +1,6 @@
 // ts-rs-generated DTO (audit DUP-030). Imported here so this module can both
 // re-export it (below) and reference it locally in the interfaces further down.
+import type { ServerType } from "./embeddedServer";
 import type { ConnectionConfig } from "./generated/ConnectionConfig";
 import type { BroadcastGroup } from "./generated/BroadcastGroup";
 import type { LineEnding } from "./generated/LineEnding";
@@ -40,6 +41,7 @@ export type TabContentType =
   | "connection-editor"
   | "log-viewer"
   | "tunnel-editor"
+  | "server-editor"
   | "workspace-editor"
   | "network-diagnostic"
   /**
@@ -170,6 +172,16 @@ export interface TunnelEditorMeta {
   sshConnectionId?: string;
   /** For a NEW tunnel: its type, chosen in the New menu (#6028). */
   tunnelType?: "local" | "remote" | "dynamic";
+}
+
+/** The editor of a file server (#6028). */
+export interface ServerEditorMeta {
+  /** The server; `null` for a new one. */
+  serverId: string | null;
+  /** For a new one: its kind, chosen in the New menu. */
+  serverType?: ServerType;
+  /** For a new one: the server it is a copy of. */
+  copyOf?: string;
 }
 
 export interface WorkspaceEditorMeta {
@@ -359,6 +371,7 @@ export interface TerminalTab {
   editorMeta?: EditorTabMeta;
   connectionEditorMeta?: ConnectionEditorMeta;
   tunnelEditorMeta?: TunnelEditorMeta;
+  serverEditorMeta?: ServerEditorMeta;
   workspaceEditorMeta?: WorkspaceEditorMeta;
   networkDiagnosticMeta?: NetworkDiagnosticMeta;
   transferViewMeta?: TransferViewMeta;
