@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use tauri::{AppHandle, Manager, Runtime};
+use tauri::{AppHandle, Manager, Runtime, Wry};
 use termihub_core::backends::ssh::auth::connect_and_authenticate_cancellable_with_liveness as core_connect_cancellable_with_liveness;
 use termihub_core::backends::ssh::handler::{ForwardedChannelRegistry, LivenessWatch, SshSession};
 use termihub_core::backends::ssh::jump_host::connect_target_through_pooled_gateway_with_liveness;
@@ -327,12 +327,12 @@ fn supervisor_cancel_token(tasks: &AppTasks) -> CancellationToken {
 /// Asks the agents which tunnels they forward, sends the stops they owe, lets
 /// the manager start what waited (#6028), and republishes the `tunnels` region
 /// (#2199): stats-only (#4574) on a plain tick, in full when a row changes.
-struct AgentTunnelPoll {
+struct AgentTunnelPoll<R: Runtime> {
     hosted: HostedServices<HostedTunnels>,
-    app: AppHandle,
+    app: AppHandle<R>,
 }
 
-impl AgentStatusPollDelegate for AgentTunnelPoll {
+impl<R: Runtime> AgentStatusPollDelegate for AgentTunnelPoll<R> {
     type Target = Target<HostedTunnel>;
     type Sample = Sample<HostedTunnel>;
 
@@ -352,7 +352,7 @@ impl AgentStatusPollDelegate for AgentTunnelPoll {
         if !self.hosted.needs_tick() {
             return;
         }
-        let Some(manager) = resolve_managed_arc::<TunnelManager, _>(&self.app) else {
+        let Some(manager) = resolve_managed_arc::<TunnelManager<R>, _>(&self.app) else {
             return;
         };
         // A start blocks on the agent.
@@ -368,7 +368,7 @@ impl AgentStatusPollDelegate for AgentTunnelPoll {
         // Only the stats changed, as far as this call goes; a row that changed
         // publishes the whole view below.
         crate::tunnel::projection::publish_tunnel_stats(&self.app);
-        if let Some(manager) = resolve_managed_arc::<TunnelManager, _>(&self.app) {
+        if let Some(manager) = resolve_managed_arc::<TunnelManager<R>, _>(&self.app) {
             manager.show_changes(changes);
         }
     }
@@ -395,9 +395,9 @@ fn gone_tunnel(unanswered: bool, reconnect_on_disconnect: bool) -> GoneTunnel {
 }
 
 /// [`Reasons`] with the agents' names.
-struct AppReasons<'a>(&'a AppHandle);
+struct AppReasons<'a, R: Runtime>(&'a AppHandle<R>);
 
-impl Reasons for AppReasons<'_> {
+impl<R: Runtime> Reasons for AppReasons<'_, R> {
     fn waiting(&self, on: &WaitFor) -> String {
         waiting_reason(self.0, on)
     }
@@ -456,7 +456,7 @@ impl LoadedTunnels {
 ///
 /// Handles CRUD operations on tunnel configurations, starting/stopping tunnels,
 /// and tracking live tunnel state.
-pub struct TunnelManager {
+pub struct TunnelManager<R: Runtime = Wry> {
     tunnel_configs: Mutex<TunnelStore>,
     storage: TunnelStorage,
     /// `Arc`-shared so each per-tunnel supervisor task can hold a handle and
@@ -483,7 +483,7 @@ pub struct TunnelManager {
     /// same connection. Jump-host gateway sessions are pooled separately in the
     /// process-wide [`shared_gateway_pool`](termihub_core::backends::ssh::session_pool::shared_gateway_pool).
     endpoint_pool: Arc<RefPool<Arc<LiveEndpoint>>>,
-    app_handle: AppHandle,
+    app_handle: AppHandle<R>,
     /// Handle to the single periodic live-stats emitter task (GAP 6, #1248).
     /// `Some` while at least one tunnel is active; the task self-reaps and clears
     /// this slot once no tunnel remains, and `stop_all` aborts it on shutdown.
@@ -506,13 +506,13 @@ pub struct TunnelManager {
     connection_refs: ConnectionRefs,
 }
 
-impl TunnelManager {
+impl<R: Runtime> TunnelManager<R> {
     /// Build the manager over the tunnels [`LoadedTunnels::load`] read from
     /// disk (with recovery, so a corrupt file is handled gracefully). The
     /// `AppHandle`-bound half of startup, split from the load so the boot phase
     /// loads the file on a mock app (#5313). The caller reports
     /// `loaded.warnings` first; they are not kept on the manager.
-    pub fn from_loaded(app_handle: &AppHandle, loaded: LoadedTunnels) -> Self {
+    pub fn from_loaded(app_handle: &AppHandle<R>, loaded: LoadedTunnels) -> Self {
         let LoadedTunnels { storage, store, .. } = loaded;
         let tasks = AppTasks::for_app(app_handle);
 
@@ -919,7 +919,11 @@ impl TunnelManager {
     /// Start every waiting tunnel that can start now, and end the waits that
     /// took too long. Blocking: called on every tick of the poller.
     fn start_ready(&self) {
-        for (id, on) in self.hosted.take_expired(Instant::now()) {
+        self.start_ready_at(Instant::now());
+    }
+
+    fn start_ready_at(&self, now: Instant) {
+        for (id, on) in self.hosted.take_expired(now) {
             let _ = self.refuse(&id, waited_too_long(&self.app_handle, &on));
         }
         for (id, _) in self.hosted.waiting() {
@@ -1854,7 +1858,7 @@ impl TunnelManager {
     }
 }
 
-impl TunnelControl for TunnelManager {
+impl<R: Runtime> TunnelControl for TunnelManager<R> {
     fn tunnel_configs(&self) -> Vec<TunnelConfig> {
         self.get_tunnels().unwrap_or_default()
     }
@@ -1943,7 +1947,11 @@ fn teardown_parts(mut forwarder: ActiveForwarder, guards: PooledSessionGuards) {
 
 /// Emit a tunnel status change event to the frontend (free function so the
 /// supervisor task can emit without `&self`).
-fn emit_tunnel_status(app_handle: &AppHandle, tunnel_id: &str, status: TunnelStatus) {
+fn emit_tunnel_status<R: Runtime>(
+    app_handle: &AppHandle<R>,
+    tunnel_id: &str,
+    status: TunnelStatus,
+) {
     // Project the change onto the stateless-UI `tunnels` region (#2150) — the
     // only status channel since the legacy `tunnel-status-changed` event was
     // retired (DEAD2-004, #4344). This is the single status-emit choke point,
@@ -1966,8 +1974,12 @@ fn emit_tunnel_status(app_handle: &AppHandle, tunnel_id: &str, status: TunnelSta
 /// path or under any manager lock, preserving the choke point's deadlock
 /// discipline. The companion is not itself a parent, so its resulting emits do
 /// not recurse here.
-fn orchestrate_companion(app_handle: &AppHandle, parent_id: &str, parent_status: &TunnelStatus) {
-    let Some(manager) = resolve_managed_arc::<TunnelManager, _>(app_handle) else {
+fn orchestrate_companion<R: Runtime>(
+    app_handle: &AppHandle<R>,
+    parent_id: &str,
+    parent_status: &TunnelStatus,
+) {
+    let Some(manager) = resolve_managed_arc::<TunnelManager<R>, _>(app_handle) else {
         return;
     };
     let Some(companion_id) = manager.companion_id_of(parent_id) else {
@@ -1997,11 +2009,11 @@ fn orchestrate_companion(app_handle: &AppHandle, parent_id: &str, parent_status:
 /// guards so the shared session drains exactly once), records the cause as the
 /// durable last-error (#1238), and emits the `Error` resting state.
 #[allow(clippy::too_many_arguments)]
-async fn supervise(
+async fn supervise<R: Runtime>(
     active_tunnels: Arc<Mutex<HashMap<String, ActiveTunnel>>>,
     last_errors: Arc<Mutex<HashMap<String, String>>>,
     reconnecting: Arc<Mutex<HashMap<String, CancellationToken>>>,
-    app_handle: AppHandle,
+    app_handle: AppHandle<R>,
     tunnel_id: String,
     death: Option<tokio::sync::oneshot::Receiver<()>>,
     liveness: Option<LivenessWatch>,
@@ -2068,7 +2080,7 @@ async fn supervise(
             );
             emit_tunnel_status(&app_handle, &tunnel_id, TunnelStatus::Reconnecting);
         },
-        |_attempt| match resolve_managed_arc::<TunnelManager, _>(&app_handle) {
+        |_attempt| match resolve_managed_arc::<TunnelManager<R>, _>(&app_handle) {
             Some(mgr) => mgr.attempt_reconnect(&tunnel_id),
             None => false,
         },
@@ -3275,25 +3287,25 @@ mod tests {
         // `preserve_order`), so the internally-tagged `mode` key lands exactly
         // where the old appended literal did. Changing any of these strings is a
         // WIRE BREAK — the agent deserializes them.
-        let local = serde_json::to_value(super::TunnelManager::forward_spec(&TunnelType::Local(
-            sample_local(),
-        )))
+        let local = serde_json::to_value(super::TunnelManager::<tauri::Wry>::forward_spec(
+            &TunnelType::Local(sample_local()),
+        ))
         .expect("serialize local forward");
         assert_eq!(
             serde_json::to_string(&local).unwrap(),
             r#"{"localHost":"127.0.0.1","localPort":5432,"mode":"local","remoteHost":"db.internal","remotePort":5433}"#
         );
 
-        let remote = serde_json::to_value(super::TunnelManager::forward_spec(&TunnelType::Remote(
-            sample_remote(),
-        )))
+        let remote = serde_json::to_value(super::TunnelManager::<tauri::Wry>::forward_spec(
+            &TunnelType::Remote(sample_remote()),
+        ))
         .expect("serialize remote forward");
         assert_eq!(
             serde_json::to_string(&remote).unwrap(),
             r#"{"localHost":"127.0.0.1","localPort":3000,"mode":"remote","remoteHost":"0.0.0.0","remotePort":8080}"#
         );
 
-        let dynamic = serde_json::to_value(super::TunnelManager::forward_spec(
+        let dynamic = serde_json::to_value(super::TunnelManager::<tauri::Wry>::forward_spec(
             &TunnelType::Dynamic(sample_dynamic()),
         ))
         .expect("serialize dynamic forward");
@@ -3320,8 +3332,10 @@ mod tests {
                 TunnelType::Dynamic(c) => serde_json::to_value(c).unwrap(),
             };
             legacy["mode"] = serde_json::json!(mode);
-            let typed =
-                serde_json::to_value(super::TunnelManager::forward_spec(&tunnel_type)).unwrap();
+            let typed = serde_json::to_value(super::TunnelManager::<tauri::Wry>::forward_spec(
+                &tunnel_type,
+            ))
+            .unwrap();
             assert_eq!(
                 serde_json::to_string(&typed).unwrap(),
                 serde_json::to_string(&legacy).unwrap(),
@@ -3354,8 +3368,10 @@ mod tests {
             ),
         ];
         for (tunnel_type, agent_spec, expected_mode) in cases {
-            let wire =
-                serde_json::to_value(super::TunnelManager::forward_spec(&tunnel_type)).unwrap();
+            let wire = serde_json::to_value(super::TunnelManager::<tauri::Wry>::forward_spec(
+                &tunnel_type,
+            ))
+            .unwrap();
             let agent_mode = serde_json::to_value(&agent_spec).unwrap()["mode"].clone();
             assert_eq!(
                 wire["mode"], agent_mode,
@@ -3393,7 +3409,8 @@ mod tests {
         // sides, so the only thing this pins is the top-level camelCase wrapper
         // (`tunnelId`/`sshConfig`/`forward`) the desktop used to build by hand.
         let ssh_config = SshConfig::default();
-        let forward = super::TunnelManager::forward_spec(&TunnelType::Local(sample_local()));
+        let forward =
+            super::TunnelManager::<tauri::Wry>::forward_spec(&TunnelType::Local(sample_local()));
 
         // Pre-migration hand-built shape.
         let legacy = serde_json::json!({
@@ -3586,3 +3603,7 @@ mod tests {
         assert!(err.contains("conn-4") && err.contains("no host"), "{err}");
     }
 }
+
+#[cfg(test)]
+#[path = "tunnel_manager_agent_tests.rs"]
+mod agent_tests;

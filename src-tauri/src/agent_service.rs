@@ -791,6 +791,45 @@ mod tests {
         assert_eq!(ticks.load(Ordering::SeqCst), 0, "no tick after shutdown");
     }
 
+    /// #6028: an instance added between a tick's empty snapshot and the end of
+    /// the task is polled on, not left without a poller.
+    #[tokio::test(start_paused = true)]
+    async fn an_instance_added_while_the_poller_ends_is_polled_on() {
+        struct Late {
+            calls: Arc<AtomicUsize>,
+            until: usize,
+        }
+        impl AgentStatusPollDelegate for Late {
+            type Target = ();
+            type Sample = ();
+            fn interval(&self) -> Duration {
+                TICK
+            }
+            fn client(&self) -> Option<Arc<dyn AgentRpcClient>> {
+                None
+            }
+            fn snapshot_targets(&self) -> (Vec<()>, bool) {
+                let call = self.calls.fetch_add(1, Ordering::SeqCst);
+                // Nothing left on the first look, something on the second.
+                (Vec::new(), call > 0 && call < self.until)
+            }
+            fn poll(_: Arc<dyn AgentRpcClient>, _: &[()]) -> Vec<()> {
+                Vec::new()
+            }
+            fn apply(&self, _: Vec<()>) {}
+        }
+        let calls = Arc::new(AtomicUsize::new(0));
+        let poller = AgentStatusPoller::new();
+        poller.ensure(Late {
+            calls: Arc::clone(&calls),
+            until: 5,
+        });
+        advance_ticks(1).await;
+        assert!(poller.is_running(), "polls on");
+        advance_until(|| !poller.is_running()).await;
+        assert!(calls.load(Ordering::SeqCst) > 5);
+    }
+
     /// A minimal [`AgentHosted`] handle for the tracker tests.
     struct Handle {
         agent_id: String,

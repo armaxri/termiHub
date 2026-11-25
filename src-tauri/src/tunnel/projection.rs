@@ -81,7 +81,7 @@ pub fn tunnel_view_from(tunnels: Vec<TunnelConfig>, states: Vec<TunnelState>) ->
 }
 
 /// The current `tunnels` view model for a manager (its configs + live statuses).
-pub fn build_tunnel_view(manager: &TunnelManager) -> Value {
+pub fn build_tunnel_view<R: tauri::Runtime>(manager: &TunnelManager<R>) -> Value {
     let tunnels = manager.get_tunnels().unwrap_or_default();
     let states = manager.get_statuses().unwrap_or_default();
     tunnel_view_from(tunnels, states)
@@ -104,7 +104,7 @@ pub fn build_tunnel_view(manager: &TunnelManager) -> Value {
 pub fn publish_tunnels<R: tauri::Runtime>(app_handle: &AppHandle<R>) {
     let (Some(projection), Some(manager)) = (
         app_handle.try_state::<ProjectionState>(),
-        app_handle.try_state::<Arc<TunnelManager>>(),
+        app_handle.try_state::<Arc<TunnelManager<R>>>(),
     ) else {
         return;
     };
@@ -131,7 +131,7 @@ pub fn publish_tunnels<R: tauri::Runtime>(app_handle: &AppHandle<R>) {
 pub fn publish_tunnel_stats<R: tauri::Runtime>(app_handle: &AppHandle<R>) {
     let (Some(projection), Some(manager)) = (
         app_handle.try_state::<ProjectionState>(),
-        app_handle.try_state::<Arc<TunnelManager>>(),
+        app_handle.try_state::<Arc<TunnelManager<R>>>(),
     ) else {
         return;
     };
