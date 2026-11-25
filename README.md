@@ -147,7 +147,7 @@ Prefer to build it yourself? See [Development](#development) below.
 
 - **Plugin system** — Extend termiHub with installable plugins, managed from the Plugins sidebar, with a curated plugin index to browse and install from (Settings → Plugins → Browse plugins; every download is checksum-verified and still needs your review). Includes **native (cdylib) backends** with an Ed25519 signature / trust model. Native plugins are off by default; each one runs out of process in an OS sandbox (`termihub-plugin-runner`) — see the plugin trust warning under [Security](#security)
 - **Network diagnostics** — Built-in ping, traceroute, port scanner, DNS lookup, HTTP monitor, and Wake-on-LAN. Open them from the **Network tools** view in the Activity Bar
-- **Embedded servers** — Run local HTTP, FTP, and TFTP servers with lifecycle management for quick file serving and device provisioning. Manage them from the **Services** view in the Activity Bar, or share a folder from the file browser (**Share via …**)
+- **Embedded servers** — Run local HTTP, FTP, and TFTP servers with lifecycle management for quick file serving and device provisioning. Manage them from the **Services** view in the Activity Bar, or share a folder from the file browser (**Share via …**). A server can run on this computer or on a remote agent (**Run on**); the choice is saved, and a server whose agent is offline, removed or too old is not started anywhere and its row says why
 - **Automations** — Record what you type in a terminal or create an automation step by step, then run it with one click, on many terminals, on a trigger or on a schedule (see [Automations](#automations))
 
 ### Workspace and Windows

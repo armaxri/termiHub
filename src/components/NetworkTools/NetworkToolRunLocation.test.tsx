@@ -74,7 +74,7 @@ describe("NetworkToolRunLocation", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     seedAgentsRegion({ remoteAgents: [agent("a1", "build-server")] });
-    useRunLocationStore.setState({ networkToolLocations: {}, serverLocations: {} });
+    useRunLocationStore.setState({ networkToolLocations: {} });
   });
 
   afterEach(() => {

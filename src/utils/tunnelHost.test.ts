@@ -30,6 +30,15 @@ describe("resolveTunnelHost", () => {
   it("defaults a missing host to This computer", () => {
     expect(resolveTunnelHost({ host: undefined })).toEqual({ kind: "thisComputer" });
   });
+  it("never reads a host it cannot read as this computer (#6028)", () => {
+    const host = { kind: "cluster" } as unknown as RunLocation;
+    expect(resolveTunnelHost({ host })).toEqual({ kind: "unreadable" });
+    expect(tunnelHostBadge({ kind: "unreadable" })).toEqual({
+      label: "an unknown machine",
+      onAgent: false,
+      unreadable: true,
+    });
+  });
   it("returns an explicit host unchanged", () => {
     expect(resolveTunnelHost({ host: AGENT })).toEqual(AGENT);
   });

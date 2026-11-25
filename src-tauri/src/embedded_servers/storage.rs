@@ -227,6 +227,7 @@ mod tests {
             }),
             max_transfer_bytes: None,
             max_concurrent_sessions: None,
+            host: Default::default(),
             extra: Default::default(),
         };
         let store = EmbeddedServerStore {
@@ -303,6 +304,7 @@ mod tests {
                 http_auth: None,
                 max_transfer_bytes: None,
                 max_concurrent_sessions: None,
+                host: Default::default(),
                 extra: Default::default(),
             }],
         };
@@ -395,6 +397,7 @@ mod tests {
                 http_auth: None,
                 max_transfer_bytes: None,
                 max_concurrent_sessions: None,
+                host: Default::default(),
                 extra: Default::default(),
             }],
         };

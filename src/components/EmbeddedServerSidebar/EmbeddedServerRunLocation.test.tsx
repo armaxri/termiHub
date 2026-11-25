@@ -1,9 +1,9 @@
 /**
- * Wiring tests for the per-server "Run on" run-location selector (#2191):
- * picking an agent in the editor and saving records the preference on the
- * desktop backend and mirrors it in the run-location store, and a backend
- * rejection rolls the mirror back. The selector lives in the editor, not on the
- * row (#5770): a row shows names, not settings.
+ * Where a file server runs (#2191, #6028): the choice is stored with the server,
+ * a save that did not touch it leaves it out (an old list in another window must
+ * not move the server), and a machine that cannot be read or is gone is never
+ * shown as this computer. The selector lives in the editor, not on the row
+ * (#5770): a row shows names, not settings.
  *
  * The Radix-backed selector is replaced with a trivial harness so the wiring is
  * tested without driving Radix's portal/pointer machinery in jsdom.
@@ -12,9 +12,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import type { EmbeddedServerConfig } from "@/types/embeddedServer";
-import { setEmbeddedServerRunLocation } from "@/services/embeddedServerApi";
-import { useRunLocationStore } from "@/store/runLocationStore";
 import { useAppStore } from "@/store/appStore";
+import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { TooltipProvider } from "@/components/ui";
 import { EmbeddedServerSidebar } from "./EmbeddedServerSidebar";
 
@@ -46,17 +45,19 @@ vi.mock("@/components/RunLocationSelect", () => ({
   }) => (
     <div
       data-testid={rest["data-testid"]}
-      data-value={value.kind === "agent" ? `agent:${value.agentId}` : "this"}
+      data-value={value.kind === "agent" ? `agent:${value.agentId}` : value.kind}
     >
       <button data-testid="pick-agent" onClick={() => onChange({ kind: "agent", agentId: "a1" })}>
         agent
+      </button>
+      <button data-testid="pick-this" onClick={() => onChange({ kind: "thisComputer" })}>
+        this
       </button>
     </div>
   ),
 }));
 
 vi.mock("@/services/embeddedServerApi", () => ({
-  setEmbeddedServerRunLocation: vi.fn(() => Promise.resolve()),
   listNetworkInterfaces: vi.fn(() => Promise.resolve([{ name: "Loopback", addr: "127.0.0.1" }])),
 }));
 
@@ -67,7 +68,7 @@ vi.mock("@/store/appStore", () => {
   return { useAppStore };
 });
 
-function makeServer(id: string, name: string): EmbeddedServerConfig {
+function makeServer(id: string, name: string, host?: unknown): EmbeddedServerConfig {
   return {
     id,
     name,
@@ -78,8 +79,11 @@ function makeServer(id: string, name: string): EmbeddedServerConfig {
     autoStart: false,
     readOnly: false,
     directoryListing: true,
+    ...(host === undefined ? {} : { host: host as EmbeddedServerConfig["host"] }),
   };
 }
+
+const saveEmbeddedServer = vi.fn((_config: EmbeddedServerConfig) => Promise.resolve());
 
 let container: HTMLDivElement;
 let root: Root;
@@ -91,51 +95,53 @@ async function flush() {
   });
 }
 
-function seedStore() {
+setupAgentsRegion();
+
+function seedStore(servers = [makeServer("srv-1", "Docs")], states: Record<string, unknown> = {}) {
   (useAppStore as unknown as { setState: (p: Record<string, unknown>) => void }).setState({
-    embeddedServers: [makeServer("srv-1", "Docs")],
-    embeddedServerStates: {},
-    remoteAgents: [
-      {
-        id: "a1",
-        name: "build-server",
-        config: {},
-        agentSettings: {},
-        isExpanded: false,
-        connectionState: "connected",
-      },
-    ],
-    saveEmbeddedServer: vi.fn(() => Promise.resolve()),
+    embeddedServers: servers,
+    embeddedServerStates: states,
+    saveEmbeddedServer,
     deleteEmbeddedServer: vi.fn(() => Promise.resolve()),
     startEmbeddedServer: vi.fn(() => Promise.resolve()),
     stopEmbeddedServer: vi.fn(() => Promise.resolve()),
   });
 }
 
-/** Open the editor for srv-1, pick the agent and save. */
-async function pickAgentInEditorAndSave() {
-  act(() => {
-    (document.querySelector('[data-testid="server-edit-srv-1"]') as HTMLButtonElement).click();
-  });
-  await flush();
-  const picker = document.querySelector('[data-testid="server-dialog-runloc"]');
-  expect(picker?.getAttribute("data-value")).toBe("this");
-  act(() => {
-    (picker!.querySelector('[data-testid="pick-agent"]') as HTMLButtonElement).click();
-  });
-  act(() => {
-    (document.querySelector('[data-testid="server-dialog-save"]') as HTMLButtonElement).click();
-  });
+function q(testId: string): HTMLElement | null {
+  return document.querySelector<HTMLElement>(`[data-testid="${testId}"]`);
+}
+
+async function render() {
+  act(() =>
+    root.render(
+      <TooltipProvider>
+        <EmbeddedServerSidebar />
+      </TooltipProvider>
+    )
+  );
   await flush();
 }
 
-describe("EmbeddedServer run-location wiring", () => {
+async function openEditor() {
+  act(() => q("server-edit-srv-1")!.click());
+  await flush();
+}
+
+async function pickAndSave(pick?: "pick-agent" | "pick-this") {
+  if (pick) act(() => q(pick)!.click());
+  act(() => q("server-dialog-save")!.click());
+  await flush();
+}
+
+describe("where a file server runs", () => {
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    seedAgentsRegion({ remoteAgents: [{ id: "a1", name: "build-server" } as any] });
     seedStore();
-    useRunLocationStore.setState({ networkToolLocations: {}, serverLocations: {} });
   });
 
   afterEach(() => {
@@ -144,56 +150,103 @@ describe("EmbeddedServer run-location wiring", () => {
     vi.clearAllMocks();
   });
 
-  it("has no Run on selector on the row", () => {
-    act(() =>
-      root.render(
-        <TooltipProvider>
-          <EmbeddedServerSidebar />
-        </TooltipProvider>
-      )
-    );
-    expect(document.querySelector('[data-testid="server-runloc-srv-1"]')).toBeNull();
-    expect(document.querySelector('[data-testid="server-item-srv-1"]')?.textContent).not.toContain(
-      "Run on"
-    );
+  it("has no Run on selector on the row", async () => {
+    await render();
+    expect(q("server-runloc-srv-1")).toBeNull();
+    expect(q("server-item-srv-1")?.textContent).not.toContain("Run on");
   });
 
-  it("records an agent choice on the backend and mirrors it in the store", async () => {
-    act(() =>
-      root.render(
-        <TooltipProvider>
-          <EmbeddedServerSidebar />
-        </TooltipProvider>
-      )
-    );
-    await pickAgentInEditorAndSave();
-
-    expect(setEmbeddedServerRunLocation).toHaveBeenCalledWith("srv-1", {
-      kind: "agent",
-      agentId: "a1",
-    });
-    expect(useRunLocationStore.getState().serverLocations["srv-1"]).toEqual({
-      kind: "agent",
-      agentId: "a1",
-    });
+  it("saves the chosen agent with the server, in one save", async () => {
+    await render();
+    await openEditor();
+    expect(q("server-dialog-runloc")?.getAttribute("data-value")).toBe("thisComputer");
+    await pickAndSave("pick-agent");
+    expect(saveEmbeddedServer).toHaveBeenCalledTimes(1);
+    expect(saveEmbeddedServer.mock.calls[0][0].host).toEqual({ kind: "agent", agentId: "a1" });
   });
 
-  it("rolls back the mirrored choice when the backend rejects it", async () => {
-    (setEmbeddedServerRunLocation as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-      new Error("agent unavailable")
-    );
-    act(() =>
-      root.render(
-        <TooltipProvider>
-          <EmbeddedServerSidebar />
-        </TooltipProvider>
-      )
-    );
-    await pickAgentInEditorAndSave();
+  it("keeps the choice while the sidebar re-renders (live states do that)", async () => {
+    await render();
+    await openEditor();
+    act(() => q("pick-agent")!.click());
+    await render();
+    expect(q("server-dialog-runloc")?.getAttribute("data-value")).toBe("agent:a1");
+  });
 
-    expect(useRunLocationStore.getState().serverLocations["srv-1"]).toEqual({
-      kind: "thisComputer",
+  it("leaves the host out of a save that did not change it", async () => {
+    seedStore([makeServer("srv-1", "Docs", { kind: "agent", agentId: "a1" })]);
+    await render();
+    await openEditor();
+    expect(q("server-dialog-runloc")?.getAttribute("data-value")).toBe("agent:a1");
+    await pickAndSave();
+    expect(saveEmbeddedServer.mock.calls[0][0]).not.toHaveProperty("host");
+  });
+
+  it("moves it back to this computer only when the user picks that", async () => {
+    seedStore([makeServer("srv-1", "Docs", { kind: "agent", agentId: "a1" })]);
+    await render();
+    await openEditor();
+    await pickAndSave("pick-this");
+    expect(saveEmbeddedServer.mock.calls[0][0].host).toEqual({ kind: "thisComputer" });
+  });
+
+  it("does not show a host it cannot read as this computer, and keeps it on save", async () => {
+    seedStore([makeServer("srv-1", "Docs", { kind: "cluster", clusterId: "x" })]);
+    await render();
+    expect(q("server-item-srv-1")?.getAttribute("aria-description")).toContain(
+      "termiHub cannot read where it runs"
+    );
+    await openEditor();
+    expect(q("server-dialog-runloc")?.getAttribute("data-value")).toBe("unreadable");
+    await pickAndSave();
+    expect(saveEmbeddedServer.mock.calls[0][0]).not.toHaveProperty("host");
+  });
+
+  it.each([
+    [undefined, "Runs on this computer"],
+    [{ kind: "agent", agentId: "a1" }, "Runs on agent build-server"],
+    [{ kind: "agent", agentId: "gone" }, "Runs on an agent that was removed"],
+  ])("says on the row where it runs (%j)", async (host, text) => {
+    seedStore([makeServer("srv-1", "Docs", host)]);
+    await render();
+    expect(q("server-item-srv-1")?.getAttribute("aria-description")).toContain(text);
+  });
+
+  it("shows why it was not started on the row", async () => {
+    const error = "Not started: agent build-server is not connected. Connect it, then start again.";
+    seedStore([makeServer("srv-1", "Docs", { kind: "agent", agentId: "a1" })], {
+      "srv-1": {
+        serverId: "srv-1",
+        status: "error",
+        error,
+        stats: { activeConnections: 0, totalConnections: 0, bytesSent: 0, bytesReceived: 0 },
+      },
     });
-    expect(toastError).toHaveBeenCalled();
+    await render();
+    expect(q("server-item-srv-1")?.textContent).toContain(error);
+  });
+
+  it("says nothing of stopping when the server is not running", async () => {
+    await render();
+    await openEditor();
+    act(() => q("pick-agent")!.click());
+    expect(q("server-dialog-move-hint")).toBeNull();
+  });
+
+  it("warns that moving a running server stops it", async () => {
+    seedStore([makeServer("srv-1", "Docs")], {
+      "srv-1": {
+        serverId: "srv-1",
+        status: "running",
+        stats: { activeConnections: 0, totalConnections: 0, bytesSent: 0, bytesReceived: 0 },
+      },
+    });
+    await render();
+    await openEditor();
+    expect(q("server-dialog-move-hint")).toBeNull();
+    act(() => q("pick-agent")!.click());
+    expect(q("server-dialog-move-hint")?.textContent).toBe(
+      "It is running. Saving stops it; start it again to run it on the machine you chose."
+    );
   });
 });

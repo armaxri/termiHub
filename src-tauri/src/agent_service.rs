@@ -35,7 +35,9 @@ use std::time::Duration;
 use tauri::{AppHandle, Manager, Runtime};
 
 use crate::app_tasks::AppTasks;
+use crate::connection::manager::ConnectionManager;
 use crate::terminal::agent_manager::AgentRpcClient;
+use crate::utils::errors::TerminalError;
 
 /// Resolve the shared agent RPC client from Tauri managed state, if available.
 ///
@@ -47,6 +49,77 @@ use crate::terminal::agent_manager::AgentRpcClient;
 pub fn agent_rpc_client<R: Runtime>(app: &AppHandle<R>) -> Option<Arc<dyn AgentRpcClient>> {
     app.try_state::<Arc<dyn AgentRpcClient>>()
         .map(|state| (*state).clone())
+}
+
+/// The reason a service whose stored host cannot be read is not started
+/// (#6028). Shown on its row.
+pub const HOST_UNREADABLE: &str =
+    "Not started: termiHub cannot read where it runs. Edit it and choose a machine.";
+
+/// What the saved agents say about an agent id.
+enum SavedAgent {
+    /// There are no saved agents to ask (a unit test, or a load failure).
+    Unknown,
+    /// No saved agent has this id.
+    Removed,
+    Named(String),
+}
+
+fn saved_agent<R: Runtime>(app: &AppHandle<R>, agent_id: &str) -> SavedAgent {
+    let Some(connections) = app.try_state::<ConnectionManager>() else {
+        return SavedAgent::Unknown;
+    };
+    let Ok(all) = connections.get_all() else {
+        return SavedAgent::Unknown;
+    };
+    match all.agents.into_iter().find(|agent| agent.id == agent_id) {
+        Some(agent) => SavedAgent::Named(agent.name),
+        None => SavedAgent::Removed,
+    }
+}
+
+fn agent_label<R: Runtime>(app: &AppHandle<R>, agent_id: &str) -> String {
+    match saved_agent(app, agent_id) {
+        SavedAgent::Named(name) if !name.trim().is_empty() => name.trim().to_string(),
+        _ => agent_id.to_string(),
+    }
+}
+
+/// The client to start a service on agent `agent_id`, or the reason to show on
+/// the service's row when that agent cannot be asked (#6028). The caller starts
+/// nothing then, least of all on this computer.
+pub fn agent_for_start<R: Runtime>(
+    app: &AppHandle<R>,
+    agent_id: &str,
+) -> Result<Arc<dyn AgentRpcClient>, String> {
+    if matches!(saved_agent(app, agent_id), SavedAgent::Removed) {
+        return Err(
+            "Not started: the agent it runs on was removed. Edit it and choose a machine."
+                .to_string(),
+        );
+    }
+    agent_rpc_client(app)
+        .filter(|client| client.is_connected(agent_id))
+        .ok_or_else(|| {
+            let name = agent_label(app, agent_id);
+            format!("Not started: agent {name} is not connected. Connect it, then start again.")
+        })
+}
+
+/// The reason to show on a service's row when agent `agent_id` did not start
+/// it (#6028).
+pub fn agent_start_error<R: Runtime>(
+    app: &AppHandle<R>,
+    agent_id: &str,
+    error: &TerminalError,
+) -> String {
+    let name = agent_label(app, agent_id);
+    match error {
+        TerminalError::AgentUnsupported(_) => {
+            format!("Not started: agent {name} is too old to run it. Update the agent.")
+        }
+        error => format!("Not started: agent {name} could not start it: {error}"),
+    }
 }
 
 /// The service-specific parts of one agent status-poll tick.

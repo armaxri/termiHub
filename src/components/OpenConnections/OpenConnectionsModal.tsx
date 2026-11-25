@@ -44,6 +44,7 @@ import {
   resolveTunnelHost,
   isAgentHost,
   tunnelHostBadge,
+  tunnelHostMachine,
   reportedReachability,
 } from "@/utils/tunnelHost";
 import { findCompanion, isCompanion, orderTunnelRows } from "@/utils/tunnelChain";
@@ -85,6 +86,7 @@ import {
 } from "@/services/networkApi";
 import { frontendError, frontendLog } from "@/utils/frontendLog";
 import { XServerStatusReport } from "@/types/xserver";
+import { hostChoice } from "@/utils/hostChoice";
 import { PROTOCOL_LABELS } from "@/types/embeddedServer";
 import { resolveAgentUpdateState } from "@/utils/agentVersion";
 import { useDesktopVersion } from "@/hooks/useDesktopVersion";
@@ -1180,7 +1182,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                   tunnelHost.agentId)
                 : undefined;
               const hostBadge = tunnelHostBadge(tunnelHost, hostAgentName);
-              const hostText = hostBadge.onAgent ? `agent ${hostBadge.label}` : "this computer";
+              const hostText = hostBadge.onAgent ? `agent ${hostBadge.label}` : hostBadge.label;
               // Live stats + reported reachability for a running tunnel (#2199):
               // agent-hosted tunnels now carry the same up/down bytes + conn
               // counts as desktop ones, plus the agent's runtime vantage.
@@ -1323,12 +1325,18 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
           >
             {runningEmbeddedServers.map((s) => {
               const status = embeddedServerStates[s.id]?.status;
+              const serverHost = hostChoice(s.host);
               return (
                 <ConnectionRow
                   key={s.id}
                   icon={<Server size={14} />}
                   title={s.name}
-                  detail={`${PROTOCOL_LABELS[s.serverType]} · ${s.bindHost}:${s.port}`}
+                  detail={`${PROTOCOL_LABELS[s.serverType]} · ${s.bindHost}:${s.port} · ${tunnelHostMachine(
+                    serverHost,
+                    isAgentHost(serverHost)
+                      ? remoteAgents.find((a) => a.id === serverHost.agentId)?.name
+                      : undefined
+                  )}`}
                   badge={status === "running" ? "up" : "connecting"}
                   onKill={() => handleStopEmbeddedServer(s.id)}
                   killLabel="Stop"

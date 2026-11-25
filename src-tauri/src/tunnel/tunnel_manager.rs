@@ -29,17 +29,19 @@ use super::config::{
 use super::connecting::{ConnectingTracker, FinishOutcome};
 use super::connection_refs::{ConnectionRefs, LiveConnections, TunnelControl};
 use super::dynamic_forward::DynamicForwarder;
+use super::host::{ensure_runs_here, resolve_tunnel_host, RunsHere};
 use super::local_forward::LocalForwarder;
 use super::remote_forward::RemoteForwarder;
 use super::storage::TunnelStorage;
 use crate::agent_service::{
-    agent_rpc_client, AgentHosted, AgentInstances, AgentStatusPollDelegate, AgentStatusPoller,
+    agent_for_start, agent_rpc_client, agent_start_error, AgentHosted, AgentInstances,
+    AgentStatusPollDelegate, AgentStatusPoller,
 };
 use crate::app_tasks::AppTasks;
 use crate::connection::jump_host_resolver::ReferenceRole;
 use crate::connection::manager::ConnectionManager;
 use crate::connection::recovery::RecoveryWarning;
-use crate::run_location::{Locality, ResolvedLocation, RunLocationResolver};
+use crate::run_location::ResolvedLocation;
 use crate::session::manager::SessionManager;
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
@@ -171,25 +173,6 @@ fn resting_status(
     } else {
         (TunnelStatus::Disconnected, None)
     }
-}
-
-/// Resolve a tunnel's run-location host to its execution target (S3, #2155).
-///
-/// A tunnel is never desktop-only, so the resolver honours whatever host the
-/// config carries. [`RunLocation::ThisComputer`] resolves to
-/// [`ResolvedLocation::Local`] (the desktop forwarder path — today's
-/// behaviour); [`RunLocation::Agent`] resolves to [`ResolvedLocation::Agent`],
-/// routing hosting to that agent over the agent RPC (#2185). The error string
-/// is what the caller records + emits as the tunnel's resting `Error`. Pure (no
-/// locking, no IO, no `AppHandle`) so the routing decision is unit-testable
-/// directly.
-fn resolve_tunnel_host(
-    tunnel_id: &str,
-    host: &crate::run_location::RunLocation,
-) -> Result<ResolvedLocation, String> {
-    RunLocationResolver::new()
-        .resolve(tunnel_id, Locality::LocalOrAgent, host)
-        .map_err(|e| e.to_string())
 }
 
 // ── Companion (chained desktop-hop) linkage — pure helpers (#2597) ───────────
@@ -633,22 +616,25 @@ impl TunnelManager {
     }
 
     /// Save (add or update) a tunnel configuration.
+    ///
+    /// A tunnel that is moved to another machine is stopped where it runs, so
+    /// its port does not stay open there (#6028).
     pub fn save_tunnel(&self, config: TunnelConfig) -> Result<(), TerminalError> {
-        let mut store = self
-            .tunnel_configs
-            .lock()
-            .map_err(|e| TerminalError::TunnelError(format!("Lock error: {}", e)))?;
-
-        if let Some(existing) = store.tunnels.iter_mut().find(|t| t.id == config.id) {
-            *existing = config;
-        } else {
-            store.tunnels.push(config);
+        let id = config.id.clone();
+        let moved = {
+            let mut store = self
+                .tunnel_configs
+                .lock()
+                .map_err(|e| TerminalError::TunnelError(format!("Lock error: {}", e)))?;
+            let moved = store.upsert(config);
+            self.storage.save(&store).map_err(|e| {
+                TerminalError::TunnelError(format!("Failed to save tunnels: {}", e))
+            })?;
+            moved
+        };
+        if moved {
+            self.stop_tunnel(&id)?;
         }
-
-        self.storage
-            .save(&store)
-            .map_err(|e| TerminalError::TunnelError(format!("Failed to save tunnels: {}", e)))?;
-
         Ok(())
     }
 
@@ -858,7 +844,7 @@ impl TunnelManager {
         // Route by run-location (S3, #2155/#2185). Desktop-hosted tunnels (the
         // default) take the existing local forwarder path below; agent-hosted
         // tunnels are forwarded on the agent over the agent RPC.
-        match resolve_tunnel_host(tunnel_id, &config.host) {
+        match resolve_tunnel_host(&config.host) {
             Ok(ResolvedLocation::Local) => {}
             Ok(ResolvedLocation::Agent(agent_id)) => {
                 return self.start_agent_tunnel(tunnel_id, &config, &agent_id);
@@ -1032,9 +1018,12 @@ impl TunnelManager {
             }
         };
 
-        let agent_manager = agent_rpc_client(&self.app_handle).ok_or_else(|| {
-            TerminalError::TunnelError("Agent manager is not available".to_string())
-        })?;
+        let refuse = |reason: String| {
+            record_last_error(&self.last_errors, tunnel_id, reason.clone());
+            self.emit_status(tunnel_id, TunnelStatus::Error);
+            TerminalError::TunnelError(reason)
+        };
+        let agent_manager = agent_for_start(&self.app_handle, agent_id).map_err(refuse)?;
 
         // Build the tunnel.start request from the shared `TunnelStartParams` DTO
         // (DUP-001): the desktop and agent now share one definition of the params
@@ -1097,12 +1086,7 @@ impl TunnelManager {
                 );
                 Ok(())
             }
-            Err(e) => {
-                let message = format!("agent-hosted tunnel start failed: {}", e);
-                record_last_error(&self.last_errors, tunnel_id, message.clone());
-                self.emit_status(tunnel_id, TunnelStatus::Error);
-                Err(TerminalError::TunnelError(message))
-            }
+            Err(e) => Err(refuse(agent_start_error(&self.app_handle, agent_id, &e))),
         }
     }
 
@@ -1207,15 +1191,18 @@ impl TunnelManager {
         config: &TunnelConfig,
         cancel: CancellationToken,
     ) -> Result<(ActiveForwarder, PooledSessionGuards, Option<LivenessWatch>), TerminalError> {
-        in_tunnel_prompt_scope(config, || self.build_forwarder_named(config, cancel))
+        let here = ensure_runs_here(&config.host)?;
+        in_tunnel_prompt_scope(config, || self.build_forwarder_named(config, cancel, here))
     }
 
     /// [`build_forwarder`](Self::build_forwarder) inside the tunnel's
-    /// prompt-name scope.
+    /// prompt-name scope. `_here` proves that the tunnel belongs on this
+    /// computer (#6028): nothing can open a forwarder here without it.
     fn build_forwarder_named(
         &self,
         config: &TunnelConfig,
         cancel: CancellationToken,
+        _here: RunsHere,
     ) -> Result<(ActiveForwarder, PooledSessionGuards, Option<LivenessWatch>), TerminalError> {
         let ssh_config = self.resolve_ssh_config(&config.ssh_connection_id)?;
         let conn_id = &config.ssh_connection_id;
@@ -2098,12 +2085,11 @@ mod tests {
     use super::super::connecting::{ConnectingTracker, FinishOutcome};
     use super::{
         clear_last_error, companion_action, connection_bound_tunnel_ids, find_companion,
-        has_active_tunnels, last_error_for, record_last_error, resolve_managed_arc,
-        resolve_tunnel_host, resting_status, run_reconnect_loop, stats_from_status_reply,
-        tunnel_host_ssh_config, type_supports_tunneling, wait_forwarder_death, wait_session_death,
-        ActiveTunnel, CompanionAction, ReconnectOutcome, TUNNEL_RECONNECT_POLICY,
+        has_active_tunnels, last_error_for, record_last_error, resolve_managed_arc, resting_status,
+        run_reconnect_loop, stats_from_status_reply, tunnel_host_ssh_config,
+        type_supports_tunneling, wait_forwarder_death, wait_session_death, ActiveTunnel,
+        CompanionAction, ReconnectOutcome, TUNNEL_RECONNECT_POLICY,
     };
-    use crate::run_location::{ResolvedLocation, RunLocation};
     use crate::tunnel::config::{LocalForwardConfig, TunnelConfig, TunnelStatus, TunnelType};
     use tauri::Manager;
     use termihub_core::backends::ssh::session_pool::{PooledRef, RefPool};
@@ -2318,25 +2304,6 @@ mod tests {
         );
         assert_eq!(status, TunnelStatus::Error);
         assert_eq!(error.as_deref(), Some("connect refused"));
-    }
-
-    /// S3 (#2155): a desktop-hosted tunnel routes to the local forwarder path.
-    #[test]
-    fn this_computer_host_routes_local() {
-        assert_eq!(
-            resolve_tunnel_host(TUNNEL_ID, &RunLocation::ThisComputer),
-            Ok(ResolvedLocation::Local)
-        );
-    }
-
-    /// S3 (#2185): an agent-hosted tunnel resolves to its agent, so `start_tunnel`
-    /// routes hosting to that agent over the agent RPC rather than the desktop.
-    #[test]
-    fn agent_host_routes_to_the_agent() {
-        assert_eq!(
-            resolve_tunnel_host(TUNNEL_ID, &RunLocation::Agent("build-box".to_string())),
-            Ok(ResolvedLocation::Agent("build-box".to_string()))
-        );
     }
 
     /// GAP 3: "never started" (no map entry) stays `Disconnected` — distinct
@@ -3016,11 +2983,12 @@ mod tests {
                 remote_host: "127.0.0.1".to_string(),
                 remote_port: 5432,
             }),
-            host: RunLocation::ThisComputer,
+            host: Default::default(),
             auto_start: false,
             start_with_connection: false,
             reconnect_on_disconnect: false,
             companion_of: companion_of.map(str::to_string),
+            extra: Default::default(),
         }
     }
 

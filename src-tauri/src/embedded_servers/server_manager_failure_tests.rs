@@ -14,11 +14,11 @@ use std::time::{Duration, Instant};
 use tauri::test::{mock_app, MockRuntime};
 use tauri::{Listener, Manager};
 use termihub_core::protocol::methods::{SERVICE_START, SERVICE_STOP};
+use termihub_core::util::service_host::ServiceHost;
 
 use super::{EmbeddedServerManager, SERVER_STATUS_EVENT};
 use crate::embedded_servers::config::{EmbeddedServerConfig, ServerState, ServerStatus};
 use crate::embedded_servers::secrets::tests::{http, FakeStore, LOCKED, UNLOCKED};
-use crate::run_location::RunLocation;
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::test_support::FakeAgent;
 use crate::utils::config_paths::ConfigDirOverride;
@@ -245,16 +245,13 @@ fn agent_hosting_without_an_agent_manager_is_an_error() {
     let dir = tempfile::tempdir().unwrap();
     let root = tempfile::tempdir().unwrap();
     let h = harness(dir.path(), None);
-    h.manager
-        .save_config(http_on("web", 0, root.path()))
-        .unwrap();
-    h.manager
-        .set_run_location("web", RunLocation::Agent("edge".into()))
-        .unwrap();
+    let mut config = http_on("web", 0, root.path());
+    config.host = ServiceHost::agent("edge");
+    h.manager.save_config(config).unwrap();
 
     let err = h.manager.start_server("web").expect_err("no agent manager");
     assert!(
-        err.to_string().contains("Agent manager is not available"),
+        err.to_string().contains("agent edge is not connected"),
         "{err}"
     );
 }
@@ -268,17 +265,13 @@ fn an_agent_refusing_to_host_surfaces_an_error_and_keeps_no_handle() {
         ..FakeAgent::default()
     });
     let h = harness(dir.path(), Some(Arc::clone(&agent)));
-    h.manager
-        .save_config(http_on("web", 0, root.path()))
-        .unwrap();
-    h.manager
-        .set_run_location("web", RunLocation::Agent("edge".into()))
-        .unwrap();
+    let mut config = http_on("web", 0, root.path());
+    config.host = ServiceHost::agent("edge");
+    h.manager.save_config(config).unwrap();
 
     let err = h.manager.start_server("web").expect_err("agent refused");
     assert!(
-        err.to_string()
-            .contains("agent-hosted embedded server start failed"),
+        err.to_string().contains("agent edge could not start it"),
         "{err}"
     );
 
@@ -286,8 +279,8 @@ fn an_agent_refusing_to_host_surfaces_an_error_and_keeps_no_handle() {
     assert_eq!(last.status, ServerStatus::Error);
     assert_eq!(
         h.state_of("web").status,
-        ServerStatus::Stopped,
-        "no stale handle"
+        ServerStatus::Error,
+        "no stale handle, and the reason stays (#6028)"
     );
     // Stopping it sends nothing to the agent: there is no handle to stop.
     h.manager.stop_server("web").unwrap();
@@ -301,12 +294,9 @@ fn a_second_start_on_an_agent_is_rejected_until_stopped() {
     let root = tempfile::tempdir().unwrap();
     let agent = Arc::new(FakeAgent::default());
     let h = harness(dir.path(), Some(Arc::clone(&agent)));
-    h.manager
-        .save_config(http_on("web", 0, root.path()))
-        .unwrap();
-    h.manager
-        .set_run_location("web", RunLocation::Agent("edge".into()))
-        .unwrap();
+    let mut config = http_on("web", 0, root.path());
+    config.host = ServiceHost::agent("edge");
+    h.manager.save_config(config).unwrap();
 
     h.manager.start_server("web").expect("agent hosts it");
     let err = h.manager.start_server("web").expect_err("double start");

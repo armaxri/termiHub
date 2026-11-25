@@ -29,7 +29,9 @@ import { serverStatusLabel } from "@/utils/statusLabel";
 import { errorMessage } from "@/utils/errorMessage";
 import { fireAndForget } from "@/utils/frontendLog";
 import type { RemoteAgentDefinition } from "@/types/connection";
-import { THIS_COMPUTER, isAgentHost, type RunLocation } from "@/utils/runLocation";
+import { THIS_COMPUTER, isAgentHost } from "@/utils/runLocation";
+import type { HostChoice } from "@/utils/hostChoice";
+import { t, tf } from "@/i18n/catalog";
 import { EmbeddedServerConfig, ServerState, ServerStatus } from "@/types/embeddedServer";
 import { serverRowTooltip, serverUrl } from "./serverRowTooltip";
 
@@ -39,10 +41,10 @@ interface Props {
   /** Configured agents, to name the one this server runs on. */
   agents?: RemoteAgentDefinition[];
   /**
-   * The server's run-location (This computer or an agent). Chosen in the
-   * editor (#5770); the row names an agent host in its tooltip.
+   * Where the server runs, as stored (#6028). Chosen in the editor (#5770); the
+   * row names it in its tooltip.
    */
-  runLocation?: RunLocation;
+  runLocation?: HostChoice;
   onStart: (id: string) => void | Promise<void>;
   onStop: (id: string) => void | Promise<void>;
   onEdit: (id: string) => void;
@@ -73,7 +75,7 @@ function statusTone(status: ServerStatus | undefined): SidebarStatusTone {
  * whose capabilities are unknown (not connected) is not flagged unsupported.
  */
 export function hostAgentFor(
-  runLocation: RunLocation,
+  runLocation: HostChoice,
   agents: RemoteAgentDefinition[]
 ): ActivityHostAgent | undefined {
   if (!isAgentHost(runLocation)) return undefined;
@@ -84,6 +86,16 @@ export function hostAgentFor(
       ? agent.capabilities.embeddedServerActivity === true
       : true,
   };
+}
+
+/** "Runs on …" for the row's tooltip. */
+function runsOnText(runLocation: HostChoice, agents: RemoteAgentDefinition[]): string {
+  if (runLocation.kind === "unreadable") return t("service.host.unreadable");
+  if (!isAgentHost(runLocation)) return t("server.tooltip.here");
+  const agent = agents.find((a) => a.id === runLocation.agentId);
+  return agent
+    ? tf("server.tooltip.agent", { agent: agent.name })
+    : t("server.tooltip.agentRemoved");
 }
 
 function isActive(status: ServerStatus | undefined): boolean {
@@ -155,7 +167,7 @@ export function EmbeddedServerItem({
   const hostAgent = hostAgentFor(runLocation, agents);
   const tooltip = serverRowTooltip(config, {
     stats: active ? state?.stats : undefined,
-    agentName: hostAgent?.name,
+    runsOn: runsOnText(runLocation, agents),
   });
   const errorText = status === "error" ? state?.error : undefined;
 

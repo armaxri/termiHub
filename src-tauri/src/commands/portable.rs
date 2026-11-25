@@ -66,6 +66,7 @@ pub fn list_config_files(dir: String) -> Vec<ConfigFileStatus> {
         "connections.json",
         "settings.json",
         "tunnels.json",
+        "embedded_servers.json",
         "credentials.enc",
         "workspaces.json",
     ];
@@ -188,6 +189,17 @@ mod tests {
         assert!(connections.present);
         assert!(settings.present);
         assert!(!credentials.present);
+    }
+
+    /// #6028, F-5: file servers travel with the tunnels.
+    #[test]
+    fn list_config_files_lists_the_file_servers() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("embedded_servers.json"), "{}").unwrap();
+        let files = list_config_files(dir.path().to_string_lossy().into_owned());
+        assert!(files
+            .iter()
+            .any(|f| f.name == "embedded_servers.json" && f.present));
     }
 
     #[test]

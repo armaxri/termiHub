@@ -152,4 +152,54 @@ describe("TunnelEditor — tunnel host (S3, #2155)", () => {
     const saved = vi.mocked(saveTunnel).mock.calls[0][0];
     expect(saved.host).toEqual({ kind: "agent", agentId: "agent-1" });
   });
+
+  it("keeps a host it cannot read, and does not call it this computer (#6028)", async () => {
+    useAppStore.setState({
+      tunnels: [{ ...AGENT_TUNNEL, host: { kind: "cluster" } as unknown as TunnelConfig["host"] }],
+    });
+    await render("tun-agent");
+    expect(q("tunnel-editor-host")?.textContent).toBe("Unknown machine");
+    expect(q("tunnel-editor-endpoints")?.textContent).toContain("an unknown machine");
+    expect(q("tunnel-editor-endpoints")?.textContent).not.toContain("this computer");
+    await act(async () => q("tunnel-editor-save")!.click());
+    // Left out, so the stored value stays.
+    expect(vi.mocked(saveTunnel).mock.calls[0][0].host).toBeUndefined();
+  });
+
+  it("shows an agent that was removed as that (#6028)", async () => {
+    useAppStore.setState({
+      tunnels: [{ ...AGENT_TUNNEL, host: { kind: "agent", agentId: "gone" } }],
+    });
+    await render("tun-agent");
+    expect(q("tunnel-editor-host")?.textContent).toBe("Removed agent");
+    await act(async () => q("tunnel-editor-save")!.click());
+    expect(vi.mocked(saveTunnel).mock.calls[0][0].host).toEqual({ kind: "agent", agentId: "gone" });
+  });
+
+  it("says that moving a running tunnel stops it (#6028)", async () => {
+    useAppStore.setState({
+      tunnelStates: {
+        "tun-agent": {
+          tunnelId: "tun-agent",
+          status: "connected",
+          stats: { bytesSent: 0, bytesReceived: 0, activeConnections: 0, totalConnections: 0 },
+        },
+      },
+    });
+    await render("tun-agent");
+    const field = () => q("tunnel-editor-host-field")?.textContent;
+    expect(field()).not.toContain("Saving stops it");
+    act(() => q("tunnel-editor-host")!.focus());
+    act(() =>
+      q("tunnel-editor-host")!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true })
+      )
+    );
+    const here = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find(
+      (o) => o.textContent === "This computer"
+    )!;
+    act(() => here.focus());
+    act(() => here.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    expect(field()).toContain("Saving stops it");
+  });
 });

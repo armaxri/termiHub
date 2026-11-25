@@ -281,6 +281,7 @@ describe("PortableModeSettings", () => {
       expect(m.exportConfigToPortable).toHaveBeenCalledWith("/media/usb/termihub/data", [
         "connections.json",
         "tunnels.json",
+        "embedded_servers.json",
         "credentials.enc",
       ]);
       expect(q('[data-testid="migration-dialog"]')).toBeNull();

@@ -18,8 +18,6 @@ import {
   LocalForwardConfig,
   RemoteForwardConfig,
   DynamicForwardConfig,
-  RunLocation,
-  THIS_COMPUTER,
 } from "@/types/tunnel";
 import { TunnelEditorMeta } from "@/types/terminal";
 import {
@@ -41,12 +39,15 @@ import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import { frontendLog } from "@/utils/frontendLog";
 import {
   isAgentHost,
+  tunnelHostMachine,
   tunnelEndpointLines,
   tunnelReachabilityWarning,
   WIDE_BIND_HOST,
 } from "@/utils/tunnelHost";
 import { tunnelTypeHelp, type TunnelTypeKind } from "@/utils/tunnelTypeHelp";
 import { bestSshViaForAgent, deriveCompanion, findCompanion } from "@/utils/tunnelChain";
+import { hostChoice, sameHost, type HostChoice } from "@/utils/hostChoice";
+import { decodeRunLocation, encodeRunLocation, runLocationOptions } from "@/utils/runLocation";
 import { TunnelDiagram } from "./TunnelDiagram";
 import { TunnelChainPreviewDialog } from "./TunnelChainPreviewDialog";
 import { validateTunnelType, type TunnelFieldErrors } from "./tunnelValidation";
@@ -58,17 +59,6 @@ import { errorMessage } from "@/utils/errorMessage";
 import { draftKey } from "@/utils/draftKey";
 import { findLeafByTab } from "@/utils/panelTree";
 import "./TunnelEditor.css";
-
-/** Encode a run-location as a `Select` option value, and decode it back. */
-const HOST_THIS = "this";
-function encodeHost(host: RunLocation): string {
-  return isAgentHost(host) ? `agent:${host.agentId}` : HOST_THIS;
-}
-function decodeHost(value: string): RunLocation {
-  return value.startsWith("agent:")
-    ? { kind: "agent", agentId: value.slice("agent:".length) }
-    : THIS_COMPUTER;
-}
 
 interface TunnelEditorProps {
   tabId: string;
@@ -113,7 +103,8 @@ interface TunnelFormState {
   description: string;
   sshConnectionId: string;
   tunnelType: TunnelType;
-  host: RunLocation;
+  /** Where it runs; an unreadable host is left out of the save (#6028). */
+  host: HostChoice;
   autoStart: boolean;
   startWithConnection: boolean;
   reconnectOnDisconnect: boolean;
@@ -143,7 +134,7 @@ const tunnelFormSchema = z
     description: z.string(),
     sshConnectionId: z.string(),
     tunnelType: z.custom<TunnelType>(),
-    host: z.custom<RunLocation>(),
+    host: z.custom<HostChoice>(),
     autoStart: z.boolean(),
     startWithConnection: z.boolean(),
     reconnectOnDisconnect: z.boolean(),
@@ -172,7 +163,7 @@ const tunnelFormSchema = z
  * (UISF2-002). Each card says in plain words what the type does and explains
  * it on hover and keyboard focus, for the machine the tunnel runs on (#6027).
  */
-function tunnelTypeOptions(host: RunLocation, agentName?: string): RadioGroupOption[] {
+function tunnelTypeOptions(host: HostChoice, agentName?: string): RadioGroupOption[] {
   const card = (kind: TunnelTypeKind): RadioGroupOption => {
     const help = tunnelTypeHelp(kind, host, agentName);
     return {
@@ -261,7 +252,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
       tunnelType: existingTunnel?.tunnelType ?? defaultTunnelType("local"),
       // Which machine hosts this tunnel (S3, #2155). New tunnels default to This
       // computer — agent hosting is opt-in.
-      host: existingTunnel?.host ?? THIS_COMPUTER,
+      host: hostChoice(existingTunnel?.host),
       autoStart: existingTunnel?.autoStart ?? false,
       // Opened from a connection's section: binding it to that connection's
       // sessions is the point, so default the flag on (PROD-023).
@@ -304,7 +295,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
         description: existingTunnel.description ?? "",
         sshConnectionId: existingTunnel.sshConnectionId,
         tunnelType: existingTunnel.tunnelType,
-        host: existingTunnel.host ?? THIS_COMPUTER,
+        host: hostChoice(existingTunnel.host),
         autoStart: existingTunnel.autoStart,
         startWithConnection: existingTunnel.startWithConnection ?? false,
         reconnectOnDisconnect: existingTunnel.reconnectOnDisconnect,
@@ -391,7 +382,8 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
     description: normalizeItemDescription(values.description),
     sshConnectionId: values.sshConnectionId,
     tunnelType: values.tunnelType,
-    host: values.host,
+    // Left out, the backend keeps the stored host it cannot read either.
+    host: values.host.kind === "unreadable" ? undefined : values.host,
     autoStart: values.autoStart,
     startWithConnection: values.startWithConnection,
     reconnectOnDisconnect: values.reconnectOnDisconnect,
@@ -478,10 +470,15 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
     !sshConnections.some((c) => c.id === form.sshConnectionId);
 
   // Tunnel host (run-location) selector: This computer + every remote agent.
-  const hostOptions = [
-    { value: HOST_THIS, label: "This computer" },
-    ...remoteAgents.map((a) => ({ value: `agent:${a.id}`, label: `Agent · ${a.name}` })),
-  ];
+  const hostOptions = runLocationOptions(remoteAgents, true, host);
+  // Saving another machine for a running tunnel stops it (#6028).
+  const savedStatus = existingTunnel && tunnelStates[existingTunnel.id]?.status;
+  const movesRunning =
+    existingTunnel !== undefined &&
+    (savedStatus === "connected" ||
+      savedStatus === "connecting" ||
+      savedStatus === "reconnecting") &&
+    !sameHost(host, hostChoice(existingTunnel.host));
   const hostAgentName = isAgentHost(host)
     ? (remoteAgents.find((a) => a.id === host.agentId)?.name ?? host.agentId)
     : undefined;
@@ -708,11 +705,16 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
           />
         </Field>
 
-        <Field label="Tunnel host" htmlFor={`tunnel-host-${tabId}`}>
+        <Field
+          label="Tunnel host"
+          htmlFor={`tunnel-host-${tabId}`}
+          hint={movesRunning ? t("service.host.moveHint") : undefined}
+          data-testid="tunnel-editor-host-field"
+        >
           <Select
             id={`tunnel-host-${tabId}`}
-            value={encodeHost(host)}
-            onChange={(v) => setValue("host", decodeHost(v))}
+            value={encodeRunLocation(host)}
+            onChange={(v) => setValue("host", decodeRunLocation(v))}
             options={hostOptions}
             aria-label="Tunnel host"
             data-testid="tunnel-editor-host"
@@ -740,8 +742,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
           <div className="tunnel-editor__endpoints-host">
             {isAgentHost(host) ? <Server size={13} /> : <Monitor size={13} />}
             <span>
-              Host:{" "}
-              <strong>{isAgentHost(host) ? `agent ${hostAgentName}` : "this computer"}</strong>
+              Host: <strong>{tunnelHostMachine(host, hostAgentName)}</strong>
             </span>
           </div>
           {endpointLines.map((line, i) => (

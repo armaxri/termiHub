@@ -18,6 +18,7 @@ hosts shipping a ``curl`` without ``tftp://`` (issue #964).
 
 from __future__ import annotations
 
+import json
 import shutil
 import tempfile
 import urllib.request
@@ -426,3 +427,37 @@ class TestEmbeddedServices(
         self.wait(lambda: self.server_running(server["id"]), what="the auto-started server")
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/auto.txt", timeout=10) as resp:
             assert resp.read().decode("utf-8").strip() == "termihub-autostart-ok"
+
+    # ── SVC-21: a server set to an agent never falls back to this computer ─────
+    def test_a_server_of_a_missing_agent_is_not_started_here(self):
+        """A stored agent that is gone means not started, with the reason on the
+        row, and no port on this computer (#6028)."""
+        root = self._serve_dir("agent.txt", "termihub-must-not-be-served")
+        port = self.free_port()
+        name = unique_name("on-agent")
+        self.open_new_dialog()
+        self.fill_dialog(name, proto="http", root=str(root), port=port)
+        self.driver.click("server-dialog-autostart")
+        self.driver.click(self.DIALOG_SAVE)
+        server = self.require_server(name)
+
+        def set_agent() -> None:
+            path = self.config_dir / "embedded_servers.json"
+            doc = json.loads(path.read_text(encoding="utf-8"))
+            for entry in doc["servers"]:
+                if entry["id"] == server["id"]:
+                    entry["host"] = {"kind": "agent", "agentId": "agent-that-is-gone"}
+            path.write_text(json.dumps(doc), encoding="utf-8")
+
+        def refused():
+            states = self.driver.get_state("embeddedServerStates") or {}
+            state = states.get(server["id"], {})
+            return state if state.get("status") == "error" else None
+
+        self.restart_app(set_agent)
+        self.open_services_sidebar()
+        state = self.wait(refused, what="the refused start")
+        assert "the agent it runs on was removed" in (state.get("error") or "")
+        assert "removed" in self.driver.get_text(f"server-item-{server['id']}")
+        with pytest.raises(OSError):
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/agent.txt", timeout=2)
