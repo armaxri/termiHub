@@ -88,6 +88,8 @@ mod tests_real_keychain;
 #[cfg(test)]
 mod tests_restart;
 #[cfg(test)]
+mod tests_self_starting;
+#[cfg(test)]
 mod tests_trust;
 
 /// Format identifier stamped on every backup file.
