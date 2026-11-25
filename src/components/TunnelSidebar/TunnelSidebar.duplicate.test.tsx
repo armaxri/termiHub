@@ -62,9 +62,12 @@ async function flush() {
   });
 }
 
-function seedStore(saveTunnel: (config: TunnelConfig) => Promise<void>) {
+function seedStore(
+  saveTunnel: (config: TunnelConfig) => Promise<void>,
+  tunnel = makeTunnel("tun-1", "My Tunnel")
+) {
   (useAppStore as unknown as { setState: (p: Record<string, unknown>) => void }).setState({
-    tunnels: [makeTunnel("tun-1", "My Tunnel")],
+    tunnels: [tunnel],
     tunnelStates: {},
     connections: [],
     startTunnel: vi.fn(),
@@ -130,5 +133,22 @@ describe("TunnelSidebar — duplicate feedback (#1342)", () => {
     expect(saveTunnel).toHaveBeenCalledTimes(1);
     expect(toastError).toHaveBeenCalledTimes(1);
     expect(toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("copies where the tunnel runs, and neither its starts nor its chain (#6028, F-4)", async () => {
+    const saveTunnel = vi.fn((_c: TunnelConfig) => Promise.resolve());
+    const host = { kind: "agent", agentId: "a1" } as const;
+    seedStore(saveTunnel, {
+      ...makeTunnel("tun-1", "My Tunnel"),
+      host,
+      autoStart: true,
+      startWithConnection: true,
+      companionOf: "parent",
+    });
+    await renderSidebar();
+    await clickDuplicate();
+    const copy = saveTunnel.mock.calls[0][0];
+    expect(copy).toMatchObject({ host, autoStart: false, startWithConnection: false });
+    expect(copy.companionOf).toBeUndefined();
   });
 });

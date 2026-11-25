@@ -10,9 +10,10 @@
  * from the hosting machine.
  */
 import { t, tf } from "@/i18n/catalog";
-import type { RunLocation, TunnelType } from "@/types/tunnel";
+import type { TunnelType } from "@/types/tunnel";
 import { THIS_COMPUTER } from "@/types/tunnel";
-import { isAgentHost, tunnelHostMachine } from "@/utils/tunnelHost";
+import type { HostChoice } from "@/utils/hostChoice";
+import { tunnelHostMachine } from "@/utils/tunnelHost";
 
 /** `"local"`, `"remote"` or `"dynamic"`. */
 export type TunnelTypeKind = TunnelType["type"];
@@ -56,10 +57,11 @@ export function tunnelTypeLabel(kind: TunnelTypeKind): string {
  */
 export function tunnelTypeHelp(
   kind: TunnelTypeKind,
-  host: RunLocation = THIS_COMPUTER,
+  host: HostChoice = THIS_COMPUTER,
   agentName?: string
 ): TunnelTypeHelp {
-  const onAgent = isAgentHost(host);
+  // An agent, or a machine this build cannot name: not "here" either way.
+  const onAgent = host.kind !== "thisComputer";
   const params = { machine: tunnelHostMachine(host, agentName) };
   const base = { label: tunnelTypeLabel(kind), flag: FLAGS[kind] };
   switch (kind) {

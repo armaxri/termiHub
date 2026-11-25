@@ -133,6 +133,8 @@ describe("OpenConnectionsModal — Embedded servers section", () => {
     // identifiable at a glance.
     const details = serverRows().map((r) => r.querySelector(".oc-row__detail")?.textContent);
     expect(details.some((d) => d?.includes("HTTP") && d?.includes("127.0.0.1:8080"))).toBe(true);
+    // And the machine that holds the port (#6028).
+    expect(details.some((d) => d?.includes("this computer"))).toBe(true);
   });
 
   it("stops a single server via the store's stopEmbeddedServer action", async () => {

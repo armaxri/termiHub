@@ -13,14 +13,14 @@ export function serverUrl(config: EmbeddedServerConfig): string {
 
 /**
  * The service row's tooltip lines (#5770): the protocol and address it
- * listens on, the folder it serves, read-only, where it runs (an agent) and —
+ * listens on, the folder it serves, read-only, where it runs and —
  * while it runs — its traffic. The row itself shows only the name, the
  * description and markers that need attention. See docs/copy-style.md ->
  * "List rows".
  */
 export function serverRowTooltip(
   config: EmbeddedServerConfig,
-  opts: { stats?: ServerStats; agentName?: string } = {}
+  opts: { stats?: ServerStats; runsOn?: string } = {}
 ): string[] {
   const out = [
     tf("server.tooltip.listen", {
@@ -30,7 +30,7 @@ export function serverRowTooltip(
     tf("server.tooltip.root", { path: config.rootDirectory }),
   ];
   if (config.readOnly) out.push(t("server.tooltip.readOnly"));
-  if (opts.agentName) out.push(tf("server.tooltip.agent", { agent: opts.agentName }));
+  if (opts.runsOn) out.push(opts.runsOn);
   if (opts.stats) {
     out.push(
       tf("server.tooltip.traffic", {

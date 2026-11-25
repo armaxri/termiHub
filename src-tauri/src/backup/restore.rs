@@ -601,6 +601,8 @@ fn prepare_section(
         }
     };
 
+    let mut final_doc = final_doc;
+    sections::keep_current_hosts(spec, &mut final_doc, &current_doc_for_secrets);
     // The result must itself be a store this build loads.
     let final_doc = spec.normalize(final_doc).map_err(|e| {
         other(format!(

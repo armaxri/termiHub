@@ -81,4 +81,10 @@ maxTransferBytes?: number,
  * server hold. `None` falls back to the server's built-in default of 32;
  * `0` is treated as 1. Not used by TFTP, which caps its transfers itself.
  */
-maxConcurrentSessions?: number, };
+maxConcurrentSessions?: number, 
+/**
+ * The machine this server runs on (#6028): absent is this computer. Kept
+ * verbatim when this build cannot read it, and the server is then not
+ * started at all. The desktop's own field: an agent is not sent it.
+ */
+host?: import("./RunLocation").RunLocation, };

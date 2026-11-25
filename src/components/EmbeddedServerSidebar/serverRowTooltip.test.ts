@@ -22,7 +22,7 @@ describe("serverRowTooltip (#5770)", () => {
     const lines = serverRowTooltip(
       { ...HTTP, serverType: "tftp", readOnly: true, port: 69 },
       {
-        agentName: "build-box",
+        runsOn: "Runs on agent build-box",
         stats: { activeConnections: 2, totalConnections: 5, bytesSent: 2048, bytesReceived: 0 },
       }
     );

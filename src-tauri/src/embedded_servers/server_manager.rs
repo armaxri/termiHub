@@ -3,21 +3,26 @@
 //! Each configured server is an [`EmbeddedServerService`] behind the core
 //! [`Service`](termihub_core::service::Service) trait (#2154, following the
 //! HTTP-monitor pilot #2157/#2172). The manager owns the persisted configs, a
-//! map of live services, and a [`RunLocationResolver`] deciding where a server
-//! runs. Each service emits its status transitions on a core
+//! map of live services. Each service emits its status transitions on a core
 //! [`EventChannel`](termihub_core::service::EventChannel); the manager bridges
 //! those to the existing `embedded-server-status-changed` Tauri event, so the
 //! frontend contract is unchanged.
 //!
 //! # Agent-hosted servers (#2214)
 //!
-//! A server whose run-location resolves to an agent runs its listen socket **on
-//! that agent**: the desktop keeps only control, driving it over the agent RPC's
+//! A server whose stored [`host`](EmbeddedServerConfig::host) is an agent runs
+//! its listen socket **on that agent**: the desktop keeps only control, driving it over the agent RPC's
 //! `service.start` / `service.stop` / `service.status` methods (protocol 0.7.0,
 //! #2192). This mirrors [`tunnel_manager`](crate::tunnel::tunnel_manager)'s
-//! agent-hosted tunnels (#2185). The per-server run-location preference lives in
-//! an in-memory map today; the selector UI that records a non-default choice is a
-//! later S-phase (a sibling follow-up to #2214).
+//! agent-hosted tunnels (#2185).
+//!
+//! # The right machine or not at all (#6028)
+//!
+//! The host is stored with the server. When it cannot be honoured (the agent is
+//! offline, removed or too old, it refuses, or this build cannot read the
+//! field) the server is **not started**: nothing falls back to this computer,
+//! and the row says why until a stop, a save or a good start. A server that is
+//! moved while it runs is stopped where it ran.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -27,6 +32,7 @@ use anyhow::{Context, Result};
 use tauri::{AppHandle, Emitter, Runtime, Wry};
 use termihub_core::service::drain_broadcast;
 use termihub_core::util::entry_extra::{upsert_keeping_extra, without_extra};
+use termihub_core::util::service_host::{HostChoice, ServiceHost};
 
 use super::activity::ActivitySnapshot;
 use super::config::{
@@ -39,12 +45,12 @@ use super::service::{
 };
 use super::storage::EmbeddedServerStorage;
 use crate::agent_service::{
-    agent_rpc_client, AgentHosted, AgentInstances, AgentStatusPollDelegate, AgentStatusPoller,
+    agent_for_start, agent_rpc_client, agent_start_error, AgentHosted, AgentInstances,
+    AgentStatusPollDelegate, AgentStatusPoller, HOST_UNREADABLE,
 };
 use crate::app_tasks::AppTasks;
 use crate::connection::recovery::RecoveryWarning;
 use crate::credential::CredentialStore;
-use crate::run_location::{Locality, ResolvedLocation, RunLocation, RunLocationResolver};
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
 
@@ -92,7 +98,7 @@ impl AgentHosted for AgentServerHandle {
 /// Central manager for embedded HTTP/FTP/TFTP servers.
 ///
 /// Follows the same pattern as `NetworkManager` (#2172): holds the services and
-/// routes each start through the [`RunLocationResolver`].
+/// routes each start by the server's stored host.
 pub struct EmbeddedServerManager<R: Runtime = Wry> {
     configs: Mutex<EmbeddedServerStore>,
     storage: EmbeddedServerStorage,
@@ -109,15 +115,10 @@ pub struct EmbeddedServerManager<R: Runtime = Wry> {
     /// reference. The shared [`AgentInstances`] tracker folds the map boilerplate
     /// (DUP-020 follow-up, #2884).
     agent_servers: AgentInstances<AgentServerHandle>,
-    /// Per-server run-location preference — which machine hosts each server
-    /// (#2214). In-memory today; the selector UI that persists a non-default
-    /// choice is a later S-phase. An absent entry means
-    /// [`RunLocation::ThisComputer`] (the desktop), today's behaviour.
-    run_locations: Mutex<HashMap<String, RunLocation>>,
-    /// Resolver deciding where a server runs (local vs agent). Honours the
-    /// per-server preference in `run_locations`; a server with no recorded
-    /// preference resolves local, so users see no behaviour change.
-    run_location: RunLocationResolver,
+    /// Why a server that belongs on an agent was not started, by config id
+    /// (#6028): durable, so its row keeps saying it. Cleared by a good start,
+    /// a stop, a save or a delete.
+    refusals: Mutex<HashMap<String, String>>,
     /// The single periodic agent `service.status` poller (#2214). Runs while at
     /// least one agent-hosted server exists, self-reaping once none remain; the
     /// shared [`AgentStatusPoller`] owns the task lifecycle (DUP-020).
@@ -143,8 +144,7 @@ impl<R: Runtime> EmbeddedServerManager<R> {
             secrets,
             services: Mutex::new(HashMap::new()),
             agent_servers: AgentInstances::new(),
-            run_locations: Mutex::new(HashMap::new()),
-            run_location: RunLocationResolver::new(),
+            refusals: Mutex::new(HashMap::new()),
             // App-owned (ARCH-007, #3105): teardown cancels + awaits the poller.
             agent_status_poller: AgentStatusPoller::with_tasks(AppTasks::for_app(app_handle)),
             app_handle: app_handle.clone(),
@@ -166,44 +166,6 @@ impl<R: Runtime> EmbeddedServerManager<R> {
         Ok(store.servers.clone())
     }
 
-    /// Set (or clear) the run-location preference for a server (#2214).
-    ///
-    /// [`RunLocation::ThisComputer`] clears the entry (back to the desktop
-    /// default); a [`RunLocation::Agent`] records which agent should host the
-    /// server on its next start. This is the desktop-side preference the S1
-    /// resolver was designed around; the selector UI that calls it lands in a
-    /// later S-phase (a sibling follow-up), and it is the test hook for the
-    /// agent-hosted path meanwhile.
-    pub fn set_run_location(
-        &self,
-        server_id: &str,
-        location: RunLocation,
-    ) -> Result<(), TerminalError> {
-        let mut map = self
-            .run_locations
-            .lock()
-            .map_err(|e| TerminalError::EmbeddedServerError(format!("Lock error: {e}")))?;
-        match location {
-            RunLocation::ThisComputer => {
-                map.remove(server_id);
-            }
-            agent @ RunLocation::Agent(_) => {
-                map.insert(server_id.to_string(), agent);
-            }
-        }
-        Ok(())
-    }
-
-    /// Read a server's recorded run-location preference, defaulting to
-    /// [`RunLocation::ThisComputer`] when none is set (#2214).
-    fn requested_run_location(&self, server_id: &str) -> RunLocation {
-        self.run_locations
-            .lock()
-            .ok()
-            .and_then(|map| map.get(server_id).cloned())
-            .unwrap_or_default()
-    }
-
     /// Add or update a server configuration.
     ///
     /// Its passwords go to the credential store (an empty one keeps the saved
@@ -211,9 +173,20 @@ impl<R: Runtime> EmbeddedServerManager<R> {
     pub fn save_config(&self, mut config: EmbeddedServerConfig) -> Result<(), TerminalError> {
         self.sync_secrets();
         self.secrets.capture(&mut config)?;
-        let mut store = self.lock_configs()?;
-        upsert_server(&mut store, config);
-        self.persist(&store)
+        let id = config.id.clone();
+        let moved = {
+            let mut store = self.lock_configs()?;
+            let moved = upsert_server(&mut store, config);
+            self.persist(&store)?;
+            moved
+        };
+        // A moved server must not stay open on the machine it was moved off.
+        if moved {
+            self.stop_server(&id)?;
+        } else {
+            self.clear_refusal(&id);
+        }
+        Ok(())
     }
 
     /// Write `store` to disk without its passwords (legacy plaintext still
@@ -266,9 +239,7 @@ impl<R: Runtime> EmbeddedServerManager<R> {
         if let Ok(mut services) = self.services.lock() {
             remove_local_service(&mut services, server_id);
         }
-        if let Ok(mut locations) = self.run_locations.lock() {
-            locations.remove(server_id);
-        }
+        self.lock_refusals().remove(server_id);
         self.secrets.forget(server_id);
         let mut store = self.lock_configs()?;
         store.servers.retain(|s| s.id != server_id);
@@ -283,6 +254,7 @@ impl<R: Runtime> EmbeddedServerManager<R> {
         let store = self.lock_configs()?;
         let services = self.lock_services()?;
         let agent_servers = self.lock_agent_servers()?;
+        let refusals = self.lock_refusals();
         let states = store
             .servers
             .iter()
@@ -292,6 +264,8 @@ impl<R: Runtime> EmbeddedServerManager<R> {
                 // synthetic Stopped state for a never-started server).
                 if let Some(handle) = agent_servers.get(&cfg.id) {
                     handle.last_state.clone()
+                } else if let Some(reason) = refusals.get(&cfg.id) {
+                    auto_start_error_state(&cfg.id, reason)
                 } else {
                     services
                         .get(&cfg.id)
@@ -305,10 +279,9 @@ impl<R: Runtime> EmbeddedServerManager<R> {
 
     /// Start a server by ID.
     ///
-    /// The run-location is resolved through the [`RunLocationResolver`] from the
-    /// server's recorded preference (default: local). A server resolving to an
-    /// agent is hosted on that agent over the agent RPC (#2214); the desktop path
-    /// below is unchanged. The server's status transitions are emitted on its core
+    /// It runs where its stored host says: on this computer, or on an agent over
+    /// the agent RPC (#2214). A host that cannot be honoured or read starts
+    /// nothing (#6028). The server's status transitions are emitted on its core
     /// [`EventChannel`](termihub_core::service::EventChannel) (local) or bridged
     /// from the agent poller, both reaching the [`SERVER_STATUS_EVENT`] Tauri
     /// event.
@@ -325,26 +298,40 @@ impl<R: Runtime> EmbeddedServerManager<R> {
                     TerminalError::EmbeddedServerError(format!("Server not found: {server_id}"))
                 })?
         };
+        // The host decides before anything else: only a host that says this
+        // computer may reach the listener below.
+        let agent_id = match config.host.choice() {
+            HostChoice::ThisComputer => None,
+            HostChoice::Agent(id) => Some(id.to_string()),
+            HostChoice::Unreadable => {
+                return Err(self.refuse(server_id, HOST_UNREADABLE.to_string()));
+            }
+        };
         // Fill the passwords from the credential store (#3514); refuses with a
         // clear message when the store is locked or has none. The resolved
         // config reaches only the server itself (desktop or agent RPC).
         self.secrets.resolve(&mut config)?;
-
-        // Route by run-location (#2214). A server with no recorded preference
-        // resolves local and takes the existing desktop path; an agent preference
-        // routes hosting to that agent over the agent RPC.
-        match self.run_location.resolve(
-            server_id,
-            Locality::LocalOrAgent,
-            &self.requested_run_location(server_id),
-        ) {
-            Ok(ResolvedLocation::Local) => {}
-            Ok(ResolvedLocation::Agent(agent_id)) => {
-                return self.start_agent_service(server_id, &config, &agent_id);
-            }
-            Err(e) => return Err(TerminalError::EmbeddedServerError(e.to_string())),
+        if let Some(agent_id) = agent_id {
+            return self.start_agent_service(server_id, &config, &agent_id);
         }
+        self.lock_refusals().remove(server_id);
+        self.start_here(server_id, config)
+    }
 
+    /// Open `config`'s listener on this computer: the only place that does.
+    fn start_here(
+        &self,
+        server_id: &str,
+        config: EmbeddedServerConfig,
+    ) -> Result<(), TerminalError> {
+        // Held until the listener is up: a save that moves the server meanwhile
+        // waits, and then stops it here.
+        let store = self.lock_configs()?;
+        if host_in(&store, server_id) != Some(HostChoice::ThisComputer) {
+            return Err(TerminalError::EmbeddedServerError(format!(
+                "Server {server_id} was moved or deleted while it was starting"
+            )));
+        }
         let mut services = self.lock_services()?;
         // Reuse an existing (stopped) service so its event channel + bridge task
         // persist across restarts; create + bridge a fresh one otherwise.
@@ -387,9 +374,8 @@ impl<R: Runtime> EmbeddedServerManager<R> {
 
         let params = service_start_params(server_id, config)?;
 
-        let agent_manager = agent_rpc_client(&self.app_handle).ok_or_else(|| {
-            TerminalError::EmbeddedServerError("Agent manager is not available".to_string())
-        })?;
+        let agent_manager = agent_for_start(&self.app_handle, agent_id)
+            .map_err(|reason| self.refuse(server_id, reason))?;
 
         match agent_manager.send_request(
             agent_id,
@@ -408,6 +394,18 @@ impl<R: Runtime> EmbeddedServerManager<R> {
                         },
                     );
                 }
+                // Moved or deleted while the agent was starting it: not there.
+                let still_there = {
+                    let store = self.lock_configs()?;
+                    host_in(&store, server_id) == Some(HostChoice::Agent(agent_id))
+                };
+                if !still_there {
+                    self.stop_agent_service(server_id);
+                    return Err(TerminalError::EmbeddedServerError(format!(
+                        "Server {server_id} was moved or deleted while it was starting"
+                    )));
+                }
+                self.lock_refusals().remove(server_id);
                 let _ = self.app_handle.emit(SERVER_STATUS_EVENT, &state);
                 // Sample the agent's status periodically so a later transition
                 // (e.g. a crash → Error) and live stats reach the frontend.
@@ -416,12 +414,34 @@ impl<R: Runtime> EmbeddedServerManager<R> {
                 Ok(())
             }
             Err(e) => {
-                let message = format!("agent-hosted embedded server start failed: {e}");
-                let state = auto_start_error_state(server_id, &message);
-                let _ = self.app_handle.emit(SERVER_STATUS_EVENT, &state);
-                Err(TerminalError::EmbeddedServerError(message))
+                let reason = agent_start_error(&self.app_handle, agent_id, &e);
+                Err(self.refuse(server_id, reason))
             }
         }
+    }
+
+    /// Record and announce why `server_id` was not started, and build the error
+    /// for the caller. Durable (see [`refusals`](Self::refusals)).
+    fn refuse(&self, server_id: &str, reason: String) -> TerminalError {
+        tracing::warn!(%server_id, "{reason}");
+        let state = auto_start_error_state(server_id, &reason);
+        self.lock_refusals()
+            .insert(server_id.to_string(), reason.clone());
+        let _ = self.app_handle.emit(SERVER_STATUS_EVENT, &state);
+        TerminalError::EmbeddedServerError(reason)
+    }
+
+    /// Forget why `server_id` was not started, and put its row back to stopped.
+    fn clear_refusal(&self, server_id: &str) {
+        if self.lock_refusals().remove(server_id).is_some() {
+            let _ = self
+                .app_handle
+                .emit(SERVER_STATUS_EVENT, &stopped_state(server_id));
+        }
+    }
+
+    fn lock_refusals(&self) -> std::sync::MutexGuard<'_, HashMap<String, String>> {
+        self.refusals.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Stop an agent-hosted server, if `server_id` is one. Returns `true` when a
@@ -467,6 +487,7 @@ impl<R: Runtime> EmbeddedServerManager<R> {
 
     /// Stop a running server by ID (kept listed as `Stopped`).
     pub fn stop_server(&self, server_id: &str) -> Result<(), TerminalError> {
+        self.clear_refusal(server_id);
         // Agent-hosted servers live in their own track: send `service.stop` to
         // the agent and drop the control handle (#2214).
         if self.stop_agent_service(server_id) {
@@ -549,6 +570,10 @@ impl<R: Runtime> EmbeddedServerManager<R> {
         for cfg in configs {
             if cfg.auto_start {
                 if let Err(e) = self.start_server(&cfg.id) {
+                    // A refusal was announced with its reason already (#6028).
+                    if self.lock_refusals().contains_key(&cfg.id) {
+                        continue;
+                    }
                     // Surface the failure (e.g. port busy at boot) as an Error
                     // state so the sidebar shows the server red with a reason,
                     // instead of silently leaving it stopped (GAP G7, #1145). A
@@ -762,8 +787,11 @@ pub(super) fn service_start_params(
     server_id: &str,
     config: &EmbeddedServerConfig,
 ) -> Result<serde_json::Value, TerminalError> {
-    // The desktop file's unknown fields (#3951) are not the agent's business.
-    let config_value = serde_json::to_value(without_extra(config)).map_err(|e| {
+    // The desktop file's unknown fields (#3951) and the host (#6028) are not
+    // the agent's business.
+    let mut config = without_extra(config);
+    config.host = ServiceHost::default();
+    let config_value = serde_json::to_value(&config).map_err(|e| {
         TerminalError::EmbeddedServerError(format!("Failed to serialize server config: {e}"))
     })?;
     serde_json::to_value(ServiceStartParams {
@@ -776,12 +804,29 @@ pub(super) fn service_start_params(
     })
 }
 
+/// Where server `server_id` is stored to run; `None` when it is gone.
+fn host_in<'a>(store: &'a EmbeddedServerStore, server_id: &str) -> Option<HostChoice<'a>> {
+    let server = store.servers.iter().find(|s| s.id == server_id)?;
+    Some(server.host.choice())
+}
+
 /// Replace the server with `config`'s id, or append `config` when there is none.
+/// Returns whether the server now runs on another machine than before.
 ///
 /// The entry keeps the unknown fields it had on disk and drops the IPC copy's
-/// (#3951). Pure so the save path is unit-testable.
-pub(super) fn upsert_server(store: &mut EmbeddedServerStore, config: EmbeddedServerConfig) {
+/// (#3951), and keeps its stored host when the IPC copy has none (#6028). Pure
+/// so the save path is unit-testable.
+pub(super) fn upsert_server(
+    store: &mut EmbeddedServerStore,
+    mut config: EmbeddedServerConfig,
+) -> bool {
+    let stored = store.servers.iter().find(|s| s.id == config.id);
+    let moved = stored.is_some_and(|stored| {
+        config.host.keep_if_absent(&stored.host);
+        config.host.choice() != stored.host.choice()
+    });
     upsert_keeping_extra(&mut store.servers, config);
+    moved
 }
 
 /// Parse an agent `service.start` reply into the desktop [`ServerState`] (#2214).
@@ -1004,6 +1049,7 @@ mod tests {
             http_auth: None,
             max_transfer_bytes: None,
             max_concurrent_sessions: None,
+            host: Default::default(),
             extra: Default::default(),
         }
     }
@@ -1377,3 +1423,7 @@ mod e2e_tests;
 #[cfg(test)]
 #[path = "server_manager_failure_tests.rs"]
 mod failure_tests;
+
+#[cfg(test)]
+#[path = "server_manager_host_tests.rs"]
+mod host_tests;

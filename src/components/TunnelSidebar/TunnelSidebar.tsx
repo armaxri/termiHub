@@ -67,11 +67,15 @@ export function TunnelSidebar() {
     (tunnelId: string) => {
       const original = tunnels.find((t) => t.id === tunnelId);
       if (!original) return;
+      // A copy keeps where it runs, and is its own tunnel: it starts by hand and
+      // is not a second hop of the original's parent (#6028, F-4).
+      const { companionOf: _chain, ...rest } = original;
       const duplicate = {
-        ...original,
+        ...rest,
         id: newId("tun"),
         name: `Copy of ${original.name}`,
         autoStart: false,
+        startWithConnection: false,
       };
       // The copy's row is the confirmation (#5859).
       saveTunnel(duplicate).catch((err: unknown) =>
