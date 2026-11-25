@@ -157,7 +157,11 @@ type Attached = (
 
 /// An attached session whose agent answers `session.getBuffer` with `reply`.
 async fn attached_to(reply: Step) -> Attached {
-    let spy = Arc::new(spy_agent().always("send_request", reply));
+    attached_by(&Arc::new(spy_agent().always("send_request", reply))).await
+}
+
+/// A session attached through `spy`.
+async fn attached_by(spy: &Arc<FakeAgent>) -> Attached {
     let manager = Arc::new(SessionManager::new(
         ConnectionTypeRegistry::new(),
         spy.clone(),
@@ -237,14 +241,17 @@ async fn an_answer_that_a_later_replay_overtook_is_not_waited_for() {
     let gate = Gate::new();
     let _release = gate.open_on_drop();
     let reply = Step::Hang(gate.clone(), Box::new(buffer_reply(b"one ")));
-    let (manager, emitter, agent) = attached_to(reply).await;
+    let spy = Arc::new(spy_agent().always("send_request", reply));
+    let (manager, emitter, agent) = attached_by(&spy).await;
     agent.send_replay_start(REPLAY, b"one ".to_vec()).unwrap();
     chunks_until(&emitter, "sess-1", 4).await;
     let reading = tokio::spawn({
         let manager = manager.clone();
         async move { manager.get_remote_session_buffer("sess-1").await }
     });
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    while spy.calls_to("send_request").is_empty() {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
     agent
         .send_replay_start(REPLAY + 1, b"one two ".to_vec())
         .unwrap();
