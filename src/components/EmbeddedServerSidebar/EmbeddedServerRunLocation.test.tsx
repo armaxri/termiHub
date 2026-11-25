@@ -165,6 +165,14 @@ describe("where a file server runs", () => {
     expect(saveEmbeddedServer.mock.calls[0][0].host).toEqual({ kind: "agent", agentId: "a1" });
   });
 
+  it("keeps the choice while the sidebar re-renders (live states do that)", async () => {
+    await render();
+    await openEditor();
+    act(() => q("pick-agent")!.click());
+    await render();
+    expect(q("server-dialog-runloc")?.getAttribute("data-value")).toBe("agent:a1");
+  });
+
   it("leaves the host out of a save that did not change it", async () => {
     seedStore([makeServer("srv-1", "Docs", { kind: "agent", agentId: "a1" })]);
     await render();

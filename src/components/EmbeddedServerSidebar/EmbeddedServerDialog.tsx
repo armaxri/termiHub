@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ITEM_DESCRIPTION_MAX_LENGTH, normalizeItemDescription } from "@/utils/itemDescription";
 import { Controller } from "react-hook-form";
 import { z } from "zod";
@@ -183,6 +183,11 @@ export function EmbeddedServerDialog({
   // `canSave` still reads every error.
   const { shown: errors, rootProps, revealAndFocus, rebaseline } = useRevealOnSave(allErrors, form);
 
+  // The stored machine, read when the dialog opens. `runLocation` is a new object
+  // on every render of the sidebar and must not reset the user's choice.
+  const storedLocation = useRef(runLocation);
+  storedLocation.current = runLocation;
+
   // Reload the working copy each time the dialog opens so a prior edit never
   // leaks in and the network-interface list refreshes.
   useEffect(() => {
@@ -190,7 +195,7 @@ export function EmbeddedServerDialog({
       const initial = initialConfig(config ?? draft);
       reset(initial);
       rebaseline(initial);
-      setLocation(runLocation);
+      setLocation(storedLocation.current);
       setLanWarning(false);
       listNetworkInterfaces()
         .then(setInterfaces)
@@ -202,9 +207,6 @@ export function EmbeddedServerDialog({
           );
         });
     }
-    // The stored machine is read when the dialog opens; `runLocation` is a new
-    // object on every render of the sidebar and must not reset the choice.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, config, draft, reset, rebaseline]);
 
   const handleProtocolChange = (type: ServerType) => {
