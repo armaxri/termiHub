@@ -60,6 +60,14 @@ export interface VisualScenario {
   localProcessAsk?: boolean;
   /** Turn "Allow experimental features" off. */
   experimentalOff?: boolean;
+  /** What `check_local_process` says beside the program and its file (#6019). */
+  localProcess?: {
+    remember?: "program" | "command" | "nothing";
+    imported?: string[];
+    interpreter?: boolean;
+  };
+  /** Turn "Allow automations to run local programs" on. */
+  localProgramsOn?: boolean;
   /**
    * Answer `discover_mobaxterm_configs` with a found configuration and
    * `preview_mobaxterm_import` with a mixed preview (#4850).
@@ -743,6 +751,7 @@ function settingsFor(scenario: VisualScenario): unknown {
   return {
     ...settings,
     ...(scenario.experimentalOff ? { experimentalFeaturesEnabled: false } : {}),
+    ...(scenario.localProgramsOn ? { workflowLocalProcessEnabled: true } : {}),
     ...(scenario.localProcessAsk ? { workflowLocalProcessEnabled: true } : {}),
   };
 }
@@ -976,6 +985,7 @@ export function handleCommand(cmd: string, args: Args): unknown {
     }
     case "list_automations":
       return scenario.automationData?.automations ?? (populated ? AUTOMATIONS : []);
+    case "import_automation":
     case "save_automation": {
       // Stored, so that a switch or an edit stays on the screen.
       const saved = args?.automation as { id: string };
@@ -1000,6 +1010,10 @@ export function handleCommand(cmd: string, args: Args): unknown {
         status: "ask",
         path: `/usr/bin/${String(args?.program ?? "")}`,
         reason: `"${String(args?.program ?? "")}" is not an allowed program.`,
+        remember: "program",
+        imported: [],
+        interpreter: false,
+        ...scenario.localProcess,
       };
     case "list_schedules":
       return (
