@@ -65,7 +65,7 @@ async function open(automation: Automation = stored, isNew = false): Promise<voi
 const type = (...keys: Array<[string, string?]>) =>
   act(() => {
     for (const [data, screen = "$ "] of keys) {
-      store().recordInput(store().recording!.tabId, data, () => screen);
+      store().recordInput(store().recording!.tabId, data, (then) => then(screen));
     }
   });
 async function stop(): Promise<void> {

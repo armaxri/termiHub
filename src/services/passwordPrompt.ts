@@ -22,22 +22,50 @@ export function isPasswordPrompt(beforeCursor: string): boolean {
   return PROMPT.test(beforeCursor);
 }
 
-type TerminalPromptReader = (tabId: string) => string;
+/**
+ * Reads the text in front of a terminal's cursor ({@link textBeforeCursor}) as it is
+ * once all output that has arrived by now is in the buffer, and none that comes later
+ * (#6070). Calls back at once when nothing is on its way, with `null` when there is no
+ * terminal to read, and never when output was lost, so that it cannot be told.
+ */
+export type PromptReader = (then: (beforeCursor: string | null) => void) => void;
 
-let readTerminalPrompt: TerminalPromptReader | null = null;
-
-/** Register (or clear) the reader of a terminal's {@link textBeforeCursor} (#6025). */
-export function registerTerminalPromptReader(reader: TerminalPromptReader | null): void {
-  readTerminalPrompt = reader;
+/** The line a prompt was seen on. */
+export interface PromptPin {
+  /** Whether the cursor is still on that line. */
+  holds: () => boolean;
+  dispose: () => void;
 }
 
-/** The text in front of the cursor of terminal `tabId`; empty when it cannot be read. */
-export function promptOfTerminal(tabId: string): string {
-  try {
-    return readTerminalPrompt?.(tabId) ?? "";
-  } catch {
-    return "";
-  }
+/** What a live terminal knows about the prompt it shows. */
+export interface TerminalPrompt {
+  read: PromptReader;
+  /** Grows with everything that arrives, whether it shows yet or not. */
+  arrived: () => number;
+  /** Remember the cursor's line. */
+  pin: () => PromptPin;
+}
+
+const terminals = new Map<string, TerminalPrompt>();
+
+/** Register the live terminal of tab `tabId`. Returns the way to take it back. */
+export function registerTerminalPrompt(tabId: string, prompt: TerminalPrompt): () => void {
+  terminals.set(tabId, prompt);
+  return () => {
+    if (terminals.get(tabId) === prompt) terminals.delete(tabId);
+  };
+}
+
+/** The {@link TerminalPrompt} of tab `tabId`, while it shows a live session. */
+export function promptOfTerminal(tabId: string): TerminalPrompt | undefined {
+  return terminals.get(tabId);
+}
+
+/** The {@link PromptReader} of tab `tabId`, as it is now. */
+export function readTerminalPrompt(tabId: string, then: Parameters<PromptReader>[0]): void {
+  const terminal = terminals.get(tabId);
+  if (terminal) terminal.read(then);
+  else then(null);
 }
 
 /** The parts of an xterm buffer {@link textBeforeCursor} reads. */

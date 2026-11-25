@@ -1,6 +1,6 @@
 import { Field, Input, NumberInput, Select, Textarea, Toggle } from "@/components/ui";
 import { t } from "@/i18n/catalog";
-import { MAX_STEP_DELAY_MS } from "@/services/macroPlayback";
+import { MAX_WAIT_STEP_MS } from "@/services/workflowRunner";
 import { WAIT_FOR_OUTPUT_DEFAULT_TIMEOUT_MS } from "@/services/workflowRunner";
 import type { AutomationStep } from "@/types/generated/AutomationStep";
 import type { StepDraft } from "./automationDraft";
@@ -27,8 +27,8 @@ const WAIT_MESSAGE_MAX_LENGTH = 120;
 
 /** Why a longer delay is not what runs. */
 function delayCapHint(ms: number): string | undefined {
-  return ms > MAX_STEP_DELAY_MS
-    ? `A wait lasts at most ${formatSeconds(MAX_STEP_DELAY_MS)}.`
+  return ms > MAX_WAIT_STEP_MS
+    ? `A wait lasts at most an hour (${formatSeconds(MAX_WAIT_STEP_MS)}).`
     : undefined;
 }
 

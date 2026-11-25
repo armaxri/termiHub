@@ -5,7 +5,8 @@ import { open as openFileDialog, save } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { useAppStore } from "@/store/appStore";
 import type { BackupRestorePreview, BackupSectionInfo, BackupSectionPreview } from "@/types/backup";
-import { BackupRestoreSettings } from "./BackupRestoreSettings";
+import { BackupSwitchedOff } from "./BackupSwitchedOff";
+import { BackupRestoreSettings, restoredOffText } from "./BackupRestoreSettings";
 import { credentialsExportBlockedReason, validateBackupExport } from "./BackupExportDialog";
 import { buildRestoreRequest, defaultChoices } from "./BackupRestoreDialog";
 import { sectionSummary } from "./BackupSectionRow";
@@ -23,6 +24,8 @@ vi.mock("@/services/api", async () => {
     previewBackupRestore: vi.fn(),
     applyBackupRestore: vi.fn(),
     restartAfterBackupRestore: vi.fn(),
+    listRestoredOff: vi.fn(),
+    dismissRestoredOff: vi.fn(),
   };
 });
 
@@ -40,6 +43,7 @@ import {
   exportBackup,
   getOsAuthInfo,
   listBackupSections,
+  listRestoredOff,
   previewBackupRestore,
   readBackupHeader,
   restartAfterBackupRestore,
@@ -111,6 +115,7 @@ const PREVIEW: BackupRestorePreview = {
   createdAt: "2026-09-26T00:00:00Z",
   appVersion: "0.1.0",
   encrypted: true,
+  switchedOff: [],
   sections: [
     sectionPreview({}),
     sectionPreview({ id: "settings", label: "Settings", supportsMerge: false }),
@@ -451,6 +456,93 @@ describe("BackupRestoreSettings", () => {
     expect(query("backup-export-passphrase")).not.toBeNull();
   });
 
+  it("says what arrives switched off, as the parts are chosen (#6056)", async () => {
+    render("master_password");
+    vi.mocked(openFileDialog).mockResolvedValue("/tmp/backup.json");
+    vi.mocked(readTextFile).mockResolvedValue(BACKUP_JSON);
+    vi.mocked(readBackupHeader).mockResolvedValue({
+      createdAt: "2026-09-26T00:00:00Z",
+      appVersion: "0.1.0",
+      encrypted: false,
+      needsPassphrase: false,
+    });
+    const off = (id: string) => ({
+      section: "macros",
+      id,
+      name: `Entry ${id}`,
+      starts: ["Hotkey F8"],
+      switches: ["triggersEnabled"],
+      existsHere: false,
+      sameHere: false,
+      onHere: false,
+    });
+    vi.mocked(previewBackupRestore).mockResolvedValue({
+      ...PREVIEW,
+      switchedOff: [off("1"), { ...off("2"), existsHere: true, onHere: true, sameHere: true }],
+    });
+    await click("backup-restore-btn");
+    await click("backup-restore-choose-file");
+    await click("backup-restore-preview");
+    const list = () => query("backup-restore-switched-off")?.textContent ?? "";
+    expect(list()).toContain("1 entry starts by itself: restored switched off");
+    expect(query("backup-restore-off-macros-1")?.textContent).toContain("Hotkey F8");
+    // Replacing anything can change what an entry here uses.
+    await click("backup-restore-include-settings");
+    expect(list()).toContain("2 entries start by themselves");
+    expect(query("backup-restore-off-macros-2")?.textContent).toContain("on here now");
+    await click("backup-restore-include-settings");
+    await click("backup-restore-include-macros");
+    expect(query("backup-restore-switched-off")).toBeNull();
+  });
+
+  it("folds a long list of what arrives switched off", async () => {
+    const entries = ["1", "2", "3", "4"].map((id) => ({
+      section: "tunnels",
+      id,
+      name: id,
+      starts: ["When termiHub starts"],
+      switches: ["autoStart"],
+      existsHere: false,
+      sameHere: false,
+      onHere: false,
+    }));
+    for (const [count, open] of [
+      [3, true],
+      [4, false],
+    ] as const) {
+      act(() => root.render(<BackupSwitchedOff entries={entries.slice(0, count)} />));
+      const details = query("backup-restore-switched-off") as HTMLDetailsElement;
+      expect(details.open).toBe(open);
+      act(() => root.render(<></>));
+    }
+  });
+
+  it("offers what is still off after a restore (#6056)", async () => {
+    vi.mocked(listRestoredOff).mockResolvedValue([
+      {
+        section: "tunnels",
+        id: "t",
+        name: "DB",
+        starts: ["When termiHub starts"],
+        switches: ["autoStart"],
+        existsHere: false,
+        sameHere: false,
+        onHere: false,
+      },
+    ]);
+    render("master_password");
+    await act(async () => {});
+    expect(query("backup-restored-off")?.textContent).toContain(
+      "1 restored entry that starts by itself is still off."
+    );
+    expect(restoredOffText(2)).toBe("2 restored entries that start by themselves are still off.");
+    await click("backup-restored-off-review");
+    expect(query("restored-off-row-tunnels-t")).not.toBeNull();
+    await click("restored-off-keep");
+    expect(query("restored-off-dialog")).toBeNull();
+    expect(query("backup-restored-off")).toBeNull();
+  });
+
   it("previews, restores the chosen parts and restarts", async () => {
     render("master_password");
     vi.mocked(openFileDialog).mockResolvedValue("/tmp/backup.json");
@@ -465,6 +557,7 @@ describe("BackupRestoreSettings", () => {
     vi.mocked(applyBackupRestore).mockResolvedValue({
       sections: [],
       credentials: null,
+      switchedOff: [],
       restartRequired: true,
     });
 

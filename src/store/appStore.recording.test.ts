@@ -171,9 +171,9 @@ describe("what is recorded", () => {
 
   it("says while a password prompt is answered", () => {
     store().startRecording();
-    store().recordInput("a", "x", () => "Password: ");
+    store().recordInput("a", "x", (then) => then("Password: "));
     expect(store().recording?.atPrompt).toBe(true);
-    store().recordInput("a", "\r", () => "Password: ");
+    store().recordInput("a", "\r", (then) => then("Password: "));
     expect(store().recording?.atPrompt).toBe(false);
   });
 });
@@ -331,9 +331,10 @@ describe("saving", () => {
   describe("what was typed at a password prompt", () => {
     const take = () => {
       store().startRecording();
-      store().recordInput("a", "sudo -v\r", () => "$ ");
-      for (const key of ["p", "w", "\r"]) store().recordInput("a", key, () => "Password: ");
-      store().recordInput("a", "ls\r", () => "$ ");
+      store().recordInput("a", "sudo -v\r", (then) => then("$ "));
+      for (const key of ["p", "w", "\r"])
+        store().recordInput("a", key, (then) => then("Password: "));
+      store().recordInput("a", "ls\r", (then) => then("$ "));
       store().stopRecording();
       return store().recordedTake!;
     };
@@ -363,9 +364,9 @@ describe("saving", () => {
       });
       store().startRecording();
       // Echoed as it is: still not the recording's.
-      for (const key of ["p", "w", "\r"]) store().recordInput("a", key, () => "$ pw");
+      for (const key of ["p", "w", "\r"]) store().recordInput("a", key, (then) => then("$ pw"));
       useAppStore.setState({ automationWaits: [] });
-      store().recordInput("a", "ls\r", () => "$ ");
+      store().recordInput("a", "ls\r", (then) => then("$ "));
       store().stopRecording();
       expect(store().recordedTake?.secrets).toEqual([{ start: 0, end: 3, prompt: "Deploy" }]);
       expect(typed(false)).toEqual(["wait-for-user", ["ls\r"]]);
@@ -386,7 +387,7 @@ describe("saving", () => {
       });
       store().startRecording();
       store()
-        .reserveRecordedPaste("a", () => "$ ")!
+        .reserveRecordedPaste("a", (then) => then("$ "))!
         .fill("hunter2");
       store().stopRecording();
       expect(store().recordedTake?.secrets).toEqual([{ start: 0, end: 1, prompt: "Deploy" }]);
@@ -394,7 +395,7 @@ describe("saving", () => {
 
     it("alone leaves nothing to save", async () => {
       store().startRecording();
-      for (const key of ["p", "\r"]) store().recordInput("a", key, () => "Password: ");
+      for (const key of ["p", "\r"]) store().recordInput("a", key, (then) => then("Password: "));
       store().stopRecording();
       await expect(
         store().saveRecordedTake({ to: "new", name: "n", tags: [], keepSecrets: false })

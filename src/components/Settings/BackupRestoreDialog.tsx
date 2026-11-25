@@ -19,6 +19,8 @@ import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Modal, Button, toast } from "@/components/ui";
 import { errorMessage } from "@/utils/errorMessage";
 import { BackupSectionRow, type SectionChoice } from "./BackupSectionRow";
+import { BackupSwitchedOff } from "./BackupSwitchedOff";
+import { startsOfChoice } from "@/utils/restoredStarts";
 import { BackupCredentialsRow } from "./BackupCredentialsRow";
 import { getBasename } from "@/utils/paths";
 import { useAppStore } from "@/store/appStore";
@@ -370,6 +372,7 @@ export function BackupRestoreDialog({ open, onOpenChange }: BackupRestoreDialogP
               {emptyInBackupLine(emptySections.length)}
             </p>
           )}
+          <BackupSwitchedOff entries={startsOfChoice(preview.switchedOff, choices)} />
           {replacing && replacing.length > 0 && (
             <p className="credential-vault__warning" data-testid="backup-restore-replace-warning">
               Replace overwrites your current {replacedSectionsText(replacing.map((s) => s.label))}:

@@ -35,6 +35,76 @@ from termihub_harness import (
 
 pytestmark = [pytest.mark.integration]
 
+#: Entries of a backup from another machine that would start by themselves (#6056).
+_TUNNEL_ID = "restored-tunnel"
+_AUTOMATION_ID = "restored-automation"
+
+
+def _backup_from_elsewhere(path: Path, automation: str, tunnel: str) -> None:
+    """A backup without a passphrase holding an armed trigger and a starting tunnel."""
+    stamp = "2026-01-01T00:00:00+00:00"
+    sections = [
+        {
+            "id": "automations",
+            "schemaVersion": 1,
+            "data": {
+                "version": "1",
+                "automations": [
+                    {
+                        "id": _AUTOMATION_ID,
+                        "name": automation,
+                        "steps": [{"kind": "send-command", "command": "echo restored"}],
+                        "triggers": [{"kind": "hotkey", "binding": "Ctrl+Alt+Shift+F9"}],
+                        "createdAt": stamp,
+                        "updatedAt": stamp,
+                    }
+                ],
+            },
+        },
+        {
+            "id": "tunnels",
+            "schemaVersion": 1,
+            "data": {
+                "version": "1",
+                "tunnels": [
+                    {
+                        "id": _TUNNEL_ID,
+                        "name": tunnel,
+                        "sshConnectionId": "not-here",
+                        "tunnelType": {
+                            "type": "local",
+                            "config": {
+                                "localHost": "127.0.0.1",
+                                "localPort": 1,
+                                "remoteHost": "127.0.0.1",
+                                "remotePort": 1,
+                            },
+                        },
+                        "autoStart": True,
+                        "startWithConnection": True,
+                        "reconnectOnDisconnect": False,
+                    }
+                ],
+            },
+        },
+    ]
+    head = {
+        "format": "termihub-backup",
+        "formatVersion": 1,
+        "createdAt": stamp,
+        "appVersion": "0.1.0",
+    }
+    contents = {
+        "format": head["format"],
+        "formatVersion": 1,
+        "createdAt": stamp,
+        "sections": sections,
+        "credentials": None,
+    }
+    path.write_text(
+        json.dumps({**head, "encrypted": False, "contents": contents}), encoding="utf-8"
+    )
+
 #: The passphrase sealing the backup (the dialog's minimum is 12 characters).
 _PASSPHRASE = "harness-backup-pw-4127"
 #: The Appearance theme select, and the theme kept in the backup vs. the one
@@ -178,3 +248,62 @@ class TestBackupRestore(ConnectionsUi, SidebarUi, SettingsUi, TabsUi, SystemTest
             what=f"the restored {_BACKED_UP_THEME!r} theme after the restart",
         )
         assert self.persisted_settings().get("theme") == _BACKED_UP_THEME
+
+    # ── #6056 ────────────────────────────────────────────────────────────────
+    def _stored(self, file_name: str, field: str, item_id: str) -> dict:
+        """An item of a store file, or an empty dict."""
+        doc = json.loads((Path(self.config_dir) / file_name).read_text(encoding="utf-8"))
+        return next((i for i in doc[field] if i["id"] == item_id), {})
+
+    def test_what_a_restore_brings_starts_only_after_the_user_turned_it_on(self):
+        """A restored trigger and tunnel arrive off, are listed, and one is turned on.
+
+        The preview lists both entries; after the restart the question lists them with
+        nothing ticked. Only the automation is ticked: its triggers are on then, the
+        tunnel stays off, and nothing is offered again.
+        """
+        self.close_all_tabs()
+        automation, tunnel = unique_name("restored-auto"), unique_name("restored-tunnel")
+        target = Path(tempfile.mkdtemp(prefix="thub-backup-")) / "elsewhere.json"
+        _backup_from_elsewhere(target, automation, tunnel)
+
+        self.open_settings_category("backup")
+        self.wait(lambda: self.driver.exists("backup-restore-btn"), what="the Restore button")
+        self.driver.click("backup-restore-btn")
+        self.wait(
+            lambda: self.driver.exists("backup-restore-choose-file"), what="the restore dialog"
+        )
+        self.driver.stub_native_dialog("open", target)
+        self.driver.click("backup-restore-choose-file")
+        self.wait(
+            lambda: self.driver.get_text("backup-restore-file-name") == target.name,
+            what="the picked backup to be read",
+        )
+        self.driver.click("backup-restore-preview")
+        self.wait(
+            lambda: self.driver.exists("backup-restore-switched-off"),
+            what="the preview to say what arrives switched off",
+        )
+        said = self.driver.get_text(f"backup-restore-off-automations-{_AUTOMATION_ID}")
+        assert automation in said and "Hotkey" in said, f"the preview says {said!r}"
+        said = self.driver.get_text(f"backup-restore-off-tunnels-{_TUNNEL_ID}")
+        assert tunnel in said and "When termiHub starts" in said, f"the preview says {said!r}"
+        self.driver.click("backup-restore-submit")
+        self.adopt_app_self_restart()
+
+        tick = f"restored-off-check-automations-{_AUTOMATION_ID}"
+        self.wait(lambda: self.driver.exists(tick), what="the question after the restart")
+        for check in (tick, f"restored-off-check-tunnels-{_TUNNEL_ID}"):
+            checked = self.driver.get_attribute(check, "aria-checked")
+            assert checked == "false", f"{check} is ticked from the start: {checked!r}"
+        stored = self._stored("automations.json", "automations", _AUTOMATION_ID)
+        assert stored.get("triggersEnabled") is False, f"its triggers are armed: {stored!r}"
+        self.driver.click(tick)
+        self.driver.click("restored-off-turn-on")
+        self.wait(lambda: not self.driver.exists(tick), what="the question to close")
+
+        stored = self._stored("automations.json", "automations", _AUTOMATION_ID)
+        assert stored.get("triggersEnabled") is not False, f"its triggers are off: {stored!r}"
+        stored = self._stored("tunnels.json", "tunnels", _TUNNEL_ID)
+        assert stored["autoStart"] is False and stored["startWithConnection"] is False
+        assert not (Path(self.config_dir) / "restored-off.json").exists()

@@ -25,7 +25,11 @@ declare global {
 /** The recording part of the app store. */
 interface RecordingState {
   recording: { tabId: string } | null;
-  recordInput(tabId: string, data: string, readPrompt?: () => string): void;
+  recordInput(
+    tabId: string,
+    data: string,
+    readPrompt?: (then: (before: string) => void) => void
+  ): void;
 }
 
 const STYLED_CLASSES = styledPrimitiveClasses();
@@ -80,7 +84,7 @@ async function type(page: Page, keys: string[], prompt = "$ "): Promise<void> {
       const state = () => window.__visual.store.getState() as unknown as RecordingState;
       const tabId = state().recording!.tabId;
       for (const key of typed as string[]) {
-        state().recordInput(tabId, key, () => before as string);
+        state().recordInput(tabId, key, (then) => then(before as string));
       }
     },
     [keys, prompt] as const

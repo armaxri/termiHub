@@ -22,6 +22,7 @@ use zeroize::Zeroizing;
 pub use super::commit::{apply, PendingManifest, MANIFEST_FILE, PENDING_DIR, STAGING_DIR};
 use super::plugins::{self, StagedDir};
 use super::sections::{self, CurrentDoc, LegacySecret, NormalizeError, SectionSpec};
+use super::self_starting::{self, RestoredStart};
 use super::{
     BackupContents, BackupCredentialsPreview, BackupFile, BackupHeader, BackupRestorePreview,
     BackupRestoreRequest, BackupSection, BackupSectionPreview, RestoreMode, SectionRestoreOutcome,
@@ -444,7 +445,20 @@ pub fn plan(
         encrypted: opened.encrypted,
         sections,
         credentials: opened.credentials.as_ref().map(credentials_preview),
+        switched_off: self_starting::preview(readable_docs(opened), config_dir),
     }
+}
+
+/// The sections of the backup that this build can read, normalized.
+fn readable_docs(opened: &OpenedBackup) -> Vec<(&'static str, Value)> {
+    opened
+        .sections
+        .iter()
+        .filter_map(|section| {
+            let spec = sections::spec(&section.id)?;
+            Some((spec.id, spec.normalize_section(section).ok()?))
+        })
+        .collect()
 }
 
 /// A plaintext password from an older store schema (see [`LegacySecret`])
@@ -469,6 +483,8 @@ pub struct PreparedRestore {
     /// Plugin directories to write or remove.
     pub dirs: Vec<StagedDir>,
     pub outcomes: Vec<SectionRestoreOutcome>,
+    /// What would start by itself and is left switched off (#6056).
+    pub switched_off: Vec<RestoredStart>,
 }
 
 /// The final content of one chosen section.
@@ -649,6 +665,7 @@ pub fn prepare(
         secrets: Vec::new(),
         dirs: Vec::new(),
         outcomes: Vec::new(),
+        switched_off: Vec::new(),
     };
     for choice in &request.sections {
         if !seen.insert(choice.id.as_str()) {
@@ -717,5 +734,7 @@ pub fn prepare(
     if prepared.files.is_empty() && prepared.dirs.is_empty() && request.credentials.is_none() {
         return Err(other("Choose at least one thing to restore."));
     }
+    prepared.switched_off = self_starting::quieten(&mut prepared.files, config_dir)
+        .map_err(|e| other(format!("The restored data could not be checked: {e}")))?;
     Ok(prepared)
 }

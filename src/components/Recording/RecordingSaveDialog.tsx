@@ -9,7 +9,7 @@ import { ITEM_DESCRIPTION_MAX_LENGTH, normalizeItemDescription } from "@/utils/i
 import { parseTags } from "@/utils/parseTags";
 import { recordedTime, recordingName } from "@/utils/recordingText";
 import "./Recording.css";
-import { t } from "@/i18n/catalog";
+import { t, tf } from "@/i18n/catalog";
 
 /** Props of {@link RecordingSaveDialog}. Mount it with a fresh `key` per take. */
 export interface RecordingSaveDialogProps {
@@ -102,7 +102,7 @@ export function RecordingSaveDialog({
     saveRef.current?.click();
   };
 
-  const prompts = [...new Set(take.secrets.map((s) => s.prompt))];
+  const prompts = [...new Set(take.secrets.map((s) => s.prompt))].filter((p) => p !== "");
   const note = startHeld
     ? "Save or discard this recording before you start another one."
     : ENDED_NOTE[take.ended];
@@ -178,8 +178,12 @@ export function RecordingSaveDialog({
             <KeyRound size={14} aria-hidden="true" />
             <div>
               <p>
-                You typed at a password prompt ({prompts.map((p) => `“${p}”`).join(", ")}). An
-                automation stores what it types unencrypted.
+                {prompts.length > 0
+                  ? tf("recording.secretAt", {
+                      prompts: prompts.map((p) => `“${p}”`).join(", "),
+                    })
+                  : t("recording.secretUnknown")}{" "}
+                {t("recording.secretStored")}
               </p>
               <RadioGroup
                 value={keepSecrets ? "keep" : "leave-out"}

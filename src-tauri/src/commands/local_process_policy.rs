@@ -282,6 +282,15 @@ pub fn check(
     }
 }
 
+/// Whether an entry of the list is a program that runs whatever it is told to.
+pub fn is_interpreter_entry(entry: &str, env: &SearchEnv) -> bool {
+    let entry = entry.trim();
+    match resolve(entry, env) {
+        Ok(program) => is_interpreter(&program.path),
+        Err(_) => is_interpreter(Path::new(entry)),
+    }
+}
+
 /// Why `name` does not plainly name one program, if it does not.
 fn ambiguous(name: &str, windows: bool) -> Option<&'static str> {
     if name.is_empty() {

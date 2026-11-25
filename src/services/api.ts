@@ -44,6 +44,7 @@ import type {
   BackupRestorePreview,
   BackupRestoreRequest,
   BackupRestoreResult,
+  RestoredStart,
   BackupSectionInfo,
 } from "@/types/backup";
 import type {
@@ -3201,6 +3202,16 @@ export async function applyBackupRestore(
     passphrase,
     request,
   });
+}
+
+/** What the last restores left switched off and nobody has dealt with (#6056). */
+export async function listRestoredOff(): Promise<RestoredStart[]> {
+  return await invoke<RestoredStart[]>("list_restored_off");
+}
+
+/** The user has dealt with what the last restores left switched off. */
+export async function dismissRestoredOff(): Promise<void> {
+  await invoke("dismiss_restored_off");
 }
 
 /** Restart termiHub so a staged restore is applied before any store loads. */
