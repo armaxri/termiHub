@@ -445,29 +445,36 @@ export function EmbeddedServerDialog({
                 hint={isAgentHost(location) ? t("server.editor.folder.there") : undefined}
                 className="server-dialog__label"
               >
-                <div className="server-dialog__folder">
-                  <Input
-                    id="server-dialog-root-input"
-                    value={field.value ?? ""}
-                    onChange={(e) => field.onChange(e.target.value)}
-                    onBlur={() => {
-                      field.onBlur();
-                      nameAfterFolder(field.value ?? "");
-                    }}
-                    error={Boolean(errors["rootDirectory"])}
-                    data-testid="server-dialog-root"
-                    autoFocus
-                  />
-                  {!isAgentHost(location) && (
-                    <Button
-                      variant="secondary"
-                      onClick={chooseFolder}
-                      data-testid="server-dialog-root-choose"
-                    >
-                      {t("server.editor.folder.choose")}
-                    </Button>
-                  )}
-                </div>
+                {/* A fragment: the input is wired here, not the box around it. */}
+                <>
+                  <div className="server-dialog__folder">
+                    <Input
+                      id="server-dialog-root-input"
+                      value={field.value ?? ""}
+                      onChange={(e) => field.onChange(e.target.value)}
+                      onBlur={() => {
+                        field.onBlur();
+                        nameAfterFolder(field.value ?? "");
+                      }}
+                      error={Boolean(errors["rootDirectory"])}
+                      aria-invalid={Boolean(errors["rootDirectory"])}
+                      aria-describedby={
+                        errors["rootDirectory"] ? "server-dialog-root-input-error" : undefined
+                      }
+                      data-testid="server-dialog-root"
+                      autoFocus
+                    />
+                    {!isAgentHost(location) && (
+                      <Button
+                        variant="secondary"
+                        onClick={chooseFolder}
+                        data-testid="server-dialog-root-choose"
+                      >
+                        {t("server.editor.folder.choose")}
+                      </Button>
+                    )}
+                  </div>
+                </>
               </Field>
             )}
           />

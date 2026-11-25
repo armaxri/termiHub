@@ -35,7 +35,6 @@ import {
   EmbeddedServerActivityPanel,
   entryMatches,
   entryToTsv,
-  unavailableMessage,
   type ActivityHostAgent,
 } from "./EmbeddedServerActivityPanel";
 import { TooltipProvider } from "@/components/ui";
@@ -99,11 +98,18 @@ function activity(overrides: Partial<ServerActivity> = {}): ServerActivity {
   };
 }
 
+const onClose = vi.fn();
+
 async function renderPanel(live = false, hostAgent?: ActivityHostAgent) {
   await act(async () => {
     root.render(
       <TooltipProvider delayDuration={0}>
-        <EmbeddedServerActivityPanel serverId="srv-1" live={live} hostAgent={hostAgent} />
+        <EmbeddedServerActivityPanel
+          serverId="srv-1"
+          live={live}
+          hostAgent={hostAgent}
+          onClose={onClose}
+        />
       </TooltipProvider>
     );
   });
@@ -197,35 +203,69 @@ describe("EmbeddedServerActivityPanel", () => {
     expect(text).toContain("firmware.bin");
   });
 
-  it("shows an empty state when the server has no desktop log", async () => {
-    getActivity.mockResolvedValue(null);
-    await renderPanel();
-    expect(container.textContent).toContain("No access log yet");
+  it("has a heading and closes from it", async () => {
+    getActivity.mockResolvedValue(activity());
+    await renderPanel(true);
+    expect(container.querySelector(".server-activity__title")?.textContent).toBe("Activity");
+    act(() => q("server-activity-close-srv-1")!.click());
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
-  it("says the agent is too old when it lacks the access-log capability", async () => {
+  it("says that nobody has connected yet to a running server", async () => {
+    const none = { ...activity().stats, totalConnections: 0, totalRequests: 0 };
+    getActivity.mockResolvedValue(activity({ entries: [], stats: none }));
+    await renderPanel(true);
+    expect(q("server-activity-empty-srv-1")?.textContent).toBe(
+      "Nobody has connected yet.Requests and connected devices appear here."
+    );
+    expect(q("server-activity-filter-srv-1")).toBeNull();
+  });
+
+  it("does not say so once somebody has", async () => {
+    const one = { ...activity().stats, totalConnections: 1, totalRequests: 0 };
+    getActivity.mockResolvedValue(activity({ entries: [], stats: one }));
+    await renderPanel(true);
+    expect(container.textContent).not.toContain("Nobody has connected");
+  });
+
+  it("says that a running server's activity is not available, and reads it again", async () => {
+    getActivity.mockResolvedValueOnce(null);
+    getActivity.mockResolvedValue(activity());
+    await renderPanel(true);
+    expect(container.textContent).toContain("Activity is not available.");
+    expect(container.textContent).not.toContain("appear here once the server runs");
+    await act(async () => q("server-activity-retry-srv-1")!.click());
+    expect(container.textContent).toContain("firmware.bin");
+  });
+
+  it("says why it cannot be read, and reads it again", async () => {
+    getActivity.mockRejectedValueOnce(new Error("no answer"));
+    getActivity.mockResolvedValue(activity());
+    await renderPanel(true);
+    expect(container.textContent).toContain("Activity is not available.no answer");
+    await act(async () => q("server-activity-retry-srv-1")!.click());
+    expect(container.textContent).toContain("firmware.bin");
+  });
+
+  it("has nothing to retry on a server that does not run", async () => {
+    getActivity.mockResolvedValue(null);
+    await renderPanel(false);
+    expect(container.textContent).toContain("appear here once the server runs");
+    expect(q("server-activity-retry-srv-1")).toBeNull();
+  });
+
+  it("says the agent is too old when it lacks the capability", async () => {
     getActivity.mockResolvedValue(null);
     await renderPanel(true, { name: "Lab Pi", supportsActivity: false });
-    expect(container.textContent).toContain("not supported by this agent version");
-    expect(container.textContent).toContain("Update Lab Pi");
-    expect(container.textContent).not.toContain("No access log yet");
+    expect(container.textContent).toContain("Update agent Lab Pi");
+    expect(q("server-activity-retry-srv-1")).toBeNull();
   });
 
   it("shows an agent-hosted server's log read from the agent", async () => {
     getActivity.mockResolvedValue(activity());
     await renderPanel(true, { name: "Lab Pi", supportsActivity: true });
     expect(container.textContent).toContain("firmware.bin");
-    expect(container.textContent).not.toContain("not supported");
-  });
-
-  it("words the empty state for desktop, capable agent and old agent", () => {
-    expect(unavailableMessage().description).toContain("this computer");
-    expect(unavailableMessage({ name: "A", supportsActivity: true }).title).toBe(
-      "No access log yet"
-    );
-    expect(unavailableMessage({ name: "A", supportsActivity: false }).title).toBe(
-      "Access log not supported by this agent version"
-    );
+    expect(container.textContent).not.toContain("not available");
   });
 
   it("polls incrementally from the last cursor while live", async () => {

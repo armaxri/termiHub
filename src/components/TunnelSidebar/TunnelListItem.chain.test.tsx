@@ -97,7 +97,7 @@ describe("TunnelListItem — chained pair (#2597)", () => {
     onUsePort: noop,
   };
 
-  it("nests the companion with a link badge; 'this computer' is in its tooltip", () => {
+  it("names the companion after what it is for, and where it can be used", () => {
     render(
       <TunnelListItem
         {...common}
@@ -107,13 +107,14 @@ describe("TunnelListItem — chained pair (#2597)", () => {
         pairStatus="connected"
       />
     );
-    expect(q('[aria-label="Chained companion"]')).toBeTruthy();
+    expect(q('[data-testid="tunnel-name-p1-hop"]')?.textContent).toBe("On this computer");
+    expect(q('[data-testid="tunnel-address-p1-hop"]')?.textContent).toContain("only this computer");
     expect(q('[data-testid="tunnel-item-p1-hop"]')?.getAttribute("aria-description")).toContain(
       "Hosted on this computer"
     );
   });
 
-  it("puts a healthy 'Linked · connected' status in the parent row's tooltip (#5770)", () => {
+  it("says nothing on the parent row while the pair works", () => {
     render(
       <TunnelListItem
         {...common}
@@ -122,13 +123,11 @@ describe("TunnelListItem — chained pair (#2597)", () => {
         pairStatus="connected"
       />
     );
-    expect(q('[data-testid="tunnel-pair-status-p1"]')).toBeNull();
-    expect(q('[data-testid="tunnel-item-p1"]')?.getAttribute("aria-description")).toContain(
-      "Linked · connected"
-    );
+    expect(q('[data-testid="tunnel-reason-p1"]')).toBeNull();
+    expect(q('[data-testid="tunnel-status-p1"]')?.className).toContain("success");
   });
 
-  it("keeps a degraded pair status on the parent row as an attention marker", () => {
+  it("says on the parent row that it cannot be used here, and is not green", () => {
     render(
       <TunnelListItem
         {...common}
@@ -137,31 +136,36 @@ describe("TunnelListItem — chained pair (#2597)", () => {
         pairStatus="degraded"
       />
     );
-    const pair = q('[data-testid="tunnel-pair-status-p1"]');
-    expect(pair?.textContent).toContain("Linked · degraded");
-    expect(pair?.getAttribute("data-warn")).toBe("true");
+    expect(q('[data-testid="tunnel-reason-p1"]')?.textContent).toBe(
+      "Not reachable from this computer, see below."
+    );
+    expect(q('[data-testid="tunnel-status-p1"]')?.className).toContain("warning");
+    expect(container.textContent).not.toMatch(/linked|degraded|hop down/i);
   });
 
-  it("renders the degraded inline fix (Retry + different local port) on the companion", () => {
+  it("offers a taken port's remedies on the companion, each once", () => {
     const onStart = vi.fn();
     const onEdit = vi.fn();
+    const onUsePort = vi.fn();
     render(
       <TunnelListItem
         {...common}
         tunnel={COMPANION}
-        state={stateOf("p1-hop", "error")}
+        state={{ ...stateOf("p1-hop", "error"), error: "taken", cause: "portInUse" }}
         nested
         pairStatus="degraded"
         onStart={onStart}
         onEdit={onEdit}
+        onUsePort={onUsePort}
       />
     );
-    const fix = q('[data-testid="tunnel-degraded-fix-p1-hop"]');
-    expect(fix).toBeTruthy();
-    act(() => (q('[data-testid="tunnel-degraded-retry-p1-hop"]') as HTMLButtonElement).click());
-    expect(onStart).toHaveBeenCalledWith("p1-hop");
-    act(() => (q('[data-testid="tunnel-degraded-port-p1-hop"]') as HTMLButtonElement).click());
+    const port = COMPANION.tunnelType.config.localPort as number;
+    act(() => (q('[data-testid="tunnel-use-port-p1-hop"]') as HTMLButtonElement).click());
+    expect(onUsePort).toHaveBeenCalledWith("p1-hop", port + 1);
+    act(() => (q('[data-testid="tunnel-edit-port-p1-hop"]') as HTMLButtonElement).click());
     expect(onEdit).toHaveBeenCalledWith("p1-hop");
+    expect(container.textContent).not.toContain("Retry");
+    expect(onStart).not.toHaveBeenCalled();
   });
 
   it("offers to remove a redundant companion on the parent row", () => {

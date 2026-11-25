@@ -85,6 +85,7 @@ function seedStore(
   states: Record<string, ServerState> = {}
 ) {
   (useAppStore as unknown as { setState: (p: Record<string, unknown>) => void }).setState({
+    tunnels: [],
     embeddedServers: servers,
     embeddedServerStates: states,
     saveEmbeddedServer: vi.fn(() => Promise.resolve()),

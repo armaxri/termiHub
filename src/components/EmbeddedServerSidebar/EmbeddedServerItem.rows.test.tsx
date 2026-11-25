@@ -65,11 +65,11 @@ describe("EmbeddedServerItem — names, not settings (#5770)", () => {
     container.remove();
   });
 
-  it("shows only the name; the protocol, port and folder are in the tooltip", () => {
+  it("shows the name and the protocol; the port and folder are in the tooltip", () => {
     render();
     const text = row().textContent ?? "";
     expect(text).toContain("Docs share");
-    for (const setting of ["HTTP", "8080", "/srv/docs", "Run on"]) {
+    for (const setting of ["8080", "/srv/docs", "Run on"]) {
       expect(text).not.toContain(setting);
     }
     const tip = row().getAttribute("aria-description") ?? "";

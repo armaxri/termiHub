@@ -177,6 +177,18 @@ describe("tunnelSlice — residual branch coverage (TFE-006)", () => {
       expect(dispatchedKinds()).toEqual(["tunnel.start", "tunnel.reconnect"]);
     });
 
+    it("retries a reconnecting tunnel now without a toast, and says when it cannot (#6063)", async () => {
+      useAppStore.setState({ tunnels: [makeTunnel("tun-3", "Third")] });
+      dispatchMock.mockResolvedValueOnce(accepted);
+      await useAppStore.getState().retryTunnelNow("tun-3");
+      expect(dispatchedKinds()).toEqual(["tunnel.reconnect"]);
+      expect(toastMock.loading).not.toHaveBeenCalled();
+
+      dispatchMock.mockRejectedValueOnce(new Error("gone"));
+      await expect(useAppStore.getState().retryTunnelNow("tun-3")).rejects.toThrow("gone");
+      expect(toastMock.error).toHaveBeenCalledWith("Failed to retry Third: gone");
+    });
+
     it("no-ops a reconnect while a stop for the same tunnel is in flight", async () => {
       useAppStore.setState({ tunnels: [makeTunnel("tun-2", "Other")] });
       const deferred = makeDeferred<IntentAck>();
@@ -208,7 +220,7 @@ describe("tunnelSlice — residual branch coverage (TFE-006)", () => {
 
   it("reconnectTunnel falls back to the 'tunnel' label for an unknown id", async () => {
     await useAppStore.getState().reconnectTunnel("ghost");
-    expect(toastMock.loading).toHaveBeenCalledWith("Reconnecting tunnel…");
+    expect(toastMock.loading).toHaveBeenCalledWith("Restarting tunnel…");
   });
 
   it("throwIfRejected uses the generic message when the ack carries no error", async () => {

@@ -16,13 +16,13 @@ import {
 const TABLE: [ServiceState, string, string, "hollow" | "pulse" | "", string | null, boolean][] = [
   // state, word, tone, dot, run, may hold a port
   ["stopped", "Stopped", "neutral", "", "start", false],
-  ["waiting", "Waiting", "warning", "", "stopWaiting", false],
+  ["waiting", "Waiting", "neutral", "hollow", "stopWaiting", false],
   ["starting", "Starting", "warning", "pulse", "stop", true],
   ["running", "Running", "success", "", "stop", true],
   ["reconnecting", "Reconnecting", "warning", "pulse", "stop", true],
-  ["stopping", "Stopping", "warning", "", "stop", true],
+  ["stopping", "Stopping", "warning", "pulse", null, true],
   ["error", "Error", "error", "", "retry", false],
-  ["needsConnection", "Needs a connection", "warning", "", null, false],
+  ["needsConnection", "Needs a connection", "error", "", null, false],
   ["notReachable", "Not reachable", "warning", "hollow", "stop", true],
 ];
 
@@ -43,6 +43,20 @@ describe("the nine service states (#6028)", () => {
   it("only running is green", () => {
     const green = TABLE.filter(([state]) => serviceStateDot(state).tone === "success");
     expect(green.map(([state]) => state)).toEqual(["running"]);
+  });
+
+  it("red is for what needs the user, amber for what moves or is in doubt", () => {
+    const of = (tone: string) =>
+      TABLE.map(([state]) => state).filter((state) => serviceStateDot(state).tone === tone);
+    expect(of("error")).toEqual(["error", "needsConnection"]);
+    expect(of("warning")).toEqual(["starting", "reconnecting", "stopping", "notReachable"]);
+  });
+
+  it("no two states look alike but those that are in motion", () => {
+    const still = TABLE.map(([state]) => serviceStateDot(state)).filter((dot) => !dot.pulse);
+    const looks = still.map((dot) => `${dot.tone} ${dot.hollow}`);
+    // Error and Needs a connection: both red, both need the user.
+    expect(new Set(looks).size).toBe(looks.length - 1);
   });
 
   it("says why for every state the user may have to act on", () => {

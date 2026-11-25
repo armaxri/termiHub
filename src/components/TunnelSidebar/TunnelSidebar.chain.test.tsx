@@ -72,6 +72,7 @@ async function flush() {
 
 function seed(tunnels: TunnelConfig[], states: Record<string, TunnelState>) {
   (useAppStore as unknown as { setState: (p: Record<string, unknown>) => void }).setState({
+    embeddedServers: [],
     tunnels,
     tunnelStates: states,
     connections: [],

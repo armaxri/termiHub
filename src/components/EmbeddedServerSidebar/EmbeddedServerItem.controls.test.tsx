@@ -74,9 +74,8 @@ describe("EmbeddedServerItem — run control and labelled dot (#5852)", () => {
   it.each<[ServerStatus | undefined, string, string]>([
     [undefined, "Start", "Stopped"],
     ["stopped", "Start", "Stopped"],
-    ["starting", "Stop", "Starting"],
+    ["starting", "Cancel start", "Starting"],
     ["running", "Stop", "Running"],
-    ["stopping", "Stop", "Stopping"],
     ["error", "Retry", "Error"],
     ["waiting", "Stop waiting", "Waiting"],
     ["notReachable", "Stop", "Not reachable"],

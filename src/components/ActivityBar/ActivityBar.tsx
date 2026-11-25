@@ -45,6 +45,8 @@ interface ActivityBarItemDef {
   /** The glyph's lucide name, exposed as `data-icon` for the product-run grade (#5848). */
   iconName: string;
   label: string;
+  /** What its test id is made of, when not the label. */
+  idLabel?: string;
 }
 
 const REQUIRED_ITEMS: ActivityBarItemDef[] = [
@@ -59,7 +61,14 @@ const OPTIONAL_ITEMS: ActivityBarItemDef[] = [
   // as "quick action"; the clapperboard read as video (#5848).
   { view: "automations", icon: Zap, iconName: "zap", label: "Automations" },
   { view: "tunnels", icon: ArrowLeftRight, iconName: "arrow-left-right", label: "SSH tunnels" },
-  { view: "services", icon: Server, iconName: "server", label: "File servers" },
+  // "Services" again, with its id, once the tunnels are in it, too (#6028).
+  {
+    view: "services",
+    icon: Server,
+    iconName: "server",
+    label: "File servers",
+    idLabel: "Services",
+  },
   { view: "network-tools", icon: Stethoscope, iconName: "stethoscope", label: "Network tools" },
   { view: "plugins", icon: Puzzle, iconName: "puzzle", label: "Plugins" },
 ];
@@ -112,6 +121,7 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
                 icon={item.icon}
                 iconName={item.iconName}
                 label={item.label}
+                idLabel={item.idLabel}
                 isActive={sidebarView === item.view && !sidebarCollapsed}
                 onClick={() => setSidebarView(item.view)}
               />

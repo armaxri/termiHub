@@ -313,7 +313,8 @@ export function ServiceListItem({
           {onNextStep &&
             model.nextSteps.map((step, index) => (
               <span key={step.id} className="service-row__step">
-                {index > 0 && <span aria-hidden="true">{" · "}</span>}{" "}
+                {" "}
+                {index > 0 && <span aria-hidden="true">· </span>}
                 <button
                   type="button"
                   className="service-row__next"

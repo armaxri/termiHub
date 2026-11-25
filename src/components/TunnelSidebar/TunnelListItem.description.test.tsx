@@ -85,6 +85,6 @@ describe("TunnelListItem — description (#5770)", () => {
   it("shows no description line without one", () => {
     renderItem({ ...BASE } as TunnelConfig);
     expect(container.querySelector('[data-testid="tunnel-description-tun-1"]')).toBeNull();
-    expect(row().textContent).toMatch(/^My Tunnel(Running|Stopped) · /);
+    expect(row().textContent).toMatch(/^My TunnelLocal(Running|Stopped) · /);
   });
 });
