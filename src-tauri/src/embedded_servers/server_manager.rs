@@ -315,7 +315,15 @@ impl<R: Runtime> EmbeddedServerManager<R> {
             return self.start_agent_service(server_id, &config, &agent_id);
         }
         self.lock_refusals().remove(server_id);
+        self.start_here(server_id, config)
+    }
 
+    /// Open `config`'s listener on this computer: the only place that does.
+    fn start_here(
+        &self,
+        server_id: &str,
+        config: EmbeddedServerConfig,
+    ) -> Result<(), TerminalError> {
         // Held until the listener is up: a save that moves the server meanwhile
         // waits, and then stops it here.
         let store = self.lock_configs()?;

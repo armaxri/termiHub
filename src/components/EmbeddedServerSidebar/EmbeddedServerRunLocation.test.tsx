@@ -226,6 +226,13 @@ describe("where a file server runs", () => {
     expect(q("server-item-srv-1")?.textContent).toContain(error);
   });
 
+  it("says nothing of stopping when the server is not running", async () => {
+    await render();
+    await openEditor();
+    act(() => q("pick-agent")!.click());
+    expect(q("server-dialog-move-hint")).toBeNull();
+  });
+
   it("warns that moving a running server stops it", async () => {
     seedStore([makeServer("srv-1", "Docs")], {
       "srv-1": {

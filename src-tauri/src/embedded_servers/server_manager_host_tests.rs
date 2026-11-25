@@ -21,7 +21,7 @@ use crate::credential::NullStore;
 use crate::embedded_servers::config::{EmbeddedServerConfig, ServerState, ServerStatus};
 use crate::embedded_servers::secrets::tests::{FakeStore, UNLOCKED};
 use crate::terminal::agent_manager::AgentRpcClient;
-use crate::test_support::agent_rpc::{FakeAgent, Step};
+use crate::test_support::agent_rpc::{FakeAgent, Gate, Step};
 use crate::utils::config_paths::ConfigDirOverride;
 use crate::utils::errors::TerminalError;
 
@@ -450,4 +450,58 @@ fn a_copy_without_its_password_is_refused() {
     );
     assert!(!h.listens_here("copy"));
     h.manager.stop_all();
+}
+
+/// A save that moves the server while it is starting here wins: the listener is
+/// opened only for a server that is still stored to run here.
+#[test]
+fn a_server_moved_away_before_its_port_opens_does_not_open() {
+    let (dir, root) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    write(dir.path(), vec![server("web", root.path(), None)]);
+    let h = run(
+        dir.path(),
+        &Arc::new(FakeAgent::default()),
+        &[("edge", "Edge box")],
+    );
+    let as_it_was = h.manager.get_configs().unwrap().remove(0);
+    edit(&h, "web", |s| s["host"] = on_agent("edge")).unwrap();
+    h.manager
+        .start_here("web", as_it_was)
+        .expect_err("moved meanwhile");
+    assert!(!h.listens_here("web"));
+}
+
+/// The same for an agent: moved while the agent was starting it means stopped
+/// there again.
+#[test]
+fn a_server_moved_while_the_agent_starts_it_is_stopped_there() {
+    let (dir, root) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let gate = Gate::new();
+    let agent = Arc::new(FakeAgent::default().on(
+        SERVICE_START,
+        Step::Hang(
+            gate.clone(),
+            Box::new(Step::Reply(json!({"status": {"state": "running"}}))),
+        ),
+    ));
+    write(
+        dir.path(),
+        vec![server("web", root.path(), Some(on_agent("edge")))],
+    );
+    let h = run(dir.path(), &agent, &[("edge", "Edge box")]);
+    std::thread::scope(|scope| {
+        let _release = gate.open_on_drop();
+        let start = scope.spawn(|| h.manager.start_server("web"));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while started_on_agent(&agent) == 0 {
+            assert!(std::time::Instant::now() < deadline, "never asked");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        edit(&h, "web", |s| s["host"] = json!({"kind": "thisComputer"})).unwrap();
+        gate.open();
+        start.join().unwrap().expect_err("moved meanwhile");
+    });
+    assert!(agent.requests().iter().any(|(m, _)| m == SERVICE_STOP));
+    assert_eq!(h.state("web").status, ServerStatus::Stopped);
+    assert!(!h.listens_here("web"));
 }
