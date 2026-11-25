@@ -303,9 +303,9 @@ class TestProductRunRowsNames(
                 f"tunnel-item-{tunnel['id']}",
                 [
                     name,
-                    "Reaches the DB",
-                    # What it is for, in plain words, and its state (#6028).
-                    "Stopped · Reach something on the SSH server's side",
+                    "Local",
+                    # Its state, and what it is for in the user's words (#6063).
+                    "Stopped · Reaches the DB",
                 ],
                 [
                     "Local (ssh -L) · 127.0.0.1:18577 → db.internal:5432",
@@ -322,12 +322,12 @@ class TestProductRunRowsNames(
         t = self.tag
         with self.step(
             "rows-names.service",
-            "A service row shows its name and description; the protocol, address and folder "
-            "are in the tooltip, and Run on is in the editor",
-            expect="the Services sidebar: 'Rows service …' with a grey dot, 'Lab firmware' and "
-            "'Stopped · Open a folder in a browser' muted under the name; no "
-            "'HTTP' badge, no ':port → folder' line and no 'Run on' selector on the row "
-            "(#5770)",
+            "A file server's row shows its name, its protocol and its description; the address "
+            "and folder are in the tooltip, and Run on is in the editor",
+            expect="the File servers sidebar: 'Rows service …' with a grey dot and 'HTTP' at its "
+            "end, 'Stopped · Lab firmware' muted under the name; no "
+            "':port → folder' line and no 'Run on' selector on the row "
+            "(#5770, #6063)",
         ):
             self.require("rows-names.items")
             name = f"Rows service {t}"
@@ -339,7 +339,7 @@ class TestProductRunRowsNames(
             self.wait(lambda: self.driver.exists(row), what="the service row")
             self._grade_row(
                 row,
-                [name, "Lab firmware", "Stopped · Open a folder in a browser"],
+                [name, "HTTP", "Stopped · Lab firmware"],
                 [
                     f"HTTP · http://127.0.0.1:{port}",
                     "Share a folder that others open in a web browser.",
