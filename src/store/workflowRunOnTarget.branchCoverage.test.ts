@@ -62,6 +62,9 @@ vi.mock("@/services/localProcessApi", () => ({
           status: "ask",
           path: `/bin/${program}`,
           reason: `"${program}" (/bin/${program}) is not an allowed program.`,
+          remember: "program",
+          imported: [],
+          interpreter: false,
         },
   invokeRunLocalProcess: vi.fn(),
   cancelLocalProcess: vi.fn(),
@@ -374,7 +377,7 @@ describe("runWorkflowOnTarget — local-process authorization", () => {
 
   it("reuses a fan-out's shared decision instead of prompting again", async () => {
     const authDecisions = new Map([
-      [JSON.stringify(["make", "test"]), Promise.resolve({ ok: false as const })],
+      [JSON.stringify([["wf-wf"], "make", ["test"]]), Promise.resolve({ ok: false as const })],
     ]);
 
     const result = await run(workflow([lp]), { fanout: { authDecisions } });
@@ -400,7 +403,7 @@ describe("runWorkflowOnTarget — local-process authorization", () => {
 
   it("never reuses a fan-out decision made while experimental was on (#5988)", async () => {
     const authDecisions = new Map([
-      [JSON.stringify(["make", "test"]), Promise.resolve({ ok: true as const })],
+      [JSON.stringify([["wf-wf"], "make", ["test"]]), Promise.resolve({ ok: true as const })],
     ]);
     mocks.injector.mockImplementation(() => {
       mocks.settings.experimentalFeaturesEnabled = false;

@@ -198,7 +198,9 @@ describe("appStore — single automation store (#5818, slice 4)", () => {
     useAppStore.setState(automationLibraryState([original]));
     vi.mocked(saveAutomation).mockClear();
     await useAppStore.getState().duplicateAutomation("m1");
-    const saved = vi.mocked(saveAutomation).mock.calls[0][0];
+    const [saved, copyOf] = vi.mocked(saveAutomation).mock.calls[0];
+    // A copy of an imported automation is an imported one (#6019).
+    expect(copyOf).toBe("m1");
     const { id, name, createdAt, updatedAt, ...kept } = saved;
     expect(id).not.toBe("m1");
     expect([name, createdAt, updatedAt]).toEqual(["Copy of Typed m1", "", ""]);

@@ -220,6 +220,31 @@ const en = {
   "schedule.connect.skip.failed": "could not connect: {error}",
   "schedule.connect.skip.notReady": "the terminal did not open in time",
 
+  // ── The question before a local program runs (#1857, #6019) ─────────────
+  "localProcess.title": "Run a local program?",
+  "localProcess.imported.title": "Run a local program of an imported automation?",
+  "localProcess.imported.lead":
+    "“{name}” came from a file or a backup, or was changed outside termiHub. It wants to run this command on this computer. Allow it only if you know what it does.",
+  "localProcess.imported.leadOther":
+    "“{name}” wants to run this command on this computer. {imported} is part of it and came from a file or a backup, or was changed outside termiHub. Allow it only if you know what it does.",
+  "localProcess.imported.leadOthers":
+    "“{name}” wants to run this command on this computer. {imported} are part of it and came from a file or a backup, or were changed outside termiHub. Allow it only if you know what it does.",
+  "localProcess.emptyArg": "(empty)",
+  "localProcess.once": "Allow once",
+  "localProcess.always": "Always allow",
+  "localProcess.alwaysCommand": "Allow this command",
+  "localProcess.alwaysAnyway": "Always allow anyway",
+  "localProcess.back": "Back",
+  "localProcess.note.program":
+    "“Always allow” remembers this file, with any arguments, for every automation you made here; manage or revoke it later under Settings → Security.",
+  "localProcess.note.command":
+    "“Allow this command” remembers exactly this command for this automation. It asks again when the program, its file or an argument changes.",
+  "localProcess.note.nothing":
+    "This command belongs to no saved automation, so it can only be allowed this time.",
+  "localProcess.interpreter.title": "“{program}” runs whatever it is told to.",
+  "localProcess.interpreter.text":
+    "If you always allow {path}, every automation you made here may run any command on this computer through it, without asking. “Allow once” allows only this command, now.",
+
   // ── Connect-time password prompt (PasswordPrompt, #5617) ────────────────
   // Titled after the connection's real transport: a telnet password is not
   // an SSH one. Sentence case; the connection name sits on its own line.

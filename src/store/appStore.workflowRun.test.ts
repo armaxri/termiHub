@@ -98,6 +98,10 @@ vi.mock("@/services/automationApi", async () => {
       savedWorkflows.push(views.automationToWorkflow(a));
       return Promise.resolve(a);
     }),
+    importAutomation: vi.fn((a: import("@/types/generated/Automation").Automation) => {
+      savedWorkflows.push(views.automationToWorkflow(a));
+      return Promise.resolve(a);
+    }),
     deleteAutomation: (id: string) => apis.apiDeleteWorkflow(id),
     listAutomationRuns: () => apis.apiListWorkflowRuns(),
     recordAutomationRun: (run: import("@/types/generated/AutomationRun").AutomationRun) => {
@@ -122,6 +126,7 @@ const {
 const invokeRunLocalProcess = vi.fn((_args: { program: string; args: string[] }) =>
   Promise.resolve({ exitCode: 0 as number | null, timedOut: false, cancelled: false })
 );
+const confirmLocalProcess = vi.fn((..._args: unknown[]) => Promise.resolve());
 const cancelLocalProcess = vi.fn((_runId: string) => Promise.resolve(true));
 // The last-registered streamed-output handler (#1865), so a test can push
 // stdout/stderr chunks through the same seam #1857 emits them on.
@@ -149,8 +154,16 @@ vi.mock("@/services/localProcessApi", () => ({
     const path = `/bin/${program}`;
     return list.includes(program) || list.includes(path)
       ? { status: "allowed", path }
-      : { status: "ask", path, reason: `"${program}" (${path}) is not an allowed program.` };
+      : {
+          status: "ask",
+          path,
+          reason: `"${program}" (${path}) is not an allowed program.`,
+          remember: "program",
+          imported: [],
+          interpreter: false,
+        };
   }),
+  confirmLocalProcess: (...args: unknown[]) => confirmLocalProcess(...args),
   invokeRunLocalProcess: (args: { program: string; args: string[] }) => invokeRunLocalProcess(args),
   cancelLocalProcess: (runId: string) => cancelLocalProcess(runId),
   subscribeLocalProcessOutput: (runId: string, onChunk: (chunk: LocalProcessOutputChunk) => void) =>
@@ -162,6 +175,7 @@ import { LOCAL_PROCESS_REASON } from "@/utils/localProcessGate";
 import type { Automation } from "@/types/generated/Automation";
 import type { AutomationStep } from "@/types/generated/AutomationStep";
 import { automationLibraryState } from "./slices/automationStoreState";
+import { runWorkflowOnTarget } from "./slices/workflowRunOnTarget";
 import { workflowToAutomation } from "./slices/automationViews";
 import { layoutState, seedLayoutState } from "@/test/layoutState";
 import { serializeAutomations } from "@/services/automationFileIo";
@@ -812,7 +826,7 @@ describe("appStore — workflow run slice (#1852)", () => {
           enableLocalProcess(["make"]);
           useAppStore.setState(automationLibraryState(library));
           await useAppStore.getState().runAutomation("w1", options);
-          expect(checkLocalProcess).toHaveBeenLastCalledWith("make");
+          expect(checkLocalProcess).toHaveBeenLastCalledWith("make", lpStep.args, ["w1"]);
           expect(invokeRunLocalProcess).not.toHaveBeenCalled();
           await vi.waitFor(() => expect(recordedRuns[0]?.error).toContain("backend says no"));
         });
@@ -829,6 +843,129 @@ describe("appStore — workflow run slice (#1852)", () => {
           useAppStore.getState().resolveLocalProcessPrompt("cancel");
           await run;
           expect(invokeRunLocalProcess).not.toHaveBeenCalled();
+        });
+      });
+
+      describe("a command of an imported automation (#6019)", () => {
+        const asksAbout = (over: object = {}) =>
+          vi.mocked(checkLocalProcess).mockImplementation((async (program: string) => ({
+            status: "ask",
+            path: `/bin/${program}`,
+            reason: "“w1” came from a file or a backup, and this command was not confirmed.",
+            remember: "command",
+            imported: ["w1"],
+            interpreter: true,
+            ...over,
+          })) as never);
+        const real = vi.mocked(checkLocalProcess).getMockImplementation()!;
+        beforeEach(() => {
+          confirmLocalProcess.mockReset().mockResolvedValue(undefined);
+          seedConnectedTerminal();
+          // On the list, which does not count for it.
+          enableLocalProcess(["make"]);
+          useAppStore.setState(automationLibraryState([auto("w1", [lpStep])]));
+          asksAbout();
+        });
+        afterEach(() => vi.mocked(checkLocalProcess).mockImplementation(real));
+        const answer = async (decision: "once" | "always" | "cancel") => {
+          const run = useAppStore.getState().runAutomation("w1");
+          await vi.waitFor(() => expect(useAppStore.getState().localProcessPrompt).not.toBeNull());
+          const prompt = useAppStore.getState().localProcessPrompt!;
+          useAppStore.getState().resolveLocalProcessPrompt(decision);
+          await run;
+          return prompt;
+        };
+
+        it("is asked about, also when the program is on the list", async () => {
+          const prompt = await answer("cancel");
+          expect(prompt).toMatchObject({
+            remember: "command",
+            imported: ["w1"],
+            interpreter: true,
+          });
+          expect(invokeRunLocalProcess).not.toHaveBeenCalled();
+          expect(confirmLocalProcess).not.toHaveBeenCalled();
+        });
+
+        it("allowed once, it is not remembered", async () => {
+          await answer("once");
+          expect(confirmLocalProcess).not.toHaveBeenCalled();
+          expect(invokeRunLocalProcess.mock.calls[0][0]).toMatchObject({
+            automationChain: ["w1"],
+            approvedPath: `/bin/${lpStep.program}`,
+          });
+        });
+
+        it("confirmed, the backend remembers this command and the list stays", async () => {
+          await answer("always");
+          expect(confirmLocalProcess).toHaveBeenCalledWith(
+            lpStep.program,
+            lpStep.args,
+            ["w1"],
+            `/bin/${lpStep.program}`
+          );
+          expect(currentSettingsView().workflowLocalProcessAllowlist).toEqual(["make"]);
+          expect(invokeRunLocalProcess).toHaveBeenCalledTimes(1);
+        });
+
+        it("says when it could not be remembered, and still runs this time", async () => {
+          confirmLocalProcess.mockRejectedValueOnce(new Error("disk full"));
+          await answer("always");
+          expect(toast.error).toHaveBeenCalledWith("The command was not remembered", {
+            description: "disk full",
+          });
+          expect(invokeRunLocalProcess).toHaveBeenCalledTimes(1);
+        });
+
+        it("is refused with the reason, not asked about, when nobody is there", async () => {
+          const result = await runWorkflowOnTarget({
+            set: (partial) => useAppStore.setState(partial),
+            get: useAppStore.getState,
+            workflow: workflow("w1", [lp("make", ["a"])]),
+            targetTabId: "tab-active",
+            targetSessionId: "s",
+            paramValues: {},
+            triggeredBy: "scheduled",
+            unattended: true,
+          });
+          expect(result.error).toContain("was not confirmed");
+          expect(useAppStore.getState().localProcessPrompt).toBeNull();
+          expect(invokeRunLocalProcess).not.toHaveBeenCalled();
+        });
+
+        it("names every automation of a nested run, outermost first", async () => {
+          useAppStore.setState(
+            automationLibraryState([
+              auto("outer", [{ kind: "run-automation", automationId: "w1" }]),
+              auto("w1", [lpStep]),
+            ])
+          );
+          const run = useAppStore.getState().runAutomation("outer");
+          await vi.waitFor(() => expect(useAppStore.getState().localProcessPrompt).not.toBeNull());
+          useAppStore.getState().resolveLocalProcessPrompt("always");
+          await run;
+          const chain = ["outer", "w1"];
+          expect(checkLocalProcess).toHaveBeenLastCalledWith(lpStep.program, lpStep.args, chain);
+          expect(confirmLocalProcess.mock.calls[0][2]).toEqual(chain);
+          expect(invokeRunLocalProcess.mock.calls[0][0]).toMatchObject({ automationChain: chain });
+        });
+
+        it("an answer for one's own does not carry over to an imported one", async () => {
+          // Both run the same command, one after the other, in one fan-out.
+          useAppStore.setState(
+            automationLibraryState([
+              auto("outer", [lpStep, { kind: "run-automation", automationId: "w1" }]),
+              auto("w1", [lpStep]),
+            ])
+          );
+          const run = useAppStore.getState().runAutomation("outer");
+          await vi.waitFor(() => expect(useAppStore.getState().localProcessPrompt).not.toBeNull());
+          useAppStore.getState().resolveLocalProcessPrompt("once");
+          await vi.waitFor(() => expect(invokeRunLocalProcess).toHaveBeenCalledTimes(1));
+          await vi.waitFor(() => expect(useAppStore.getState().localProcessPrompt).not.toBeNull());
+          useAppStore.getState().resolveLocalProcessPrompt("cancel");
+          await run;
+          expect(invokeRunLocalProcess).toHaveBeenCalledTimes(1);
         });
       });
 

@@ -120,8 +120,8 @@ export interface RunWorkflowOptions {
 
 /**
  * The user's choice at a local-process authorization prompt (#1857):
- * `"once"` allows this single run, `"always"` allows it and adds the program to
- * the persisted allowlist, `"cancel"` refuses (the step does not run).
+ * `"once"` allows this single run, `"always"` allows it and remembers what the
+ * prompt said it would ({@link LocalProcessPromptState.remember}), `"cancel"` refuses (the step does not run).
  */
 export type LocalProcessAuthDecision = "once" | "always" | "cancel";
 
@@ -151,6 +151,15 @@ export interface LocalProcessPromptState {
   args: string[];
   /** The name of the workflow requesting it, for the prompt copy. */
   workflowName: string;
+  /**
+   * What "always" remembers (#6019): the file with any arguments, this very
+   * command of the automations in `imported`, or nothing.
+   */
+  remember: "program" | "command" | "nothing";
+  /** The automations behind the command that are not the user's own. */
+  imported: string[];
+  /** The program runs whatever it is told to. */
+  interpreter: boolean;
   /** Resolver wired to the pending authorization promise. */
   resolve: (decision: LocalProcessAuthDecision) => void;
 }

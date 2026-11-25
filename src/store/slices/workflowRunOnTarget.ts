@@ -19,6 +19,7 @@ import { localReadFile } from "@/services/api";
 import { isScriptSourceConfirmed } from "@/services/workflowScriptSources";
 import {
   checkLocalProcess,
+  confirmLocalProcess,
   invokeRunLocalProcess,
   cancelLocalProcess,
   subscribeLocalProcessOutput,
@@ -136,6 +137,15 @@ export type LocalProcessDecision =
  */
 let authPromptQueue: Promise<unknown> = Promise.resolve();
 
+/** What a decision about a command is kept under. */
+function decisionKey(
+  program: string,
+  args: readonly string[],
+  callChain: readonly string[]
+): string {
+  return JSON.stringify([callChain, program, args]);
+}
+
 /** Hooks a multi-target (fan-out) run passes to each target (PROD-047, #3418).
  * A fan-out target raises no toasts of its own: it reports to these hooks and
  * the fan-out renders one shared per-target status toast. */
@@ -146,7 +156,7 @@ export interface WorkflowFanoutHooks {
   onProgress?: (completed: number, retryNote?: string) => void;
   /**
    * Local-process authorization decisions shared across the fan-out's targets,
-   * keyed by program + args, so the user is asked once per program rather than
+   * keyed by command and the automations behind it, so the user is asked once per program rather than
    * once per terminal.
    */
   authDecisions?: Map<string, Promise<LocalProcessDecision>>;
@@ -319,11 +329,13 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
 
   // The authorization gate for a `run-local-process` step (#1857). The backend
   // holds the rule (#5994) and decides again when the program starts; this asks it
-  // first, so that a program that is not on the list can be put to the user. An
-  // imported automation adds nothing to the list. Fails closed.
+  // first, so that a program that is not on the list can be put to the user, and
+  // any command of an imported automation that was not confirmed (#6019). Fails
+  // closed.
   const askAuthorization = async (
     program: string,
-    args: string[]
+    args: string[],
+    callChain: readonly string[]
   ): Promise<LocalProcessDecision> => {
     if (!currentSettingsView().workflowLocalProcessEnabled) {
       toast.error("Local process execution is disabled", {
@@ -334,30 +346,49 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
     }
     let verdict: LocalProcessCheck;
     try {
-      verdict = await checkLocalProcess(program);
+      verdict = await checkLocalProcess(program, args, callChain);
     } catch (err) {
       return { ok: false, reason: `"${program}" was not started: ${errorMessage(err)}` };
     }
     if (verdict.status === "allowed") return { ok: true };
     if (verdict.status !== "ask") return { ok: false, reason: verdict.reason };
     if (unattended) {
-      // Never prompt from an unattended run: an unlisted program is refused.
+      // Never prompt from an unattended run: an unlisted program, or a command that
+      // was not confirmed, is refused.
       frontendLog("workflow", `unattended run refused local program: ${verdict.reason}`);
       return { ok: false, reason: verdict.reason };
     }
 
     // Not yet trusted — ask the user, once, via the confirmation dialog, about the
     // file that would start. The approval is for that file only.
-    const { path } = verdict;
+    const { path, remember, imported, interpreter } = verdict;
     const decision = await new Promise<LocalProcessAuthDecision>((resolve) => {
       set({
-        localProcessPrompt: { program, path, args, workflowName: workflow.name, resolve },
+        localProcessPrompt: {
+          program,
+          path,
+          args,
+          workflowName: workflow.name,
+          remember,
+          imported,
+          interpreter,
+          resolve,
+        },
       });
     });
     set({ localProcessPrompt: null });
 
     if (decision === "cancel") return { ok: false };
-    if (decision === "always") {
+    if (decision === "always" && remember === "command") {
+      // The backend remembers it, for this very command of these automations.
+      try {
+        await confirmLocalProcess(program, args, callChain, path);
+      } catch (err) {
+        // It was allowed for this run; it is asked about again the next time.
+        toast.error("The command was not remembered", { description: errorMessage(err) });
+      }
+    }
+    if (decision === "always" && remember === "program") {
       const current = currentSettingsView();
       const nextAllowlist = [...(current.workflowLocalProcessAllowlist ?? [])];
       // The file, not the name it was found by: another one is asked about again.
@@ -371,7 +402,11 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
   };
   // The files the user approved for this run, by program + args.
   const approvedPaths = new Map<string, string>();
-  const authorizeLocalProcess: WorkflowAuthorizeLocalProcessSeam = async (program, args) => {
+  const authorizeLocalProcess: WorkflowAuthorizeLocalProcessSeam = async (
+    program,
+    args,
+    callChain
+  ) => {
     // The run was checked before it started; this catches an automation or the
     // switch that changed while it runs (#5988). Before the shared decisions, so
     // a fan-out cannot reuse one made while the switch was on. The backend
@@ -384,12 +419,13 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
       });
       return false;
     }
-    // A fan-out shares one decision per program + args across its targets.
-    const key = JSON.stringify([program, ...args]);
+    // A fan-out shares one decision per command across its targets. The automations
+    // behind it are part of it: one's own and an imported one are asked apart.
+    const key = decisionKey(program, args, callChain);
     let decision = fanout?.authDecisions?.get(key);
     if (!decision) {
       // One prompt slot: queue behind any prompt a concurrent target has open.
-      decision = authPromptQueue.then(() => askAuthorization(program, args));
+      decision = authPromptQueue.then(() => askAuthorization(program, args, callChain));
       // The caller awaiting `decision` handles its rejection; the queue only has to
       // settle so the next prompt is not blocked. Trace it here too (#4520).
       authPromptQueue = decision.catch((err: unknown) =>
@@ -454,7 +490,8 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
         runId: processRunId,
         program,
         args,
-        approvedPath: approvedPaths.get(JSON.stringify([program, ...args])),
+        automationChain: options.callChain,
+        approvedPath: approvedPaths.get(decisionKey(program, args, options.callChain)),
         timeoutMs: LOCAL_PROCESS_TIMEOUT_MS,
       });
       frontendLog(

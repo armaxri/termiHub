@@ -8,12 +8,12 @@ vi.mock("@/services/nativeDialog", () => ({ open: vi.fn(), save: vi.fn() }));
 vi.mock("@tauri-apps/plugin-fs", () => ({ readTextFile: vi.fn(), writeTextFile: vi.fn() }));
 vi.mock("@/services/automationApi", () => ({
   listAutomations: vi.fn(() => Promise.resolve([])),
-  saveAutomation: vi.fn((a: unknown) => Promise.resolve(a)),
+  importAutomation: vi.fn((a: unknown) => Promise.resolve(a)),
 }));
 
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { toast } from "@/components/ui";
-import { saveAutomation } from "@/services/automationApi";
+import { importAutomation } from "@/services/automationApi";
 import { open, save } from "@/services/nativeDialog";
 import { useAppStore } from "@/store/appStore";
 import { automationLibraryState } from "@/store/slices/automationStoreState";
@@ -97,7 +97,7 @@ describe("import", () => {
     expect(entry("Caller")?.textContent).toContain("Runs an automation th");
     for (const other of ["Local", "Script", "Caller"])
       expect(entry(other)?.textContent).not.toContain("Triggers off");
-    expect(vi.mocked(saveAutomation).mock.calls[0][0].triggersEnabled).toBe(false);
+    expect(vi.mocked(importAutomation).mock.calls[0][0].triggersEnabled).toBe(false);
     await checkA11y(query("automation-import-dialog")!);
   });
 
@@ -124,7 +124,7 @@ describe("import", () => {
     expect(title()).toBe("Nothing was imported");
     expect(refused("Odd")?.textContent).toContain("teleport");
     expect(query("automation-import-show")).toBeNull();
-    expect(saveAutomation).not.toHaveBeenCalled();
+    expect(importAutomation).not.toHaveBeenCalled();
   });
 
   it("names the automation of this library that a step runs", async () => {
@@ -161,7 +161,7 @@ describe("import", () => {
 
   it("imports nothing from a bad file, and says why", async () => {
     await importJson({ version: 2, automations: [automation({})] });
-    expect(saveAutomation).not.toHaveBeenCalled();
+    expect(importAutomation).not.toHaveBeenCalled();
     expect(query("automation-import-dialog")).toBeNull();
     expect(toast.error).toHaveBeenCalledWith(
       "Failed to import automations: The file was exported by a newer version of termiHub. Update termiHub to import it."

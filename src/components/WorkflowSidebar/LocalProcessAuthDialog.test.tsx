@@ -13,6 +13,7 @@ import { createRoot, Root } from "react-dom/client";
 import { LocalProcessAuthDialog } from "./LocalProcessAuthDialog";
 import { useAppStore } from "@/store/appStore";
 import type { LocalProcessAuthDecision } from "@/store/appStore";
+import type { LocalProcessPromptState } from "@/store/slices/workflowsSlice";
 
 vi.mock("@/themes", () => ({
   applyTheme: vi.fn(),
@@ -33,11 +34,26 @@ function render() {
 }
 
 /** Open the prompt via the store and return the resolver spy. */
-function openPrompt(program: string, args: string[], path = program) {
+function openPrompt(
+  program: string,
+  args: string[],
+  path = program,
+  over: Partial<LocalProcessPromptState> = {}
+) {
   const resolve = vi.fn();
   act(() => {
     useAppStore.setState({
-      localProcessPrompt: { program, path, args, workflowName: "Deploy", resolve },
+      localProcessPrompt: {
+        program,
+        path,
+        args,
+        workflowName: "Deploy",
+        remember: "program",
+        imported: [],
+        interpreter: false,
+        resolve,
+        ...over,
+      },
     });
   });
   return resolve;
@@ -98,5 +114,102 @@ describe("LocalProcessAuthDialog", () => {
     expect(spy).toHaveBeenCalledWith(decision);
     // The prompt is cleared after resolving.
     expect(useAppStore.getState().localProcessPrompt).toBeNull();
+  });
+
+  const text = (testId: string) => query(testId)?.textContent ?? null;
+  const click = (testId: string) => act(() => (query(testId) as HTMLButtonElement).click());
+
+  describe("an imported automation (#6019)", () => {
+    const theirs = { remember: "command" as const, imported: ["Deploy"] };
+
+    it("says where it came from, and remembers only this command", () => {
+      render();
+      const spy = openPrompt("make", ["all"], "/usr/bin/make", theirs);
+      expect(query("local-process-auth-dialog")!.textContent).toContain("imported automation");
+      expect(text("local-process-auth-lead")).toContain("“Deploy” came from a file or a backup");
+      expect(text("local-process-auth-always")).toBe("Allow this command");
+      expect(text("local-process-auth-note")).toContain("exactly this command");
+      expect(text("local-process-auth-note")).not.toContain("any arguments");
+      click("local-process-auth-always");
+      expect(spy).toHaveBeenCalledWith("always");
+    });
+
+    it("names the imported ones a run of one's own reaches", () => {
+      render();
+      openPrompt("make", [], "/usr/bin/make", { ...theirs, imported: ["Helper"] });
+      expect(text("local-process-auth-lead")).toMatch(
+        /^“Deploy” wants .* “Helper” is part of it and came from a file/
+      );
+      openPrompt("make", [], "/usr/bin/make", { ...theirs, imported: ["A", "B", "C"] });
+      expect(text("local-process-auth-lead")).toContain("“A”, “B” and “C” are part of it");
+    });
+
+    it("does not warn of an interpreter: only this command is remembered", () => {
+      render();
+      const spy = openPrompt("sh", ["-c", "ls"], "/bin/sh", { ...theirs, interpreter: true });
+      click("local-process-auth-always");
+      expect(query("local-process-auth-interpreter")).toBeNull();
+      expect(spy).toHaveBeenCalledWith("always");
+    });
+  });
+
+  it("can only allow once what belongs to no saved automation", () => {
+    render();
+    const spy = openPrompt("make", [], "/usr/bin/make", { remember: "nothing" });
+    expect(query("local-process-auth-always")).toBeNull();
+    expect(text("local-process-auth-note")).toContain("only be allowed this time");
+    click("local-process-auth-once");
+    expect(spy).toHaveBeenCalledWith("once");
+  });
+
+  describe("Always allow for a program that runs whatever it is told to (#6019)", () => {
+    it("says so and asks again", () => {
+      render();
+      const spy = openPrompt("python3", ["x.py"], "/usr/bin/python3", { interpreter: true });
+      expect(query("local-process-auth-interpreter")).toBeNull();
+      click("local-process-auth-always");
+      expect(spy).not.toHaveBeenCalled();
+      expect(text("local-process-auth-interpreter")).toContain("“python3” runs whatever");
+      expect(text("local-process-auth-interpreter")).toContain("/usr/bin/python3");
+      click("local-process-auth-always-anyway");
+      expect(spy).toHaveBeenCalledWith("always");
+    });
+
+    it("can go back, allow once, or be closed, which refuses", () => {
+      render();
+      let spy = openPrompt("sh", [], "/bin/sh", { interpreter: true });
+      click("local-process-auth-always");
+      click("local-process-auth-back");
+      expect(query("local-process-auth-interpreter")).toBeNull();
+      expect(query("local-process-auth-cancel")).not.toBeNull();
+      click("local-process-auth-always");
+      click("local-process-auth-once");
+      expect(spy).toHaveBeenCalledWith("once");
+      spy = openPrompt("sh", [], "/bin/sh", { interpreter: true });
+      click("local-process-auth-always");
+      click("modal-close");
+      expect(spy).toHaveBeenCalledWith("cancel");
+    });
+
+    it("starts over for the next program", () => {
+      render();
+      openPrompt("sh", [], "/bin/sh", { interpreter: true });
+      click("local-process-auth-always");
+      openPrompt("bash", [], "/bin/bash", { interpreter: true });
+      expect(query("local-process-auth-interpreter")).toBeNull();
+      expect(query("local-process-auth-always-anyway")).toBeNull();
+    });
+  });
+
+  it("shows an argument as it is, also what would not show", () => {
+    render();
+    openPrompt("make", ["", "a  b", "safe\u202ehs.live", "x\ny"], "/usr/bin/make");
+    const items = [...query("local-process-auth-args")!.querySelectorAll("li")];
+    expect(items.map((li) => li.textContent)).toEqual([
+      "(empty)",
+      "a  b",
+      "safe\\u{202e}hs.live",
+      "x\\ny",
+    ]);
   });
 });
