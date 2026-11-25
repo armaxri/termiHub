@@ -18,7 +18,14 @@ beforeEach(() => {
 describe("SELF_PROMPTING_CONTENT_TYPES", () => {
   it("lists exactly the editors that render their own unsaved-changes dialog", () => {
     expect([...SELF_PROMPTING_CONTENT_TYPES].sort()).toEqual(
-      ["connection-editor", "editor", "settings", "tunnel-editor", "workspace-editor"].sort()
+      [
+        "connection-editor",
+        "editor",
+        "settings",
+        "tunnel-editor",
+        "server-editor",
+        "workspace-editor",
+      ].sort()
     );
   });
 

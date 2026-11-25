@@ -16,6 +16,7 @@ import type {
   PluginDetailMeta,
   TabContentType,
   TransferViewMeta,
+  ServerEditorMeta,
   TunnelEditorMeta,
   WorkspaceEditorMeta,
 } from "@/types/terminal";
@@ -72,6 +73,7 @@ export interface HandoffTab {
    */
   connectionEditorMeta?: ConnectionEditorMeta;
   tunnelEditorMeta?: TunnelEditorMeta;
+  serverEditorMeta?: ServerEditorMeta;
   workspaceEditorMeta?: WorkspaceEditorMeta;
   networkDiagnosticMeta?: NetworkDiagnosticMeta;
   pluginDetailMeta?: PluginDetailMeta;
@@ -109,7 +111,12 @@ export interface HandoffTab {
  * The form editors that can hand their unsaved draft to another window: the
  * connection, tunnel and workspace editors (#4500) and the Settings panel (#4758).
  */
-export type FormDraftKind = "connection-editor" | "tunnel-editor" | "workspace-editor" | "settings";
+export type FormDraftKind =
+  | "connection-editor"
+  | "tunnel-editor"
+  | "server-editor"
+  | "workspace-editor"
+  | "settings";
 
 /**
  * A snapshot of one form editor's unsaved draft at the moment it is read

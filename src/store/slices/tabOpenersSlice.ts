@@ -16,6 +16,7 @@ import {
   EditorSessionRef,
   ConnectionEditorMeta,
   ConnectionEditorFocusRequest,
+  ServerEditorMeta,
   TunnelEditorMeta,
   WorkspaceEditorMeta,
   NetworkDiagnosticMeta,
@@ -148,6 +149,11 @@ export interface TabOpenersSlice {
 
   // SSH Tunnels — tunnel data + lifecycle live in TunnelSlice (#2077); the
   // tab-opening action lives here as it belongs to the panel/tab domain.
+  /** Open (or focus) the editor tab of a file server; `null` makes one (#6028). */
+  openServerEditorTab: (
+    serverId: string | null,
+    options?: Pick<ServerEditorMeta, "serverType" | "copyOf">
+  ) => void;
   /**
    * Open (or focus) the tunnel-editor tab for `tunnelId` (`null` = new tunnel).
    * `options.sshConnectionId` pre-selects the SSH connection of a NEW tunnel —
@@ -653,6 +659,51 @@ export const createTabOpenersSlice: StateCreator<AppState, [], [], TabOpenersSli
         };
       });
     },
+
+    openServerEditorTab: (serverId, options) =>
+      setAndReseed((state) => {
+        const meta: ServerEditorMeta = {
+          serverId,
+          ...(serverId === null && options?.serverType ? { serverType: options.serverType } : {}),
+          ...(serverId === null && options?.copyOf ? { copyOf: options.copyOf } : {}),
+        };
+        const allLeaves = getAllLeaves(state.rootPanel);
+        for (const leaf of allLeaves) {
+          const existing = leaf.tabs.find(
+            ({ contentType, serverEditorMeta: open }) =>
+              contentType === "server-editor" &&
+              open?.serverId === meta.serverId &&
+              open.serverType === meta.serverType &&
+              open.copyOf === meta.copyOf
+          );
+          if (existing) {
+            const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
+              ...l,
+              tabs: l.tabs.map((t) => ({ ...t, isActive: t.id === existing.id })),
+              activeTabId: existing.id,
+            }));
+            return { rootPanel, activePanelId: leaf.id };
+          }
+        }
+
+        const targetPanelId = state.activePanelId ?? allLeaves[0]?.id;
+        if (!targetPanelId) return state;
+        const server = state.embeddedServers.find(({ id }) => id === serverId);
+        const title = server ? `Edit: ${server.name}` : "New file server";
+        const dummyConfig: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
+        const newTab = createTab(title, "local", dummyConfig, targetPanelId, "server-editor");
+        newTab.serverEditorMeta = meta;
+        const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
+          const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
+          tabs.push(newTab);
+          return { ...leaf, tabs, activeTabId: newTab.id };
+        });
+        return {
+          rootPanel,
+          activePanelId: targetPanelId,
+          tabContent: setTabContentEntry(state.tabContent, newTab),
+        };
+      }),
 
     openTunnelEditorTab: (tunnelId, options) =>
       setAndReseed((state) => {

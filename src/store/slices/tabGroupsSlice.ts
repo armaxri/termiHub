@@ -629,6 +629,7 @@ export const createTabGroupsSlice: StateCreator<AppState, [], [], TabGroupsSlice
           // Every other moved tab keeps the metadata it reopens from (#4501).
           ...(h.connectionEditorMeta ? { connectionEditorMeta: h.connectionEditorMeta } : {}),
           ...(h.tunnelEditorMeta ? { tunnelEditorMeta: h.tunnelEditorMeta } : {}),
+          ...(h.serverEditorMeta ? { serverEditorMeta: h.serverEditorMeta } : {}),
           ...(h.workspaceEditorMeta ? { workspaceEditorMeta: h.workspaceEditorMeta } : {}),
           ...(h.networkDiagnosticMeta ? { networkDiagnosticMeta: h.networkDiagnosticMeta } : {}),
           ...(h.pluginDetailMeta ? { pluginDetailMeta: h.pluginDetailMeta } : {}),

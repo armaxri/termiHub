@@ -23,6 +23,7 @@ vi.mock("@/themes", () => ({
   onThemeChange: vi.fn(() => vi.fn()),
 }));
 
+import type { EmbeddedServerConfig } from "@/types/embeddedServer";
 import { useAppStore } from "./appStore";
 import { layoutState } from "@/test/layoutState";
 import { getAllLeaves } from "@/utils/panelTree";
@@ -94,6 +95,40 @@ describe("appStore — openTunnelEditorTab focus-existing / title branches", () 
     );
     expect(leaf?.activeTabId).toBe(firstId);
     expect(leaf?.tabs.find((t) => t.id === firstId)?.isActive).toBe(true);
+  });
+});
+
+describe("appStore — openServerEditorTab (#6028)", () => {
+  const editors = () => allTabs().filter((t) => t.contentType === "server-editor");
+
+  it("titles the tab like its server, and has one tab per server and kind", () => {
+    const server = { id: "srv-1", name: "Docs" } as EmbeddedServerConfig;
+    useAppStore.setState({ embeddedServers: [server] });
+    const open = useAppStore.getState().openServerEditorTab;
+    open("srv-1");
+    open(null, { serverType: "ftp" });
+    open(null, { serverType: "tftp" });
+    open(null, { copyOf: "srv-1" });
+    expect(editors().map((t) => [t.title, t.serverEditorMeta])).toEqual([
+      ["Edit: Docs", { serverId: "srv-1" }],
+      ["New file server", { serverId: null, serverType: "ftp" }],
+      ["New file server", { serverId: null, serverType: "tftp" }],
+      ["New file server", { serverId: null, copyOf: "srv-1" }],
+    ]);
+    open("srv-1");
+    open(null, { serverType: "ftp" });
+    open(null, { copyOf: "srv-1" });
+    expect(editors()).toHaveLength(4);
+    open(null, { serverType: "ftp" });
+    const ftp = editors()[1];
+    const leaf = getAllLeaves(layoutState().rootPanel).find((l) => l.tabs.includes(ftp));
+    expect(leaf?.activeTabId).toBe(ftp.id);
+    expect(leaf?.tabs.filter((t) => t.isActive)).toEqual([ftp]);
+  });
+
+  it("a saved server's tab has no kind of its own", () => {
+    useAppStore.getState().openServerEditorTab("gone", { serverType: "ftp", copyOf: "x" });
+    expect(editors()[0].serverEditorMeta).toEqual({ serverId: "gone" });
   });
 });
 

@@ -94,9 +94,17 @@ const STATES = {
   "servers--tooltip": "What exactly does this server share?",
   "servers--stop": "Stop a server while somebody downloads: what happens?",
   "servers--delete": "Delete a running server: what happens?",
-  "servers--new": "Make a new file server: which kind is right?",
-  "servers--new-tftp": "Make a server that gives firmware to a switch.",
-  "servers--new-missing": "Saving did nothing: what is missing?",
+  "server-editor--http": "Make a folder open in a browser.",
+  "server-editor--ftp": "Share a folder to upload and download files.",
+  "server-editor--tftp": "Make a server that gives firmware to a switch.",
+  "server-editor--missing": "Saving did nothing: what is missing?",
+  "server-editor--warning": "Others may upload without a password: do you see what that means?",
+  "server-editor--sign-in": "Only people with the password may open it.",
+  "server-editor--address": "It should be open on one address only.",
+  "server-editor--agent": "The folder is on another machine.",
+  "server-editor--kinds": "You took the wrong kind: change it.",
+  "server-editor--edit": "Change the port of a running server.",
+  "server-editor--unsaved": "You closed the tab with changes in it.",
 } as const;
 type State = keyof typeof STATES;
 
@@ -643,6 +651,10 @@ const BOTH_ROWS: Partial<Record<State, { tunnels: Row[]; servers: Row[] }>> = {
   "services--narrow": BOTH,
 };
 
+const EDITOR_STATES = (Object.keys(STATES) as State[]).filter((state) =>
+  state.startsWith("server-editor--")
+);
+
 /** What else the backend answers in a state. */
 const ANSWERS: Partial<Record<State, Partial<VisualScenario>>> = {
   "servers--open-unknown": { networkInterfaces: [] },
@@ -675,7 +687,9 @@ async function boot(page: Page, theme: string, state: State): Promise<void> {
       populated: true,
       serviceData: data(
         BOTH_ROWS[state]?.tunnels ?? TUNNEL_ROWS[state] ?? [],
-        BOTH_ROWS[state]?.servers ?? SERVER_ROWS[state] ?? []
+        BOTH_ROWS[state]?.servers ??
+          SERVER_ROWS[state] ??
+          (state.startsWith("server-editor--") ? serversIn("running") : [])
       ),
       ...ANSWERS[state],
     } satisfies VisualScenario
@@ -819,24 +833,80 @@ for (const viewport of WINDOWS) {
         });
       }
 
-      test("servers--new", async ({ page }) => {
-        await boot(page, theme, "servers--new");
-        await page.locator(id("service-new-btn")).click();
-        await page.locator(id("service-new-server-http")).click();
-        await page.locator(id("server-dialog-name")).waitFor();
-        await shot(page, "servers--new", "[role=dialog]");
-        // It only looks disabled: activating it says what is missing.
-        await page.locator(id("server-dialog-save")).click({ force: true });
-        await shot(page, "servers--new-missing", "[role=dialog]");
-      });
-
-      test("servers--new-tftp", async ({ page }) => {
-        await boot(page, theme, "servers--new-tftp");
-        await page.locator(id("service-new-btn")).click();
-        await page.locator(id("service-new-server-tftp")).click();
-        await page.locator(id("server-dialog-root")).fill("/srv/firmware");
-        await shot(page, "servers--new-tftp", "[role=dialog]");
-      });
+      for (const state of EDITOR_STATES) {
+        test(state, async ({ page }) => {
+          await boot(page, theme, state);
+          const field = (name: string) => page.locator(id(`server-dialog-${name}`));
+          const open = async (kind: string) => {
+            await page.locator(id("service-new-btn")).click();
+            await page.locator(id(`service-new-server-${kind}`)).click();
+            await page.locator(id("server-editor")).waitFor();
+          };
+          /** Where the reviewer should look, as the user scrolled there. */
+          const look = (name: string) => field(name).scrollIntoViewIfNeeded();
+          switch (state) {
+            case "server-editor--http":
+            case "server-editor--ftp":
+            case "server-editor--tftp":
+              await open(state.slice("server-editor--".length));
+              break;
+            case "server-editor--missing":
+              await open("tftp");
+              await field("save-start").click({ force: true });
+              break;
+            case "server-editor--warning":
+              await open("ftp");
+              await field("root").fill("/srv/inbox");
+              await field("bind-network").click();
+              await field("can-upload").click();
+              await look("warning");
+              break;
+            case "server-editor--sign-in":
+              await open("http");
+              await field("root").fill("/srv/docs");
+              await field("bind-network").click();
+              await field("signin").click();
+              await field("username").fill("team");
+              await look("password");
+              break;
+            case "server-editor--address":
+              await open("http");
+              await field("root").fill("/srv/docs");
+              await field("bind-address").click();
+              await look("address");
+              break;
+            case "server-editor--agent":
+              await open("http");
+              await field("runloc").click();
+              await page.locator("[role=option]").nth(1).click();
+              await field("root").fill("/srv/docs");
+              await field("bind-address").click();
+              await field("address").fill("10.0.0.5");
+              break;
+            case "server-editor--kinds":
+              await open("http");
+              await page.locator(id("server-editor-change-type")).click();
+              break;
+            case "server-editor--edit":
+            case "server-editor--unsaved":
+              await page.locator(id("server-item-web")).focus();
+              await page.keyboard.press("Enter");
+              await page.locator(id("server-editor")).waitFor();
+              if (state === "server-editor--unsaved") {
+                await field("name").fill("Release builds 2");
+                await field("cancel").click();
+                await page.locator("[role=alertdialog], [role=dialog]").waitFor();
+              }
+              break;
+          }
+          await shot(
+            page,
+            state,
+            state === "server-editor--unsaved" ? "[role=dialog]" : id("server-editor"),
+            state === "server-editor--unsaved"
+          );
+        });
+      }
 
       for (const state of Object.keys(BOTH_ROWS) as State[]) {
         test(state, async ({ page }) => {

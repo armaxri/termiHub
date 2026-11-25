@@ -264,6 +264,10 @@ const MOVABLE_TABS: TerminalTab[] = [
     contentType: "tunnel-editor",
     tunnelEditorMeta: { tunnelId: "tun-1" },
   }),
+  staticTab("se", "Edit file server", {
+    contentType: "server-editor",
+    serverEditorMeta: { serverId: "srv-1" },
+  }),
   staticTab("we", "Edit workspace", {
     contentType: "workspace-editor",
     workspaceEditorMeta: { workspaceId: "ws-1" },

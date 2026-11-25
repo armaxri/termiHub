@@ -42,7 +42,7 @@ export function isWideBind(bind: string): boolean {
 }
 
 /** Whether only the machine itself reaches `bind`. */
-function isPrivateBind(bind: string): boolean {
+export function isPrivateBind(bind: string): boolean {
   // sshd and the backends read an empty bind as loopback.
   return bind.trim() === "" || isLoopbackBind(bind) || /^127\./.test(bind.trim());
 }

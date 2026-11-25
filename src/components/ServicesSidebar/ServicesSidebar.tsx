@@ -31,7 +31,6 @@ import {
   type ServiceRow,
 } from "@/utils/serviceRows";
 import { findCompanion, isCompanionRedundant } from "@/utils/tunnelChain";
-import { EmbeddedServerDialog } from "./EmbeddedServerDialog";
 import { EmbeddedServerItem } from "./EmbeddedServerItem";
 import { newServiceGroups, type NewServiceEntry } from "./newServiceEntries";
 import { GROUP_LABEL, pairStatusOf, useServiceEntries } from "./useServiceEntries";
@@ -69,16 +68,6 @@ export function ServicesSidebar() {
   const lifecycle = useServiceLifecycleConfirm();
   const tunnelActions = useTunnelActions(modelOf, lifecycle.request);
   const serverActions = useFileServerActions(modelOf, lifecycle.request);
-
-  // A new file server that was asked for elsewhere, e.g. in the command palette.
-  const requested = useServicesView((s) => s.requested);
-  const takeRequest = useServicesView((s) => s.takeRequest);
-  const { create } = serverActions;
-  useEffect(() => {
-    if (!requested) return;
-    takeRequest();
-    create(requested.type);
-  }, [requested, takeRequest, create]);
 
   const closed = useServicesView((s) => s.closed);
   const toggleGroup = useServicesView((s) => s.toggleGroup);
@@ -318,7 +307,6 @@ export function ServicesSidebar() {
         </>
       )}
 
-      <EmbeddedServerDialog {...serverActions.editDialogProps} agents={agents} />
       <ConfirmDialog
         {...lifecycle.dialogProps}
         variant="danger"
