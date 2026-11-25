@@ -37,6 +37,7 @@ const running: RunningAutomationInfo = {
   name: "Deploy",
   completed: 1,
   total: 3,
+  waiting: false,
   stop: { kind: "macro" },
 };
 

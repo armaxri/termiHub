@@ -304,7 +304,7 @@ describe("loop", () => {
 it("keeps a step from a newer version, and says it cannot be edited here", async () => {
   const future = { kind: "send-email", to: "ops" } as unknown as AutomationStep;
   await open(future);
-  expect(query("automation-editor-step-kind-0")?.textContent).toBe("send-email");
+  expect(query("automation-editor-step-kind-0")?.textContent).toBe("Unknown step (send-email)");
   expect(query("automation-editor-step-body-0")?.textContent).toContain("cannot edit this step");
   typeText("automation-editor-name", "x");
   expect(await saved()).toEqual(future);

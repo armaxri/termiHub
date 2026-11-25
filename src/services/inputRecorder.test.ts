@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { InputRecorder, withoutSecrets } from "./inputRecorder";
+import { InputRecorder, recordedParts, withoutSecrets } from "./inputRecorder";
 
 /** A recorder on a clock and a screen the test sets. */
 function setup() {
@@ -90,13 +90,16 @@ describe("what is typed at a password prompt", () => {
     ).toBe("hunter2\r");
   });
 
-  it("is left out with its time kept as a pause", () => {
+  it("is left out, and the place is known", () => {
     const { at, recorder, type } = setup();
     sudo(type, at);
-    expect(withoutSecrets(recorder.finish())).toEqual([
-      { data: "sudo -v\r", delayMs: 0 },
-      { data: "ls\r", delayMs: 1000 },
+    const recorded = recorder.finish();
+    expect(recordedParts(recorded)).toEqual([
+      { kind: "keys", chunks: [{ data: "sudo -v\r", delayMs: 0 }] },
+      { kind: "left-out" },
+      { kind: "keys", chunks: [{ data: "ls\r", delayMs: 0 }] },
     ]);
+    expect(withoutSecrets(recorded).map((c) => c.data)).toEqual(["sudo -v\r", "ls\r"]);
   });
 
   it("is flagged when the prompt masks it", () => {

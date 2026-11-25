@@ -7,20 +7,21 @@
 import { StateCreator } from "zustand";
 
 import { toast } from "@/components/ui";
+import { isTerminalReady } from "@/services/macroPlayback";
 import { newId } from "@/services/transport/ids";
 import {
   InputRecorder,
-  withoutSecrets,
+  recordedParts,
   type ReadPrompt,
   type Recorded,
   type RecordingSlot,
 } from "@/services/inputRecorder";
 import type { Automation } from "@/types/generated/Automation";
 import type { AutomationStep } from "@/types/generated/AutomationStep";
+import { t } from "@/i18n/catalog";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
 import { showUndoToast } from "@/utils/undoableDelete";
-import { recordedKeys } from "@/utils/recordingText";
 
 import type { AppState } from "../appStore";
 import { collectLiveTabs, getActiveTab } from "../layoutHelpers";
@@ -95,7 +96,14 @@ export interface RecordingSlice {
   reserveRecordedPaste: (tabId: string, readPrompt?: ReadPrompt) => RecordingSlot | null;
   /** Stop, and ask what to do with the take (or hand it to the editor). */
   stopRecording: (ended?: RecordingEnd) => void;
+  /** Stop and keep nothing: a recording into the editor that went wrong (A-010). */
+  cancelRecording: () => void;
   toggleRecording: () => void;
+  /**
+   * Open a local terminal and record in it once it is connected (A-004). Resolves
+   * to whether the recording runs.
+   */
+  recordInNewTerminal: (options?: Pick<StartRecordingOptions, "intoEditor">) => Promise<boolean>;
   /** Stop when the recorded terminal is gone or its session was ended. */
   followRecordedTerminal: () => void;
   setRecordingSaveOpen: (open: boolean) => void;
@@ -107,23 +115,30 @@ export interface RecordingSlice {
   takeForEditor: () => RecordedTake | null;
 }
 
+/** How a new terminal's connection is awaited, and for how long. */
+const NEW_TERMINAL_POLL_MS = 100;
+const NEW_TERMINAL_LIMIT_MS = 15_000;
+
 /** The recorder of the running recording. Not serializable, so not in the store. */
 let recorder: InputRecorder | null = null;
 
-/** The Type keys step a recording becomes; `null` when nothing is left to type. */
-export function recordingStep(
+/**
+ * The steps a recording becomes: what was typed, and a "Wait for you" step at
+ * each place where a password was left out (#6025). Empty when nothing is left
+ * to type.
+ */
+export function recordingSteps(
   take: Pick<Recorded, "chunks" | "secrets">,
   keepSecrets: boolean
-): AutomationStep | null {
-  const chunks = keepSecrets ? take.chunks : withoutSecrets(take);
-  if (chunks.length === 0) return null;
-  const [first, ...rest] = chunks;
-  return {
-    kind: "type-keys",
-    chunks: first.delayMs === 0 ? chunks : [{ ...first, delayMs: 0 }, ...rest],
-    timing: "recorded",
-    recorded: true,
-  };
+): AutomationStep[] {
+  const parts = recordedParts(keepSecrets ? { chunks: take.chunks, secrets: [] } : take);
+  if (!parts.some((part) => part.kind === "keys")) return [];
+  return parts.map(
+    (part): AutomationStep =>
+      part.kind === "left-out"
+        ? { kind: "wait-for-user", message: t("automation.wait.password") }
+        : { kind: "type-keys", chunks: part.chunks, timing: "recorded", recorded: true }
+  );
 }
 
 /** Whether the session on `tabId` was ended for good (a drop may reconnect). */
@@ -171,6 +186,10 @@ export const createRecordingSlice: StateCreator<AppState, [], [], RecordingSlice
     });
   };
 
+  /** The automation that waits in `tabId` for what is typed there now, if any. */
+  const waitIn = (tabId: string) =>
+    get().automationWaits.find((w) => w.tabId === tabId)?.automationName;
+
   return {
     recording: null,
     recordedTake: null,
@@ -216,14 +235,14 @@ export const createRecordingSlice: StateCreator<AppState, [], [], RecordingSlice
 
     recordInput: (tabId, data, readPrompt) => {
       if (get().recording?.tabId !== tabId || !recorder) return;
-      recorder.push(data, readPrompt);
+      recorder.push(data, readPrompt, waitIn(tabId));
       publish();
     },
 
     reserveRecordedPaste: (tabId, readPrompt) => {
       if (get().recording?.tabId !== tabId || !recorder) return null;
       const own = recorder;
-      const slot = own.reserve(readPrompt);
+      const slot = own.reserve(readPrompt, waitIn(tabId));
       return {
         cancel: slot.cancel,
         fill: (data) => {
@@ -252,6 +271,31 @@ export const createRecordingSlice: StateCreator<AppState, [], [], RecordingSlice
       present({ ...recorded, id: newId("take"), tabTitle: recording.tabTitle, ended, forEditor });
     },
 
+    cancelRecording: () => {
+      if (!get().recording) return;
+      recorder = null;
+      set({ recording: null });
+      frontendLog("recording", "canceled");
+    },
+
+    recordInNewTerminal: async (options) => {
+      if (get().recording || get().recordedTake) return get().startRecording(options);
+      const tabId = get().addLocalShellTab();
+      const ready = () =>
+        isTerminalReady(tabId) && filterConnectedTerminalTabIds(get(), [tabId]).length > 0;
+      for (let waited = 0; !ready(); waited += NEW_TERMINAL_POLL_MS) {
+        const gone = !collectLiveTabs(get()).some((t) => t.id === tabId);
+        // A shell that does not start says so in its own tab.
+        if (gone || waited >= NEW_TERMINAL_LIMIT_MS) {
+          toast.error("Nothing is recorded: the new terminal did not connect");
+          return false;
+        }
+        await new Promise((resolve) => setTimeout(resolve, NEW_TERMINAL_POLL_MS));
+      }
+      // The user may have gone elsewhere meanwhile: what they type there is theirs.
+      return getActiveTab(get())?.id === tabId && get().startRecording({ ...options, tabId });
+    },
+
     toggleRecording: () => {
       if (get().recording) get().stopRecording();
       else get().startRecording();
@@ -274,16 +318,16 @@ export const createRecordingSlice: StateCreator<AppState, [], [], RecordingSlice
 
     saveRecordedTake: async (request) => {
       const take = get().recordedTake;
-      const step = take && recordingStep(take, request.keepSecrets);
+      const steps = take ? recordingSteps(take, request.keepSecrets) : [];
       try {
-        if (!step) throw new Error("There is nothing to save");
+        if (steps.length === 0) throw new Error("There is nothing to save");
         let automation: Automation;
         if (request.to === "new") {
           automation = {
             id: newId("automation"),
             name: request.name,
             tags: request.tags,
-            steps: [step],
+            steps,
             triggers: [],
             // The backend stamps authoritative created/updated timestamps.
             createdAt: "",
@@ -293,7 +337,7 @@ export const createRecordingSlice: StateCreator<AppState, [], [], RecordingSlice
         } else {
           const existing = get().automations.find((a) => a.id === request.automationId);
           if (!existing) throw new Error("The automation no longer exists");
-          automation = { ...existing, steps: [...existing.steps, step] };
+          automation = { ...existing, steps: [...existing.steps, ...steps] };
         }
         await get().saveAutomationToBackend(automation);
         if (take) done(take);
@@ -309,7 +353,7 @@ export const createRecordingSlice: StateCreator<AppState, [], [], RecordingSlice
       const take = get().recordedTake;
       if (!take) return;
       done(take);
-      showUndoToast(`Discarded the recording of ${recordedKeys(take.chunks.length)}`, {
+      showUndoToast(`Discarded the recording in ${take.tabTitle}`, {
         testId: "recording-discarded",
         onUndo: () => present(take),
       });

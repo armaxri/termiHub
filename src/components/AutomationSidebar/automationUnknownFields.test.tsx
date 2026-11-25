@@ -84,7 +84,7 @@ describe("what the frontend writes keeps every unknown field", () => {
 
   it("the editor: opens it and saves a rename, nothing else changed", async () => {
     editor = await mountEditor(newer());
-    expect(query("automation-editor-step-kind-10")!.textContent).toContain("future-step");
+    expect(query("automation-editor-step-kind-11")!.textContent).toContain("future-step");
     typeText("automation-editor-name", "Renamed");
     expect(overIpc(await editor.save())).toEqual({ ...newer(), name: "Renamed" });
   });

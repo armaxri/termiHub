@@ -100,12 +100,37 @@ describe("Record steps", () => {
     expect(store().recording?.tabId).toBe("a");
   });
 
-  it("without a terminal says what is missing", async () => {
+  it("without a terminal opens one and records there (A-034)", async () => {
     seedTabs([]);
     await open();
-    expect(query("automation-editor-record")?.getAttribute("aria-disabled")).toBe("true");
+    expect(query("automation-editor-record")?.textContent).toBe("Open a terminal to record steps");
+    const addLocalShellTab = vi.fn(() => {
+      seedTabs([tab("a", "bash")]);
+      return "a";
+    });
+    act(() => useAppStore.setState({ addLocalShellTab }));
     click("automation-editor-record");
-    expect(store().recording).toBeNull();
+    await flushAsync();
+    expect(addLocalShellTab).toHaveBeenCalledTimes(1);
+    expect(store().recording).toMatchObject({ tabId: "a", intoEditor: stored.name });
+  });
+
+  it("a canceled recording comes back with the draft and nothing else (A-010)", async () => {
+    await open();
+    typeText("automation-editor-name", "Renamed");
+    await chooseFrom("automation-editor-record", "automation-editor-record-in-a");
+    type(["oops\r"]);
+    act(() => store().cancelRecording());
+    await flushAsync();
+    expect(valueOf("automation-editor-name")).toBe("Renamed");
+    expect(kinds()).toEqual(["send-command", "wait"]);
+    expect(query("automation-editor-recorded")).toBeNull();
+    expect(store().recordedTake).toBeNull();
+  });
+
+  it("the footer names the terminal it would run in (A-021)", async () => {
+    await open();
+    expect(query("automation-editor-save-run")?.textContent).toBe("Save and run in prod-web");
   });
 
   it("comes back with the draft as it was and the recording as the last step", async () => {
@@ -116,10 +141,10 @@ describe("Record steps", () => {
     await stop();
     expect(valueOf("automation-editor-name")).toBe("Deploy everything");
     expect(kinds()).toEqual(["send-command", "wait", "type-keys"]);
-    expect(query("automation-editor-step-summary-2")?.textContent).toBe(
-      "git pull⏎2 keys, recorded"
+    expect(query("automation-editor-step-summary-2")?.textContent).toBe("git pull⏎Recorded");
+    expect(query("automation-editor-recorded")?.textContent).toMatch(
+      /^Recorded in prod-web, \d+\.\d s\.$/
     );
-    expect(query("automation-editor-recorded")?.textContent).toBe("Recorded 2 keys in prod-web.");
     expect(document.activeElement).toBe(query("automation-editor-record"));
     expect((await editor.save()).steps).toEqual([
       ...stored.steps,
@@ -180,14 +205,16 @@ describe("Record steps", () => {
     type(["sudo -v\r"], ["pw", "Password: "], ["\r", "Password: "], ["ls\r"]);
     await stop();
     expect(query("automation-editor-recorded")?.textContent).toContain(
-      "What you typed at “Password:” was left out."
+      "What you typed at “Password:” was left out: the automation waits for you there."
     );
+    expect(kinds()).toEqual(["send-command", "wait", "type-keys", "wait-for-user", "type-keys"]);
     const typed = (a: Automation) =>
       a.steps.flatMap((s) => (s.kind === "type-keys" ? s.chunks.map((c) => c.data) : []));
     expect(typed(await editor.save())).toEqual(["sudo -v\r", "ls\r"]);
     click("automation-editor-recorded-keep-secrets");
     expect(query("automation-editor-recorded-keep-secrets")).toBeNull();
     expect(typed(await editor.save())).toEqual(["sudo -v\r", "pw", "\r", "ls\r"]);
+    expect(kinds()).toEqual(["send-command", "wait", "type-keys"]);
   });
 });
 

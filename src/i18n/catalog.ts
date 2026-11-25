@@ -98,10 +98,11 @@ const en = {
   "workflow.trigger.onOutputMatch.patternPlaceholder": "e.g. Connection refused",
   "workflow.trigger.onOutputMatch.isRegex": "Regular expression",
   "workflow.trigger.onOutputMatch.cooldown": "Cooldown (seconds)",
-  "workflow.trigger.onOutputMatch.cooldownHint": "Default 10. Allowed: 1 to 86400.",
+  "workflow.trigger.onOutputMatch.cooldownHint": "Not again for this long. 1 to 86400.",
   "workflow.trigger.onOutputMatch.cooldownError": "Enter a cooldown from 1 to 86400 seconds.",
-  "workflow.trigger.onOutputMatch.maxFires": "Max runs per session",
-  "workflow.trigger.onOutputMatch.maxFiresHint": "Default 5. Allowed: 1 to 100.",
+  "workflow.trigger.onOutputMatch.maxFires": "Runs at most",
+  "workflow.trigger.onOutputMatch.maxFiresHint":
+    "At most {count} times until the terminal disconnects. 1 to 100.",
   "workflow.trigger.onOutputMatch.maxFiresError": "Enter a whole number from 1 to 100.",
   "workflow.trigger.onOutputMatch.hint":
     "Matches the visible text (colors and other escape codes removed). Runs in the matching terminal, never while another automation is running.",
@@ -144,6 +145,10 @@ const en = {
     "It types “{command}”. If that asks for a password, nobody is there to enter it and the run cannot finish.",
   "schedule.unattended.passwordWait":
     "It waits for a password question. Nobody is there to answer it, so the run cannot finish.",
+  "schedule.unattended.waits":
+    "Will not run: it stops to let you type in the terminal, and nobody is there on a schedule.",
+  "schedule.skip.waits":
+    "It stops to let you type in the terminal, and nobody is there on a schedule",
   "schedule.skip.noneOpen": "None of its connections was open",
   "schedule.skip.noneOpenSkip":
     "None of its connections was open, and the schedule is set to skip closed ones",
@@ -597,6 +602,21 @@ const en = {
   "terminalToolbar.toggleSidebar": "Toggle sidebar",
   "terminalToolbar.more": "More terminal actions",
   "terminalToolbar.broadcast.start": "Broadcast input…",
+  "automation.wait.message": "Type what the terminal asks for",
+  "automation.wait.password": "Type your password",
+  "automation.wait.stepNote":
+    "The run stops here until you press Continue above the terminal. It ends after 5 minutes without it. A schedule, On disconnect and On output match do not start an automation with this step.",
+  "automation.wait.whenNote":
+    "It waits for you. Schedules, On disconnect and On output match do not start it; a run On connect ends if nobody presses Continue within 5 minutes.",
+  "automation.wait.title": "“{name}” waits for you in {tab}.",
+  "automation.wait.then": "{message}, then Continue.",
+  "automation.wait.until": "Stops at {time} if you do nothing.",
+  "automation.wait.stillAsking":
+    "The terminal still asks for a password. Type it and press Enter first, or the next keys go into the prompt.",
+  "automation.wait.note": "Waiting for you",
+  "automation.wait.unattended":
+    "It stops to let you type in the terminal, and nobody is there when it starts by itself. Nothing was typed.",
+  "automation.wait.toast": "“{name}” waits for you in {tab}",
   "terminalToolbar.broadcast.stop": "Stop broadcast",
   "terminalToolbar.logging.start": "Log session output",
   "terminalToolbar.logging.stop": "Stop logging output",
@@ -606,11 +626,13 @@ const en = {
   "terminalToolbar.play.stop": "Stop automation ({played}/{total})",
   "terminalToolbar.chip.broadcast": "Broadcasting",
   "terminalToolbar.chip.logging": "Logging",
-  "terminalToolbar.chip.recording": "Recording",
-  "terminalToolbar.chip.recordingIn": "Recording in {tab}",
-  "terminalToolbar.chip.recordingPrompt": "Recording: password prompt",
-  "terminalToolbar.chip.recordingPaused": "Recording: not connected",
-  "terminalToolbar.chip.playback": "Playing {played}/{total}",
+  "terminalToolbar.chip.recording": "Stop recording",
+  "terminalToolbar.chip.recordingIn": "Stop recording in {tab}",
+  "terminalToolbar.chip.recordingPrompt": "Stop recording (password kept apart)",
+  "terminalToolbar.chip.recordingPromptTooltip":
+    "Stop recording (password kept apart). You choose whether to store it when you save",
+  "terminalToolbar.chip.recordingPaused": "Stop recording (not connected)",
+  "terminalToolbar.chip.playback": "Stop “{name}” ({played} of {total})",
 } as const;
 
 /** A stable id naming one catalog message. */

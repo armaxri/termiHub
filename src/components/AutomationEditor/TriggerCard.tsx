@@ -1,7 +1,9 @@
 import { Trash2 } from "lucide-react";
-import { Button, Field, Input } from "@/components/ui";
+import { Button } from "@/components/ui";
 import type { SavedConnection } from "@/types/connection";
+import type { Automation } from "@/types/generated/Automation";
 import type { AutomationTrigger } from "@/types/generated/AutomationTrigger";
+import { HotkeyField } from "./HotkeyField";
 import { OnDisconnectTriggerDetail } from "./OnDisconnectTriggerDetail";
 import { OnOutputMatchTriggerDetail, type OutputMatchErrors } from "./OnOutputMatchTriggerDetail";
 import { triggerKindIcon, triggerKindLabel } from "./stepMeta";
@@ -13,7 +15,9 @@ export interface TriggerCardProps {
   /** Position in the list, unique in the editor. */
   index: number;
   connections: SavedConnection[];
-  errors: OutputMatchErrors;
+  errors: OutputMatchErrors & { binding?: string };
+  /** The other automations. */
+  automations: readonly Automation[];
   onChange: (trigger: AutomationTrigger) => void;
   onRemove: () => void;
 }
@@ -24,6 +28,7 @@ export function TriggerCard({
   index,
   connections,
   errors,
+  automations,
   onChange,
   onRemove,
 }: TriggerCardProps) {
@@ -60,6 +65,7 @@ export function TriggerCard({
           index={index}
           connections={connections}
           errors={errors}
+          automations={automations}
           onChange={onChange}
         />
       </div>
@@ -73,24 +79,19 @@ function TriggerFields({
   index,
   connections,
   errors,
+  automations,
   onChange,
 }: Omit<TriggerCardProps, "onRemove">) {
   switch (trigger.kind) {
     case "hotkey":
       return (
-        <Field
-          label="Keys"
-          htmlFor={`automation-trigger-binding-${index}`}
-          hint="An app shortcut with the same keys wins."
-        >
-          <Input
-            id={`automation-trigger-binding-${index}`}
-            value={trigger.binding}
-            placeholder="e.g. Ctrl+Alt+H"
-            onChange={(e) => onChange({ ...trigger, binding: e.target.value })}
-            data-testid={`automation-trigger-binding-${index}`}
-          />
-        </Field>
+        <HotkeyField
+          index={index}
+          binding={trigger.binding}
+          error={errors.binding}
+          automations={automations}
+          onChange={(binding) => onChange({ ...trigger, binding })}
+        />
       );
     case "on-connect":
       return (

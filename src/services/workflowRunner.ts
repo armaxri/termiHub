@@ -176,6 +176,24 @@ export function retryDelayMs(retry: WorkflowStepRetry | undefined, retryNumber: 
   return Math.min(clampedBase * 2 ** exponent, MAX_RETRY_DELAY_MS);
 }
 
+/**
+ * How long a `wait-for-user` step waits before its run stops (#6025). Not longer
+ * than `sudo` keeps asking (five minutes): what is typed after that would land
+ * in the shell, in plain view.
+ */
+export const WAIT_FOR_USER_LIMIT_MS = 300_000;
+
+/** Why a `wait-for-user` step that was not continued ended its run. */
+const WAIT_FOR_USER_ERROR: Record<Exclude<WaitForUserResult, "continued" | "cancelled">, string> = {
+  "timed-out":
+    `nobody pressed Continue within ${WAIT_FOR_USER_LIMIT_MS / 60_000} minutes; ` +
+    "nothing more was typed",
+  gone: "the terminal was closed or disconnected while it waited for you",
+};
+
+/** Why a `wait-for-user` step of a run nobody watches ended it. */
+export const WAIT_FOR_USER_NOBODY = "it waits for somebody to type, and nobody was there";
+
 /** Default timeout (ms) for a `wait-for-output` step when it declares none. */
 export const WAIT_FOR_OUTPUT_DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -343,6 +361,18 @@ export interface WaitForOutputResult {
   cancelled: boolean;
 }
 
+/** How a "Wait for you" step's wait ended (#6025). Only `continued` goes on. */
+export type WaitForUserResult = "continued" | "cancelled" | "timed-out" | "gone";
+
+/**
+ * Waits until the user says to go on (#6025). Injectable: the store shows the
+ * wait and its Continue. Absent → nobody is there, and the step ends the run.
+ */
+export type WorkflowWaitForUserSeam = (
+  message: string | undefined,
+  options: { signal?: WorkflowStepSignal }
+) => Promise<WaitForUserResult>;
+
 /**
  * Waits until the target session's terminal output matches `matcher`, or
  * `timeoutMs` elapses, or the run is cancelled (PROD-044). Injectable so the
@@ -442,6 +472,8 @@ export interface WorkflowRunnerDeps {
    * timeout (PROD-044). Absent → a `wait-for-output` step fails loudly.
    */
   waitForOutput?: WorkflowWaitForOutputSeam;
+  /** Waits for the user (#6025). Absent → a `wait-for-user` step ends the run. */
+  waitForUser?: WorkflowWaitForUserSeam;
 }
 
 /** A poll the runner threads into a step so long/multi-part steps can abort. */
@@ -547,7 +579,14 @@ export interface WorkflowRunHandle {
  * `run-script`) that observed the cancel and aborted mid-flight — the run ends
  * `cancelled` without counting that step as completed.
  */
-type StepOutcome = { ok: true; cancelled?: boolean } | { ok: false; error: string };
+type StepOutcome =
+  | { ok: true; cancelled?: boolean }
+  | {
+      ok: false;
+      error: string;
+      /** Ends the run whatever the error handling of this step and those around it says. */
+      fatal?: true;
+    };
 
 /** Line terminator appended to each sent line; the `send_input` seam normalises
  * it to the session's configured line ending. */
@@ -749,6 +788,7 @@ function resolveAnyStepParams(
       // conditional's sub-steps are resolved when the arm executes them).
       return step;
     case "wait":
+    case "wait-for-user":
       return step;
     case "type-keys":
       // Recorded bytes are typed exactly: a `${` in a chunk stays literal.
@@ -920,6 +960,7 @@ async function runNestedAutomation(
       return {
         ok: false,
         error: `in automation "${callee.name}", step ${i + 1}: ${outcome.error}`,
+        ...(outcome.fatal ? { fatal: true } : {}),
       };
     }
     if (outcome.cancelled) {
@@ -1175,6 +1216,13 @@ export async function executeStep(
       }
       return { ok: false, error: "wait-for-output ended without a match" };
     }
+    case "wait-for-user": {
+      if (!deps.waitForUser) return { ok: false, error: WAIT_FOR_USER_NOBODY, fatal: true };
+      const result = await deps.waitForUser(resolved.message, { signal });
+      if (cancelled() || result === "cancelled") return { ok: true, cancelled: true };
+      if (result === "continued") return { ok: true };
+      return { ok: false, error: WAIT_FOR_USER_ERROR[result], fatal: true };
+    }
     default: {
       // Exhaustiveness guard: a new step kind must add a case above.
       const _exhaustive: never = resolved;
@@ -1197,6 +1245,10 @@ export async function executeStep(
  *   success so the enclosing list moves on; otherwise the final failure is
  *   returned (annotated with the attempt count when retries were used).
  *
+ * A fatal failure (nobody answered a `wait-for-user` step, #6025) is neither
+ * retried nor tolerated, at this level or around it: going on would type into
+ * whatever the terminal still asks.
+ *
  * A step with neither option behaves exactly like {@link executeStep}.
  */
 export async function executeStepWithPolicy(
@@ -1215,7 +1267,7 @@ export async function executeStepWithPolicy(
   for (;;) {
     attempt += 1;
     const outcome = await executeStep(step, deps, signal, paramValues, depth, policy, callChain);
-    if (outcome.ok) return outcome;
+    if (outcome.ok || outcome.fatal) return outcome;
     lastError = outcome.error;
     if (attempt >= maxAttempts) break;
     const delayMs = retryDelayMs(step.retry, attempt);

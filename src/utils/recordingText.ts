@@ -8,11 +8,6 @@ const ESC = String.fromCharCode(0x1b);
 /** A key or paste marker as a terminal sends it: CSI, SS3, or a bare escape. */
 const ESCAPE_SEQUENCE = new RegExp(`${ESC}(?:\\[[0-9;?]*[ -/]*[@-~]|O.|)`, "g");
 
-/** "1 key" / "14 keys". */
-export function recordedKeys(count: number): string {
-  return `${count} key${count === 1 ? "" : "s"}`;
-}
-
 /** "3.2 s" / "2 min 5 s". */
 export function recordedTime(ms: number): string {
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`;

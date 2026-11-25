@@ -1,5 +1,14 @@
 import { useRef } from "react";
-import { ArrowDown, ArrowUp, Copy, Gauge, MoreHorizontal, ShieldAlert, Trash2 } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  Copy,
+  Gauge,
+  MoreHorizontal,
+  Plus,
+  ShieldAlert,
+  Trash2,
+} from "lucide-react";
 import {
   Button,
   DropdownMenuContent,
@@ -7,8 +16,14 @@ import {
   DropdownMenuTrigger,
   MenuItem,
   MenuSeparator,
+  MenuSub,
+  MenuSubContent,
+  MenuSubTrigger,
   useModalPortalContainer,
 } from "@/components/ui";
+
+import { AddStepItems } from "./AddStepMenu";
+import type { AutomationStepKind } from "./stepMeta";
 
 /** Props of {@link StepRowMenu}. */
 export interface StepRowMenuProps {
@@ -17,8 +32,12 @@ export interface StepRowMenuProps {
   /** Position in its list, from 0. */
   index: number;
   total: number;
-  /** Show the step's failure options. */
-  onFailure: () => void;
+  /** It sits in a nested list. */
+  nested: boolean;
+  /** Add a step of `kind` right after this one; returns what to do once the menu closed. */
+  onAddBelow: (kind: AutomationStepKind) => () => void;
+  /** Show the step's failure options; absent for a step that has none. */
+  onFailure?: () => void;
   /** Show the step's typing speed; absent for a step that does not type keys. */
   onSpeed?: () => void;
   onMove: (direction: -1 | 1) => void;
@@ -31,6 +50,8 @@ export function StepRowMenu({
   path,
   index,
   total,
+  nested,
+  onAddBelow,
   onFailure,
   onSpeed,
   onMove,
@@ -77,14 +98,31 @@ export function StepRowMenu({
             Typing speed…
           </MenuItem>
         )}
-        <MenuItem
-          icon={<ShieldAlert size={14} />}
-          onSelect={later(onFailure)}
-          data-testid={`automation-editor-step-failure-menu-${path}`}
-        >
-          If this step fails…
-        </MenuItem>
-        <MenuSeparator />
+        {onFailure && (
+          <MenuItem
+            icon={<ShieldAlert size={14} />}
+            onSelect={later(onFailure)}
+            data-testid={`automation-editor-step-failure-menu-${path}`}
+          >
+            If this step fails…
+          </MenuItem>
+        )}
+        {(onSpeed || onFailure) && <MenuSeparator />}
+        <MenuSub>
+          <MenuSubTrigger
+            icon={<Plus size={14} />}
+            data-testid={`automation-editor-step-add-below-${path}`}
+          >
+            Add step below
+          </MenuSubTrigger>
+          <MenuSubContent container={portalContainer} collisionPadding={8}>
+            <AddStepItems
+              nested={nested}
+              onAdd={(kind) => later(onAddBelow(kind))()}
+              testId={(kind) => `automation-editor-step-add-below-${path}-${kind}`}
+            />
+          </MenuSubContent>
+        </MenuSub>
         <MenuItem
           icon={<ArrowUp size={14} />}
           disabled={index === 0}

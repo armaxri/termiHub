@@ -166,7 +166,7 @@ describe("triggers", () => {
     typeText("automation-trigger-pattern-0", "(a+)+");
     leaveField(query("automation-trigger-pattern-0"));
     expect(document.querySelector('[role="alert"]')).not.toBeNull();
-    expect(query("automation-editor-save")?.getAttribute("aria-disabled")).toBe("true");
+    expect(query("automation-editor-save")?.hasAttribute("data-invalid")).toBe(true);
   });
 
   it("keeps several triggers of one kind apart", async () => {

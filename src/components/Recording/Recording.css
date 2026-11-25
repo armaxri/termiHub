@@ -55,6 +55,15 @@
   flex-shrink: 0;
 }
 
+/* Keeping is apart from the two that decide what becomes of the recording. */
+.ui-btn.recording-save__keep {
+  margin-right: auto;
+}
+
+.ui-btn.recording-save__discard {
+  color: var(--color-error);
+}
+
 /* ── Bar above the terminals ─────────────────────────────────────────── */
 .recording-bar {
   display: flex;

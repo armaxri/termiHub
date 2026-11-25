@@ -1,5 +1,6 @@
 import { Field, Input, NumberInput, Toggle } from "@/components/ui";
-import { t } from "@/i18n/catalog";
+import { t, tf } from "@/i18n/catalog";
+import { OUTPUT_TRIGGER_LIMITS } from "@/services/workflowOutputTriggers";
 import type { SavedConnection } from "@/types/connection";
 import type { AutomationTrigger } from "@/types/generated/AutomationTrigger";
 import { TriggerConnectionPicker } from "./TriggerConnectionPicker";
@@ -96,6 +97,7 @@ export function OnOutputMatchTriggerDetail({
             id={`automation-trigger-cooldown-${index}`}
             value={cooldownSeconds}
             min={1}
+            placeholder={String(OUTPUT_TRIGGER_LIMITS.defaultCooldownMs / MS_PER_SECOND)}
             onValueChange={(v) =>
               setOptional("cooldownMs", v === "" ? undefined : Math.round(v * MS_PER_SECOND))
             }
@@ -105,13 +107,16 @@ export function OnOutputMatchTriggerDetail({
         <Field
           label={t("workflow.trigger.onOutputMatch.maxFires")}
           htmlFor={`automation-trigger-max-fires-${index}`}
-          hint={t("workflow.trigger.onOutputMatch.maxFiresHint")}
+          hint={tf("workflow.trigger.onOutputMatch.maxFiresHint", {
+            count: trigger.maxFiresPerSession ?? OUTPUT_TRIGGER_LIMITS.defaultMaxFiresPerSession,
+          })}
           error={errors.maxFiresPerSession}
         >
           <NumberInput
             id={`automation-trigger-max-fires-${index}`}
             value={trigger.maxFiresPerSession ?? ""}
             min={1}
+            placeholder={String(OUTPUT_TRIGGER_LIMITS.defaultMaxFiresPerSession)}
             onValueChange={(v) => setOptional("maxFiresPerSession", v === "" ? undefined : v)}
             data-testid={`automation-trigger-max-fires-${index}`}
           />

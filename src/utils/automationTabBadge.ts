@@ -9,6 +9,7 @@
  * this window's own (`macroPlayback`); workflow runs come from the
  * authoritative `workflow-run` region.
  */
+import type { AutomationWait } from "@/store/slices/automationWaitSlice";
 import type { MacroPlaybackState, WorkflowRunState } from "@/store/appStore";
 
 /** How the badge's Stop reaches the run. */
@@ -22,6 +23,8 @@ export interface RunningAutomationInfo {
   completed: number;
   /** Steps in the automation. */
   total: number;
+  /** It waits for the user there (#6025). */
+  waiting: boolean;
   /** How to stop it on this terminal. */
   stop: RunningAutomationStop;
 }
@@ -34,7 +37,8 @@ export interface RunningAutomationInfo {
 export function runningAutomationOnTab(
   playback: MacroPlaybackState | null,
   workflowRuns: readonly WorkflowRunState[],
-  tabId: string
+  tabId: string,
+  waits: readonly Pick<AutomationWait, "runId">[] = []
 ): RunningAutomationInfo | null {
   if (playback) {
     const targets = playback.targetTabIds;
@@ -44,6 +48,7 @@ export function runningAutomationOnTab(
         name: playback.macroName,
         completed: playback.targetProgress?.[tabId] ?? playback.played,
         total: playback.total,
+        waiting: false,
         stop: { kind: "macro" },
       };
     }
@@ -54,11 +59,13 @@ export function runningAutomationOnTab(
     name: run.workflowName,
     completed: run.completed,
     total: run.total,
+    waiting: waits.some((w) => w.runId === run.runId),
     stop: { kind: "workflow", runId: run.runId },
   };
 }
 
 /** The badge's accessible name: `Running automation "Deploy" (2/5)`. */
 export function runningAutomationLabel(info: RunningAutomationInfo): string {
+  if (info.waiting) return `Automation "${info.name}" waits for you`;
   return `Running automation "${info.name}" (${info.completed}/${info.total})`;
 }

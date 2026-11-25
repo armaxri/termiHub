@@ -1,4 +1,5 @@
 import { Field, Input, NumberInput, Select, Textarea, Toggle } from "@/components/ui";
+import { t } from "@/i18n/catalog";
 import { MAX_STEP_DELAY_MS } from "@/services/macroPlayback";
 import { WAIT_FOR_OUTPUT_DEFAULT_TIMEOUT_MS } from "@/services/workflowRunner";
 import type { AutomationStep } from "@/types/generated/AutomationStep";
@@ -21,6 +22,9 @@ export interface StepFieldsProps {
   onChange: (draft: StepDraft) => void;
 }
 
+/** Longest text a "Wait for you" step asks with. */
+const WAIT_MESSAGE_MAX_LENGTH = 120;
+
 /** Why a longer delay is not what runs. */
 function delayCapHint(ms: number): string | undefined {
   return ms > MAX_STEP_DELAY_MS
@@ -31,6 +35,9 @@ function delayCapHint(ms: number): string | undefined {
 /** The fields of one step, by kind. */
 export function StepFields({ draft, path, stepNumber, onChange }: StepFieldsProps) {
   const { step } = draft;
+  const { errors } = useStepEditor();
+  /** The error of one of this step's own fields (A-022). */
+  const errorOf = (field: string) => errors[`steps.${draft.uid}.${field}`];
   const setStep = (next: AutomationStep) => onChange({ ...draft, step: next });
   switch (step.kind) {
     case "type-keys":
@@ -45,8 +52,13 @@ export function StepFields({ draft, path, stepNumber, onChange }: StepFieldsProp
       );
     case "send-command":
       return (
-        <Field label="Command" htmlFor={`automation-step-command-${path}`}>
+        <Field
+          label="Command"
+          htmlFor={`automation-step-command-${path}`}
+          error={errorOf("command")}
+        >
           <Input
+            error={Boolean(errorOf("command"))}
             id={`automation-step-command-${path}`}
             value={step.command}
             placeholder="e.g. sudo -v"
@@ -56,9 +68,24 @@ export function StepFields({ draft, path, stepNumber, onChange }: StepFieldsProp
         </Field>
       );
     case "run-script":
-      return <RunScriptFields step={step} path={path} stepNumber={stepNumber} onChange={setStep} />;
+      return (
+        <RunScriptFields
+          step={step}
+          path={path}
+          stepNumber={stepNumber}
+          error={errorOf("script")}
+          onChange={setStep}
+        />
+      );
     case "run-automation":
-      return <RunAutomationField step={step} path={path} onChange={setStep} />;
+      return (
+        <RunAutomationField
+          step={step}
+          path={path}
+          error={errorOf("automationId")}
+          onChange={setStep}
+        />
+      );
     case "wait": {
       const cap = delayCapHint(step.delayMs);
       return (
@@ -79,14 +106,64 @@ export function StepFields({ draft, path, stepNumber, onChange }: StepFieldsProp
     }
     case "run-local-process":
       return (
-        <LocalProcessFields step={step} path={path} stepNumber={stepNumber} onChange={setStep} />
+        <LocalProcessFields
+          step={step}
+          path={path}
+          stepNumber={stepNumber}
+          error={errorOf("program")}
+          onChange={setStep}
+        />
       );
     case "conditional":
-      return <ConditionalFields draft={draft} step={step} path={path} onChange={onChange} />;
+      return (
+        <ConditionalFields
+          draft={draft}
+          step={step}
+          path={path}
+          error={errorOf("left")}
+          onChange={onChange}
+        />
+      );
     case "loop":
-      return <LoopFields draft={draft} step={step} path={path} onChange={onChange} />;
+      return (
+        <LoopFields
+          draft={draft}
+          step={step}
+          path={path}
+          error={errorOf("left")}
+          onChange={onChange}
+        />
+      );
     case "wait-for-output":
-      return <WaitForOutputFields step={step} path={path} onChange={setStep} />;
+      return (
+        <WaitForOutputFields
+          step={step}
+          path={path}
+          error={errorOf("pattern")}
+          onChange={setStep}
+        />
+      );
+    case "wait-for-user":
+      return (
+        <>
+          <Field label="Ask you to (optional)" htmlFor={`automation-step-message-${path}`}>
+            <Input
+              id={`automation-step-message-${path}`}
+              value={step.message ?? ""}
+              placeholder={t("automation.wait.password")}
+              maxLength={WAIT_MESSAGE_MAX_LENGTH}
+              onChange={(e) => {
+                const next = { ...step };
+                if (e.target.value === "") delete next.message;
+                else next.message = e.target.value;
+                setStep(next);
+              }}
+              data-testid={`automation-editor-step-message-${path}`}
+            />
+          </Field>
+          <p className="automation-step__note">{t("automation.wait.stepNote")}</p>
+        </>
+      );
     default:
       return (
         <p className="automation-step__note">
@@ -100,11 +177,12 @@ interface RunScriptFieldsProps {
   step: Extract<AutomationStep, { kind: "run-script" }>;
   path: string;
   stepNumber: number;
+  error?: string;
   onChange: (step: AutomationStep) => void;
 }
 
 /** A script's body, its file and the delay between its lines. */
-function RunScriptFields({ step, path, stepNumber, onChange }: RunScriptFieldsProps) {
+function RunScriptFields({ step, path, stepNumber, error, onChange }: RunScriptFieldsProps) {
   // Editing the body detaches any script file (#4310): what the user sees and
   // types is then exactly what runs.
   const withoutFile = () => {
@@ -113,8 +191,9 @@ function RunScriptFields({ step, path, stepNumber, onChange }: RunScriptFieldsPr
   };
   return (
     <>
-      <Field label="Script" htmlFor={`automation-step-script-${path}`}>
+      <Field label="Script" htmlFor={`automation-step-script-${path}`} error={error}>
         <Textarea
+          error={Boolean(error)}
           id={`automation-step-script-${path}`}
           value={step.script}
           placeholder="One command per line"
@@ -154,18 +233,19 @@ function RunScriptFields({ step, path, stepNumber, onChange }: RunScriptFieldsPr
 interface RunAutomationFieldProps {
   step: Extract<AutomationStep, { kind: "run-automation" }>;
   path: string;
+  error?: string;
   onChange: (step: AutomationStep) => void;
 }
 
 /** Which automation the step runs. A missing one stays shown as such. */
-function RunAutomationField({ step, path, onChange }: RunAutomationFieldProps) {
+function RunAutomationField({ step, path, error, onChange }: RunAutomationFieldProps) {
   const { automations } = useStepEditor();
   const options = automations.map((a) => ({ value: a.id, label: a.name }));
   if (step.automationId && !automations.some((a) => a.id === step.automationId)) {
     options.unshift({ value: step.automationId, label: MISSING_AUTOMATION });
   }
   return (
-    <Field label="Automation" htmlFor={`automation-step-automation-${path}`}>
+    <Field label="Automation" htmlFor={`automation-step-automation-${path}`} error={error}>
       <Select
         id={`automation-step-automation-${path}`}
         value={step.automationId || undefined}
@@ -181,6 +261,7 @@ function RunAutomationField({ step, path, onChange }: RunAutomationFieldProps) {
 interface WaitForOutputFieldsProps {
   step: Extract<AutomationStep, { kind: "wait-for-output" }>;
   path: string;
+  error?: string;
   onChange: (step: AutomationStep) => void;
 }
 
@@ -188,11 +269,16 @@ interface WaitForOutputFieldsProps {
  * What to wait for, as text or a regular expression, and for how long at most.
  * `${param}` references in the pattern are resolved at run time.
  */
-function WaitForOutputFields({ step, path, onChange }: WaitForOutputFieldsProps) {
+function WaitForOutputFields({ step, path, error, onChange }: WaitForOutputFieldsProps) {
   return (
     <>
-      <Field label="Wait until output matches" htmlFor={`automation-step-wfo-pattern-${path}`}>
+      <Field
+        label="Wait until output matches"
+        htmlFor={`automation-step-wfo-pattern-${path}`}
+        error={error}
+      >
         <Input
+          error={Boolean(error)}
           id={`automation-step-wfo-pattern-${path}`}
           value={step.pattern}
           placeholder={step.isRegex ? "e.g. login:\\s*$" : "e.g. $ "}

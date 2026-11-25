@@ -22,7 +22,9 @@ import {
 import { setupConnectionsRegion } from "@/test/connectionsHarness";
 import { flushAsync } from "@/test/flushAsync";
 import { seedSettings, setupSettingsRegion } from "@/test/settingsRegionTestHarness";
-import { LOCAL_PROCESS_REASON } from "@/utils/localProcessGate";
+import { useAppStore } from "@/store/appStore";
+import { useAutomationEditor } from "./automationEditorStore";
+import { LOCAL_PROCESS_STEP_REASON, UNKNOWN_STEP_REASON } from "./stepMeta";
 
 setupConnectionsRegion();
 setupSettingsRegion();
@@ -69,13 +71,51 @@ describe("the Run local process step", () => {
     await open(false);
     expect(query("automation-editor-step-summary-1")?.textContent).toContain("Will not run");
     click("automation-editor-step-toggle-1");
-    expect(query("automation-editor-step-blocked-1")?.textContent).toBe(LOCAL_PROCESS_REASON);
+    expect(query("automation-editor-step-blocked-1")?.textContent).toContain(
+      LOCAL_PROCESS_STEP_REASON
+    );
     typeText("automation-editor-step-program-1", "cmake");
     expect((await editor.save()).steps[1]).toEqual({
       kind: "run-local-process",
       program: "cmake",
       args: [],
     });
+  });
+
+  it("both blocked kinds say that nothing of the automation runs (A-031)", () => {
+    for (const reason of [LOCAL_PROCESS_STEP_REASON, UNKNOWN_STEP_REASON]) {
+      expect(reason).toMatch(/^Will not run: .* Nothing of the automation runs until you /);
+    }
+  });
+
+  it("without the switch: Save and run is unavailable and says why; Save works (A-032)", async () => {
+    await open(false);
+    expect(query("automation-editor-footer-note")?.textContent).toBe(
+      "Cannot run: local programs are switched off."
+    );
+    expect(query("automation-editor-save-run")?.getAttribute("aria-disabled")).toBe("true");
+    typeText("automation-editor-name", "Renamed");
+    click("automation-editor-save-run");
+    await flushAsync();
+    expect(editor.onSave).not.toHaveBeenCalled();
+    expect((await editor.save()).name).toBe("Renamed");
+  });
+
+  it("Open Settings steps aside and keeps the draft (A-031)", async () => {
+    await open(false);
+    const openSettingsTab = vi.fn();
+    act(() => useAppStore.setState({ openSettingsTab }));
+    useAutomationEditor.setState({ editing: { automation, isNew: false } });
+    typeText("automation-editor-name", "Renamed");
+    click("automation-editor-step-toggle-1");
+    click("automation-editor-step-open-settings-1");
+    expect(openSettingsTab).toHaveBeenCalledWith({ category: "general" });
+    expect(query("automation-editor-dialog")).toBeNull();
+    // Another automation does not take its place: the draft comes back instead.
+    act(() => useAutomationEditor.getState().open(automationWith([], { id: "other" }), false));
+    expect(useAutomationEditor.getState().editing?.automation.id).toBe(automation.id);
+    expect(query("automation-editor-name")).toHaveProperty("value", "Renamed");
+    act(() => useAutomationEditor.getState().close());
   });
 
   it("without the switch: can be removed", async () => {
@@ -101,6 +141,7 @@ it.each(["take-snapshot", "constructor"])("a step of the unknown kind %s says so
     "a newer version of termiHub made this step"
   );
   // It stays as it is until it is deleted.
+  expect(query("automation-editor-footer-note")?.textContent).toContain("does not know");
   typeText("automation-editor-name", "Renamed");
   expect((await editor.save()).steps).toEqual([{ kind, volume: "data" }]);
 });

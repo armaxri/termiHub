@@ -3,9 +3,9 @@
  *
  * Errors are keyed by a path of stable ids (`steps.<uid>.keys.<uid>.text`), so
  * `useRevealOnSave` can tell which ones are the user's to see (#5917): the same
- * paths appear in {@link draftValues}. What blocks Save is what the two old
- * editors blocked: no name, no step, keys that are empty or do not parse, a
- * failure policy or an output-match trigger out of bounds.
+ * paths appear in {@link draftValues}. What blocks Save: no name, no step, an
+ * empty field a step cannot do without, keys that are empty or do not parse, a
+ * failure policy or an output-match trigger out of bounds, a hotkey without keys.
  */
 import {
   cooldownInRange,
@@ -34,8 +34,42 @@ const PATTERN_ERROR: Record<OutputPatternError, MessageId> = {
   "unsafe-regex": "workflow.trigger.pattern.error.unsafeRegex",
 };
 
+/** The field a step cannot do without: its value, and what to say when it is empty (A-022). */
+function requiredField({ step }: StepDraft): { name: string; value: string; error: string } | null {
+  switch (step.kind) {
+    case "send-command":
+      return { name: "command", value: step.command, error: "Enter the command." };
+    case "run-script":
+      // A step with a file reads it when it runs.
+      return step.sourcePath
+        ? null
+        : { name: "script", value: step.script, error: "Enter the lines to type." };
+    case "run-automation":
+      return { name: "automationId", value: step.automationId, error: "Choose an automation." };
+    case "run-local-process":
+      return { name: "program", value: step.program, error: "Enter the program." };
+    case "wait-for-output":
+      // Blanks count: a prompt may be waited for by the space it ends with.
+      return {
+        name: "pattern",
+        value: step.pattern === "" ? "" : "set",
+        error: "Enter the text to wait for.",
+      };
+    case "conditional":
+      return { name: "left", value: step.condition.left, error: "Enter what to compare." };
+    case "loop":
+      return step.loop.kind === "while"
+        ? { name: "left", value: step.loop.condition.left, error: "Enter what to compare." }
+        : null;
+    default:
+      return null;
+  }
+}
+
 function stepErrors(draft: StepDraft, out: ZodFieldErrors): void {
   const base = `steps.${draft.uid}`;
+  const required = requiredField(draft);
+  if (required && required.value.trim() === "") out[`${base}.${required.name}`] = required.error;
   // Only the recorded speed uses the delays, and never the first (nor are they shown).
   const delays =
     draft.step.kind === "type-keys" && (draft.step.timing ?? "recorded") === "recorded";
@@ -63,8 +97,11 @@ function stepErrors(draft: StepDraft, out: ZodFieldErrors): void {
 }
 
 function triggerErrors({ uid, trigger }: TriggerDraft, out: ZodFieldErrors): void {
-  if (trigger.kind !== "on-output-match") return;
   const base = `triggers.${uid}`;
+  if (trigger.kind === "hotkey" && trigger.binding.trim() === "") {
+    out[`${base}.binding`] = "Press the keys.";
+  }
+  if (trigger.kind !== "on-output-match") return;
   const pattern = validateOutputPattern(trigger.pattern, trigger.isRegex);
   if (pattern) out[`${base}.pattern`] = t(PATTERN_ERROR[pattern]);
   if (!cooldownInRange(trigger.cooldownMs)) {
@@ -88,10 +125,13 @@ export function draftErrors(draft: AutomationDraft): ZodFieldErrors {
 /** The draft's values under the paths {@link draftErrors} uses. */
 export function draftValues(draft: AutomationDraft): Record<string, unknown> {
   const steps: Record<string, unknown> = {};
-  visitStepDrafts(draft.steps, ({ uid, step, keys }) => {
+  visitStepDrafts(draft.steps, (stepDraft) => {
+    const { uid, step, keys } = stepDraft;
     const { retry } = step;
+    const required = requiredField(stepDraft);
     steps[uid] = {
       retry,
+      ...(required ? { [required.name]: required.value } : {}),
       keys: Object.fromEntries(
         (keys ?? []).map(({ uid: k, text, delayMs }) => [k, { text, delayMs }])
       ),
@@ -115,4 +155,20 @@ export function stepsWithErrors(draft: AutomationDraft, errors: ZodFieldErrors):
     for (const ancestor of ancestors) out.add(ancestor.uid);
   });
   return out;
+}
+
+/** What is missing, in a few words for the footer (A-023); `null` when nothing is. */
+export function missingSummary(errors: ZodFieldErrors): string | null {
+  const paths = Object.keys(errors);
+  if (paths.length === 0) return null;
+  const parts: string[] = [];
+  if (errors.name) parts.push("give it a name");
+  if (errors[STEP_LIST_ERROR]) parts.push("add at least one step");
+  const steps = paths.some((path) => path.startsWith("steps."));
+  const triggers = paths.some((path) => path.startsWith("triggers."));
+  if (steps || triggers) {
+    const where = [...(steps ? ["steps"] : []), ...(triggers ? ["triggers"] : [])];
+    parts.push(`complete the ${where.join(" and the ")}`);
+  }
+  return `To save: ${parts.join(", ").replace(/, ([^,]*)$/, " and $1")}.`;
 }

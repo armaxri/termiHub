@@ -177,7 +177,8 @@ export function ScheduleEditorDialog({
   // What the automation cannot do when nobody is there (#6024).
   const findAutomation = (id: string) => automations.find((a) => a.id === id);
   const picked = findAutomation(watched.automationId);
-  const cannotRun = blockedPick ?? (picked ? unattendedBlockedReason(picked) : null);
+  const cannotRun =
+    blockedPick ?? (picked ? unattendedBlockedReason(picked, findAutomation) : null);
   const passwordNote = picked ? unattendedPasswordNote(picked, findAutomation) : null;
   const defaultsNote = picked ? unattendedDefaults(picked) : null;
   const automationNote = cannotRun ?? passwordNote ?? defaultsNote;

@@ -1,4 +1,4 @@
-import { ListVideo } from "lucide-react";
+import { Hand, ListVideo } from "lucide-react";
 import { Tooltip } from "@/components/ui";
 import { runningAutomationLabel, type RunningAutomationInfo } from "@/utils/automationTabBadge";
 
@@ -33,9 +33,9 @@ export function TabAutomationBadge({ tabId, info, onStop }: TabAutomationBadgePr
         }}
         data-testid={`tab-automation-badge-${tabId}`}
       >
-        <ListVideo size={12} aria-hidden />
+        {info.waiting ? <Hand size={12} aria-hidden /> : <ListVideo size={12} aria-hidden />}
         <span className="tab__automation-progress" aria-hidden>
-          {info.completed}/{info.total}
+          {info.waiting ? "waits" : `${info.completed}/${info.total}`}
         </span>
       </span>
     </Tooltip>

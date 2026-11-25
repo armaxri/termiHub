@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DndContext, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, arrayMove, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { Button } from "@/components/ui";
@@ -6,7 +6,7 @@ import { ReleaseScopedPointerSensor } from "@/utils/releaseScopedPointerSensor";
 import { AddStepMenu } from "./AddStepMenu";
 import { duplicateStepDraft, toStepDraft, type StepDraft } from "./automationDraft";
 import { useStepEditor, type StepListProps } from "./stepEditorContext";
-import { newStep, stepKindLabel } from "./stepMeta";
+import { newStep, stepKindLabel, type AutomationStepKind } from "./stepMeta";
 import { StepRow } from "./StepRow";
 
 /** What to focus once the list has rendered. */
@@ -18,7 +18,7 @@ interface PendingFocus {
 const FOCUS_SELECTOR: Record<PendingFocus["target"], string> = {
   grip: ".automation-step__grip",
   toggle: ".automation-step__toggle",
-  field: ".automation-step__body :is(input, textarea, button)",
+  field: ".automation-step__body :is(input, textarea, button):not(.type-keys__more)",
 };
 
 /** Drag instructions for a screen reader: the handle reorders with the arrows. */
@@ -57,12 +57,15 @@ export function StepList({ steps, onChange, nested }: StepListProps) {
     focusStep(pendingFocus.uid, pendingFocus.target);
   }, [pendingFocus, focusStep]);
 
-  const addStep = (kind: Parameters<typeof newStep>[0]) => {
+  /** Add a step before the one at `index`. */
+  const addStepAt = (kind: AutomationStepKind, index: number) => {
     const step = toStepDraft(newStep(kind));
     addedUid.current = step.uid;
     setDeleted(null);
     setExpanded(step.uid, true);
-    onChange([...steps, step]);
+    const next = steps.slice();
+    next.splice(index, 0, step);
+    onChange(next);
   };
 
   const handleAdded = () => {
@@ -136,24 +139,44 @@ export function StepList({ steps, onChange, nested }: StepListProps) {
               data-testid={base === undefined ? "automation-editor-steps" : undefined}
             >
               {steps.map((step, index) => (
-                <StepRow
-                  key={step.uid}
-                  draft={step}
-                  path={base === undefined ? String(index) : `${base}-${index}`}
-                  index={index}
-                  total={steps.length}
-                  onChange={(next) => onChange(steps.map((s, i) => (i === index ? next : s)))}
-                  onMove={(direction, keepFocus) => moveStep(index, index + direction, keepFocus)}
-                  onDuplicate={() => duplicateStep(index)}
-                  onDelete={() => deleteStep(index)}
-                />
+                <Fragment key={step.uid}>
+                  {index > 0 && (
+                    <li className="automation-steps__insert" role="presentation">
+                      <AddStepMenu
+                        nestedIn={base}
+                        before={index}
+                        onAdd={(kind) => addStepAt(kind, index)}
+                        onAdded={handleAdded}
+                      />
+                    </li>
+                  )}
+                  <StepRow
+                    nested={nested !== undefined}
+                    onAddBelow={(kind) => {
+                      addStepAt(kind, index + 1);
+                      return handleAdded;
+                    }}
+                    draft={step}
+                    path={base === undefined ? String(index) : `${base}-${index}`}
+                    index={index}
+                    total={steps.length}
+                    onChange={(next) => onChange(steps.map((s, i) => (i === index ? next : s)))}
+                    onMove={(direction, keepFocus) => moveStep(index, index + direction, keepFocus)}
+                    onDuplicate={() => duplicateStep(index)}
+                    onDelete={() => deleteStep(index)}
+                  />
+                </Fragment>
               ))}
             </ul>
           </SortableContext>
         </DndContext>
       )}
       <div className="automation-steps__footer">
-        <AddStepMenu nestedIn={base} onAdd={addStep} onAdded={handleAdded} />
+        <AddStepMenu
+          nestedIn={base}
+          onAdd={(kind) => addStepAt(kind, steps.length)}
+          onAdded={handleAdded}
+        />
         {deleted && (
           <span
             className="automation-steps__deleted"

@@ -14,13 +14,14 @@ import { useRunTargets } from "@/components/Automations/useRunTargets";
 
 /** Props of {@link RecordStepsButton}. */
 export interface RecordStepsButtonProps {
-  /** Record in this terminal. */
-  onRecord: (tabId: string) => void;
+  /** Record in this terminal; `null`: in a new one. */
+  onRecord: (tabId: string | null) => void;
 }
 
 /**
  * "Record steps" (#5818, slice 8): records into the open draft in a terminal the
- * user picks. With one connected terminal there is nothing to pick.
+ * user picks. With one connected terminal there is nothing to pick; with none it
+ * opens a local one (A-034).
  */
 export const RecordStepsButton = forwardRef<HTMLButtonElement, RecordStepsButtonProps>(
   function RecordStepsButton({ onRecord }, ref) {
@@ -40,7 +41,7 @@ export const RecordStepsButton = forwardRef<HTMLButtonElement, RecordStepsButton
           content={
             only
               ? `Type in ${only.title}; what you type becomes a step`
-              : "Open a terminal to record in"
+              : "Opens a local terminal; what you type there becomes a step"
           }
         >
           <Button
@@ -48,13 +49,10 @@ export const RecordStepsButton = forwardRef<HTMLButtonElement, RecordStepsButton
             variant="ghost"
             size="sm"
             icon={<CircleDot size={14} />}
-            aria-disabled={!only}
-            onClick={() => {
-              if (only) onRecord(only.id);
-            }}
+            onClick={() => onRecord(only?.id ?? null)}
             data-testid="automation-editor-record"
           >
-            Record steps
+            {only ? "Record steps" : "Open a terminal to record steps"}
           </Button>
         </Tooltip>
       );

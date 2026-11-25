@@ -104,15 +104,15 @@ describe("the chip's words", () => {
   it("say that it records, and where when that is not in front", () => {
     expect(label()).toBe("none");
     start();
-    expect(label()).toBe("Recording");
+    expect(label()).toBe("Stop recording");
     act(() => seedTabs(["a", "b"], "b"));
-    expect(label()).toBe("Recording in prod-web");
+    expect(label()).toBe("Stop recording in prod-web");
   });
 
   it("say that a password prompt is answered", () => {
     start();
     act(() => store().recordInput("a", "x", () => "Password: "));
-    expect(label()).toBe("Recording: password prompt");
+    expect(label()).toBe("Stop recording (password kept apart)");
   });
 
   it("say that the terminal is not connected", async () => {
@@ -122,7 +122,7 @@ describe("the chip's words", () => {
     );
     await flushAsync();
     expect(store().recording).not.toBeNull();
-    expect(label()).toBe("Recording: not connected");
+    expect(label()).toBe("Stop recording (not connected)");
   });
 });
 
@@ -135,11 +135,27 @@ describe("the bar", () => {
   it("is the way back to the editor", () => {
     start("Deploy prep");
     expect(query("recording-bar-editor")?.textContent).toContain(
-      "Recording into “Deploy prep”: type in prod-web (1 key)"
+      "Recording into “Deploy prep”: type in prod-web."
     );
+    // Its one Stop: the chip is away meanwhile (A-010).
+    expect(label()).toBe("none");
     click("recording-bar-return");
     expect(store().recordedTake?.forEditor).toBe(true);
     expect(query("recording-save-dialog")).toBeNull();
+  });
+
+  it("takes a wrong start back to the editor without the keys (A-010)", () => {
+    start("Deploy prep");
+    click("recording-bar-cancel");
+    expect(store()).toMatchObject({ recording: null, recordedTake: null });
+  });
+
+  it("Keep for later is the X by name (A-009)", () => {
+    start();
+    act(() => store().stopRecording());
+    click("recording-save-keep");
+    expect(query("recording-bar-unsaved")).not.toBeNull();
+    expect(store().recordedTake).not.toBeNull();
   });
 
   it("keeps a recording whose dialog was closed, until it is saved or discarded", async () => {
@@ -149,7 +165,7 @@ describe("the bar", () => {
     expect(query("recording-bar-unsaved")).toBeNull();
     click("modal-close");
     expect(query("recording-bar-unsaved")?.textContent).toContain(
-      "The recording of 1 key in prod-web is not saved"
+      "The recording in prod-web is not saved. It is lost when you close termiHub."
     );
     click("recording-bar-save");
     expect(query("recording-save-dialog")).not.toBeNull();
@@ -157,7 +173,7 @@ describe("the bar", () => {
     click("recording-bar-discard");
     expect(query("recording-bar-unsaved")).toBeNull();
     expect(toast.info).toHaveBeenCalledWith(
-      "Discarded the recording of 1 key",
+      "Discarded the recording in prod-web",
       expect.objectContaining({ testId: "recording-discarded" })
     );
   });

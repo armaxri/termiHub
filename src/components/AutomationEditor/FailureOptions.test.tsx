@@ -39,7 +39,7 @@ async function open(step: AutomationStep = command): Promise<void> {
   editor = await mountEditor(automationWith([step]));
 }
 const saved = async () => (await editor.save()).steps[0];
-const blocked = () => query("automation-editor-save")!.getAttribute("aria-disabled") === "true";
+const blocked = () => query("automation-editor-save")!.hasAttribute("data-invalid");
 afterEach(() => editor.unmount());
 
 describe("the options", () => {

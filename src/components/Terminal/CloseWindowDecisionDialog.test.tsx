@@ -211,9 +211,7 @@ describe("CloseWindowDecisionDialog (#1903)", () => {
 
     it("is named as lost", () => {
       ask();
-      expect(q("close-window-decision-recording").textContent).toContain(
-        "Recording in prod-web (14 keys)"
-      );
+      expect(q("close-window-decision-recording").textContent).toContain("Recording in prod-web");
       expect(q("close-window-decision-dialog").textContent).toContain(
         "The recording is not saved and would be lost."
       );

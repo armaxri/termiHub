@@ -9,6 +9,7 @@ import {
   newStep,
   newTrigger,
   offeredStepKinds,
+  stepKindDescription,
   stepKindIcon,
   stepKindLabel,
   stepNotes,
@@ -22,12 +23,20 @@ describe("offeredStepKinds", () => {
   it("offers the everyday kinds first and the rest under More", () => {
     expect(offeredStepKinds(true)).toEqual({
       basic: ["type-keys", "send-command", "wait", "wait-for-output"],
-      more: ["conditional", "loop", "run-script", "run-automation", "run-local-process"],
+      more: [
+        "wait-for-user",
+        "conditional",
+        "loop",
+        "run-script",
+        "run-automation",
+        "run-local-process",
+      ],
     });
   });
 
   it("leaves out Run local process while the switch is off (#5818)", () => {
     expect(offeredStepKinds(false).more).toEqual([
+      "wait-for-user",
       "conditional",
       "loop",
       "run-script",
@@ -37,6 +46,7 @@ describe("offeredStepKinds", () => {
 
   it("offers no further nesting inside a step", () => {
     expect(offeredStepKinds(true, true).more).toEqual([
+      "wait-for-user",
       "run-script",
       "run-automation",
       "run-local-process",
@@ -69,12 +79,13 @@ describe("labels and icons", () => {
     for (const kind of AUTOMATION_STEP_KINDS) {
       const label = stepKindLabel(kind);
       expect(label).not.toContain("-");
+      expect(stepKindDescription(kind).length).toBeGreaterThan(10);
       expect(label[0]).toBe(label[0].toUpperCase());
     }
   });
 
   it("falls back for a kind from a newer version", () => {
-    expect(stepKindLabel("send-email" as never)).toBe("send-email");
+    expect(stepKindLabel("send-email" as never)).toBe("Unknown step (send-email)");
     expect(stepKindIcon("send-email" as never)).toBeDefined();
     expect(triggerKindIcon("at-full-moon" as never)).toBeDefined();
   });
@@ -89,7 +100,7 @@ describe("labels and icons", () => {
 
   it("names the recorded speed only for a recording", () => {
     expect(typingSpeedLabel("recorded", true)).toBe("As recorded");
-    expect(typingSpeedLabel("recorded", false)).toBe("Delay per row");
+    expect(typingSpeedLabel("recorded", false)).toBe("Set for each row");
   });
 });
 
@@ -187,9 +198,9 @@ describe("stepNotes", () => {
       { data: "s", delayMs: 5 },
     ];
     expect(stepNotes({ kind: "type-keys", chunks, recorded: true, timing: "recorded" })).toEqual([
-      "2 keys, recorded",
+      "Recorded",
     ]);
     expect(stepNotes({ kind: "type-keys", chunks, timing: "fixed" })).toEqual(["40 ms per key"]);
-    expect(stepNotes({ kind: "type-keys", chunks, timing: "instant" })).toEqual(["Instant"]);
+    expect(stepNotes({ kind: "type-keys", chunks, timing: "instant" })).toEqual(["No delay"]);
   });
 });

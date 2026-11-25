@@ -140,6 +140,11 @@
       "fStep": 8
     },
     {
+      "kind": "wait-for-user",
+      "message": "m",
+      "fStep": 9
+    },
+    {
       "kind": "future-step",
       "payload": {
         "deep": [
