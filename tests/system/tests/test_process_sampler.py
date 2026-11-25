@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 
@@ -12,6 +13,7 @@ from termihub_harness.process_sampler import (
     MemorySample,
     ProcessTreeSampler,
     attribute_webkit_services,
+    describe_process_tree,
     mib,
     percentile,
     responsible_pid,
@@ -94,3 +96,24 @@ def test_sampler_sums_a_real_process_tree():
     finally:
         child.kill()
         child.wait()
+
+
+def test_a_process_tree_is_described_with_its_children_and_cpu_use():
+    child = subprocess.Popen([sys.executable, "-c", "while True: pass"])
+    try:
+        text = describe_process_tree(os.getpid(), interval=0.5)
+    finally:
+        child.kill()
+        child.wait()
+    lines = text.splitlines()
+    assert lines[0].startswith("  host: ")
+    assert any(line.startswith(f"  {os.getpid()} ") for line in lines)
+    (busy,) = [line for line in lines if line.startswith(f"  {child.pid} ")]
+    assert f"(parent {os.getpid()})" in busy
+    assert float(re.search(r"CPU (\d+)% now", busy).group(1)) > 0
+
+
+def test_describing_a_process_that_is_gone_does_not_raise():
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
+    child.wait()
+    assert "not readable" in describe_process_tree(child.pid, interval=0)

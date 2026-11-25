@@ -441,6 +441,15 @@ function Resume-Fixture([hashtable]$Sshd = $MainSshd) {
         $Sshd.Name, $tcpPort, (Get-SshdMasterPid $Sshd.Config), $Sshd.Task)
 }
 
+function Wait-FixtureProcess([object[]]$Processes, [int]$Seconds = 15) {
+    # A stopped process keeps its files open until it is really gone.
+    $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
+    foreach ($proc in $Processes) {
+        $left = [int][Math]::Ceiling(($deadline - [DateTime]::UtcNow).TotalSeconds)
+        Wait-Process -InputObject $proc -Timeout ([Math]::Max(1, $left)) -ErrorAction SilentlyContinue
+    }
+}
+
 function Suspend-Fixture([hashtable]$Sshd = $MainSshd) {
     # The master and every sshd it spawned (collected before the master goes),
     # so an established session is severed along with the listener.
@@ -452,12 +461,15 @@ function Suspend-Fixture([hashtable]$Sshd = $MainSshd) {
     if (Get-ScheduledTask -TaskName $Sshd.Task -ErrorAction SilentlyContinue) {
         Stop-ScheduledTask -TaskName $Sshd.Task -ErrorAction SilentlyContinue
     }
+    $stopped = [Collections.Generic.List[object]]::new()
     foreach ($victim in $victims) {
         $proc = Get-Process -Id $victim -ErrorAction SilentlyContinue
         if ($null -ne $proc -and $proc.ProcessName -like 'sshd*') {
-            Stop-Process -Id $victim -Force -ErrorAction SilentlyContinue
+            Stop-Process -InputObject $proc -Force -ErrorAction SilentlyContinue
+            $stopped.Add($proc)
         }
     }
+    Wait-FixtureProcess $stopped.ToArray()
     if (Test-Path -LiteralPath $Sshd.PortFile) {
         $tcpPort = [int](Get-Content -LiteralPath $Sshd.PortFile)
         if (-not (Wait-Listening $tcpPort $false)) {
@@ -767,6 +779,59 @@ function Stop-FixtureBinaryProcess {
     }
 }
 
+function Stop-FixtureLeftover {
+    # What outlives the master and still holds the sshd log (#6074): an sshd of
+    # a session whose parent is already gone (its command line names the
+    # fixture's config or log), and whatever the sessions left running, which is
+    # all the test user's. The system's own sshd matches neither.
+    $needles = @($Config, $JumpConfig, $LogFile, $JumpLogFile)
+    $sshdPids = @(Get-CimInstance -ClassName Win32_Process | Where-Object {
+            $line = $_.CommandLine
+            $_.Name -like 'sshd*' -and $null -ne $line -and
+            @($needles | Where-Object { $line.IndexOf($_, [StringComparison]::OrdinalIgnoreCase) -ge 0 }).Count -gt 0
+        } | ForEach-Object { [int]$_.ProcessId })
+    $account = "$env:COMPUTERNAME\$TestUser"
+    $procs = @(Get-Process -IncludeUserName -ErrorAction SilentlyContinue | Where-Object {
+            $_.UserName -ieq $account -or ($sshdPids -contains $_.Id -and $_.ProcessName -like 'sshd*')
+        })
+    foreach ($proc in $procs) {
+        Write-FixtureLog "stopping leftover $($proc.ProcessName) (pid $($proc.Id), $($proc.UserName))"
+        Stop-Process -InputObject $proc -Force -ErrorAction SilentlyContinue
+    }
+    Wait-FixtureProcess $procs
+}
+
+function Remove-FixtureDir([int]$Seconds = 15) {
+    # A log that cannot be deleted yet must not fail a passed lane (#6074);
+    # anything else left behind (keys, the password, the agent copy) does.
+    $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
+    while ($true) {
+        # File by file: one that is in use must not keep the others.
+        Get-ChildItem -LiteralPath $Dir -Recurse -Force -File -ErrorAction SilentlyContinue |
+            Remove-Item -Force -ErrorAction SilentlyContinue
+        $left = @(Get-ChildItem -LiteralPath $Dir -Recurse -Force -File)
+        if ($left.Count -eq 0) {
+            Remove-Item -LiteralPath $Dir -Recurse -Force
+            Write-FixtureLog "fixture torn down ($Dir removed)"
+            return
+        }
+        if ([DateTime]::UtcNow -ge $deadline) {
+            break
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    $names = @($left | ForEach-Object { $_.FullName }) -join ', '
+    $others = @($left | Where-Object { $_.Extension -ne '.log' })
+    if ($others.Count -gt 0) {
+        throw "could not remove $names after ${Seconds}s"
+    }
+    Write-FixtureLog "WARNING: fixture torn down, but a log is still in use after ${Seconds}s and stays: $names"
+    Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'sshd*' } |
+        ForEach-Object {
+            Write-FixtureLog "  still running: $($_.Name) $($_.ProcessId) (parent $($_.ParentProcessId)): $($_.CommandLine)"
+        }
+}
+
 function Invoke-Down {
     Assert-Admin
     Suspend-Fixture $JumpSshd
@@ -775,6 +840,7 @@ function Invoke-Down {
     if (Test-Path -LiteralPath $Dir) {
         Stop-FixtureBinaryProcess
     }
+    Stop-FixtureLeftover
     foreach ($task in @($JumpTaskName, $TaskName)) {
         if (Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue) {
             Unregister-ScheduledTask -TaskName $task -Confirm:$false
@@ -786,9 +852,10 @@ function Invoke-Down {
     }
     Unregister-TestUser
     if (Test-Path -LiteralPath $Dir) {
-        Remove-Item -LiteralPath $Dir -Recurse -Force
+        Remove-FixtureDir
+    } else {
+        Write-FixtureLog 'fixture torn down'
     }
-    Write-FixtureLog "fixture torn down ($Dir removed)"
 }
 
 function Assert-State {

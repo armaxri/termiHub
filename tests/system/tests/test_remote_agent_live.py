@@ -101,9 +101,12 @@ class TestRemoteAgentLive(
     def test_connect_shows_available_shells(self):
         agent = self._create_and_connect("agent-live-connect")
         # A connected agent reports its shells, which the sidebar folder renders as
-        # the "New Shell Session" targets.
-        shells = self.agent_available_shells(agent["name"])
-        assert shells, "connected agent reported no available shells"
+        # the "New Shell Session" targets. They arrive with the agent's answer, which
+        # may trail the connected state by a moment (#6074).
+        self.wait(
+            lambda: self.agent_available_shells(agent["name"]),
+            what="the connected agent to report its available shells",
+        )
 
     # ── child shell session ──────────────────────────────────────────────────────
     def test_create_shell_session_opens_terminal(self):

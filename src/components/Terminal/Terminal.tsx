@@ -57,6 +57,7 @@ import { currentEffectiveSettings, useEffectiveSettings } from "@/services/works
 import { getXtermTheme } from "@/themes";
 import { fireAndForget, frontendLog } from "@/utils/frontendLog";
 import { createSessionOutputFlow } from "@/utils/terminalFlowControl";
+import { writeSliced } from "@/utils/slicedWrite";
 import { parseBackendError } from "@/utils/backendErrorCode";
 import { connectionErrorKindFromCode } from "@/utils/connectionErrorHints";
 import {
@@ -1147,17 +1148,20 @@ export function Terminal({
           // the high watermark — the pending write callback reschedules.
           const batch = outputFlow.takeBatch();
           if (batch === null) return;
-          try {
-            xterm.write(batch, () => {
-              outputFlow.written(batch.length);
-              afterWrite();
-              if (outputFlow.hasStaged) scheduleFlush();
-            });
-          } catch (err) {
+          const rest = writeSliced(xterm, batch, (bytes, last) => {
+            outputFlow.written(bytes);
+            if (last) afterWrite();
+            // After every slice: the last one never reports when xterm refuses it.
+            if (outputFlow.hasStaged) scheduleFlush();
+          });
+          if (rest) {
             // xterm refused the write (its own overflow guard): keep the bytes
             // and retry on the next tick instead of throwing every frame.
-            outputFlow.restore(batch);
-            frontendLog("terminal", `xterm write deferred tab=${tabId}: ${errorMessage(err)}`);
+            outputFlow.restore(rest.refused);
+            frontendLog(
+              "terminal",
+              `xterm write deferred tab=${tabId}: ${errorMessage(rest.error)}`
+            );
             flushTimer = setTimeout(flushOutput, 16);
           }
         };

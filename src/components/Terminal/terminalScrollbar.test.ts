@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { Terminal as XTerm } from "@xterm/xterm";
 import {
   computeThumbGeometry,
@@ -185,5 +185,55 @@ describe("createTerminalScrollbar thumb visibility during drag", () => {
     expect(isDragging(thumb)).toBe(false);
 
     gutter.remove();
+  });
+});
+
+describe("createTerminalScrollbar under an output flood (#6074)", () => {
+  it("renders the thumb once per frame however many lines scroll", () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => frames.push(cb));
+    try {
+      let scrolled: () => void = () => {};
+      const disposable = { dispose: () => {} };
+      const active = { viewportY: 0, baseY: 0 };
+      const xterm = {
+        rows: 24,
+        buffer: { active },
+        onScroll: (cb: () => void) => {
+          scrolled = cb;
+          return disposable;
+        },
+        onResize: () => disposable,
+        onWriteParsed: () => disposable,
+      } as unknown as XTerm;
+      const gutter = document.createElement("div");
+      let layoutReads = 0;
+      Object.defineProperty(gutter, "clientHeight", {
+        get: () => {
+          layoutReads += 1;
+          return 240;
+        },
+      });
+      const thumb = document.createElement("div");
+      const controller = createTerminalScrollbar({ xterm, gutter, thumb });
+      layoutReads = 0;
+
+      for (let line = 1; line <= 1000; line++) {
+        active.baseY = active.viewportY = line;
+        scrolled();
+      }
+      expect(layoutReads).toBe(0);
+      expect(frames).toHaveLength(1);
+
+      frames[0](0);
+      expect(layoutReads).toBe(1);
+      expect(thumb.style.display).toBe("block");
+
+      scrolled();
+      expect(frames).toHaveLength(2);
+      controller.dispose();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
