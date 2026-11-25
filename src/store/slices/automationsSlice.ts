@@ -22,6 +22,7 @@ import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
 
 import type { AppState } from "../appStore";
+import { getActiveTab } from "../layoutHelpers";
 import { syncWorkflowOutputTriggers } from "../workflowSessionTriggers";
 import {
   automationForRun,
@@ -194,13 +195,20 @@ export const createAutomationsSlice: StateCreator<AppState, [], [], AutomationsS
       }
       // Refused or still to be asked for values: nothing is stopped yet. The user is
       // asked once, before anything of this run shows.
-      const running = runsReplacedBy(get(), isMacroShaped(automation));
+      const typesKeys = isMacroShaped(automation);
+      const where = targets ?? [getActiveTab(get())?.id].filter((id): id is string => !!id);
+      const running = runsReplacedBy(get(), typesKeys, where);
       if (running.length > 0) {
         if (get().runReplacePrompt !== null) return;
         const stop = await new Promise<boolean>((resolve) =>
           set({ runReplacePrompt: { name: automation.name, running, resolve } })
         );
         if (!stop) return;
+        // Its own kind is replaced when it starts; the other kind stops in those terminals.
+        for (const run of running.filter((r) => r.typesKeys !== typesKeys)) {
+          if (run.runId) get().cancelWorkflowRun(run.runId);
+          else get().cancelMacroPlaybackOnTab(run.tabId);
+        }
       }
       if (isMacroShaped(automation)) {
         await get().playMacro(automationId, {
