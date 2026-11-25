@@ -1,3 +1,5 @@
+// First: must run before anything imports an xterm addon.
+import "./bufferPool";
 import { expect, vi } from "vitest";
 import { toHaveNoViolations } from "jest-axe";
 import { installConsoleGuard } from "./consoleGuard";
