@@ -998,6 +998,8 @@ pub fn run() -> anyhow::Result<()> {
             commands::backup::read_backup_header,
             commands::backup::preview_backup_restore,
             commands::backup::apply_backup_restore,
+            commands::backup::list_restored_off,
+            commands::backup::dismiss_restored_off,
             commands::backup::restart_after_backup_restore,
             // Portable mode
             commands::portable::get_app_mode,

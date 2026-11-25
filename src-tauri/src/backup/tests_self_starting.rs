@@ -4,8 +4,10 @@ use std::path::Path;
 
 use serde_json::{json, Value};
 
-use super::sections::spec;
-use super::tests::{choice, raw_backup, read_doc, request, restore_and_boot, write_doc};
+use super::restored_off;
+use super::sections::{spec, SECTIONS};
+use super::self_starting::RestoredStart;
+use super::tests::{choice, no_creds, raw_backup, read_doc, request, restore_and_boot, write_doc};
 use super::*;
 use crate::credential::vault::ConflictStrategy;
 
@@ -427,4 +429,183 @@ fn a_merge_that_keeps_mine_changes_nothing_here() {
     assert_eq!(mine["enabled"], true);
     assert_eq!(mine["rule"]["time"], "02:00");
     assert_eq!(item(d, "schedules", "schedules", "new")["enabled"], false);
+}
+
+fn names(entries: &[RestoredStart]) -> Vec<(&str, &str)> {
+    entries
+        .iter()
+        .map(|e| (e.section.as_str(), e.name.as_str()))
+        .collect()
+}
+
+#[test]
+fn the_result_names_each_entry_and_what_would_start_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    here(d, "tunnels", "tunnels", json!([tunnel("t")]));
+    let mut changed = tunnel("t");
+    changed["sshConnectionId"] = json!("Work/Other");
+    let connection = json!([{"type": "folder", "name": "Work", "isExpanded": true, "children": [
+        {"type": "connection", "name": "Other",
+         "config": {"type": "ssh", "config": {"host": "h", "username": "u"}}}]}]);
+    let off = replace(
+        d,
+        vec![
+            section("connections", "children", connection),
+            section("schedules", "schedules", json!([schedule("s")])),
+            section("automations", "automations", json!([automation("a", "ls")])),
+            section("tunnels", "tunnels", json!([changed])),
+            section("embeddedServers", "servers", json!([server("f")])),
+        ],
+    )
+    .switched_off;
+    assert_eq!(
+        names(&off),
+        [
+            ("schedules", "Nightly"),
+            ("automations", "Automation a"),
+            ("tunnels", "DB"),
+            ("embeddedServers", "Share"),
+        ]
+    );
+    assert_eq!(off[0].starts, ["Daily at 02:00 on Build Box"]);
+    let next = off[0].next_run_at.as_deref().unwrap();
+    assert!(chrono::DateTime::parse_from_rfc3339(next).unwrap() > chrono::Utc::now());
+    assert_eq!(
+        off[1].starts,
+        ["Hotkey Ctrl+Alt+R", "When connecting to Build Box"]
+    );
+    assert_eq!(off[1].next_run_at, None);
+    assert_eq!(
+        off[2].starts,
+        ["When termiHub starts", "When connecting to Other"]
+    );
+    assert_eq!(off[2].switches, ["autoStart", "startWithConnection"]);
+    assert_eq!(
+        off[3].starts,
+        ["When termiHub starts: opens port 8080 on 0.0.0.0"]
+    );
+    let here: Vec<_> = off.iter().map(|o| (o.exists_here, o.on_here)).collect();
+    assert_eq!(
+        here,
+        [(false, false), (false, false), (true, true), (false, false)]
+    );
+}
+
+#[test]
+fn the_preview_says_it_before_anything_is_restored() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let mut plain = automation("a", "ls");
+    plain["triggers"] = json!([]);
+    here(d, "automations", "automations", json!([plain.clone()]));
+    here(d, "schedules", "schedules", json!([schedule("mine")]));
+    plain["steps"][0]["command"] = json!("rm -r");
+    let backup = raw_backup(
+        vec![
+            section("automations", "automations", json!([plain])),
+            section("tunnels", "tunnels", json!([tunnel("t")])),
+        ],
+        BACKUP_FORMAT_VERSION,
+    );
+    let opened = restore::open(&backup, None).unwrap();
+    let preview = restore::plan(&opened, d, no_creds);
+    // Also one of this machine whose automation the backup changes.
+    assert_eq!(
+        names(&preview.switched_off),
+        [("schedules", "Nightly"), ("tunnels", "DB")]
+    );
+    assert!(preview.switched_off[0].on_here);
+    assert_eq!(item(d, "schedules", "schedules", "mine")["enabled"], true);
+}
+
+#[test]
+fn the_list_is_kept_until_it_is_dealt_with() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let both = vec![
+        section("schedules", "schedules", json!([schedule("s")])),
+        section("tunnels", "tunnels", json!([tunnel("t")])),
+    ];
+    replace(d, both);
+    assert_eq!(
+        names(&restored_off::list(d)),
+        [("schedules", "Nightly"), ("tunnels", "DB")]
+    );
+    // Another restore adds to it.
+    replace(
+        d,
+        vec![section("embeddedServers", "servers", json!([server("f")]))],
+    );
+    assert_eq!(restored_off::list(d).len(), 3);
+    // Turned on, or gone: not listed any more.
+    here(d, "schedules", "schedules", json!([schedule("s")]));
+    here(d, "embeddedServers", "servers", json!([]));
+    let mut half = tunnel("t");
+    half["autoStart"] = json!(false);
+    here(d, "tunnels", "tunnels", json!([half]));
+    assert_eq!(names(&restored_off::list(d)), [("tunnels", "DB")]);
+    restored_off::dismiss(d).unwrap();
+    restored_off::dismiss(d).unwrap();
+    assert!(restored_off::list(d).is_empty());
+}
+
+#[test]
+fn a_workflow_is_listed_as_the_automation_it_became() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    replace(
+        d,
+        vec![section(
+            "workflows",
+            "workflows",
+            json!([automation("w", "ls")]),
+        )],
+    );
+    let mut became = automation("new-w", "ls");
+    became["triggersEnabled"] = json!(false);
+    let mut automations = doc("automations", "automations", json!([became]));
+    automations["idRemaps"] = json!([{"source": "workflow", "oldId": "w", "newId": "new-w"}]);
+    write_doc(d, "automations.json", &automations);
+    let listed = restored_off::list(d);
+    assert_eq!(
+        (listed[0].section.as_str(), listed[0].id.as_str()),
+        ("automations", "new-w")
+    );
+}
+
+#[test]
+fn a_restore_with_nothing_to_switch_off_leaves_no_list() {
+    let dir = tempfile::tempdir().unwrap();
+    replace(dir.path(), vec![section("tunnels", "tunnels", json!([]))]);
+    assert!(!dir.path().join(restored_off::RESTORED_OFF_FILE).exists());
+    assert!(SECTIONS
+        .iter()
+        .all(|s| s.file_name != restored_off::RESTORED_OFF_FILE));
+}
+
+/// What the app keeps in its file and a backup leaves out stays (#6056: a file that
+/// was not chosen).
+#[test]
+fn a_file_that_was_not_chosen_keeps_all_but_its_switches() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let mut mine = automation("a", "ls");
+    mine["later"] = json!(1);
+    let mut library = doc("automations", "automations", json!([mine]));
+    library["migratedFrom"] = json!({"macros.json": {"version": 1, "sha256": "x", "entries": []}});
+    write_doc(d, "automations.json", &library);
+    let connections = |host: &str| {
+        json!([{"type": "connection", "name": "Build Box",
+            "config": {"type": "ssh", "config": {"host": host, "username": "u"}}}])
+    };
+    here(d, "connections", "children", connections("a"));
+    restore_as(
+        d,
+        vec![section("connections", "children", connections("b"))],
+        RestoreMode::Replace,
+        ConflictStrategy::Skip,
+    );
+    library["automations"][0]["triggersEnabled"] = json!(false);
+    assert_eq!(read_doc(d, "automations.json"), library);
 }

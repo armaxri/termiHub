@@ -24,7 +24,7 @@ use zeroize::{Zeroize, Zeroizing};
 
 use super::deferred;
 use super::restore::{prepare, OpenedBackup, PendingSecret, PreparedRestore};
-use super::{BackupRestoreRequest, BackupRestoreResult};
+use super::{restored_off, BackupRestoreRequest, BackupRestoreResult};
 use crate::credential::biometric_slot::SecretSlot;
 use crate::credential::types::CredentialKey;
 use crate::credential::vault::{self, VaultError};
@@ -169,6 +169,8 @@ fn stage(config_dir: &Path, prepared: &PreparedRestore) -> Result<Staged, VaultE
                     .map_err(|e| other(format!("Could not stage {}/{rel}: {e}", dir.rel)))?;
             }
         }
+        restored_off::stage(&staging, &prepared.switched_off)
+            .map_err(|e| other(format!("Could not stage what is left switched off: {e:#}")))?;
         let nested =
             !prepared.dirs.is_empty() || prepared.files.iter().any(|(f, _)| f.contains('/'));
         let manifest = PendingManifest {
@@ -522,6 +524,7 @@ pub fn apply(
     Ok(BackupRestoreResult {
         sections: prepared.outcomes,
         credentials: credentials_result,
+        switched_off: prepared.switched_off,
         restart_required,
     })
 }
