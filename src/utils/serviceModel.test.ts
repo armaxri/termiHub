@@ -483,6 +483,15 @@ describe("state, reason and next step", () => {
     expect(says({ ...CONTEXT, portHolders })).toBe('Port 8080 is used by "Release builds".');
     expect(says(CONTEXT)).toBe("Port 8080 is in use.");
     expect(says({ ...CONTEXT, portHolders }, { port: 9 })).toBe("Port 8080 is in use.");
+    // Only when that is why, and while it did not start.
+    const other = { ...taken, cause: "other" as const };
+    expect(fileServerModel(server({ port: 8080 }), other, { ...CONTEXT, portHolders }).reason).toBe(
+      "Port 8080 is in use."
+    );
+    const open = { ...serverIn("running"), cause: "portInUse" as const };
+    expect(
+      fileServerModel(server({ port: 8080 }), open, { ...CONTEXT, portHolders }).reason
+    ).toBeUndefined();
     // Another machine's port.
     const there = { host: EDGE } as Partial<EmbeddedServerConfig>;
     expect(says({ ...CONTEXT, portHolders }, there)).toBe("Port 8080 is in use.");

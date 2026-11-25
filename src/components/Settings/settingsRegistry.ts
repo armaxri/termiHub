@@ -701,7 +701,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     id: "confirmUndoableDelete",
     label: "Confirm before deletes that can be undone",
     description:
-      "Ask for confirmation before deleting a connection folder, a custom theme, or an idle tunnel. The Undo toast appears either way",
+      "Ask for confirmation before deleting a connection folder, a custom theme, an idle tunnel, or an idle file server. The Undo toast appears either way",
     category: "safety-prompts",
     keywords: [
       "confirm",

@@ -173,6 +173,8 @@ describe("what the row says", () => {
     expect(tailOf("Edge gateway, Frankfurt datacenter rack")).toBe(" datacenter rack");
     expect(tailOf("edge-gateway-frankfurt-rack")).toBe("urt-rack");
     expect(tailOf("edge gateway-frankfurt-rack")).toBe("urt-rack");
+    // A last word too short to tell two machines apart.
+    expect(tailOf("edge-gateway-frankfurt rack")).toBe("urt rack");
     expect(tailOf("Edge box")).toBeUndefined();
   });
 

@@ -325,7 +325,6 @@ impl<R: Runtime> EmbeddedServerManager<R> {
     /// Bring back a server that was just deleted, with its passwords and at its
     /// place in the list. It is not started.
     pub fn restore_deleted(&self, server_id: &str) -> Result<(), TerminalError> {
-        self.forget_deleted(Instant::now());
         let Some(deleted) = self.lock_deleted().remove(server_id) else {
             return Err(TerminalError::EmbeddedServerError(
                 "It can no longer be brought back.".to_string(),

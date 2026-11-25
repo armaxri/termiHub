@@ -385,6 +385,18 @@ fn a_deleted_server_comes_back_at_its_place_with_its_password() {
 }
 
 #[test]
+fn a_restore_does_not_add_a_server_twice() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let h = harness(dir.path(), None);
+    h.manager.save_config(http_on("a", 0, root.path())).unwrap();
+    h.manager.delete_config("a").unwrap();
+    h.manager.save_config(http_on("a", 0, root.path())).unwrap();
+    h.manager.restore_deleted("a").unwrap();
+    assert_eq!(ids(&h), ["a"]);
+}
+
+#[test]
 fn a_password_comes_back_when_the_store_was_locked_meanwhile() {
     let dir = tempfile::tempdir().unwrap();
     let root = tempfile::tempdir().unwrap();

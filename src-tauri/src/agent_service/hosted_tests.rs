@@ -572,3 +572,13 @@ fn a_restart_is_not_a_stop_to_take_back() {
     services.wait_to_restart("a", WaitFor::Agent("edge".into()), Instant::now());
     assert!(!services.keep("edge", "a"));
 }
+
+#[test]
+fn what_runs_again_is_not_taken_back() {
+    let services = Services::default();
+    started(&services, "a");
+    services.stop("a");
+    started(&services, "a");
+    assert!(!services.keep("edge", "a"));
+    assert_eq!(view(&services), running(0));
+}
