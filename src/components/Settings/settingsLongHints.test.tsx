@@ -110,7 +110,7 @@ describe("Safety prompts (#5900)", () => {
   it("keeps what is deleted and what keeps running in the visible hint", async () => {
     await render(<SafetyPromptSettings settings={SETTINGS} onChange={vi.fn()} />);
     expect(text("settings-confirm-undoable-delete-hint")).toBe(
-      "Ask before deleting a connection folder, a custom theme, an idle tunnel or an idle file server."
+      "Ask before deleting a connection folder, a custom theme or an idle tunnel or file server."
     );
     expect(text("settings-confirm-close-attached-tab-hint")).toContain("keeps running");
   });
