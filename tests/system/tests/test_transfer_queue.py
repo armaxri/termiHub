@@ -146,16 +146,17 @@ class TransferQueueReads(ProjectionHarness):
         """Wait until ``accept(rows)``; a timeout ends with the rows as they were (#6046)."""
         rows: list[dict] = []
 
-        def accepted():
+        def accepted() -> bool:  # not the rows: an empty queue can be what is waited for
             nonlocal rows
             rows = self.queue_entries()
-            return rows if accept(rows) else False
+            return bool(accept(rows))
 
         try:
-            return self.wait(accepted, what=what, timeout=timeout)
+            self.wait(accepted, what=what, timeout=timeout)
         except AssertionError as exc:
             shown = "\n".join(f"  | {row}" for row in rows) or "  | (no rows)"
             raise AssertionError(f"{exc}\nthe transfer queue holds:\n{shown}") from None
+        return rows
 
     def wait_for_queue_size(self, size: int, *, timeout: float = 30.0) -> list[dict]:
         return self.wait_for_queue(

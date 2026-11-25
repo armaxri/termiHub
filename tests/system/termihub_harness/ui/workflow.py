@@ -204,6 +204,6 @@ class WorkflowUi(AutomationSidebarUi):
     def save_disabled(self) -> bool:
         """Whether Save refuses to save (no name / no steps).
 
-        Save stays clickable while blocked (``aria-disabled``, #5917).
+        Save stays clickable while blocked (``data-invalid``, #5917, A-023).
         """
         return self.is_blocked(EDITOR_SAVE)
