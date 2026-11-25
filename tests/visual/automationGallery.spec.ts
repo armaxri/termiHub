@@ -47,6 +47,7 @@ const STATES = {
   "editor--new-steps": "Make an automation step by step.",
   "editor--new-keys": "Make one that only types keys; nothing else should be in the way.",
   "editor--full": "Read a long automation: steps, triggers, values, tags.",
+  "editor--triggers": "See and change what starts this automation.",
   "editor--add-step": "Choose the next step.",
   "editor--invalid": "Save was refused: see why and where.",
   "editor--local-process-off": "A step runs a program, but experimental features are off.",
@@ -455,14 +456,14 @@ for (const viewport of WINDOWS) {
       test("editor, stored", async ({ page }) => {
         await boot(page, theme);
         await edit(page, "full");
-        for (const section of ["when", "values", "tags"]) {
-          const toggle = page.locator(id(`automation-editor-${section}-toggle`));
-          if ((await toggle.count()) > 0) await toggle.click();
-        }
         await shot(page, "editor--full", EDITOR);
+        await page.locator(id("automation-editor-when-toggle")).click();
+        await page.locator(id("automation-editor-triggers")).scrollIntoViewIfNeeded();
+        await shot(page, "editor--triggers", EDITOR);
         await page.locator(id("automation-editor-cancel")).click();
         await edit(page, "unknown");
-        await expect(page.locator(id("automation-editor-step-1"))).toContainText("take-snapshot");
+        await page.locator(id("automation-editor-step-toggle-1")).click();
+        await page.locator(id("automation-editor-step-blocked-1")).waitFor();
         await shot(page, "editor--unknown-step", EDITOR);
       });
 

@@ -133,7 +133,7 @@ const STEP_ICONS: Record<AutomationStepKind, ComponentType<{ size?: number | str
 
 /** The icon component for a step kind. */
 export function stepKindIcon(kind: AutomationStepKind): ComponentType<{ size?: number | string }> {
-  return STEP_ICONS[kind] ?? Play;
+  return isKnownStepKind(kind) ? STEP_ICONS[kind] : Play;
 }
 
 /**
@@ -154,8 +154,18 @@ const STEP_LABELS: Record<AutomationStepKind, string> = {
 
 /** Human-readable label shown in the "Add step" menu and each step row. */
 export function stepKindLabel(kind: AutomationStepKind): string {
-  return STEP_LABELS[kind] ?? kind;
+  return isKnownStepKind(kind) ? STEP_LABELS[kind] : kind;
 }
+
+/** Whether this build can run a step of `kind`; a newer termiHub may have written it (#6009). */
+export function isKnownStepKind(kind: string): boolean {
+  return Object.prototype.hasOwnProperty.call(STEP_LABELS, kind);
+}
+
+/** Why a step of an unknown kind does not run. */
+export const UNKNOWN_STEP_REASON =
+  "Will not run: a newer version of termiHub made this step, and this one does not know it. " +
+  "Nothing of the automation runs until you update termiHub or delete the step.";
 
 /** Lucide icon component for each trigger kind. */
 const TRIGGER_ICONS: Record<AutomationTriggerKind, ComponentType<{ size?: number | string }>> = {
