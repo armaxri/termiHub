@@ -448,8 +448,11 @@ for (const viewport of WINDOWS) {
         await shot(page, "editor--add-step", EDITOR);
         await page.locator(id("automation-editor-add-step-send-command")).click();
         // Save is aria-disabled while something is missing; the click says what.
-        await page.locator(id("automation-editor-save")).click({ force: true });
-        await expect(page.getByText("Name is required.")).toBeVisible();
+        // The closing menu may still hold the first click.
+        await expect(async () => {
+          await page.locator(id("automation-editor-save")).click({ force: true });
+          await expect(page.getByText("Name is required.")).toBeVisible({ timeout: 1000 });
+        }).toPass();
         await shot(page, "editor--invalid", EDITOR);
       });
 
@@ -457,7 +460,7 @@ for (const viewport of WINDOWS) {
         await boot(page, theme);
         await edit(page, "full");
         await shot(page, "editor--full", EDITOR);
-        await page.locator(id("automation-editor-when-toggle")).click();
+        // Open already: this automation has triggers.
         await page.locator(id("automation-editor-triggers")).scrollIntoViewIfNeeded();
         await shot(page, "editor--triggers", EDITOR);
         await page.locator(id("automation-editor-cancel")).click();
