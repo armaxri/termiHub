@@ -20,21 +20,26 @@ import {
   Unplug,
   Zap,
 } from "lucide-react";
-import type { Automation } from "@/types/generated/Automation";
 import type { AutomationStep } from "@/types/generated/AutomationStep";
 import type { AutomationTrigger } from "@/types/generated/AutomationTrigger";
 import type { TypingSpeed } from "@/types/generated/TypingSpeed";
-import type { WorkflowComparisonOp, WorkflowCondition } from "@/types/workflow";
+import type { WorkflowComparisonOp } from "@/types/workflow";
 import { DEFAULT_FIXED_DELAY_MS } from "@/services/macroPlayback";
-import { t } from "@/i18n/catalog";
 import { EXPERIMENTAL_SETTING_PATH } from "@/utils/experimentalSetting";
-import { formatMacroStepData } from "./keysFormat";
+import { isKnownStepKind, type AutomationStepKind, type AutomationTriggerKind } from "./stepText";
 
-/** All step discriminants. */
-export type AutomationStepKind = AutomationStep["kind"];
-
-/** All trigger discriminants. */
-export type AutomationTriggerKind = AutomationTrigger["kind"];
+export {
+  EMPTY_STEP_SUMMARY,
+  MISSING_AUTOMATION,
+  conditionOpLabel,
+  formatSeconds,
+  isKnownStepKind,
+  stepKindLabel,
+  stepSummary,
+  triggerKindLabel,
+  type AutomationStepKind,
+  type AutomationTriggerKind,
+} from "./stepText";
 
 /** The step kinds, in the order the "Add step" menu offers them. */
 export const AUTOMATION_STEP_KINDS: readonly AutomationStepKind[] = [
@@ -102,26 +107,6 @@ export const WORKFLOW_CONDITION_OPS: readonly WorkflowComparisonOp[] = [
   "contains",
 ] as const;
 
-/** Human-readable label for a condition operator, shown in the picker. */
-export function conditionOpLabel(op: WorkflowComparisonOp): string {
-  switch (op) {
-    case "eq":
-      return "equals";
-    case "ne":
-      return "not equals";
-    case "gt":
-      return "greater than";
-    case "lt":
-      return "less than";
-    case "gte":
-      return "greater or equal";
-    case "lte":
-      return "less or equal";
-    case "contains":
-      return "contains";
-  }
-}
-
 /** Lucide icon component for each step kind. */
 const STEP_ICONS: Record<AutomationStepKind, ComponentType<{ size?: number | string }>> = {
   "type-keys": Keyboard,
@@ -141,23 +126,6 @@ export function stepKindIcon(kind: AutomationStepKind): ComponentType<{ size?: n
   return isKnownStepKind(kind) ? STEP_ICONS[kind] : CircleHelp;
 }
 
-/**
- * Sentence-case label of each step kind. The kind ids are internal
- * identifiers (`send-command`); users see these labels instead (#5529).
- */
-const STEP_LABELS: Record<AutomationStepKind, string> = {
-  "type-keys": "Type keys",
-  "send-command": "Run command",
-  "run-script": "Run script",
-  "run-automation": "Run automation",
-  wait: "Wait",
-  "run-local-process": "Run local process",
-  conditional: "Condition",
-  loop: "Loop",
-  "wait-for-output": "Wait for output",
-  "wait-for-user": "Wait for you",
-};
-
 /** What each kind does, in the words of the "Add step" menu (A-028). */
 const STEP_DESCRIPTIONS: Record<AutomationStepKind, string> = {
   "type-keys": "Types keys exactly as you press them",
@@ -175,16 +143,6 @@ const STEP_DESCRIPTIONS: Record<AutomationStepKind, string> = {
 /** The "Add step" menu's second line for a step kind. */
 export function stepKindDescription(kind: AutomationStepKind): string {
   return STEP_DESCRIPTIONS[kind];
-}
-
-/** Human-readable label shown in the "Add step" menu and each step row. */
-export function stepKindLabel(kind: AutomationStepKind): string {
-  return isKnownStepKind(kind) ? STEP_LABELS[kind] : `Unknown step (${kind})`;
-}
-
-/** Whether this build can run a step of `kind`; a newer termiHub may have written it (#6009). */
-export function isKnownStepKind(kind: string): boolean {
-  return Object.prototype.hasOwnProperty.call(STEP_LABELS, kind);
 }
 
 /** Why a step of an unknown kind does not run. */
@@ -210,26 +168,6 @@ export function triggerKindIcon(
   kind: AutomationTriggerKind
 ): ComponentType<{ size?: number | string }> {
   return TRIGGER_ICONS[kind] ?? Zap;
-}
-
-/**
- * Human-readable label of a trigger kind, or of what else starts a run. One map so the
- * editor, the row's trigger marker and the run history use the same wording
- * (#5529).
- */
-export function triggerKindLabel(kind: AutomationTriggerKind | "manual"): string {
-  switch (kind) {
-    case "manual":
-      return "Manual";
-    case "on-connect":
-      return "On connect";
-    case "hotkey":
-      return "Hotkey";
-    case "on-disconnect":
-      return t("workflow.trigger.onDisconnect.label");
-    case "on-output-match":
-      return t("workflow.trigger.onOutputMatch.label");
-  }
 }
 
 /**
@@ -276,75 +214,6 @@ export function newTrigger(kind: AutomationTriggerKind): AutomationTrigger {
       return { kind, connectionIds: [], pattern: "" };
     default:
       return { kind, connectionIds: [] };
-  }
-}
-
-/** Shown in a collapsed step's summary when its main field is still empty. */
-export const EMPTY_STEP_SUMMARY = "Not set yet";
-
-/** Shown for a "Run automation" step whose automation is not in the library. */
-export const MISSING_AUTOMATION = "Missing automation";
-
-/** A duration in seconds, the unit the editor uses (R-167): `0.5 s`, `12 s`. */
-export function formatSeconds(ms: number): string {
-  return `${ms / 1000} s`;
-}
-
-/** `left op right` of a condition, for a one-line summary. */
-function conditionSummary(condition: WorkflowCondition): string {
-  return `${condition.left || "…"} ${conditionOpLabel(condition.op)} ${condition.right || "…"}`;
-}
-
-/** "1 step" / "3 steps". */
-function stepCount(n: number): string {
-  return `${n} step${n === 1 ? "" : "s"}`;
-}
-
-/**
- * One-line summary of a step's main value, shown on a collapsed step row and in
- * the sidebar's row tooltip (#5637): what it types, the command, the script's
- * first line, the delay, and so on. `automations` resolves the automation a
- * step runs to its name.
- */
-export function stepSummary(
-  step: AutomationStep,
-  automations: readonly Pick<Automation, "id" | "name">[] = []
-): string {
-  switch (step.kind) {
-    case "type-keys":
-      return formatMacroStepData(step.chunks.map((c) => c.data).join("")) || EMPTY_STEP_SUMMARY;
-    case "send-command":
-      return step.command.trim() || EMPTY_STEP_SUMMARY;
-    case "run-script": {
-      if (step.sourcePath) return step.sourcePath.split(/[\\/]/).pop() || step.sourcePath;
-      const lines = step.script.split("\n").filter((l) => l.trim() !== "");
-      if (lines.length === 0) return EMPTY_STEP_SUMMARY;
-      return lines.length === 1 ? lines[0] : `${lines[0]} (+${lines.length - 1} more)`;
-    }
-    case "run-automation":
-      if (!step.automationId) return EMPTY_STEP_SUMMARY;
-      return automations.find((a) => a.id === step.automationId)?.name ?? MISSING_AUTOMATION;
-    case "wait":
-      return formatSeconds(step.delayMs);
-    case "run-local-process":
-      return [step.program, ...step.args].join(" ").trim() || EMPTY_STEP_SUMMARY;
-    case "conditional":
-      return `If ${conditionSummary(step.condition)} · ${stepCount(step.then.length)}`;
-    case "loop":
-      return step.loop.kind === "count"
-        ? `${step.loop.count}× · ${stepCount(step.body.length)}`
-        : `While ${conditionSummary(step.loop.condition)} · ${stepCount(step.body.length)}`;
-    case "wait-for-output": {
-      if (!step.pattern) return EMPTY_STEP_SUMMARY;
-      const pattern = step.isRegex ? `/${step.pattern}/` : step.pattern;
-      return step.timeoutMs === undefined
-        ? pattern
-        : `${pattern} · ${formatSeconds(step.timeoutMs)}`;
-    }
-    case "wait-for-user":
-      return step.message?.trim() || t("automation.wait.message");
-    default:
-      return "";
   }
 }
 

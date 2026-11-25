@@ -199,6 +199,13 @@ export interface WindowCloseSessionRow {
   outcome: WindowCloseOutcome;
 }
 
+/** An automation that is running in the window. */
+export interface WindowCloseRun {
+  key: string;
+  name: string;
+  tabTitle: string;
+}
+
 /**
  * A pending close-with-live-tabs decision (#1903). Raised only when at least one
  * owned session would actually be lost (a non-persistent `terminate`); an empty
@@ -226,6 +233,8 @@ export interface WindowCloseRequest {
    * many keys it holds. Absent when none runs and none waits to be saved.
    */
   recording?: WindowCloseRecording;
+  /** The automations this window runs, which stop with it (#6026). */
+  runs?: WindowCloseRun[];
   /**
    * Why the dialog is up (#4296). `"close"` (the default when absent) closes
    * this window; `"quit"` answers an app-wide quit (Cmd+Q / menu Quit), which

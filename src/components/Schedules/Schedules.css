@@ -161,14 +161,6 @@
   padding: var(--spacing-xs) 0;
 }
 
-.schedules__pause {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  white-space: nowrap;
-  cursor: pointer;
-}
-
 .schedules__list {
   overflow-y: auto;
   padding: var(--spacing-xxs) 0;

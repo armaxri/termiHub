@@ -77,9 +77,9 @@ const click = (testId: string) =>
     el.click();
   });
 
-function key(el: Element, keyName: string): void {
+function key(el: Element, keyName: string, mods: KeyboardEventInit = {}): void {
   act(() => {
-    el.dispatchEvent(new KeyboardEvent("keydown", { key: keyName, bubbles: true }));
+    el.dispatchEvent(new KeyboardEvent("keydown", { key: keyName, bubbles: true, ...mods }));
   });
 }
 
@@ -243,7 +243,9 @@ describe("one list", () => {
     await render();
     expect(query("automation-item-macro-1")!.textContent).toBe("Sudo loginType the login");
     expect(query("automation-item-workflow-1")!.textContent).toBe("Deploy prep");
-    expect(query("automation-item-workflow-2")!.textContent).toBe("Answer on matchArmed");
+    expect(query("automation-item-workflow-2")!.textContent).toBe(
+      "Answer on matchTriggers on: matching output in prod"
+    );
     expect(query("automation-item-workflow-2")!.getAttribute("aria-description")).toContain(
       "On output match · prod"
     );
@@ -385,7 +387,7 @@ describe("running", () => {
     await render();
     click("automation-start-macro-1");
     expect(storeFns.runAutomation).not.toHaveBeenCalled();
-    expect(query("run-targets-dialog")!.textContent).toContain('Run "Sudo login"');
+    expect(query("run-targets-dialog")!.textContent).toContain("Run “Sudo login”");
     expect(query("automation-start-macro-1")!.getAttribute("aria-label")).toBe(
       "Run Sudo login on…"
     );
@@ -405,17 +407,18 @@ describe("running", () => {
     });
   });
 
-  it("runs on a row double-click, but not on a double-click of its buttons", async () => {
+  it("edits on a row double-click and never runs, and leaves its buttons alone (A-015)", async () => {
     await render();
     const dbl = (testId: string) =>
       act(() => {
         query(testId)!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
       });
-    dbl("automation-edit-macro-1");
+    dbl("automation-start-macro-1");
     dbl("automation-arm-toggle-workflow-2");
-    expect(storeFns.runAutomation).not.toHaveBeenCalled();
+    expect(query("automation-editor-dialog")).toBeNull();
     dbl("automation-name-macro-1");
-    expect(storeFns.runAutomation).toHaveBeenCalledWith("macro-1");
+    expect(query("automation-editor-dialog")).not.toBeNull();
+    expect(storeFns.runAutomation).not.toHaveBeenCalled();
   });
 
   it("shows Running and Stop for a step run, and stops every queued terminal with it", async () => {
@@ -433,12 +436,13 @@ describe("running", () => {
     await render();
     expect(query("automation-running-workflow-1")!.textContent).toBe("Running");
     expect(query("automation-start-workflow-1")).toBeNull();
-    expect(query("automation-targets-workflow-1")).toBeNull();
+    // One terminal has its line too: where, and which step (A-035).
+    expect(query("automation-target-r1")!.textContent).toContain("in web-1, step 1 of 1");
     click("automation-stop-workflow-1");
     expect(storeFns.cancelWorkflowRun).toHaveBeenCalledWith();
-    // Enter and double-click never start it a second time.
+    // The keyboard never starts it a second time.
     key(query("automation-item-workflow-1")!, "ArrowDown");
-    key(query("automation-item-workflow-1")!, "Enter");
+    key(query("automation-item-workflow-1")!, "Enter", { ctrlKey: true });
     expect(storeFns.runAutomation).not.toHaveBeenCalled();
   });
 
@@ -459,8 +463,8 @@ describe("running", () => {
     });
     await render();
     expect(query("automation-running-workflow-1")!.textContent).toBe("Running 2");
-    expect(query("automation-target-r1")!.textContent).toContain("web-11 / 3");
-    expect(query("automation-target-r2")!.textContent).toContain("db-22 / 3");
+    expect(query("automation-target-r1")!.textContent).toContain("in web-1, step 2 of 3");
+    expect(query("automation-target-r2")!.textContent).toContain("in db-2, step 3 of 3");
     click("automation-target-stop-r2");
     expect(storeFns.cancelWorkflowRun).toHaveBeenLastCalledWith("r2");
     click("automation-stop-workflow-1");
@@ -491,22 +495,20 @@ describe("running", () => {
         },
       })
     );
-    expect(query("automation-target-tab-a")!.textContent).toContain("web-13 / 4");
-    expect(query("automation-target-tab-b")!.textContent).toContain("web-21 / 4");
+    expect(query("automation-target-tab-a")!.textContent).toContain("in web-1, 75 % typed");
+    expect(query("automation-target-tab-b")!.textContent).toContain("in web-2, 25 % typed");
     click("automation-target-stop-tab-b");
     expect(storeFns.cancelMacroPlaybackOnTab).toHaveBeenCalledWith("tab-b");
   });
 });
 
 describe("markers", () => {
-  it("arms and disarms on the name line without running or opening anything (R-077)", async () => {
+  it("switches triggers without running or opening anything (R-077)", async () => {
     await render();
-    const marker = query("automation-armed-workflow-2")!;
-    expect(marker.getAttribute("aria-label")).toBe("Runs automatically: on output match of prod");
-    // Marker and switch sit in the row's header, beside Run: no second line.
-    const primary = query("automation-primary-workflow-2")!;
-    expect(primary.contains(marker)).toBe(true);
-    expect(primary.contains(query("automation-arm-toggle-workflow-2"))).toBe(true);
+    const line = query("automation-armed-workflow-2")!;
+    expect(line.textContent).toBe("Triggers on: matching output in prod");
+    const toggle = query("automation-arm-toggle-workflow-2")!;
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
     click("automation-arm-toggle-workflow-2");
     expect(storeFns.setWorkflowTriggersEnabled).toHaveBeenCalledWith("workflow-2", false);
     key(query("automation-arm-toggle-workflow-2")!, "Enter");
@@ -514,20 +516,17 @@ describe("markers", () => {
     expect(query("automation-editor-dialog")).toBeNull();
   });
 
-  it("shows Off, meaning the trigger, and arms again", async () => {
+  it("says what no longer happens while they are off, and still offers Run (A-013)", async () => {
     await render([{ ...triggered, triggersEnabled: false }]);
-    expect(query("automation-armed-workflow-2")!.textContent).toBe("Off");
-    expect(query("automation-armed-workflow-2")!.getAttribute("aria-label")).toMatch(
-      /^Trigger off/
+    expect(query("automation-armed-workflow-2")!.textContent).toBe(
+      "Triggers off: not on matching output in prod. You can still run it."
     );
-    expect(query("automation-arm-toggle-workflow-2")!.getAttribute("aria-label")).toBe(
-      "Turn on the automatic trigger of Answer on match"
-    );
+    expect(query("automation-start-workflow-2")).not.toBeNull();
     click("automation-arm-toggle-workflow-2");
     expect(storeFns.setWorkflowTriggersEnabled).toHaveBeenCalledWith("workflow-2", true);
   });
 
-  it("shows a hotkey that is off, and turns it on without losing the focus (#5818)", async () => {
+  it("keeps the switch of an automation with only a hotkey, on and off (A-018)", async () => {
     const hotkey: Automation = {
       ...triggered,
       triggers: [{ kind: "hotkey", binding: "Ctrl+Alt+D" }],
@@ -535,16 +534,49 @@ describe("markers", () => {
     };
     await render([hotkey]);
     const toggle = query("automation-arm-toggle-workflow-2")!;
-    expect(query("automation-armed-workflow-2")!.getAttribute("aria-label")).toContain(
-      "hotkey Ctrl+Alt+D"
-    );
+    expect(query("automation-armed-workflow-2")!.textContent).toContain("hotkey Ctrl+Alt+D");
     act(() => toggle.focus());
     click("automation-arm-toggle-workflow-2");
     expect(storeFns.setWorkflowTriggersEnabled).toHaveBeenCalledWith("workflow-2", true);
     act(() => setLibrary([{ ...hotkey, triggersEnabled: undefined }]));
-    // On, a hotkey needs no marker: it starts nothing by itself.
-    expect(query("automation-arm-toggle-workflow-2")).toBeNull();
-    expect(document.activeElement).toBe(query("automation-item-workflow-2"));
+    expect(query("automation-armed-workflow-2")!.textContent).toBe(
+      "Triggers on: hotkey Ctrl+Alt+D"
+    );
+    expect(document.activeElement).toBe(query("automation-arm-toggle-workflow-2"));
+  });
+
+  it("says which step cannot run instead of offering Run (A-016)", async () => {
+    await render([
+      {
+        ...steps,
+        steps: [{ kind: "run-local-process", program: "make", args: [] }],
+      },
+    ]);
+    expect(query("automation-start-workflow-1")).toBeNull();
+    expect(query("automation-blocked-reason-workflow-1")!.textContent).toMatch(
+      /Allow experimental features/
+    );
+    const item = query("automation-item-workflow-1")!;
+    key(item, "Enter", { ctrlKey: true });
+    expect(storeFns.runAutomation).not.toHaveBeenCalled();
+    expect(item.getAttribute("aria-label")).toContain("Cannot run");
+  });
+
+  it("a run that waits for the user says so, and is not Running (A-036)", async () => {
+    setWorkflowRunViewForTest({
+      run: {
+        runId: "r1",
+        workflowId: "workflow-1",
+        workflowName: "Deploy prep",
+        tabId: "tab-a",
+        total: 2,
+        completed: 1,
+      },
+      output: null,
+    });
+    useAppStore.setState({ automationWaits: [{ runId: "r1" }] as never });
+    await render();
+    expect(query("automation-running-workflow-1")!.textContent).toBe("Waiting for you");
   });
 
   it("reports a failed disarm", async () => {
@@ -552,9 +584,12 @@ describe("markers", () => {
     await render();
     click("automation-arm-toggle-workflow-2");
     await flushAsync();
-    expect(toastError).toHaveBeenCalledWith('Failed to disarm "Answer on match"', {
-      description: "disk full",
-    });
+    expect(toastError).toHaveBeenCalledWith(
+      "The triggers of “Answer on match” could not be changed",
+      {
+        description: "disk full",
+      }
+    );
   });
 
   it("has no switch without an automatic trigger", async () => {
@@ -578,17 +613,15 @@ describe("markers", () => {
     await render();
     act(() => useAppStore.setState({ automationRuns: [failedRun("workflow-2")] }));
     ro.resize(200);
-    expect(query("automation-armed-workflow-2")!.textContent).toBe("");
-    expect(query("automation-armed-workflow-2")!.getAttribute("aria-label")).toMatch(/^Runs auto/);
     expect(query("automation-failed-workflow-2")!.textContent).toBe("");
     expect(query("automation-failed-workflow-2")!.getAttribute("aria-label")).toContain(
-      "Last automatic run failed"
+      "Last run failed"
     );
     // Run and the switch stay.
     expect(query("automation-start-workflow-2")).not.toBeNull();
     expect(query("automation-arm-toggle-workflow-2")).not.toBeNull();
     ro.resize(320);
-    expect(query("automation-armed-workflow-2")!.textContent).toBe("Armed");
+    expect(query("automation-failed-workflow-2")!.textContent).toBe("Failed");
   });
 });
 
@@ -629,7 +662,7 @@ describe("row actions", () => {
     await render();
     choose("macro-1", "duplicate");
     await flushAsync();
-    expect(toastError).toHaveBeenCalledWith('Failed to duplicate "Sudo login"', {
+    expect(toastError).toHaveBeenCalledWith("Failed to duplicate “Sudo login”", {
       description: "disk full",
     });
   });
@@ -649,7 +682,7 @@ describe("row actions", () => {
     choose("workflow-1", "delete");
     expect(storeFns.deleteAutomationFromBackend).not.toHaveBeenCalled();
     expect(query("confirm-delete-dialog")!.textContent).toContain(
-      'Delete automation "Deploy prep"? This cannot be undone.'
+      "Delete automation “Deploy prep”? This cannot be undone."
     );
     click("confirm-delete-confirm");
     await flushAsync();
@@ -840,7 +873,7 @@ describe("files (#5818, slice 11)", () => {
     expect(dialogSave.mock.calls[0][0].defaultPath).toBe(path);
     const file = parseAutomationFile(fsWriteTextFile.mock.calls[0][1] as string);
     expect(file.entries.automations.map((e) => e.automation.name)).toEqual([name]);
-    expect(toastSuccess).toHaveBeenCalledWith(`Exported "${name}"`);
+    expect(toastSuccess).toHaveBeenCalledWith(`Exported “${name}”`);
   });
 
   it("exports the automations one runs with it, and says so", async () => {
@@ -859,7 +892,7 @@ describe("files (#5818, slice 11)", () => {
       "Caller",
       "Sudo login",
     ]);
-    expect(toastSuccess).toHaveBeenCalledWith('Exported "Caller" and the automation it runs');
+    expect(toastSuccess).toHaveBeenCalledWith("Exported “Caller” and the automation it runs");
   });
 
   it("does nothing when the dialog is canceled", async () => {
@@ -907,14 +940,21 @@ describe("sections", () => {
 });
 
 describe("keyboard and screen reader", () => {
-  it("moves with the arrow keys and runs the focused automation with Enter", async () => {
+  it("moves with the arrow keys, runs with Ctrl+Enter or Cmd+Enter and edits with Enter", async () => {
     await render();
     const first = query("automation-item-macro-1")!;
     act(() => first.focus());
     key(first, "ArrowDown");
     expect(document.activeElement).toBe(query("automation-item-workflow-1"));
-    key(document.activeElement!, "Enter");
+    key(document.activeElement!, "Enter", { ctrlKey: true });
     expect(storeFns.runAutomation).toHaveBeenCalledWith("workflow-1");
+    key(document.activeElement!, "Enter", { metaKey: true });
+    expect(storeFns.runAutomation).toHaveBeenCalledTimes(2);
+    key(document.activeElement!, "Enter");
+    expect(storeFns.runAutomation).toHaveBeenCalledTimes(2);
+    expect((query("automation-editor-name") as HTMLInputElement).value).toBe("Deploy prep");
+    click("automation-editor-cancel");
+    act(() => query("automation-item-workflow-1")!.focus());
     key(document.activeElement!, "End");
     expect(document.activeElement).toBe(query("automation-item-workflow-2"));
     key(document.activeElement!, "d");
@@ -923,12 +963,14 @@ describe("keyboard and screen reader", () => {
 
   it("leaves Enter and letters on a row's button to the button", async () => {
     await render();
-    const edit = query("automation-edit-workflow-1")!;
-    act(() => edit.focus());
-    key(edit, "Enter");
-    key(edit, "s");
+    const start = query("automation-start-workflow-1")!;
+    act(() => start.focus());
+    key(start, "Enter");
+    key(start, "Enter", { ctrlKey: true });
+    key(start, "s");
     expect(storeFns.runAutomation).not.toHaveBeenCalled();
-    expect(document.activeElement).toBe(edit);
+    expect(query("automation-editor-dialog")).toBeNull();
+    expect(document.activeElement).toBe(start);
   });
 
   it("keeps the keys of an open menu in the menu", async () => {
@@ -951,7 +993,7 @@ describe("keyboard and screen reader", () => {
     const label = (id: string) => query(id)!.getAttribute("aria-label");
     expect(label("automation-item-macro-1")).toBe("Sudo login");
     expect(label("automation-item-workflow-1")).toBe("Deploy prep, Failed");
-    expect(label("automation-item-workflow-2")).toBe("Answer on match, Armed");
+    expect(label("automation-item-workflow-2")).toBe("Answer on match, Triggers on");
     expect(label("automation-edit-macro-1")).toBe("Edit Sudo login");
     expect(label("automation-more-macro-1")).toBe("More actions for Sudo login");
     // Every button in the sidebar has a name.

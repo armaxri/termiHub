@@ -701,7 +701,7 @@ const en = {
   "terminalToolbar.chip.recordingPromptTooltip":
     "Stop recording (password kept apart). You choose whether to store it when you save",
   "terminalToolbar.chip.recordingPaused": "Stop recording (not connected)",
-  "terminalToolbar.chip.playback": "Stop “{name}” ({played} of {total})",
+  "terminalToolbar.chip.playback": "Stop “{name}” ({percent} % typed)",
 } as const;
 
 /** A stable id naming one catalog message. */

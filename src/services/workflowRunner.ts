@@ -918,7 +918,7 @@ async function runNestedAutomation(
     };
   }
   const callee = deps.resolveAutomation(automationId);
-  if (!callee) return { ok: false, error: `automation "${automationId}" was not found` };
+  if (!callee) return { ok: false, error: `automation “${automationId}” was not found` };
 
   const chain = [...callChain, automationId];
   const values = calleeParamValues(callee, paramValues);

@@ -1,4 +1,4 @@
-import { stepKindLabel, stepSummary } from "@/components/AutomationEditor/stepMeta";
+import { stepKindLabel, stepSummary } from "@/components/AutomationEditor/stepText";
 import type { Automation } from "@/types/generated/Automation";
 
 /** How many steps the confirmation lists before it counts the rest. */

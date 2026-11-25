@@ -116,18 +116,20 @@ describe("HistorySection (#5818, slice 9)", () => {
     ]);
   });
 
-  it("keeps rows to the name, a status dot and the time (names, not settings)", () => {
+  it("a row says in words how it ended, when and where (A-038)", () => {
     const endedAt = new Date(new Date().setHours(2, 5, 0, 0)).toISOString();
     render(RUNS.map((r) => ({ ...r, endedAt })));
     const row = query("automation-run-toggle-run-2")!;
     expect(row.querySelector(".automation-history__name")!.textContent).toBe("Rotate logs");
-    expect(row.querySelector('[aria-label="Failed"]')).not.toBeNull();
+    expect(query("automation-run-outcome-run-2")!.textContent).toBe("Failed");
+    expect(query("automation-run-outcome-run-3")!.textContent).toBe("Stopped");
     expect(query("automation-run-time-run-2")!.getAttribute("dateTime")).toBe(endedAt);
     expect(query("automation-run-time-run-2")!.textContent).toBe("today 02:05");
     const text = query("automation-history-list")!.textContent ?? "";
     expect(text).not.toMatch(/\d+\s*\/\s*\d+|\d+ (of \d+ )?steps?/);
-    expect(text).not.toContain("db-1");
-    expect(text).not.toContain("Run by");
+    expect(text).toContain("db-1");
+    expect(text).toContain("2 terminals");
+    expect(text).not.toContain("Started by");
     expect(row.getAttribute("aria-expanded")).toBe("false");
   });
 
@@ -135,9 +137,13 @@ describe("HistorySection (#5818, slice 9)", () => {
     render(RUNS);
     act(() => query("automation-run-toggle-run-2")!.click());
     expect(query("automation-run-toggle-run-2")!.getAttribute("aria-expanded")).toBe("true");
-    expect(query("automation-run-origin-run-2")!.textContent).toBe("Run by schedule");
-    expect(query("automation-run-status-run-2")!.textContent).toBe("Failed at step 3");
-    expect(query("automation-run-steps-run-2")!.textContent).toBe("2 of 5 steps");
+    expect(query("automation-run-origin-run-2")!.textContent).toBe("Schedule");
+    expect(query("automation-run-status-run-2")!.textContent).toBe("Failed at step 3 of 5");
+    // The outcome says it: no second line for the same (A-039).
+    expect(query("automation-run-steps-run-2")).toBeNull();
+    expect(query("automation-run-details-run-2")!.textContent).toContain(
+      "The automation was deleted."
+    );
     expect(query("automation-run-target-run-2")!.textContent).toBe("db-1");
     expect(query("automation-run-error-run-2")!.textContent).toBe("timed out");
     act(() => query("automation-run-toggle-run-2")!.click());
@@ -148,9 +154,9 @@ describe("HistorySection (#5818, slice 9)", () => {
     render(RUNS);
     act(() => query("automation-run-toggle-run-3")!.click());
     expect(query("automation-run-origin-run-3")!.textContent).toBe(
-      "Run by you · From the command palette"
+      "You · From the command palette"
     );
-    expect(query("automation-run-status-run-3")!.textContent).toBe("Canceled");
+    expect(query("automation-run-status-run-3")!.textContent).toBe("Stopped");
     expect(query("automation-run-target-run-3")!.textContent).toBe("web-1, web-2");
   });
 
@@ -187,7 +193,7 @@ describe("HistorySection (#5818, slice 9)", () => {
       "a2"
     );
     await openClearConfirm();
-    expect(document.body.textContent).toContain('Clear the history of "Rotate logs"?');
+    expect(document.body.textContent).toContain("Clear the history of “Rotate logs”?");
     await act(async () => {
       query("automation-history-clear-confirm-confirm")!.click();
     });
@@ -244,7 +250,7 @@ describe("HistorySection (#5818, slice 9)", () => {
     it("name the schedule of a run it started", () => {
       render(RUNS);
       act(() => query("automation-run-toggle-run-2")!.click());
-      expect(query("automation-run-schedule-run-2")!.textContent).toBe("Every night");
+      expect(query("automation-run-origin-run-2")!.textContent).toBe("Schedule “Every night”");
     });
 
     it("show without any run, and are narrowed with the rest", () => {

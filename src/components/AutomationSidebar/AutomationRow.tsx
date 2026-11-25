@@ -23,7 +23,7 @@ import {
   type AutomationRunSummary,
   type ConnectionName,
 } from "./automationRowInfo";
-import { RowLines } from "./AutomationRowLines";
+import { keepOffRow, RowLines } from "./AutomationRowLines";
 import { AutomationRowMenu, type AutomationRowActions } from "./AutomationRowMenu";
 
 /**
@@ -74,15 +74,6 @@ export interface AutomationRowProps {
   /** Roving-tabindex props of the row (ref included). */
   rowProps: FlatRovingItemProps<HTMLDivElement>;
 }
-
-/** Keep a control's clicks and Enter/Space off the row, which acts on them. */
-const keepOffRow = {
-  onClick: (e: React.SyntheticEvent) => e.stopPropagation(),
-  onDoubleClick: (e: React.SyntheticEvent) => e.stopPropagation(),
-  onKeyDown: (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" || e.key === " ") e.stopPropagation();
-  },
-};
 
 /**
  * One automation in the sidebar: the name (what users scan and search for,

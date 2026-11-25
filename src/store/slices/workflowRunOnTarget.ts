@@ -8,7 +8,7 @@
  * `workflow-run` projection region, records the run in history (PROD-0046),
  * and surfaces progress, retries (PROD-045), and the outcome as a toast.
  */
-import { stepKindLabel, stepSummary } from "@/components/AutomationEditor/stepMeta";
+import { stepKindLabel, stepSummary } from "@/components/AutomationEditor/stepText";
 import { toast } from "@/components/ui";
 import {
   claimWorkflowRunToast,

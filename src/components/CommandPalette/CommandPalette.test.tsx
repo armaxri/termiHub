@@ -205,27 +205,27 @@ describe("CommandPalette", () => {
     const row = (id: string) =>
       document.querySelector(`[data-testid="command-palette-item-automation:${id}"]`);
 
-    it("is one kind of entry: name first, and where it runs (R-083)", () => {
+    it("is one kind of entry: what Enter does, and where (A-048)", () => {
       seed();
       typeInto("deploy");
-      expect(activeLabel()).toBe("Deploy");
+      expect(activeLabel()).toBe("Run Deploy");
       expect(row("wf-1")?.querySelector(".command-palette__target")?.textContent).toBe(
-        "→ prod-web"
+        "types 1 step in prod-web"
       );
       expect(row("wf-1")?.textContent).not.toMatch(/macro|workflow/i);
       typeInto("login");
-      expect(activeLabel()).toBe("Login");
+      expect(activeLabel()).toBe("Run Login");
       expect(document.querySelectorAll('[data-testid*="item-automation:"]')).toHaveLength(1);
     });
 
     it.each([
-      ["run automation: deploy", "Deploy"],
-      ["run macro: login", "Login"],
-      ["run workflow: deploy", "Deploy"],
+      ["run automation: deploy", "Run Deploy"],
+      ["run macro: login", "Run Login"],
+      ["run workflow: deploy", "Run Deploy"],
       // Either old word finds either of them.
-      ["run macro: deploy", "Deploy"],
-      ["run workflow: login", "Login"],
-      ["credentials", "Login"],
+      ["run macro: deploy", "Run Deploy"],
+      ["run workflow: login", "Run Login"],
+      ["credentials", "Run Login"],
     ])("is found by %s", (query, name) => {
       seed();
       typeInto(query);
@@ -259,7 +259,7 @@ describe("CommandPalette", () => {
       seed(null);
       typeInto("deploy");
       expect(row("wf-1")?.querySelector(".command-palette__target")?.textContent).toBe(
-        "→ choose a terminal"
+        "asks where"
       );
       keydown("Enter");
       window.removeEventListener(OPEN_RUN_AUTOMATION_EVENT, listen);
@@ -454,7 +454,7 @@ describe("CommandPalette", () => {
       const labels = [...document.querySelectorAll(".command-palette__label")].map(
         (el) => el.textContent
       );
-      expect(labels).toEqual(["Deploy", "Health Check"]);
+      expect(labels).toEqual(["Run Deploy", "Run Health Check"]);
     });
 
     it("runs the picked automation on the group's connected terminals and closes", async () => {
@@ -462,7 +462,7 @@ describe("CommandPalette", () => {
       typeInto("run automation on broadcast group");
       keydown("Enter");
       typeInto("health");
-      expect(activeLabel()).toBe("Health Check");
+      expect(activeLabel()).toBe("Run Health Check");
       keydown("Enter");
       expect(runAutomation).toHaveBeenCalledWith("wf-2", {
         targetTabIds: ["t1", "t3"],

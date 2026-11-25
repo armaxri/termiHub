@@ -21,7 +21,7 @@ export interface RowLinesProps {
 }
 
 /** Keep a control's clicks and Enter/Space off the row, which acts on them. */
-const keepOffRow = {
+export const keepOffRow = {
   onClick: (e: React.SyntheticEvent) => e.stopPropagation(),
   onDoubleClick: (e: React.SyntheticEvent) => e.stopPropagation(),
   onKeyDown: (e: React.KeyboardEvent) => {

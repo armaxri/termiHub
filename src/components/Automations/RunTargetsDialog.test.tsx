@@ -120,7 +120,7 @@ describe("RunTargetsDialog (#5818 slice 5)", () => {
   it("defaults to this terminal and runs without a confirmation", () => {
     seedTabs([term("a", "s-a"), term("b", "s-b")]);
     const onRun = render();
-    expect(document.body.textContent).toContain('Run "Deploy"');
+    expect(document.body.textContent).toContain("Run “Deploy”");
     expect(q("run-targets-target-active").getAttribute("aria-checked")).toBe("true");
     expect(document.body.textContent).toContain("This terminal (host-a)");
     expect(runButton().textContent).toBe("Run");
@@ -131,8 +131,8 @@ describe("RunTargetsDialog (#5818 slice 5)", () => {
   it("counts live terminals for this panel and all terminals", () => {
     seedTabs([term("a", "s-a"), term("b", "s-b"), term("c", null)]);
     render();
-    expect(document.body.textContent).toContain("This panel (2)");
-    expect(document.body.textContent).toContain("All terminals (2)");
+    expect(document.body.textContent).toContain("Terminals in this split (2)");
+    expect(document.body.textContent).toMatch(/All terminals in “.+” \(2\)/);
     // Broadcast is off, so its option is not offered.
     expect(q("run-targets-target-broadcast")).toBeNull();
   });
@@ -149,7 +149,7 @@ describe("RunTargetsDialog (#5818 slice 5)", () => {
     expect(list.textContent).toContain("host-a");
     expect(list.textContent).toContain("host-b");
     expect(q("run-targets-confirm-step").textContent).toContain(
-      '"Deploy" will run on 2 terminals at the same time'
+      "“Deploy” will run on 2 terminals at the same time"
     );
     act(() => {
       q("run-targets-dialog").dispatchEvent(
@@ -173,14 +173,14 @@ describe("RunTargetsDialog (#5818 slice 5)", () => {
     expect(onRun).not.toHaveBeenCalled();
   });
 
-  it("runs one after another when Run in parallel is turned off under More", () => {
+  it("runs one after another when Run in parallel is turned off", () => {
     seedTabs([term("a", "s-a"), term("b", "s-b")]);
     const onRun = render();
+    // One terminal has nothing to run in parallel with.
     expect(q("run-targets-parallel")).toBeNull();
-    click("run-targets-more");
+    click("run-targets-target-all");
     expect(q("run-targets-parallel").getAttribute("aria-checked")).toBe("true");
     click("run-targets-parallel");
-    click("run-targets-target-all");
     click("run-targets-run");
     expect(q("run-targets-confirm-step").textContent).toContain("one after another");
     click("run-targets-run");
@@ -263,11 +263,10 @@ describe("RunTargetsDialog (#5818 slice 5)", () => {
     expect(onRun).not.toHaveBeenCalled();
   });
 
-  it("Enter on Cancel or More does not run; Enter on a target choice does", () => {
+  it("Enter on Cancel does not run; Enter on a target choice does", () => {
     seedTabs([term("a", "s-a")]);
     const onRun = render();
     pressEnter("run-targets-cancel");
-    pressEnter("run-targets-more");
     expect(onRun).not.toHaveBeenCalled();
     pressEnter("run-targets-target-active");
     expect(onRun).toHaveBeenCalledTimes(1);

@@ -53,13 +53,13 @@ export function automaticTriggers(automation: Automation): SessionTrigger[] {
   );
 }
 
-/** Whether the triggers may fire; an absent flag means armed (#5674). */
+/** Whether the triggers may fire; an absent flag means on (#5674). */
 export function triggersArmed(automation: Automation): boolean {
   return automation.triggersEnabled !== false;
 }
 
 /** The keys its hotkey triggers name. */
-export function hotkeyBindings(automation: Automation): string[] {
+function hotkeyBindings(automation: Automation): string[] {
   return automation.triggers.flatMap((t) => (t.kind === "hotkey" && t.binding ? [t.binding] : []));
 }
 

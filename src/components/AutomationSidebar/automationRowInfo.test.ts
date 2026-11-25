@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { Automation } from "@/types/generated/Automation";
+import type { ScheduleView } from "@/types/schedule";
 import type { AutomationRun } from "@/types/generated/AutomationRun";
 import {
-  armedMarkerDescription,
   automaticTriggers,
   automationRowTooltip,
+  nextScheduledRun,
   summarizeRuns,
+  triggerState,
   triggerSummary,
   triggersArmed,
 } from "./automationRowInfo";
@@ -72,19 +74,62 @@ describe("triggers", () => {
     );
   });
 
-  it("says what the marker means, and that Off is about the trigger (R-077)", () => {
+  describe("what starts it, in the row's words (A-013)", () => {
     const a = automation({
       triggers: [
+        { kind: "hotkey", binding: "Ctrl+Alt+D" },
         { kind: "on-output-match", connectionIds: ["c1"], pattern: "x" },
         { kind: "on-connect", connectionIds: ["c2"] },
+        { kind: "on-disconnect", connectionIds: ["c1", "c2", "c3"] },
       ],
     });
-    expect(armedMarkerDescription(a, nameOf)).toBe(
-      "Runs automatically: on output match of prod; on connect of db"
+
+    it("names every hotkey and trigger while they are on", () => {
+      expect(triggerState(a, nameOf)).toEqual({
+        on: true,
+        text:
+          "Triggers on: hotkey Ctrl+Alt+D, matching output in prod, connecting to db, " +
+          "disconnecting from prod, db +1",
+      });
+    });
+
+    it("says what does not start it while they are off, and that it still runs", () => {
+      const off = triggerState({ ...a, triggersEnabled: false }, nameOf)!;
+      expect(off.on).toBe(false);
+      expect(off.text).toMatch(/^Triggers off: not on hotkey Ctrl\+Alt\+D, or matching output/);
+      expect(off.text).toMatch(/You can still run it\.$/);
+    });
+
+    it.each([
+      ["without a trigger", []],
+      ["with a hotkey without keys", [{ kind: "hotkey" as const, binding: "" }]],
+      ["without a connection", [{ kind: "on-connect" as const, connectionIds: [] }]],
+    ])("says nothing %s", (_what, triggers) => {
+      expect(triggerState(automation({ triggers }), nameOf)).toBeNull();
+    });
+  });
+
+  it("says when a schedule runs it next (A-011)", () => {
+    const now = new Date(2026, 9, 1, 18, 0);
+    const at = (day: number, hour: number) => new Date(2026, 9, day, hour).toISOString();
+    const schedule = (over: Partial<ScheduleView>) =>
+      ({
+        action: { kind: "automation", automationId: "a1" },
+        enabled: true,
+        nextRunAt: at(2, 2),
+        ...over,
+      }) as ScheduleView;
+    const next = (schedules: ScheduleView[], paused = false) =>
+      nextScheduledRun("a1", schedules, paused, now);
+    expect(next([])).toBeNull();
+    expect(next([schedule({ enabled: false })])).toBeNull();
+    expect(next([schedule({ action: { kind: "automation", automationId: "a2" } })])).toBeNull();
+    expect(next([schedule({})])).toBe("Next run tomorrow 02:00");
+    expect(next([schedule({}), schedule({ nextRunAt: at(1, 20) })])).toBe(
+      "Next run today 20:00 (2 schedules)"
     );
-    expect(armedMarkerDescription({ ...a, triggersEnabled: false }, nameOf)).toBe(
-      "Trigger off, will not run automatically: on output match of prod; on connect of db"
-    );
+    expect(next([schedule({})], true)).toBe("Schedules paused");
+    expect(next([schedule({ nextRunAt: undefined })])).toBe("Schedule on");
   });
 });
 
@@ -155,11 +200,11 @@ describe("summarizeRuns", () => {
     "marks a failed %s run until something completes after it",
     (origin) => {
       const failed = run({ id: "f", origin, status: "failed", endedAt: at(2) });
-      expect(summarizeRuns([failed]).get("a1")?.failedUnattended).toBe(true);
+      expect(summarizeRuns([failed]).get("a1")?.failed).toBe(true);
       const ok = run({ id: "ok", endedAt: at(3) });
-      expect(summarizeRuns([ok, failed]).get("a1")?.failedUnattended).toBe(false);
+      expect(summarizeRuns([ok, failed]).get("a1")?.failed).toBe(false);
       const earlier = run({ id: "before", endedAt: at(1) });
-      expect(summarizeRuns([failed, earlier]).get("a1")?.failedUnattended).toBe(true);
+      expect(summarizeRuns([failed, earlier]).get("a1")?.failed).toBe(true);
     }
   );
 
@@ -167,14 +212,16 @@ describe("summarizeRuns", () => {
     const failed = run({ id: "f", origin: "scheduled", status: "failed", endedAt: at(2) });
     for (const status of ["failed", "cancelled"] as const) {
       const later = run({ id: "l", status, endedAt: at(4) });
-      expect(summarizeRuns([later, failed]).get("a1")?.failedUnattended).toBe(true);
+      expect(summarizeRuns([later, failed]).get("a1")?.failed).toBe(true);
     }
   });
 
-  it("does not mark a run the user started: it reported its failure right away", () => {
+  it("marks a failed run the user started too, until one completes (A-037)", () => {
     for (const origin of ["manual", "palette", "hotkey", "run-by-automation"] as const) {
-      const failed = run({ origin, status: "failed" });
-      expect(summarizeRuns([failed]).get("a1")?.failedUnattended).toBe(false);
+      const failed = run({ origin, status: "failed", endedAt: at(2) });
+      expect(summarizeRuns([failed]).get("a1")?.failed).toBe(true);
+      const ok = run({ id: "ok", endedAt: at(3) });
+      expect(summarizeRuns([ok, failed]).get("a1")?.failed).toBe(false);
     }
   });
 

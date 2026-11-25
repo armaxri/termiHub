@@ -243,7 +243,7 @@ describe("run-automation", () => {
     const { deps } = setup([outer]);
     const result = await runAutomation(outer, deps).done;
     expect(result.status).toBe("failed");
-    expect(result.error).toBe('automation "ghost" was not found');
+    expect(result.error).toBe("automation “ghost” was not found");
   });
 
   it("fails without an automation lookup", async () => {
@@ -256,7 +256,7 @@ describe("run-automation", () => {
     const { send, deps } = setup([self]);
     const result = await runAutomation(self, deps).done;
     expect(result).toMatchObject({ status: "failed", stepsCompleted: 0, failedStepIndex: 1 });
-    expect(result.error).toBe('automation calls itself: "SELF" → "SELF"');
+    expect(result.error).toBe("automation calls itself: “SELF” → “SELF”");
     expect(send).not.toHaveBeenCalled();
   });
 
@@ -277,7 +277,7 @@ describe("run-automation", () => {
     const { send, deps } = setup([a, b, c]);
     const result = await runAutomation(a, deps).done;
     expect(result.failedStepIndex).toBe(1);
-    expect(result.error).toBe('automation calls itself: "A" → "B" → "C" → "A"');
+    expect(result.error).toBe("automation calls itself: “A” → “B” → “C” → “A”");
     expect(send).not.toHaveBeenCalled();
   });
 
@@ -292,7 +292,7 @@ describe("run-automation", () => {
     bSteps = [call("a")];
     const result = await handle.done;
     expect(result.status).toBe("failed");
-    expect(result.error).toContain('automation calls itself: "A" → "B" → "A"');
+    expect(result.error).toContain("automation calls itself: “A” → “B” → “A”");
   });
 
   it("caps call depth with a clear error", async () => {
@@ -326,7 +326,7 @@ describe("run-automation", () => {
     const outer = automation("outer", [call("inner")]);
     const { deps } = setup([inner, outer], (n) => n < 1);
     const result = await runAutomation(outer, deps).done;
-    expect(result.error).toMatch(/^in automation "INNER", step 2: /);
+    expect(result.error).toMatch(/^in automation “INNER”, step 2: /);
   });
 });
 

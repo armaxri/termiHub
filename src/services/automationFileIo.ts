@@ -20,7 +20,7 @@ import { child, isNonBlankString, isRecord } from "@/services/importEnvelope";
 import { parseMacroEnvelope } from "@/services/macroIo";
 import { WORKFLOW_EXPORT_VERSION, parseStepEntries } from "@/services/workflowIo";
 import { KNOWN_ENTRY_KEYS, KNOWN_STEP_KINDS, KNOWN_TRIGGER_KINDS } from "@/services/workflowSchema";
-import { triggerKindLabel } from "@/components/AutomationEditor/stepMeta";
+import { triggerKindLabel } from "@/components/AutomationEditor/stepText";
 import { referencedAutomations } from "@/services/automationRunner";
 import { newId } from "@/services/transport/ids";
 import { macroToAutomation, workflowToAutomation } from "@/store/slices/automationViews";

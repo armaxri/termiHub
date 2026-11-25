@@ -80,8 +80,7 @@ export function TerminalToolbarMore(props: TerminalToolbarMoreProps) {
   const playbackLabel = playback
     ? tf("terminalToolbar.chip.playback", {
         name: playback.macroName,
-        played: playback.played,
-        total: playback.total,
+        percent: Math.round((100 * playback.played) / Math.max(1, playback.total)),
       })
     : "";
   const activeCount =

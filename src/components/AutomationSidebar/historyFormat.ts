@@ -5,7 +5,7 @@
  * wording, one way to name the terminals it ran on.
  */
 import type { StatusTone } from "@/components/ui";
-import { stepKindLabel, stepSummary } from "@/components/AutomationEditor/stepMeta";
+import { stepKindLabel, stepSummary } from "@/components/AutomationEditor/stepText";
 import { t, tf, type MessageId } from "@/i18n/catalog";
 import { isMacroShaped } from "@/store/slices/automationViews";
 import type { Automation } from "@/types/generated/Automation";

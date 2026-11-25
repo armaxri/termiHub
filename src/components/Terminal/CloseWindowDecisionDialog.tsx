@@ -13,6 +13,7 @@ import {
   Terminal,
   TriangleAlert,
   Trash2,
+  Zap,
 } from "lucide-react";
 import { Button, Modal, Select, toast } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
@@ -86,6 +87,7 @@ export function CloseWindowDecisionDialog() {
   const canMove = others.length > 0 && Boolean(selected);
 
   const isQuit = request.mode === "quit";
+  const runs = request.runs ?? [];
 
   const answerQuit = async (answer: () => Promise<void>) => {
     try {
@@ -169,7 +171,7 @@ export function CloseWindowDecisionDialog() {
       store.closeTab(editor.tabId, located.panelId);
     }
     const remaining = dirtyEditors.filter((e) => e.tabId !== editor.tabId);
-    if (count === 0 && remaining.length === 0 && !recording) {
+    if (count === 0 && remaining.length === 0 && !recording && runs.length === 0) {
       // Nothing is left that closing would lose, so close as asked.
       setRequest(null);
       await getCurrentWindow().destroy();
@@ -268,6 +270,13 @@ export function CloseWindowDecisionDialog() {
             ))}
           {recording && (count > 0 || dirtyCount > 0) && " "}
           {recording && <>The recording is not saved and would be lost.</>}
+          {runs.length > 0 && (
+            <>
+              {" "}
+              {runs.length === 1 ? "The running automation" : "The running automations"} would be
+              stopped, also when the tabs move.
+            </>
+          )}
         </p>
       </div>
 
@@ -328,6 +337,21 @@ export function CloseWindowDecisionDialog() {
             </Button>
           </div>
         )}
+        {runs.map((run) => (
+          <div
+            key={run.key}
+            className="close-window-decision__row"
+            data-testid={`close-window-decision-run-${run.key}`}
+          >
+            <Zap className="li close-window-decision__row-icon" aria-hidden="true" />
+            <span className="close-window-decision__row-name">
+              “{run.name}” is running in {run.tabTitle}
+            </span>
+            <span className="close-window-decision__pill close-window-decision__pill--terminate">
+              <Ban className="li" aria-hidden="true" /> Will be stopped
+            </span>
+          </div>
+        ))}
         {dirtyEditors.map((editor) => (
           <div
             key={editor.tabId}

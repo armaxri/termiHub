@@ -325,7 +325,7 @@ describe("appStore — session-driven workflow triggers (#3791)", () => {
       await vi.waitFor(
         () =>
           expect(error).toHaveBeenCalledWith(
-            'Automation "Workflow wf-lp" was not run',
+            "Automation “Workflow wf-lp” was not run",
             expect.objectContaining({ description: LOCAL_PROCESS_REASON })
           ),
         { timeout: OUTPUT_TRIGGER_LIMITS.batchMs * 20 }

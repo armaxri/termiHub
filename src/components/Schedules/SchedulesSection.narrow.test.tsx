@@ -60,7 +60,8 @@ describe("SchedulesSection header at narrow widths (#4709)", () => {
   it("shows the Pause all label when there is room", async () => {
     await render();
     ro.resize(SCHEDULES_HEADER_COMPACT_WIDTH + 40);
-    expect(header().textContent).toContain("Pause all");
+    expect(header().textContent).toContain("Resume");
+    expect(header().textContent).toContain("Paused");
     expect(query("schedules-pause-toggle")).not.toBeNull();
     expect(query("schedules-new-btn")).not.toBeNull();
   });
@@ -69,10 +70,10 @@ describe("SchedulesSection header at narrow widths (#4709)", () => {
     await render();
     // 200px sidebar minus the header's horizontal padding.
     ro.resize(184);
-    expect(header().textContent).not.toContain("Pause all");
+    expect(header().textContent).not.toContain("Resume");
     const toggle = query("schedules-pause-toggle");
     const add = query("schedules-new-btn");
-    expect(toggle?.getAttribute("aria-label")).toBe("Pause all schedules");
+    expect(toggle?.getAttribute("aria-label")).toBe("Resume all schedules");
     expect(add?.getAttribute("aria-label")).toBe("New schedule");
     // Both controls sit in the non-shrinking actions slot of the header.
     const actions = header().querySelector(".sidebar-section-header__actions");
