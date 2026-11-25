@@ -265,7 +265,7 @@ describe("executeStep", () => {
       );
 
       expect(outcome.ok).toBe(false);
-      expect(authorizeLocalProcess).toHaveBeenCalledWith("rm", ["-rf", "/"], false);
+      expect(authorizeLocalProcess).toHaveBeenCalledWith("rm", ["-rf", "/"], [], false);
       expect(runLocalProcess).not.toHaveBeenCalled();
     });
 

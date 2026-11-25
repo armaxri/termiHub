@@ -58,6 +58,25 @@ fn a_missing_config_dir_is_created_and_managed_without_a_warning() {
     assert!(!app.state::<AppMode>().is_portable());
 }
 
+/// #6019: what a pending restore brings must not be listed as the user's own.
+#[test]
+fn the_library_is_listed_as_ones_own_before_a_pending_restore_is_applied() {
+    use crate::automations::trust::AutomationTrust;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let config = tmp.path().join("config");
+    let pending = config.join(crate::backup::restore::PENDING_DIR);
+    std::fs::create_dir_all(&pending).unwrap();
+    let library = r#"{"version":"1","automations":[{"id":"mine","name":"Mine"}]}"#;
+    std::fs::write(config.join("automations.json"), library).unwrap();
+
+    resolve(&mock_app(), installed(&config, &tmp.path().join("temp")));
+
+    let raw = std::fs::read_to_string(config.join(AutomationTrust::FILE_NAME)).unwrap();
+    let trust: AutomationTrust = serde_json::from_str(&raw).unwrap();
+    assert_eq!(trust.own.keys().collect::<Vec<_>>(), ["mine"]);
+}
+
 #[test]
 fn an_unwritable_config_dir_falls_back_to_temp_storage_with_a_warning() {
     let tmp = tempfile::tempdir().unwrap();

@@ -9,6 +9,7 @@ import {
   clearAutomationRunHistory,
   deleteAutomation,
   getAutomation,
+  importAutomation,
   listAutomationRuns,
   listAutomations,
   recordAutomationRun,
@@ -56,7 +57,19 @@ describe("automationApi (#5818, slice 4)", () => {
     expect(mockedInvoke).toHaveBeenLastCalledWith("get_automation", { automationId: "a-1" });
 
     expect(await saveAutomation(automation)).toEqual(automation);
-    expect(mockedInvoke).toHaveBeenLastCalledWith("save_automation", { automation });
+    expect(mockedInvoke).toHaveBeenLastCalledWith("save_automation", {
+      automation,
+      copyOf: null,
+    });
+
+    // A copy names its source, and a file goes its own way (#6019).
+    expect(await saveAutomation(automation, "a-0")).toEqual(automation);
+    expect(mockedInvoke).toHaveBeenLastCalledWith("save_automation", {
+      automation,
+      copyOf: "a-0",
+    });
+    expect(await importAutomation(automation)).toEqual(automation);
+    expect(mockedInvoke).toHaveBeenLastCalledWith("import_automation", { automation });
 
     mockedInvoke.mockResolvedValue(undefined);
     await deleteAutomation("a-1");

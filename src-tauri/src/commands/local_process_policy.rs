@@ -18,20 +18,25 @@
 //!    the resolved path. Nothing is normalized, case-folded or canonicalized, so no
 //!    other spelling and no other name of the same file can match an entry.
 //!    Arguments are not part of the rule.
+//! 5. The list is for automations the user made here. When one behind the command
+//!    is not ([`crate::automations::trust`], #6019), the list does not count: the
+//!    user must have confirmed this very command, file and arguments, for it. Nor
+//!    does it count for a command that belongs to no saved automation.
 //!
-//! A program that is not on the list starts only with the path the user approved
-//! for this run, which must be the one it still resolves to.
+//! What is not allowed this way starts only with the path the user approved for
+//! this run, which must be the one it still resolves to.
 //!
 //! # What this does not protect against
 //!
 //! - **A compromised window.** The list lives in the settings, which the window
-//!   writes (`save_settings`) and a restored backup brings (#6018), and the window
-//!   reports the user's approval. Code
+//!   writes (`save_settings`), and the window reports the user's approval and which
+//!   automations are behind a command. Code
 //!   running in a window can also open a local shell and type into it. This check
 //!   protects against automations (files, imports, triggers) and against a mistake
 //!   in the frontend, not against the frontend itself.
-//! - **Arguments.** Allowing an interpreter or a build tool (`sh`, `python`,
-//!   `make`, `git`) allows everything it can be told to do.
+//! - **Arguments of the user's own automations.** Allowing an interpreter or a
+//!   build tool (`sh`, `python`, `make`, `git`) allows everything it can be told to
+//!   do; the window warns before that ([`super::local_process_interpreters`]).
 //! - **Someone who can write to the allowed file, to a symbolic link on its path,
 //!   or to a `PATH` directory** (for an entry that is a bare name): the file can be
 //!   replaced at any time, also between this check and the start.
@@ -42,6 +47,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
+use super::local_process_interpreters::is_interpreter;
+use crate::automations::trust::Standing;
 use crate::connection::settings::AppSettings;
 
 /// Where the user allows programs, for messages.
@@ -87,12 +94,32 @@ pub enum LocalProcessCheck {
         path: String,
         /// Why it does not start by itself, and where to allow it.
         reason: String,
+        /// What "always" would remember.
+        remember: LocalProcessRemember,
+        /// The automations behind the command that are not the user's own.
+        imported: Vec<String>,
+        /// The program runs whatever it is told to.
+        interpreter: bool,
     },
     /// It must not start, approved or not.
     Refused {
         /// Why.
         reason: String,
     },
+}
+
+/// What the user can have remembered about a command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[serde(rename_all = "kebab-case")]
+pub enum LocalProcessRemember {
+    /// The file, with any arguments, for the user's own automations.
+    Program,
+    /// This very command, for the automations behind it.
+    Command,
+    /// Nothing: the command belongs to no saved automation.
+    Nothing,
 }
 
 /// The file to start.
@@ -111,6 +138,38 @@ pub struct Judged {
     pub program: Program,
     /// Whether the list has it; otherwise why not, and where to allow it.
     pub listed: Result<(), String>,
+}
+
+impl Judged {
+    /// Whether the program may start without asking for a command of this
+    /// [`Standing`]; otherwise why not.
+    fn permitted(&self, name: &str, standing: &Standing) -> Result<(), String> {
+        let name = name.trim();
+        let path = self.program.path.display();
+        match standing {
+            Standing::Own => self.listed.clone(),
+            Standing::Confirmed => Ok(()),
+            Standing::Unconfirmed { names } => Err(format!(
+                "\"{name}\" ({path}) was not started: {} came from a file or a backup, or was \
+                 changed outside termiHub, and this command was not confirmed. Run it by hand \
+                 once and confirm the command.",
+                quoted(names)
+            )),
+            Standing::Unknown => Err(format!(
+                "\"{name}\" ({path}) was not started: the command does not belong to a saved \
+                 automation, or the automation was changed while it ran. Run it by hand."
+            )),
+        }
+    }
+}
+
+/// `“A”`, `“A” and “B”`.
+fn quoted(names: &[String]) -> String {
+    let names: Vec<String> = names.iter().map(|n| format!("“{n}”")).collect();
+    match names.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
+        _ => names.concat(),
+    }
 }
 
 /// Judge `program` by `settings` (`None` when they cannot be read). An error is a
@@ -160,16 +219,19 @@ pub fn judge(
     })
 }
 
-/// The program to start now: a listed one, or the one the user approved for this
-/// run (`approved_path`, as [`LocalProcessCheck::Ask`] named it).
+/// The program to start now: a permitted one, or the one the user approved for this
+/// run (`approved_path`, as [`LocalProcessCheck::Ask`] named it). `standing` says
+/// what is known about the automations behind a command that starts this file.
 pub fn authorize(
     settings: Option<&AppSettings>,
     program: &str,
     approved_path: Option<&str>,
     env: &SearchEnv,
+    standing: impl FnOnce(&Path) -> Standing,
 ) -> Result<Program, String> {
     let judged = judge(settings, program, env)?;
-    match (judged.listed, approved_path) {
+    let permitted = judged.permitted(program, &standing(&judged.program.path));
+    match (permitted, approved_path) {
         (Ok(()), _) => Ok(judged.program),
         (Err(_), Some(approved)) if judged.program.path.to_str() == Some(approved) => {
             Ok(judged.program)
@@ -184,20 +246,39 @@ pub fn authorize(
 }
 
 /// The verdict for the frontend.
-pub fn check(settings: Option<&AppSettings>, program: &str, env: &SearchEnv) -> LocalProcessCheck {
-    match judge(settings, program, env) {
-        Err(reason) => LocalProcessCheck::Refused { reason },
-        Ok(Judged { program, listed }) => match (program.path.to_str(), listed) {
-            // An approval names the path, so one that is no text cannot be given.
-            (None, _) => LocalProcessCheck::Refused {
-                reason: format!("{} has no readable name.", program.path.display()),
-            },
-            (Some(path), Ok(())) => LocalProcessCheck::Allowed { path: path.into() },
-            (Some(path), Err(reason)) => LocalProcessCheck::Ask {
-                path: path.into(),
-                reason,
-            },
+pub fn check(
+    settings: Option<&AppSettings>,
+    program: &str,
+    env: &SearchEnv,
+    standing: impl FnOnce(&Path) -> Standing,
+) -> LocalProcessCheck {
+    let judged = match judge(settings, program, env) {
+        Err(reason) => return LocalProcessCheck::Refused { reason },
+        Ok(judged) => judged,
+    };
+    let standing = standing(&judged.program.path);
+    let permitted = judged.permitted(program, &standing);
+    let Program { path, .. } = judged.program;
+    match (path.to_str(), permitted) {
+        // An approval names the path, so one that is no text cannot be given.
+        (None, _) => LocalProcessCheck::Refused {
+            reason: format!("{} has no readable name.", path.display()),
         },
+        (Some(path), Ok(())) => LocalProcessCheck::Allowed { path: path.into() },
+        (Some(text), Err(reason)) => {
+            let (remember, imported) = match standing {
+                Standing::Own | Standing::Confirmed => (LocalProcessRemember::Program, Vec::new()),
+                Standing::Unconfirmed { names } => (LocalProcessRemember::Command, names),
+                Standing::Unknown => (LocalProcessRemember::Nothing, Vec::new()),
+            };
+            LocalProcessCheck::Ask {
+                path: text.into(),
+                reason,
+                remember,
+                imported,
+                interpreter: is_interpreter(&path),
+            }
+        }
     }
 }
 

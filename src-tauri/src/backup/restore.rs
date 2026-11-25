@@ -384,6 +384,9 @@ fn preview_section(
             return preview;
         }
     };
+    preview
+        .notes
+        .extend(sections::permission_notes(spec, &backup_doc));
     match sections::compare(spec, &backup_doc, &current_doc) {
         Ok(cmp) => {
             preview.item_count = cmp.item_count;

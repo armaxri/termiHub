@@ -2265,6 +2265,19 @@ sequenceDiagram
   writes the settings, reports the approval and can open a local shell; the arguments of an allowed
   program (an interpreter runs anything); a file, link or `PATH` directory that someone else can write,
   also between the check and the start; the inherited environment and working directory.
+- **An imported automation confirms each command** (#6019, `automations/trust.rs`). The list is for
+  automations made on this machine. `automation-trust.json` lists those by id with a fingerprint of
+  what decides their local programs (their steps, the automations they run, their parameters), and
+  the exact commands (resolved file and arguments) confirmed for any other. The mark is not part of
+  an automation and the file is not a backup section, so no file can set or clear it; an edit, a
+  rename or a copy (`save_automation` `copyOf`) does not either, and what a restore or an older build
+  changed no longer matches its fingerprint. The runner passes the ids of the automations behind a
+  command, outermost first; the backend checks that the stored ones really run each other that way
+  and that the last has a step that can be this command, then every one that is not the user's own
+  must have the command confirmed, because a caller also chooses the parameter values. Unconfirmed,
+  it is asked about (exact command, what would not show is written out) or, unattended, refused. The
+  first start with this check lists the whole library as the user's own. "Always allow" of a program
+  that runs whatever it is told to (`local_process_interpreters.rs`) is asked about twice.
 - **Schedules in the UI** (`src/components/Schedules/`, #6024) — a row says its state with the next
   run, the rule, the automation, the connections, why it will not run and how the last run ended
   with the whole reason (`scheduleStatus.ts`). The editor asks the scheduler for the next run before
@@ -2329,6 +2342,12 @@ are deliberately not backed up. The optional **credentials** section is the cred
 object above, sealed with the backup passphrase and gated exactly like a vault export
 (master-password re-authentication, or a fresh OS user verification in OS-keychain mode —
 refused where that is unavailable, while the rest of the backup still works).
+
+A restore never grants what may run on this machine (#6018): the settings section keeps this
+machine's experimental, JavaScript-plugin and local-program switches, allowed programs and script files and confirmed
+workspace commands (`LOCAL_PERMISSION_KEYS`), and the preview says so and what the backup would have
+allowed. On a machine without them they stay off. A restored automation asks before its first local
+program unless it is the one made here.
 
 ```json
 {

@@ -29,6 +29,11 @@ export interface RunLocalProcessArgs {
   /** Discrete argument vector (never concatenated into a command line). */
   args: string[];
   /**
+   * The ids of the automations behind the command, the one the run started with
+   * first (#6019). The backend traces the command through them.
+   */
+  automationChain: readonly string[];
+  /**
    * The file the user approved for this run ({@link LocalProcessCheck} `ask`
    * named it). The backend starts an unlisted program only as this file.
    */
@@ -49,14 +54,32 @@ export async function invokeRunLocalProcess(
     runId: args.runId,
     program: args.program,
     args: args.args,
+    automationChain: args.automationChain,
     timeoutMs: args.timeoutMs ?? null,
     approvedPath: args.approvedPath ?? null,
   });
 }
 
-/** Ask the backend whether `program` may start now, or the user has to be asked. */
-export async function checkLocalProcess(program: string): Promise<LocalProcessCheck> {
-  return await invoke<LocalProcessCheck>("check_local_process", { program });
+/** Ask the backend whether a command may start now, or the user has to be asked. */
+export async function checkLocalProcess(
+  program: string,
+  args: readonly string[],
+  automationChain: readonly string[]
+): Promise<LocalProcessCheck> {
+  return await invoke<LocalProcessCheck>("check_local_process", { program, args, automationChain });
+}
+
+/**
+ * The user confirmed a command of an imported automation, as the file at `path`
+ * (#6019): the backend does not ask about this very command again.
+ */
+export async function confirmLocalProcess(
+  program: string,
+  args: readonly string[],
+  automationChain: readonly string[],
+  path: string
+): Promise<void> {
+  await invoke("confirm_local_process", { program, args, automationChain, path });
 }
 
 /** Request cancellation of an in-flight local process by its run id. */

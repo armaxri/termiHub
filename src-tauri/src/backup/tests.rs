@@ -331,8 +331,9 @@ fn round_trip_every_section_encrypted() {
             .normalize(read_doc(src.path(), spec.file_name))
             .unwrap();
         if spec.id == "settings" {
-            // This machine's credential-storage keys are never restored.
+            // This machine's credential-storage keys and permissions are never restored.
             sections::preserve_local_settings(&mut expected, None);
+            expected = spec.normalize(expected).unwrap();
         }
         let actual = spec
             .normalize(read_doc(dst.path(), spec.file_name))
