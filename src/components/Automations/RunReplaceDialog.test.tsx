@@ -64,7 +64,9 @@ describe("a run never stops another one unasked (#6042)", () => {
   it("names the one it would stop, and starts nothing before the answer", async () => {
     await start("steps");
     expect(q("run-replace-dialog")?.textContent).toContain("Run “Deploy”?");
-    expect(q("run-replace-dialog")?.textContent).toContain("“Health check” in web-1");
+    expect(q("run-replace-dialog")?.textContent).toContain(
+      "“Health check” is running in web-1, at step 2 of 3. Running this stops that there"
+    );
     expect(runWorkflow).not.toHaveBeenCalled();
     await act(async () => q("run-replace-confirm")!.click());
     expect(runWorkflow).toHaveBeenCalledTimes(1);

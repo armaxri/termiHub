@@ -64,6 +64,8 @@ export interface AutomationRowProps {
   nextRun: string | null;
   /** Resolves a saved connection id to its name, for triggers. */
   connectionName: ConnectionName;
+  /** Finds an automation by id. */
+  resolve: (id: string) => Automation | undefined;
   /** Turn its triggers, hotkeys included, on or off (#5674). */
   onSetTriggers: (automationId: string, on: boolean) => void;
   /** Every other action. */
@@ -94,6 +96,7 @@ export function AutomationRow({
   blocked,
   nextRun,
   connectionName,
+  resolve,
   onSetTriggers,
   actions,
   justSaved = false,
@@ -105,7 +108,11 @@ export function AutomationRow({
   const several = targets.length > 1;
   const waiting = targets.some((target) => target.waiting);
   const selected = rowProps.tabIndex === 0;
-  const triggers = triggerState(automation, connectionName);
+  const triggers = triggerState(automation, {
+    connectionName,
+    resolve,
+    blocked: blocked !== null,
+  });
   const failed = !running && runs?.failed === true;
 
   const runningText = waiting
@@ -113,6 +120,8 @@ export function AutomationRow({
     : several
       ? tf("automation.marker.runningCount", { count: targets.length })
       : t("automation.marker.running");
+  // The line under the name says it in words, and the name keeps its room (C-008).
+  const iconOnly = compact || several || waiting;
   // The row's own name says its state too, so moving through the list reads
   // "Deploy prep, Running" instead of every button inside the row.
   const rowLabel = [
@@ -121,7 +130,13 @@ export function AutomationRow({
     blocked && !running ? t("automation.marker.blocked") : null,
     failed ? t("automation.marker.failed") : null,
     triggers
-      ? t(triggers.on ? "automation.triggers.onState" : "automation.triggers.offState")
+      ? t(
+          !triggers.on
+            ? "automation.triggers.offState"
+            : triggers.effective
+              ? "automation.triggers.onState"
+              : "automation.triggers.noneState"
+        )
       : null,
   ]
     .filter(Boolean)
@@ -140,7 +155,7 @@ export function AutomationRow({
   const markers = (
     <>
       {running ? (
-        <Tooltip content={runningText} side="top" disabled={!compact && !several}>
+        <Tooltip content={runningText} side="top" disabled={!iconOnly}>
           <span
             className={
               waiting
@@ -149,11 +164,11 @@ export function AutomationRow({
             }
             data-waiting={waiting ? "true" : undefined}
             data-testid={`automation-running-${id}`}
-            role={compact || several ? "img" : undefined}
-            aria-label={compact || several ? runningText : undefined}
+            role={iconOnly ? "img" : undefined}
+            aria-label={iconOnly ? runningText : undefined}
           >
             {waiting ? <Hand size={10} aria-hidden="true" /> : <Spinner size={10} label={null} />}
-            {compact || several ? null : runningText}
+            {iconOnly ? null : runningText}
           </span>
         </Tooltip>
       ) : null}

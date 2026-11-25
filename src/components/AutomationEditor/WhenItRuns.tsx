@@ -57,6 +57,10 @@ export interface WhenItRunsProps {
   automationId: string | null;
   /** The step at which it waits for the user, 1-based (#6025); `null` without one. */
   waitsAt: number | null;
+  /** Why nothing unattended can start it, in a few words; `null` when it can. */
+  unattendedBlocked: string | null;
+  /** Why this trigger can never start it, in a few words, or `null`. */
+  blockedBy: (trigger: AutomationTrigger) => string | null;
   /** A new automation opens the schedule editor once it is saved. */
   scheduleAfterSave: boolean;
   /** The validation errors the user should see now, by draft path. */
@@ -76,6 +80,8 @@ export function WhenItRuns({
   triggersEnabled,
   automationId,
   waitsAt,
+  unattendedBlocked,
+  blockedBy,
   scheduleAfterSave,
   errors,
   onTriggersChange,
@@ -94,6 +100,11 @@ export function WhenItRuns({
   const afterClose = useRef<(() => void) | null>(null);
   const linked =
     automationId === null ? [] : schedules.filter((s) => s.action.automationId === automationId);
+
+  // Never offered without its reason (C-001).
+  const cannotHint = tf("automation.startBlocked.menu", { reason: unattendedBlocked ?? "" });
+  const cannotStart = (kind: AutomationTriggerKind) =>
+    unattendedBlocked !== null && (kind === "on-disconnect" || kind === "on-output-match");
 
   const addTrigger = (kind: AutomationTriggerKind) => {
     const index = triggers.length;
@@ -156,6 +167,7 @@ export function WhenItRuns({
               index={index}
               connections={connections}
               automations={others}
+              blocked={blockedBy(trigger)}
               errors={{
                 binding: errors[`triggers.${uid}.binding`],
                 pattern: errors[`triggers.${uid}.pattern`],
@@ -250,7 +262,8 @@ export function WhenItRuns({
                 <MenuItem
                   key={kind}
                   icon={<Icon size={14} />}
-                  hint={t(TRIGGER_HINT[kind])}
+                  disabled={cannotStart(kind)}
+                  hint={cannotStart(kind) ? cannotHint : t(TRIGGER_HINT[kind])}
                   onSelect={() => addTrigger(kind)}
                   data-testid={`automation-editor-add-trigger-${kind}`}
                 >
@@ -261,7 +274,8 @@ export function WhenItRuns({
             <MenuSeparator />
             <MenuItem
               icon={<CalendarClock size={14} />}
-              hint={t("automation.triggerHint.schedule")}
+              disabled={unattendedBlocked !== null}
+              hint={unattendedBlocked !== null ? cannotHint : t("automation.triggerHint.schedule")}
               onSelect={addSchedule}
               data-testid="automation-editor-add-schedule"
             >

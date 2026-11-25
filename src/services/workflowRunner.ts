@@ -424,7 +424,9 @@ export interface LocalProcessRunOptions {
  */
 export type WorkflowAuthorizeLocalProcessSeam = (
   program: string,
-  args: string[]
+  args: string[],
+  /** The step that asks continues on error: refusing it does not end the run. */
+  goesOn?: boolean
 ) => Promise<LocalProcessAuthorization> | LocalProcessAuthorization;
 
 /**
@@ -1061,7 +1063,11 @@ export async function executeStep(
       // GUARDRAIL: never spawn without explicit authorization. Absent seam or a
       // refusal both mean "not authorized" — the process is never spawned.
       const authorized = deps.authorizeLocalProcess
-        ? await deps.authorizeLocalProcess(resolved.program, resolved.args)
+        ? await deps.authorizeLocalProcess(
+            resolved.program,
+            resolved.args,
+            resolved.continueOnError === true
+          )
         : false;
       if (authorized !== true) {
         return {

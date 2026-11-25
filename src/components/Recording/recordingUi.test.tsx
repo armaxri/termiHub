@@ -115,7 +115,7 @@ describe("the chip's words", () => {
     // Beside the Stop, not in it (B-011).
     expect(label()).toBe("Stop recording");
     expect(query("recording-bar-prompt")?.textContent).toBe(
-      "Password prompt: what you type now is not recorded, unless you choose so when saving."
+      "Password prompt: what you type now is kept out of the recording. When saving you decide whether to store it."
     );
     act(() => store().recordInput("a", "\r", () => "Password: "));
     act(() => store().recordInput("a", "l", () => "$ "));

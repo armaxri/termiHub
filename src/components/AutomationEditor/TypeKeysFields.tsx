@@ -107,7 +107,7 @@ export function TypeKeysFields({ draft, step, path, stepNumber, onChange }: Type
           onClick={() => setMoreKeys((v) => !v)}
           data-testid={`automation-editor-keys-more-${path}`}
         >
-          More keys
+          Special keys
         </Button>
       </p>
       {moreKeys && <MoreKeys path={path} onInsert={insertAtCaret} />}
@@ -307,7 +307,7 @@ function KeyRow({
               aria-label={`Delay before ${label} in milliseconds`}
               data-testid={`automation-editor-keys-delay-${id}`}
             />
-            <span className="type-keys__unit">ms</span>
+            <span className="type-keys__unit">ms before</span>
           </span>
         )}
         {!only && (

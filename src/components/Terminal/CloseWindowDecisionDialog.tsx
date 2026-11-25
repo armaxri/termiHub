@@ -224,18 +224,18 @@ export function CloseWindowDecisionDialog() {
           <Button variant="danger" onClick={handleEnd} data-testid="close-window-decision-end">
             {recording ? (
               <>
-                <Trash2 className="li" aria-hidden="true" /> {isQuit ? "Quit" : "Close"} without
-                saving
+                <Trash2 className="li close-window-decision__button-icon" aria-hidden="true" />{" "}
+                {isQuit ? "Quit" : "Close"} without saving
               </>
             ) : count > 0 ? (
               <>
-                <Power className="li" aria-hidden="true" /> {isQuit ? "Quit" : "Close"} &amp; end
-                sessions
+                <Power className="li close-window-decision__button-icon" aria-hidden="true" />{" "}
+                {isQuit ? "Quit" : "Close"} &amp; end sessions
               </>
             ) : (
               <>
-                <Trash2 className="li" aria-hidden="true" /> Discard &amp;{" "}
-                {isQuit ? "quit" : "close"}
+                <Trash2 className="li close-window-decision__button-icon" aria-hidden="true" />{" "}
+                Discard &amp; {isQuit ? "quit" : "close"}
               </>
             )}
           </Button>

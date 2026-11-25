@@ -146,7 +146,7 @@ describe("HistorySection (#5818, slice 9)", () => {
       "The automation was deleted."
     );
     expect(query("automation-run-target-run-2")!.textContent).toBe("db-1");
-    expect(query("automation-run-error-run-2")!.textContent).toBe("timed out");
+    expect(query("automation-run-error-run-2")!.textContent).toBe("Timed out");
     act(() => query("automation-run-toggle-run-2")!.click());
     expect(query("automation-run-details-run-2")).toBeNull();
   });

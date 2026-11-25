@@ -28,7 +28,7 @@ export function RecordingBar() {
           {recording.atPrompt && ` ${t("recording.promptNote")}`}
         </span>
         <Button variant="ghost" size="sm" onClick={cancel} data-testid="recording-bar-cancel">
-          Cancel
+          Discard and return
         </Button>
         <Button size="sm" onClick={() => stopRecording()} data-testid="recording-bar-return">
           Stop and return

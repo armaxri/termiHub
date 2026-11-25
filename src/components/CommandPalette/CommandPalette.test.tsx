@@ -233,7 +233,7 @@ describe("CommandPalette", () => {
     });
 
     it.each([
-      ["record macro", "Record automation (start/stop)"],
+      ["record macro", "Start recording in prod-web"],
       ["play macro", "Run automation…"],
     ])("the command once called %s is %s", (query, label) => {
       seed();
@@ -285,8 +285,9 @@ describe("CommandPalette", () => {
       window.addEventListener(OPEN_RUN_AUTOMATION_EVENT, listen);
       seed(null);
       typeInto("deploy");
+      // Nothing is open, so there is nothing to choose from (C-024).
       expect(row("wf-1")?.querySelector(".command-palette__target")?.textContent).toBe(
-        "asks where"
+        "open a terminal first"
       );
       keydown("Enter");
       window.removeEventListener(OPEN_RUN_AUTOMATION_EVENT, listen);

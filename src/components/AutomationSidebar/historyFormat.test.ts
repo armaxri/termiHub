@@ -89,7 +89,7 @@ describe("automation history format (#5818, slice 9)", () => {
     it("names the step that failed and what it does", () => {
       expect(automationRunOutcome(failed, steps)).toBe("Failed at step 2 of 2 (Run command: make)");
       expect(automationRunOutcome({ ...failed, continuedFailures: 2 }, steps)).toMatch(
-        / · 2 tolerated failures$/
+        / · 2 steps failed, the run went on$/
       );
     });
 

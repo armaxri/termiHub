@@ -22,6 +22,7 @@ function waitText(wait: AutomationWait, hidden: boolean): string {
     return message ? tf("automation.wait.hidden", { message }) : t("automation.wait.messageHidden");
   }
   if (wait.stillAsking) return t("automation.wait.stillAsking");
+  if (wait.answered) return t("automation.wait.answered");
   if (password) return t("automation.wait.passwordThen");
   return message ? tf("automation.wait.then", { message }) : t("automation.wait.messageThen");
 }
@@ -49,13 +50,12 @@ export function WaitingRunBar() {
     if (waiting) follow();
   }, [waiting, follow, rootPanel, tabGroups, lifecycle]);
 
-  // Once the password is typed, Continue is the way on again.
-  const stillAsking = waits.some((w) => w.stillAsking);
+  // Once the password is typed, Continue is the way on, and the bar says so.
   useEffect(() => {
-    if (!stillAsking) return;
+    if (!waiting) return;
     const timer = window.setInterval(recheck, 500);
     return () => window.clearInterval(timer);
-  }, [stillAsking, recheck]);
+  }, [waiting, recheck]);
 
   useEffect(() => {
     const onShow = (e: Event) => showTerminal((e as CustomEvent<{ tabId: string }>).detail.tabId);

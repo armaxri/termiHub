@@ -40,6 +40,9 @@ import { hotkeyConflict } from "./HotkeyField";
 import { tf } from "@/i18n/catalog";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { joinWords } from "@/utils/joinWords";
+import { triggerKindLabel } from "./stepMeta";
+import type { AutomationTrigger } from "@/types/generated/AutomationTrigger";
+import { triggerBlocked, unattendedStartBlocked } from "@/utils/triggerBlocked";
 import { waitingStep } from "@/utils/unattended";
 import { WhenItRuns, whenItRunsSummary } from "./WhenItRuns";
 import "./AutomationEditor.css";
@@ -270,9 +273,24 @@ export function AutomationEditorDialog({
       trigger.kind === "hotkey" ? [hotkeyConflict(trigger.binding, stepEditor.automations)] : []
     )
     .find((conflict) => conflict !== null);
+  // One draft for every question about what could start it.
+  const current = useMemo(() => fromDraft(draft, base), [draft, base]);
+  const find = (id: string) => automations.find((a) => a.id === id);
+  const connectionName = (id: string) => connections.find((c) => c.id === id)?.name;
+  const triggerBlockedBy = (trigger: AutomationTrigger) =>
+    triggerBlocked(trigger, current, find, connectionName);
+  const deadTrigger = draft.triggers
+    .map(({ trigger }) => ({ trigger, reason: triggerBlockedBy(trigger) }))
+    .find(({ reason }) => reason !== null);
   const footerNote =
     missing ??
     blockedBy ??
+    (deadTrigger
+      ? tf("automation.startBlocked.one", {
+          trigger: triggerKindLabel(deadTrigger.trigger.kind),
+          reason: deadTrigger.reason ?? "",
+        })
+      : null) ??
     (deadHotkey
       ? `The hotkey will not work: ${deadHotkey.keys} is used by “${deadHotkey.user}”.`
       : null);
@@ -296,8 +314,8 @@ export function AutomationEditorDialog({
   };
 
   const waitsAt = useMemo(
-    () => waitingStep(fromDraft(draft, base), (id) => automations.find((a) => a.id === id)),
-    [draft, base, automations]
+    () => waitingStep(current, (id) => automations.find((a) => a.id === id)),
+    [current, automations]
   );
   const stepUids = allUids(draft.steps);
   const anyExpanded = stepUids.some((uid) => expanded.has(uid));
@@ -310,7 +328,7 @@ export function AutomationEditorDialog({
           triggers: draft.triggers.map((x) => x.trigger),
           triggersEnabled: draft.triggersEnabled,
           schedules: isNew ? [] : linked,
-          connectionName: (id) => connections.find((c) => c.id === id)?.name,
+          connectionName,
         })}
         open={whenOpen}
         onOpenChange={setWhenOpen}
@@ -320,6 +338,8 @@ export function AutomationEditorDialog({
           triggers={draft.triggers}
           triggersEnabled={draft.triggersEnabled}
           waitsAt={waitsAt}
+          unattendedBlocked={unattendedStartBlocked(current, find)}
+          blockedBy={triggerBlockedBy}
           automationId={isNew ? null : automation.id}
           scheduleAfterSave={scheduleAfterSave}
           errors={errors}

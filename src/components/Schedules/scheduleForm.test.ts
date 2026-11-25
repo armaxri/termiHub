@@ -38,12 +38,12 @@ describe("scheduleFormSchema", () => {
   });
 
   it("bounds the interval to 1 minute … 1 week, whole minutes", () => {
-    expect(issues(valid({ everyMinutes: 0 }))).toContain("everyMinutes");
-    expect(issues(valid({ everyMinutes: "" }))).toContain("everyMinutes");
-    expect(issues(valid({ everyMinutes: 1.5 }))).toContain("everyMinutes");
-    expect(issues(valid({ everyMinutes: 1 }))).toEqual([]);
-    expect(issues(valid({ everyMinutes: 10080 }))).toEqual([]);
-    expect(issues(valid({ everyMinutes: 10081 }))).toContain("everyMinutes");
+    expect(issues(valid({ ruleKind: "interval", everyMinutes: 0 }))).toContain("everyMinutes");
+    expect(issues(valid({ ruleKind: "interval", everyMinutes: "" }))).toContain("everyMinutes");
+    expect(issues(valid({ ruleKind: "interval", everyMinutes: 1.5 }))).toContain("everyMinutes");
+    expect(issues(valid({ ruleKind: "interval", everyMinutes: 1 }))).toEqual([]);
+    expect(issues(valid({ ruleKind: "interval", everyMinutes: 10080 }))).toEqual([]);
+    expect(issues(valid({ ruleKind: "interval", everyMinutes: 10081 }))).toContain("everyMinutes");
   });
 
   it("requires a valid 24h time for daily/weekly and a day for weekly", () => {

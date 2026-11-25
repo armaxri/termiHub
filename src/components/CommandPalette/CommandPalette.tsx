@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { matchSorter } from "match-sorter";
 import { TerminalSquare, LayoutGrid, Radio, ChevronLeft, Zap } from "lucide-react";
-import { getActiveTab, useAppStore } from "@/store/appStore";
+import { collectLiveTabs, getActiveTab, useAppStore } from "@/store/appStore";
 import { useActivePanelId, useLayoutRenderTree } from "@/store/layoutSelectors";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
@@ -190,6 +190,11 @@ export function CommandPalette(): React.ReactElement {
   const runAutomation = useAppStore((s) => s.runAutomation);
   const experimental = useExperimentalFeatures();
   // Where an automation would type (R-083): the active terminal tab's title.
+  // "asks where" needs something to choose from (C-024).
+  const anyTerminal = useAppStore((s) =>
+    collectLiveTabs(s).some((tab) => tab.contentType === "terminal")
+  );
+  const recording = useAppStore((s) => s.recording !== null);
   const runTarget = useAppStore((s) => {
     const tab = getActiveTab(s);
     return tab?.contentType === "terminal" ? tab.title || "Terminal" : null;
@@ -211,6 +216,12 @@ export function CommandPalette(): React.ReactElement {
 
   // All entries (commands first, then connections) in declaration order — the
   // order shown when the query is empty.
+  // What it does now, not what it can do (C-024).
+  const recordLabel = recording
+    ? "Stop recording"
+    : runTarget === null
+      ? "Open a terminal and record"
+      : `Start recording in ${runTarget}`;
   const entries = useMemo<PaletteEntry[]>(() => {
     if (mode === "broadcast") {
       return automations.map((a) => ({
@@ -223,10 +234,10 @@ export function CommandPalette(): React.ReactElement {
     const commandEntries: PaletteEntry[] = buildCommands().map((cmd) => ({
       kind: "command",
       key: `command:${cmd.id}`,
-      label: cmd.label,
+      label: cmd.id === "toggle-macro-recording" ? recordLabel : cmd.label,
       accelerator: cmd.accelerator,
       available: cmd.available,
-      aliases: COMMAND_ALIASES[cmd.id] ?? [],
+      aliases: [...(COMMAND_ALIASES[cmd.id] ?? []), cmd.label],
       run: cmd.run,
     }));
     const connectionEntries: PaletteEntry[] = connections.map((conn) => ({
@@ -295,6 +306,7 @@ export function CommandPalette(): React.ReactElement {
     workspaces,
     rootPanel,
     activePanelId,
+    recordLabel,
   ]);
 
   // Ranked results. An empty query returns every entry in declaration order.
@@ -477,7 +489,9 @@ export function CommandPalette(): React.ReactElement {
                         {entry.blocked !== null
                           ? `Cannot run: ${entry.blockedShort}`
                           : runTarget === null
-                            ? "asks where"
+                            ? anyTerminal
+                              ? "asks where"
+                              : "open a terminal first"
                             : automationDoes(entry.automation, runTarget)}
                         {entry.triggersOff ? " · triggers off" : ""}
                       </span>

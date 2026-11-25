@@ -6,8 +6,6 @@
  */
 import { StateCreator } from "zustand";
 
-import { toast } from "@/components/ui";
-import { tf } from "@/i18n/catalog";
 import { isPasswordPrompt, promptOfTerminal } from "@/services/passwordPrompt";
 import {
   WAIT_FOR_USER_LIMIT_MS,
@@ -35,6 +33,10 @@ export interface AutomationWait {
    * next press goes on.
    */
   stillAsking: boolean;
+  /** Its terminal showed a password prompt since it waits. */
+  prompted?: boolean;
+  /** That prompt is gone: the password was typed (C-006). */
+  answered?: boolean;
 }
 
 /** What {@link AutomationWaitSlice.waitForUser} needs to know. */
@@ -56,7 +58,7 @@ export interface AutomationWaitSlice {
    * shows it. While the terminal shows a password prompt, the first call only says so.
    */
   continueAutomationWait: (runId: string) => void;
-  /** Stop saying that a terminal still asks once its prompt is answered. */
+  /** Look at the terminals that wait: is their password prompt answered? */
   recheckWaitingPrompts: () => void;
   /** End the waits whose terminal was closed, moved away or disconnected. */
   followWaitingTerminals: () => void;
@@ -81,13 +83,11 @@ export const createAutomationWaitSlice: StateCreator<AppState, [], [], Automatio
   waitForUser: ({ sessionId, ...request }, signal) => {
     if (signal?.isCancelled()) return Promise.resolve("cancelled");
     const { runId, tabId } = request;
-    const toastId = `automation-wait-${runId}`;
     return new Promise<WaitForUserResult>((resolve) => {
       const end = (result: WaitForUserResult): void => {
         if (pending.get(runId)?.end !== end) return;
         pending.delete(runId);
         clearTimeout(timer);
-        toast.dismiss(toastId);
         set({ automationWaits: get().automationWaits.filter((w) => w.runId !== runId) });
         resolve(result);
       };
@@ -100,24 +100,9 @@ export const createAutomationWaitSlice: StateCreator<AppState, [], [], Automatio
           { ...request, until: Date.now() + WAIT_FOR_USER_LIMIT_MS, stillAsking: false },
         ],
       });
-      if (getActiveTab(get())?.id === tabId) {
-        // The user types there now; the run may have been started elsewhere.
-        show(tabId);
-        return;
-      }
-      // toast-policy: off-screen — the terminal that waits does not show
-      toast.info(
-        tf("automation.wait.toast", { name: request.automationName, tab: request.tabTitle }),
-        {
-          id: toastId,
-          duration: Infinity,
-          action: {
-            label: tf("automation.wait.show", { tab: request.tabTitle }),
-            testId: "automation-wait-show",
-            onClick: () => show(tabId),
-          },
-        }
-      );
+      // The bar above the terminals says it, wherever the user is (C-009). One who is
+      // in that terminal types at once; the run may have been started elsewhere.
+      if (getActiveTab(get())?.id === tabId) show(tabId);
     });
   },
 
@@ -149,14 +134,18 @@ export const createAutomationWaitSlice: StateCreator<AppState, [], [], Automatio
   },
 
   recheckWaitingPrompts: () => {
-    const answered = (w: AutomationWait) =>
-      w.stillAsking && !isPasswordPrompt(promptOfTerminal(w.tabId));
-    if (!get().automationWaits.some(answered)) return;
-    set({
-      automationWaits: get().automationWaits.map((w) =>
-        answered(w) ? { ...w, stillAsking: false } : w
-      ),
+    const next = get().automationWaits.map((w) => {
+      const asking = isPasswordPrompt(promptOfTerminal(w.tabId));
+      const prompted = w.prompted === true || asking || w.stillAsking;
+      const answered = prompted && !asking;
+      const stillAsking = w.stillAsking && asking;
+      const same =
+        prompted === (w.prompted === true) &&
+        answered === (w.answered === true) &&
+        stillAsking === w.stillAsking;
+      return same ? w : { ...w, prompted, answered, stillAsking };
     });
+    if (next.some((w, i) => w !== get().automationWaits[i])) set({ automationWaits: next });
   },
 
   followWaitingTerminals: () => {

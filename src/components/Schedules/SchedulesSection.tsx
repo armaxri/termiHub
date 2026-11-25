@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { CalendarClock, Pause, Play, Plus } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { Button, Tooltip, toast, EmptyState } from "@/components/ui";
+import { Button, StatusDot, Tooltip, toast, EmptyState } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { AUTOMATION_JUST_SAVED_MS } from "@/components/AutomationSidebar/AutomationRow";
 import {
@@ -16,7 +16,7 @@ import { errorMessage } from "@/utils/errorMessage";
 import { t } from "@/i18n/catalog";
 import { ScheduleRow } from "./ScheduleRow";
 import { ScheduleSwitchOn } from "./ScheduleSwitchOn";
-import { lastRunAttention } from "./scheduleStatus";
+import { concernText, lastRunAttention } from "./scheduleStatus";
 import { useScheduleLabels } from "./useScheduleLabels";
 import "./Schedules.css";
 
@@ -121,34 +121,27 @@ export function SchedulesSection({ showTitle = true, collapse }: SchedulesSectio
   const failed = concerns.filter((c) => c === "error").length;
   const notRun = concerns.filter((c) => c === "warning").length;
   const count = collapse && schedules.length > 0 ? ` (${schedules.length})` : "";
-  const suffix = paused
-    ? ` · ${t("schedule.state.paused")}`
-    : failed > 0
-      ? `${count} · ${failed} failed`
-      : notRun > 0
-        ? `${count} · ${notRun} not run`
-        : count;
+  const suffix = paused ? ` · ${t("schedule.state.paused")}` : count;
+  const concern = concernText(failed, notRun);
   // A verb, not a switch (A-019): an "off" switch beside "Schedules" read as if
   // the schedules were off.
   const pauseLabel = paused ? "Resume all schedules" : "Pause all schedules";
-  // The words of the title come before the button's.
-  const compactPause = compactHeader || (failed + notRun > 0 && !paused);
   // There is nothing to pause without a schedule (R-135); a pause left on stays
   // reachable.
   const pauseToggle =
     schedules.length === 0 && !paused ? null : (
-      <Tooltip content={pauseLabel} side="top" disabled={!compactPause}>
+      <Tooltip content={pauseLabel} side="top" disabled={!compactHeader}>
         <Button
           variant="ghost"
           size="sm"
-          iconOnly={compactPause}
+          iconOnly={compactHeader}
           icon={paused ? <Play size={12} /> : <Pause size={12} />}
           aria-label={pauseLabel}
           onClick={() => handlePause(!paused)}
           data-paused={paused ? "true" : "false"}
           data-testid="schedules-pause-toggle"
         >
-          {compactPause ? null : paused ? "Resume" : "Pause all"}
+          {compactHeader ? null : paused ? "Resume" : "Pause all"}
         </Button>
       </Tooltip>
     );
@@ -217,6 +210,18 @@ export function SchedulesSection({ showTitle = true, collapse }: SchedulesSectio
           {pauseToggle}
         </div>
       )}
+      {showTitle && concern !== "" ? (
+        // On a line of its own: the header keeps its words (C-002, C-022).
+        <button
+          type="button"
+          className="schedules__concern"
+          onClick={() => collapse?.onChange(true)}
+          data-testid="schedules-concern"
+        >
+          <StatusDot tone={failed > 0 ? "error" : "warning"} size="sm" ariaHidden />
+          {concern}
+        </button>
+      ) : null}
       {!open ? null : schedules.length === 0 ? (
         <div id={contentId}>
           <EmptyState

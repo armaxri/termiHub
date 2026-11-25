@@ -19,6 +19,7 @@ import {
   rememberRunTargetChoice,
   rememberedRunTargetChoice,
   resolveRunTargetChoice,
+  samePanelAsAll,
   type RunTargetChoice,
   type RunTargetKind,
   type RunTargetOptions,
@@ -81,7 +82,8 @@ function targetOptions(options: RunTargetOptions): RadioGroupOption[] {
       "data-testid": "run-targets-target-broadcast",
     });
   }
-  if (active) {
+  // Without a split the two would be the same choice (C-012).
+  if (active && !samePanelAsAll(options)) {
     list.push({
       value: "panel",
       label: `Terminals in this split: ${names(options.panel)}`,
@@ -226,7 +228,9 @@ export function RunTargetsDialog({
         ? "This automation has no steps to run."
         : count === 0
           ? choice.kind === "active"
-            ? "This terminal is not connected."
+            ? options.terminals.length === 0
+              ? "No terminal is connected. Open one first."
+              : "This terminal is not connected."
             : "No live terminals in this choice."
           : null;
 
@@ -275,7 +279,7 @@ export function RunTargetsDialog({
           />
         </Field>
       )}
-      <Field label="On">
+      <Field label="Run in">
         <RadioGroup
           value={choice.kind}
           onValueChange={setKind}

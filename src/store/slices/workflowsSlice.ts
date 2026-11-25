@@ -150,6 +150,8 @@ export interface WorkflowParamPromptState {
 export interface LocalProcessPromptState {
   /** The program the step wants to spawn, as written. */
   program: string;
+  /** Refusing it does not end the run: the step continues on error. */
+  goesOn?: boolean;
   /** The file that would start (#5994); the approval is for this file. */
   path: string;
   /** The discrete arguments it would be spawned with. */

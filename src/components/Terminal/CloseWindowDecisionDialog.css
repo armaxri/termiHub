@@ -88,6 +88,7 @@
   white-space: nowrap;
 }
 
+.close-window-decision__button-icon.li,
 .close-window-decision__pill .li,
 .close-window-decision__row-icon.li,
 .close-window-decision__lead-icon.li {

@@ -42,6 +42,7 @@ function run(overrides: Partial<AutomationRun> = {}): AutomationRun {
 
 const names: Record<string, string> = { c1: "prod", c2: "db", c3: "web" };
 const nameOf = (id: string) => names[id];
+const context = { connectionName: nameOf, resolve: () => undefined };
 
 describe("triggers", () => {
   it("counts only connection-bound automatic triggers, never a hotkey", () => {
@@ -70,7 +71,7 @@ describe("triggers", () => {
       ],
     });
     expect(triggerSummary(a, nameOf)).toBe(
-      "On connect · prod, db +1; Hotkey Ctrl+Alt+D; On disconnect · Unknown connection"
+      "On connect · prod, db +1; Hotkey Ctrl+Alt+D; On disconnect · a deleted connection"
     );
   });
 
@@ -85,8 +86,9 @@ describe("triggers", () => {
     });
 
     it("names every hotkey and trigger while they are on", () => {
-      expect(triggerState(a, nameOf)).toEqual({
+      expect(triggerState(a, context)).toEqual({
         on: true,
+        effective: true,
         text:
           "Triggers on: hotkey Ctrl+Alt+D, matching output in prod, connecting to db, " +
           "disconnecting from prod, db +1",
@@ -94,7 +96,7 @@ describe("triggers", () => {
     });
 
     it("says what does not start it while they are off, and that it still runs", () => {
-      const off = triggerState({ ...a, triggersEnabled: false }, nameOf)!;
+      const off = triggerState({ ...a, triggersEnabled: false }, context)!;
       expect(off.on).toBe(false);
       expect(off.text).toMatch(
         /^Triggers off: hotkey Ctrl\+Alt\+D, matching output in prod, .+ and disconnecting/
@@ -102,12 +104,45 @@ describe("triggers", () => {
       expect(off.text).toMatch(/ do not start it\. You can still run it\.$/);
     });
 
+    describe("what can never start it is not among them (C-001)", () => {
+      const waits = { steps: [{ kind: "wait-for-user" as const }] };
+      const output = { kind: "on-output-match" as const, connectionIds: ["c1"], pattern: "x" };
+
+      it("says the others, and why that one will not", () => {
+        const some = automation({
+          ...waits,
+          triggers: [{ kind: "hotkey", binding: "F9" }, output],
+        });
+        expect(triggerState(some, context)).toEqual({
+          on: true,
+          effective: true,
+          text: "Triggers on: hotkey F9. On output match will not start it: step 1 waits for you.",
+        });
+      });
+
+      it("never says that triggers are on when none can start it", () => {
+        expect(triggerState(automation({ ...waits, triggers: [output] }), context)).toEqual({
+          on: true,
+          effective: false,
+          text: "No trigger can start it: step 1 waits for you.",
+        });
+        const hotkey = automation({ triggers: [{ kind: "hotkey", binding: "F9" }] });
+        expect(triggerState(hotkey, { ...context, blocked: true })?.text).toBe(
+          "No trigger can start it: it cannot run."
+        );
+        const gone = automation({ triggers: [{ kind: "on-connect", connectionIds: ["x"] }] });
+        expect(triggerState(gone, context)?.text).toBe(
+          "No trigger can start it: its connection was deleted."
+        );
+      });
+    });
+
     it.each([
       ["without a trigger", []],
       ["with a hotkey without keys", [{ kind: "hotkey" as const, binding: "" }]],
       ["without a connection", [{ kind: "on-connect" as const, connectionIds: [] }]],
     ])("says nothing %s", (_what, triggers) => {
-      expect(triggerState(automation({ triggers }), nameOf)).toBeNull();
+      expect(triggerState(automation({ triggers }), context)).toBeNull();
     });
   });
 

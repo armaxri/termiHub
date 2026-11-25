@@ -19,6 +19,7 @@ import type { AutomationTrigger } from "@/types/generated/AutomationTrigger";
 import type { ScheduleView } from "@/types/schedule";
 import { formatDayTime, formatRelativeTime } from "@/utils/formatters";
 import { automationRunTargets } from "./historyFormat";
+import { triggerBlocked } from "@/utils/triggerBlocked";
 import { joinWords } from "@/utils/joinWords";
 
 /** How many bound connection names a trigger lists before collapsing to "+N". */
@@ -70,7 +71,7 @@ function hotkeyBindings(triggers: readonly AutomationTrigger[]): string[] {
 
 /** The bound connections' names, the first few listed and the rest counted. */
 function connectionList(ids: string[], connectionName: ConnectionName): string {
-  const names = ids.map((id) => connectionName(id) ?? "Unknown connection");
+  const names = ids.map((id) => connectionName(id) ?? t("automation.deletedConnection"));
   const shown = names.slice(0, MAX_SUMMARY_CONNECTIONS).join(", ");
   const rest = names.length - MAX_SUMMARY_CONNECTIONS;
   return rest > 0 ? `${shown} +${rest}` : shown;
@@ -105,6 +106,8 @@ const TRIGGER_PHRASE = {
 /** What starts an automation by itself while its triggers are on, and what does not while off. */
 export interface TriggerState {
   on: boolean;
+  /** Something can start it now. */
+  effective: boolean;
   /** The whole sentence. */
   text: string;
 }
@@ -124,26 +127,53 @@ export function triggerPhrases(
   ];
 }
 
+/** What {@link triggerState} needs besides the automation. */
+export interface TriggerStateContext {
+  connectionName: ConnectionName;
+  resolve: (id: string) => Automation | undefined;
+  /** The automation cannot run at all. */
+  blocked?: boolean;
+}
+
 /**
- * The row's trigger line (#6026): which hotkey and what else starts it, or, while
- * its triggers are off, what does not start it any more. `null` when nothing
- * could: no trigger, or only ones without keys or connections.
+ * The row's trigger line (#6026): which hotkey and what else starts it, or, while its
+ * triggers are off, what does not start it any more. A trigger that can never start it
+ * is not among them, and says why (C-001). `null` when nothing could: no trigger, or
+ * only ones without keys or connections.
  */
 export function triggerState(
   automation: Automation,
-  connectionName: ConnectionName
+  { connectionName, resolve, blocked = false }: TriggerStateContext
 ): TriggerState | null {
-  const parts = triggerPhrases(automation.triggers, connectionName);
-  if (parts.length === 0) return null;
+  if (triggerPhrases(automation.triggers, connectionName).length === 0) return null;
   const on = triggersArmed(automation);
-  return {
-    on,
-    text: on
-      ? tf("automation.triggers.on", { triggers: parts.join(", ") })
-      : tf(parts.length > 1 ? "automation.triggers.offMany" : "automation.triggers.off", {
-          triggers: joinWords(parts),
-        }),
-  };
+  const broken = new Map<AutomationTrigger, string>();
+  for (const trigger of boundTriggers(automation.triggers)) {
+    const reason = triggerBlocked(trigger, automation, resolve, connectionName);
+    if (reason !== null) broken.set(trigger, reason);
+  }
+  const working = blocked
+    ? []
+    : triggerPhrases(
+        automation.triggers.filter((trigger) => !broken.has(trigger)),
+        connectionName
+      );
+  if (working.length === 0) {
+    const reason = blocked
+      ? t("automation.triggers.cannotRun")
+      : joinWords([...new Set(broken.values())]);
+    return { on, effective: false, text: tf("automation.triggers.none", { reason }) };
+  }
+  const text = on
+    ? tf("automation.triggers.on", { triggers: working.join(", ") })
+    : tf(working.length > 1 ? "automation.triggers.offMany" : "automation.triggers.off", {
+        triggers: joinWords(working),
+      });
+  if (!on || broken.size === 0) return { on, effective: on, text };
+  const notes = [...broken].map(([trigger, reason]) =>
+    tf("automation.startBlocked.row", { trigger: triggerKindLabel(trigger.kind), reason })
+  );
+  return { on, effective: true, text: [`${text}.`, ...notes].join(" ") };
 }
 
 /**

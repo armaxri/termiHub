@@ -2046,7 +2046,7 @@ describe("appStore — on-connect trigger dispatch (#1855)", () => {
     useAppStore.getState().setTabSessionId("tab-oc", "sess-oc-1");
     await vi.waitFor(() =>
       expect(error).toHaveBeenCalledWith(expect.stringMatching(/was not run$/), {
-        description: "“Health check” in web-1 is running.",
+        description: "“Health check” is running in web-1, at step 1 of 2.",
       })
     );
     expect(injected).toEqual([]);

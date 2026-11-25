@@ -492,7 +492,7 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
               if (running) {
                 const name = get().workflows.find((w) => w.id === workflowId)?.name ?? "";
                 toast.error(`“${name}” was not run`, {
-                  description: `${tf("automation.replace.one", { ...running })} is running.`,
+                  description: `${tf("automation.replace.one", { ...running })}.`,
                 });
                 return;
               }

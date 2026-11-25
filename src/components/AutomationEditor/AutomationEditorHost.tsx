@@ -8,6 +8,7 @@ import { toast } from "@/components/ui";
 import { getActiveTab, useAppStore } from "@/store/appStore";
 import {
   EDIT_AUTOMATION_EVENT,
+  RUN_AUTOMATION_AGAIN_EVENT,
   SHOW_AUTOMATION_RUNS_EVENT,
   type AutomationEventDetail,
 } from "@/store/slices/automationRunActions";
@@ -46,9 +47,12 @@ export function AutomationEditorHost() {
       else toast.error("The automation no longer exists");
     };
     const onRuns = (e: Event) => showHistoryInSidebar(idOf(e));
+    const onAgain = (e: Event) => setRunOnId(idOf(e));
+    window.addEventListener(RUN_AUTOMATION_AGAIN_EVENT, onAgain);
     window.addEventListener(EDIT_AUTOMATION_EVENT, onEdit);
     window.addEventListener(SHOW_AUTOMATION_RUNS_EVENT, onRuns);
     return () => {
+      window.removeEventListener(RUN_AUTOMATION_AGAIN_EVENT, onAgain);
       window.removeEventListener(EDIT_AUTOMATION_EVENT, onEdit);
       window.removeEventListener(SHOW_AUTOMATION_RUNS_EVENT, onRuns);
     };
