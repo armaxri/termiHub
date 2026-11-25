@@ -190,6 +190,17 @@ mod tests {
         assert!(!credentials.present);
     }
 
+    /// #6028, F-5: file servers travel with the tunnels.
+    #[test]
+    fn list_config_files_lists_the_file_servers() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("embedded_servers.json"), "{}").unwrap();
+        let files = list_config_files(dir.path().to_string_lossy().into_owned());
+        assert!(files
+            .iter()
+            .any(|f| f.name == "embedded_servers.json" && f.present));
+    }
+
     #[test]
     fn copy_config_files_copies_existing_files() {
         let src = TempDir::new().unwrap();

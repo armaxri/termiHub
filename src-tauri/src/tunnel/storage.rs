@@ -293,4 +293,67 @@ mod tests {
         let second = dir.path().join("tunnels.json.bak.1");
         assert_eq!(fs::read_to_string(second).unwrap(), "corrupt again!!!");
     }
+
+    // ── Where a tunnel runs, and what this build does not know (#6028) ──────
+
+    /// One stored tunnel as JSON, with `host` when given.
+    fn tunnel_json(id: &str, host: Option<serde_json::Value>) -> serde_json::Value {
+        let mut tunnel = serde_json::json!({
+            "id": id, "name": id, "sshConnectionId": "c", "autoStart": true,
+            "reconnectOnDisconnect": false,
+            "tunnelType": {"type": "dynamic", "config": {"localHost": "127.0.0.1", "localPort": 1080}},
+        });
+        if let Some(host) = host {
+            tunnel["host"] = host;
+        }
+        tunnel
+    }
+
+    /// Load `tunnels` from disk and save them again; returns what was loaded
+    /// and what is on disk after.
+    fn reload_and_save(
+        tunnels: Vec<serde_json::Value>,
+    ) -> (RecoveryResult<TunnelStore>, Vec<serde_json::Value>) {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let doc = serde_json::json!({"version": "1", "tunnels": tunnels});
+        fs::write(&storage.file_path, doc.to_string()).unwrap();
+        let loaded = storage.load_with_recovery().unwrap();
+        storage.save(&loaded.data).unwrap();
+        let after: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&storage.file_path).unwrap()).unwrap();
+        let after = after["tunnels"].as_array().unwrap().clone();
+        (loaded, after)
+    }
+
+    /// A host this build cannot read is kept as it is: the tunnel used to be
+    /// removed from the file as corrupt.
+    #[test]
+    fn a_tunnel_with_an_unreadable_host_is_kept_verbatim() {
+        for host in [
+            serde_json::Value::Null,
+            serde_json::json!("edge"),
+            serde_json::json!({"kind": "cluster", "clusterId": "a"}),
+            serde_json::json!({"kind": "agent"}),
+        ] {
+            let (loaded, after) = reload_and_save(vec![tunnel_json("t", Some(host.clone()))]);
+            assert!(loaded.warnings.is_empty(), "{host}: {:?}", loaded.warnings);
+            assert_eq!(after.len(), 1, "{host}");
+            assert_eq!(after[0].get("host"), Some(&host));
+        }
+    }
+
+    #[test]
+    fn a_tunnels_unknown_fields_survive_a_load_and_save() {
+        let mut tunnel = tunnel_json("t", Some(serde_json::json!({"kind": "thisComputer"})));
+        tunnel["futureField"] = serde_json::json!({"nested": [1, {"deep": true}]});
+        let (_, after) = reload_and_save(vec![tunnel.clone()]);
+        assert_eq!(after[0]["futureField"], tunnel["futureField"]);
+    }
+
+    #[test]
+    fn a_tunnel_without_a_host_is_not_given_one() {
+        let (_, after) = reload_and_save(vec![tunnel_json("t", None)]);
+        assert!(after[0].get("host").is_none());
+    }
 }
