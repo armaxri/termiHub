@@ -2146,6 +2146,8 @@ since), and "Cannot run" from `utils/runBlocked.ts`, which the palette and the r
 failed run's toast asks for the editor or the history through window events that
 `AutomationEditorHost` handles, as the stores must not import the views. `runAutomation` asks
 (`RunReplaceDialog`) before a run stops the one in progress, and an On connect trigger never does.
+Runs that type keys and step-by-step runs go on side by side, but never in one terminal: starting one
+where the other kind runs asks too and stops that one there (`runsReplacedBy`, #6042).
 How far a run is has one wording, `utils/runProgress.ts`. What an import left out is
 `Automation.importedInPart`, which the row shows and the editor's Save drops. Closing the last window or
 quitting asks first while an automation runs (`WindowCloseRequest.runs`). The sidebar replaced the
