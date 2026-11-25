@@ -7,6 +7,7 @@ import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
 import { resumedMarker } from "./dropCopy";
 import { NO_REPLAY, type ReplayEnd } from "./scrollbackReplay";
+import { trackUserInput } from "./xtermUserInput";
 
 /**
  * Who repaints an agent tab's scrollback after a reconnect (#5953).
@@ -34,10 +35,10 @@ export interface ResumedRepaint {
   /** Where the repaint ends in the session's output stream (#5990). */
   replayEnd: ReplayEnd;
   /**
-   * What the user typed while the session's buffer was read. The tab is not
-   * wired to the session yet, so the caller sends it once it is.
+   * What the user typed since the read of the session's buffer began, ending
+   * its collection. The caller sends it when it wires the tab to the session.
    */
-  typed: string[];
+  takeTyped: () => string[];
   /**
    * Set when the buffer has not arrived here yet and comes as live output: run
    * it right before the first of that output, which replaces the scrollback.
@@ -63,12 +64,13 @@ export async function repaintIfResumed(
   xterm: XTerm,
   sessionId: string,
   resetCommandMarks: () => void,
-  isCanceled: () => boolean
+  signal: AbortSignal
 ): Promise<ResumedRepaint> {
+  const isCanceled = () => signal.aborted;
   const repaint: ResumedRepaint = {
     resumed: false,
     replayEnd: NO_REPLAY,
-    typed: [],
+    takeTyped: () => [],
     beforeFirstOutput: null,
   };
   try {
@@ -78,35 +80,62 @@ export async function repaintIfResumed(
     return repaint;
   }
   if (!repaint.resumed || isCanceled()) return repaint;
-  const marker = `\r\n\x1b[90m${resumedMarker(new Date())}\x1b[0m`;
+  const writeMarker = () => xterm.writeln(`\r\n\x1b[90m${resumedMarker(new Date())}\x1b[0m`);
   // The raw buffer carries the OSC 133 marks: rebuild them, not duplicate.
   const clear = () => {
     resetCommandMarks();
     xterm.reset();
   };
-  // Only while the buffer is read: xterm also answers the queries in the buffer
-  // as data, and those must not reach the session as typed input.
-  const typing = xterm.onData((data) => repaint.typed.push(data));
+  const typing = collectTyped(xterm, signal);
+  repaint.takeTyped = typing.take;
   try {
     const { data, coming, ...end } = await getAgentSessionBuffer(sessionId);
-    typing.dispose();
     if (isCanceled()) return repaint;
     if (data.length > 0) {
       clear();
+      typing.beforeReplay();
       await new Promise<void>((resolve) => xterm.write(data, resolve));
       repaint.replayEnd = end;
     } else if (coming) {
       repaint.beforeFirstOutput = () => {
         clear();
-        xterm.writeln(marker);
+        writeMarker();
       };
     }
   } catch (err) {
     // The tab keeps its own scrollback; only the detached output is missing.
     frontendLog("terminal", `resumed-session buffer failed: ${errorMessage(err)}`);
-  } finally {
-    typing.dispose();
   }
-  xterm.writeln(marker);
+  writeMarker();
   return repaint;
+}
+
+/**
+ * Collect what the user types until `take`. xterm's answers to queries in the
+ * repainted buffer are not typed and stay out; should xterm not tell the two
+ * apart, nothing is collected from `beforeReplay` on.
+ */
+function collectTyped(
+  xterm: XTerm,
+  signal: AbortSignal
+): { beforeReplay: () => void; take: () => string[] } {
+  const typed: string[] = [];
+  const userInput = trackUserInput(xterm);
+  const data = xterm.onData((text) => {
+    if (userInput.take()) typed.push(text);
+  });
+  const stop = () => {
+    data.dispose();
+    userInput.dispose();
+  };
+  signal.addEventListener("abort", stop, { once: true });
+  return {
+    beforeReplay: () => {
+      if (!userInput.known) stop();
+    },
+    take: () => {
+      stop();
+      return typed;
+    },
+  };
 }

@@ -36,6 +36,10 @@ use crate::utils::remote_exec::run_remote_command_with_timeout;
 /// still open after this hangs or was left at a prompt.
 pub(super) const SHELL_END_CEILING: Duration = Duration::from_secs(300);
 
+/// How long the wait goes on for a session that is gone already: the session is
+/// dropped right before its end is announced.
+const END_ANNOUNCED_WITHIN: Duration = Duration::from_secs(1);
+
 /// Deadline of the check: starting PowerShell and the first run of a fresh
 /// executable (virus scanner) are slow on a loaded Windows host.
 pub(super) const CHECK_TIMEOUT: Duration = Duration::from_secs(60);
@@ -285,14 +289,16 @@ impl<R: Runtime> SessionEndWatch<R> {
     /// Wait until the session ended, at most `ceiling`. `is_open` says whether
     /// it still exists: one that ended before the watch began sent no event.
     pub(super) fn wait(&self, ceiling: Duration, is_open: impl FnOnce() -> bool) -> ShellEnd {
-        // Already ended: an end seen by the watch is queued before the session
-        // is dropped, so an absent session without one ended earlier.
-        let ceiling = if is_open() { ceiling } else { Duration::ZERO };
-        match self.ended.recv_timeout(ceiling) {
+        let open = is_open();
+        let limit = if open {
+            ceiling
+        } else {
+            END_ANNOUNCED_WITHIN.min(ceiling)
+        };
+        match self.ended.recv_timeout(limit) {
             Ok(Some(code)) => ShellEnd::Exited(code),
-            Ok(None) => ShellEnd::NoStatus,
-            Err(RecvTimeoutError::Timeout) if ceiling > Duration::ZERO => ShellEnd::StillOpen,
-            Err(_) => ShellEnd::NoStatus,
+            Err(RecvTimeoutError::Timeout) if open => ShellEnd::StillOpen,
+            Ok(None) | Err(_) => ShellEnd::NoStatus,
         }
     }
 }

@@ -16,6 +16,8 @@ interface XtermWithUserInput {
 
 /** Tells, once per `onData`, whether the data came from the user. */
 export interface UserInputTracker {
+  /** Whether xterm tells at all; otherwise `take` is always true. */
+  known: boolean;
   take: () => boolean;
   dispose: () => void;
 }
@@ -23,12 +25,15 @@ export interface UserInputTracker {
 /** Track `xterm`'s user input. Without the private event, everything counts as the user's. */
 export function trackUserInput(xterm: XTerm): UserInputTracker {
   const onUserInput = (xterm as unknown as XtermWithUserInput)._core?.coreService?.onUserInput;
-  if (typeof onUserInput !== "function") return { take: () => true, dispose: () => undefined };
+  if (typeof onUserInput !== "function") {
+    return { known: false, take: () => true, dispose: () => undefined };
+  }
   let pending = false;
   const subscription = onUserInput(() => {
     pending = true;
   });
   return {
+    known: true,
     take: () => {
       const user = pending;
       pending = false;

@@ -129,9 +129,7 @@ export class TerminalOutputFlow {
   /** xterm's write callback fired for `bytes` previously taken. */
   written(bytes: number): void {
     this.inflight = Math.max(0, this.inflight - bytes);
-    if (this.isPaused && this.stagedLen + this.inflight <= this.low) {
-      this.setPaused(false);
-    }
+    this.resumeIfDrained();
   }
 
   /** xterm refused a taken batch: put it back in front of the staged output. */
@@ -139,6 +137,13 @@ export class TerminalOutputFlow {
     this.inflight = Math.max(0, this.inflight - batch.length);
     this.staged.unshift(batch);
     this.stagedLen += batch.length;
+  }
+
+  /** Drop the staged output: a repaint of the terminal shows it. */
+  discardStaged(): void {
+    this.staged = [];
+    this.stagedLen = 0;
+    this.resumeIfDrained();
   }
 
   /** The terminal is going away: never leave the backend paused. */
@@ -154,6 +159,12 @@ export class TerminalOutputFlow {
       dropped += oldest.length;
     }
     if (dropped > 0) this.onOverflow?.(dropped);
+  }
+
+  private resumeIfDrained(): void {
+    if (this.isPaused && this.stagedLen + this.inflight <= this.low) {
+      this.setPaused(false);
+    }
   }
 
   private setPaused(paused: boolean): void {
