@@ -1,16 +1,3 @@
-.tunnel-sidebar {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  overflow: hidden;
-}
-
-.tunnel-sidebar__list {
-  flex: 1;
-  overflow-y: auto;
-  padding: var(--spacing-xs) 0;
-}
-
 /*
  * The row is the shared ServiceListItem (issue 6028). Only what a chained hop
  * adds is here.

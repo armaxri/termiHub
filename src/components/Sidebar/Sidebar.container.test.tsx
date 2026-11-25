@@ -31,9 +31,6 @@ vi.mock("./ConnectionList", () => ({
   ConnectionList: () => <div data-testid="panel-connections" />,
 }));
 vi.mock("./FileBrowser", () => ({ FileBrowser: () => <div data-testid="panel-files" /> }));
-vi.mock("@/components/TunnelSidebar", () => ({
-  TunnelSidebar: () => <div data-testid="panel-tunnels" />,
-}));
 vi.mock("@/components/WorkspaceSidebar", () => ({
   WorkspaceSidebar: () => <div data-testid="panel-workspaces" />,
 }));
@@ -46,8 +43,8 @@ vi.mock("@/components/RecentSessionsSidebar", () => ({
 vi.mock("@/components/NetworkTools/NetworkToolsSidebar", () => ({
   NetworkToolsSidebar: () => <div data-testid="panel-network-tools" />,
 }));
-vi.mock("@/components/EmbeddedServerSidebar", () => ({
-  EmbeddedServerSidebar: () => <div data-testid="panel-services" />,
+vi.mock("@/components/ServicesSidebar", () => ({
+  ServicesSidebar: () => <div data-testid="panel-services" />,
 }));
 vi.mock("@/components/Plugins", () => ({
   PluginManagerView: () => <div data-testid="panel-plugins" />,
@@ -57,8 +54,7 @@ vi.mock("@/components/Plugins", () => ({
 const VIEWS: ReadonlyArray<{ view: SidebarView; panelTestid: string; title: string }> = [
   { view: "connections", panelTestid: "panel-connections", title: "Connections" },
   { view: "files", panelTestid: "panel-files", title: "File browser" },
-  { view: "tunnels", panelTestid: "panel-tunnels", title: "SSH tunnels" },
-  { view: "services", panelTestid: "panel-services", title: "File servers" },
+  { view: "services", panelTestid: "panel-services", title: "Services" },
   { view: "workspaces", panelTestid: "panel-workspaces", title: "Workspaces" },
   { view: "automations", panelTestid: "panel-automations", title: "Automations" },
   { view: "network-tools", panelTestid: "panel-network-tools", title: "Network tools" },
@@ -155,7 +151,7 @@ describe("Sidebar container (#2953)", () => {
 
   it("collapses live when sidebarCollapsed flips to true", () => {
     act(() => {
-      useAppStore.setState({ sidebarView: "tunnels", sidebarCollapsed: false });
+      useAppStore.setState({ sidebarView: "services", sidebarCollapsed: false });
     });
     renderSidebar();
     expect(container.querySelector('[data-testid="sidebar"]')).not.toBeNull();
@@ -185,10 +181,10 @@ describe("Sidebar container (#2953)", () => {
 describe("Sidebar landmark (A11Y2-012, #4351)", () => {
   it("is a complementary landmark named after the active view", () => {
     act(() => {
-      useAppStore.setState({ sidebarView: "tunnels", sidebarCollapsed: false });
+      useAppStore.setState({ sidebarView: "services", sidebarCollapsed: false });
     });
     renderSidebar();
-    const aside = getByRole("complementary", "SSH tunnels", container);
+    const aside = getByRole("complementary", "Services", container);
     expect(aside).toBe(container.querySelector('[data-testid="sidebar"]'));
 
     act(() => {

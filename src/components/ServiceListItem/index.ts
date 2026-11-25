@@ -1,4 +1,5 @@
 export { ServiceListItem } from "./ServiceListItem";
 export type { ServiceListItemProps, ServiceRowAction } from "./ServiceListItem";
 export { serviceRowTestIds } from "./serviceRowTestIds";
-export { onlyHealth, ServiceCounts } from "./ServiceCounts";
+export { ServiceCounts } from "./ServiceCounts";
+export { MiddleEllipsis } from "./MiddleEllipsis";

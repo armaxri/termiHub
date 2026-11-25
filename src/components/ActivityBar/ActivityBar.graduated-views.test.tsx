@@ -1,5 +1,5 @@
 /**
- * SSH tunnels, services, network tools (#5858) and Automations (#5818) show in
+ * Services, network tools (#5858) and Automations (#5818) show in
  * the activity bar with experimental features off. One Automations item replaces
  * Macros and Workflows. A view the user hid stays hidden.
  */
@@ -19,12 +19,11 @@ vi.mock("@/components/OpenConnections/OpenConnectionsModal", () => ({
 setupSettingsRegion();
 
 const GRADUATED = {
-  tunnels: "activity-bar-ssh-tunnels",
   services: "activity-bar-services",
   "network-tools": "activity-bar-network-tools",
   automations: "activity-bar-automations",
 } as const;
-const REPLACED = ["activity-bar-macros", "activity-bar-workflows"];
+const REPLACED = ["activity-bar-macros", "activity-bar-workflows", "activity-bar-ssh-tunnels"];
 
 let container: HTMLDivElement;
 let root: Root;
@@ -88,10 +87,9 @@ describe("ActivityBar — graduated views (#5858, #5818)", () => {
 
   it("keeps a view the user hid hidden", async () => {
     seedSettings({ experimentalFeaturesEnabled: false });
-    hideViews(["tunnels", "services", "automations"]);
+    hideViews(["services", "automations"]);
     await render();
     expect(item(GRADUATED.automations)).toBeNull();
-    expect(item(GRADUATED.tunnels)).toBeNull();
     expect(item(GRADUATED.services)).toBeNull();
     expect(item(GRADUATED["network-tools"])).not.toBeNull();
   });

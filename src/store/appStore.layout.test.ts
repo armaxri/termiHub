@@ -206,7 +206,7 @@ describe("appStore — layout state", () => {
         sidebarVisible: true,
         statusBarVisible: true,
         hiddenActivityBarViews: [],
-        sidebarView: "tunnels",
+        sidebarView: "services",
         sidebarCollapsed: true,
       },
     });
@@ -356,21 +356,21 @@ describe("toggleActivityBarView", () => {
   });
 
   it("hides a visible view", () => {
-    useAppStore.getState().toggleActivityBarView("tunnels");
-    expect(useAppStore.getState().layoutConfig.hiddenActivityBarViews).toContain("tunnels");
+    useAppStore.getState().toggleActivityBarView("services");
+    expect(useAppStore.getState().layoutConfig.hiddenActivityBarViews).toContain("services");
   });
 
   it("shows a hidden view", () => {
     useAppStore.setState({
-      layoutConfig: { ...DEFAULT_LAYOUT, hiddenActivityBarViews: ["tunnels"] },
+      layoutConfig: { ...DEFAULT_LAYOUT, hiddenActivityBarViews: ["services"] },
     });
-    useAppStore.getState().toggleActivityBarView("tunnels");
-    expect(useAppStore.getState().layoutConfig.hiddenActivityBarViews).not.toContain("tunnels");
+    useAppStore.getState().toggleActivityBarView("services");
+    expect(useAppStore.getState().layoutConfig.hiddenActivityBarViews).not.toContain("services");
   });
 
   it("collapses the sidebar when hiding the active view", () => {
-    useAppStore.setState({ sidebarView: "tunnels", sidebarCollapsed: false });
-    useAppStore.getState().toggleActivityBarView("tunnels");
+    useAppStore.setState({ sidebarView: "services", sidebarCollapsed: false });
+    useAppStore.getState().toggleActivityBarView("services");
     expect(useAppStore.getState().sidebarCollapsed).toBe(true);
   });
 
@@ -381,7 +381,7 @@ describe("toggleActivityBarView", () => {
 
   it("does not collapse the sidebar when hiding an inactive view", () => {
     useAppStore.setState({ sidebarView: "connections", sidebarCollapsed: false });
-    useAppStore.getState().toggleActivityBarView("tunnels");
+    useAppStore.getState().toggleActivityBarView("services");
     expect(useAppStore.getState().sidebarCollapsed).toBe(false);
   });
 });

@@ -168,6 +168,8 @@ export interface TunnelEditorMeta {
    * section (PROD-023). Ignored when editing an existing tunnel.
    */
   sshConnectionId?: string;
+  /** For a NEW tunnel: its type, chosen in the New menu (#6028). */
+  tunnelType?: "local" | "remote" | "dynamic";
 }
 
 export interface WorkspaceEditorMeta {

@@ -15,7 +15,7 @@ import type { EmbeddedServerConfig } from "@/types/embeddedServer";
 import { useAppStore } from "@/store/appStore";
 import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { TooltipProvider } from "@/components/ui";
-import { EmbeddedServerSidebar } from "./EmbeddedServerSidebar";
+import { ServicesSidebar } from "./ServicesSidebar";
 
 const toastError = vi.fn();
 
@@ -100,6 +100,7 @@ setupAgentsRegion();
 function seedStore(servers = [makeServer("srv-1", "Docs")], states: Record<string, unknown> = {}) {
   (useAppStore as unknown as { setState: (p: Record<string, unknown>) => void }).setState({
     tunnels: [],
+    tunnelStates: {},
     embeddedServers: servers,
     embeddedServerStates: states,
     saveEmbeddedServer,
@@ -117,7 +118,7 @@ async function render() {
   act(() =>
     root.render(
       <TooltipProvider>
-        <EmbeddedServerSidebar />
+        <ServicesSidebar />
       </TooltipProvider>
     )
   );

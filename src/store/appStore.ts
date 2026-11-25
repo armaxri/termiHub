@@ -97,7 +97,6 @@ export {
 export type SidebarView =
   | "connections"
   | "files"
-  | "tunnels"
   | "services"
   | "workspaces"
   | "automations"

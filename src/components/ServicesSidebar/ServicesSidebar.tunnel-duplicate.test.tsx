@@ -12,7 +12,7 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import type { TunnelConfig } from "@/types/tunnel";
 import { TooltipProvider } from "@/components/ui";
-import { TunnelSidebar } from "./TunnelSidebar";
+import { ServicesSidebar } from "./ServicesSidebar";
 import { serviceMenuItem } from "@/test/serviceMenu";
 
 const toastSuccess = vi.fn();
@@ -69,6 +69,7 @@ function seedStore(
 ) {
   (useAppStore as unknown as { setState: (p: Record<string, unknown>) => void }).setState({
     embeddedServers: [],
+    embeddedServerStates: {},
     tunnels: [tunnel],
     tunnelStates: {},
     connections: [],
@@ -85,7 +86,7 @@ async function renderSidebar() {
   await act(async () => {
     root.render(
       <TooltipProvider delayDuration={0}>
-        <TunnelSidebar />
+        <ServicesSidebar />
       </TooltipProvider>
     );
   });

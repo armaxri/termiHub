@@ -38,13 +38,3 @@ export function ServiceCounts({ counts, only, onOnly, ...rest }: ServiceCountsPr
     </div>
   );
 }
-
-/** The rows `only` leaves; a number that is gone shows all of them again. */
-export function onlyHealth<T>(
-  rows: readonly T[],
-  only: ServiceHealth | null,
-  healthOf: (row: T) => ServiceHealth
-): T[] {
-  if (only === null || !rows.some((row) => healthOf(row) === only)) return [...rows];
-  return rows.filter((row) => healthOf(row) === only);
-}

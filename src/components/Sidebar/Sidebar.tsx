@@ -1,20 +1,18 @@
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
 import { FileBrowser } from "./FileBrowser";
-import { TunnelSidebar } from "@/components/TunnelSidebar";
 import { WorkspaceSidebar } from "@/components/WorkspaceSidebar";
 import { AutomationSidebar } from "@/components/AutomationSidebar";
 import { RecentSessionsSidebar } from "@/components/RecentSessionsSidebar";
 import { NetworkToolsSidebar } from "@/components/NetworkTools/NetworkToolsSidebar";
-import { EmbeddedServerSidebar } from "@/components/EmbeddedServerSidebar";
+import { ServicesSidebar } from "@/components/ServicesSidebar";
 import { PluginManagerView } from "@/components/Plugins";
 import "./Sidebar.css";
 
 const VIEW_TITLES: Record<string, string> = {
   connections: "Connections",
   files: "File browser",
-  tunnels: "SSH tunnels",
-  services: "File servers",
+  services: "Services",
   workspaces: "Workspaces",
   automations: "Automations",
   "network-tools": "Network tools",
@@ -48,8 +46,7 @@ export function Sidebar({ width }: SidebarProps) {
       <div className="sidebar__content">
         {sidebarView === "connections" && <ConnectionList />}
         {sidebarView === "files" && <FileBrowser />}
-        {sidebarView === "tunnels" && <TunnelSidebar />}
-        {sidebarView === "services" && <EmbeddedServerSidebar />}
+        {sidebarView === "services" && <ServicesSidebar />}
         {sidebarView === "workspaces" && <WorkspaceSidebar />}
         {sidebarView === "automations" && <AutomationSidebar />}
         {sidebarView === "recent-sessions" && <RecentSessionsSidebar />}

@@ -4,7 +4,7 @@ import { Controller } from "react-hook-form";
 import { z } from "zod";
 import { useZodEditorForm } from "@/hooks/useZodEditorForm";
 import { useRevealOnSave } from "@/hooks/useRevealedErrors";
-import "./EmbeddedServerSidebar.css";
+import "./EmbeddedServer.css";
 import { AlertTriangle } from "lucide-react";
 import { open as openFolderDialog } from "@/services/nativeDialog";
 import {
@@ -44,6 +44,8 @@ interface Props {
    * which the copy does not have.
    */
   draft?: EmbeddedServerConfig | null;
+  /** The kind of a new server. */
+  initialType?: ServerType;
   /** Whether the edited server is running, so moving it stops it. */
   running?: boolean;
   /**
@@ -131,25 +133,25 @@ function folderName(folder: string): string | undefined {
 }
 
 /** Blank default config used when creating a new server. */
-function defaultConfig(): ServerFormState {
+function defaultConfig(serverType: ServerType): ServerFormState {
   return {
     id: "",
     name: "",
-    serverType: "http",
+    serverType,
     rootDirectory: "",
     bindHost: "127.0.0.1",
-    port: DEFAULT_PORTS.http,
+    port: DEFAULT_PORTS[serverType],
     autoStart: false,
     readOnly: false,
-    directoryListing: true,
-    ftpAuth: undefined,
+    directoryListing: serverType === "http" ? true : undefined,
+    ftpAuth: serverType === "ftp" ? { type: "anonymous" } : undefined,
     httpAuth: undefined,
   };
 }
 
 /** The form's values for an existing server or a copy, else a blank one. */
-function initialConfig(config: EmbeddedServerConfig | null): ServerFormState {
-  return config ? { ...config } : defaultConfig();
+function initialConfig(config: EmbeddedServerConfig | null, type: ServerType): ServerFormState {
+  return config ? { ...config } : defaultConfig(type);
 }
 
 /** Who can open a server, in words; the addresses are for special cases. */
@@ -210,6 +212,7 @@ export function EmbeddedServerDialog({
   onOpenChange,
   config,
   draft = null,
+  initialType = "http",
   running = false,
   onSave,
   agents = [],
@@ -235,7 +238,7 @@ export function EmbeddedServerDialog({
     canSave,
   } = useZodEditorForm<ServerFormState>({
     schema: serverFormSchema,
-    defaultValues: initialConfig(config ?? draft),
+    defaultValues: initialConfig(config ?? draft, initialType),
   });
   // Errors show once the user edited a field and left it, or tried to save
   // (#5917) — a new service does not open with "Name is required." in red.
@@ -251,7 +254,7 @@ export function EmbeddedServerDialog({
   // leaks in and the network-interface list refreshes.
   useEffect(() => {
     if (open) {
-      const initial = initialConfig(config ?? draft);
+      const initial = initialConfig(config ?? draft, initialType);
       reset(initial);
       rebaseline(initial);
       setLocation(storedLocation.current);
@@ -266,7 +269,7 @@ export function EmbeddedServerDialog({
           );
         });
     }
-  }, [open, config, draft, reset, rebaseline]);
+  }, [open, config, draft, initialType, reset, rebaseline]);
 
   const handleProtocolChange = (type: ServerType) => {
     const cur = getValues();

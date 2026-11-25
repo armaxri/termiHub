@@ -260,18 +260,17 @@ export function ServiceListItem({
     </DropdownMenuRoot>
   );
 
-  const { where } = model;
   const description = model.description?.trim();
   // "Anyone on your network can upload" says who reaches it, too.
   const riskSaysReach = model.risk !== undefined && address?.copy !== undefined;
 
   const details = (
     <>
-      {where.label !== t("service.where.here") && (
-        <Tooltip content={where.label} side="right">
+      {model.machine !== undefined && (
+        <Tooltip content={model.where.label} side="right">
           <span className="service-row__machine" data-testid={ids.machineTestId}>
             <HardDrive size={11} className="service-row__machine-icon" aria-hidden="true" />
-            <MiddleEllipsis text={where.name ?? where.label} />
+            <MiddleEllipsis text={model.machine} />
           </span>
         </Tooltip>
       )}

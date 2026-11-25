@@ -5,7 +5,12 @@ import { useAppStore } from "@/store/appStore";
 import { ServiceListItem, type ServiceRowAction } from "@/components/ServiceListItem";
 import type { TunnelConfig, TunnelState } from "@/types/tunnel";
 import { useByteRate } from "@/hooks/useByteRate";
-import { tunnelModel, type ServiceContext, type ServiceNextStep } from "@/utils/serviceModel";
+import {
+  tunnelModel,
+  withoutAgent,
+  type ServiceContext,
+  type ServiceNextStep,
+} from "@/utils/serviceModel";
 import {
   resolveTunnelHost,
   isAgentHost,
@@ -14,6 +19,7 @@ import {
 } from "@/utils/tunnelHost";
 import type { PairStatus } from "@/utils/tunnelChain";
 import { tunnelRowTooltip } from "./tunnelRowTooltip";
+import "./TunnelListItem.css";
 
 interface TunnelListItemProps {
   tunnel: TunnelConfig;
@@ -44,6 +50,8 @@ interface TunnelListItemProps {
    * with a link badge and its own "this computer" host badge.
    */
   nested?: boolean;
+  /** Whether the row stands under its agent's line, which says what it shares. */
+  underAgent?: boolean;
   /**
    * The combined pair status when this row belongs to a chained pair: whether
    * `localhost:PORT` works here, which the parent's row says when it does not.
@@ -77,16 +85,18 @@ export function TunnelListItem({
   rowRef,
   rowProps,
   nested = false,
+  underAgent = false,
   pairStatus,
   companionRedundant = false,
   onRemoveCompanion,
 }: TunnelListItemProps) {
-  const model = tunnelModel(
+  const own = tunnelModel(
     tunnel,
     state,
     context,
     pairStatus && { role: nested ? "hop" : "parent", status: pairStatus }
   );
+  const model = underAgent ? withoutAgent(own) : own;
   const connectAgent = useConnectAgent();
   const openConnectionEditorTab = useAppStore((s) => s.openConnectionEditorTab);
   const checkTunnelsAgain = useAppStore((s) => s.checkTunnelsAgain);

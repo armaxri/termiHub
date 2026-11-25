@@ -15,7 +15,7 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import type { EmbeddedServerConfig, ServerState } from "@/types/embeddedServer";
 import { TooltipProvider } from "@/components/ui";
-import { EmbeddedServerSidebar } from "./EmbeddedServerSidebar";
+import { ServicesSidebar } from "./ServicesSidebar";
 import { serviceMenuItem } from "@/test/serviceMenu";
 
 const toastSuccess = vi.fn();
@@ -86,6 +86,7 @@ function seedStore(
 ) {
   (useAppStore as unknown as { setState: (p: Record<string, unknown>) => void }).setState({
     tunnels: [],
+    tunnelStates: {},
     embeddedServers: servers,
     embeddedServerStates: states,
     saveEmbeddedServer: vi.fn(() => Promise.resolve()),
@@ -99,7 +100,7 @@ async function renderSidebar() {
   await act(async () => {
     root.render(
       <TooltipProvider delayDuration={0}>
-        <EmbeddedServerSidebar />
+        <ServicesSidebar />
       </TooltipProvider>
     );
   });
@@ -201,6 +202,6 @@ describe("EmbeddedServerSidebar — delete confirmation (#1393)", () => {
     );
     expect(toastSuccess).not.toHaveBeenCalled();
     // The server row is still present (the store keeps it on failure).
-    expect(container.querySelector('[data-testid="server-list"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="services-list"]')).not.toBeNull();
   });
 });
