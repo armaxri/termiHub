@@ -3160,9 +3160,15 @@ next start.
 runs, its state with the reason and the next step, its counters, its address and its actions. The
 model is pure, and the rules live there, not in components:
 
-- **Address** (`serviceAddress.ts`): only while it runs, only what someone can type, or with the
-  machine it opens on. A wide bind is never shown; it becomes the address of the machine that
-  listens.
+- **Address** (`serviceAddress.ts`): only while it runs, only what someone can type, and who reaches
+  it. A wide bind is never shown; it becomes the address of the machine that listens, and when nobody
+  knows that one there is nothing to copy.
+- **Next steps** follow the cause that the backend sends with a reason (`ServiceCause` in
+  `core/src/util/service_cause.rs`: port in use, agent offline, store locked, connection), never its
+  words. A cause of a newer build reads `other` and offers nothing. "Use another port" takes the next
+  one that no service of this computer is set to. "Connect agent" is `connectAgent.ts`, the same
+  steps as on the agent's row. A cause is known for what runs on this computer; an agent's own start
+  failures come as text only.
 - **Actions** come in one order with one set of words and keys. An action that cannot act is absent.
   "Open in browser" is absent for a server on another machine's localhost.
 

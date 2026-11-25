@@ -10,7 +10,7 @@ import {
   isCompanion,
   isCompanionRedundant,
   orderTunnelRows,
-  pairStatusLabel,
+  hasHopName,
 } from "./tunnelChain";
 
 /** An agent-hosted loopback `-L` parent — the case chaining remediates. */
@@ -136,16 +136,11 @@ describe("combinedPairStatus with an agent that is offline (#6028)", () => {
   });
 });
 
-describe("pairStatusLabel", () => {
-  it("maps each pair status to its 'Linked · …' label", () => {
-    expect(pairStatusLabel("connected")).toBe("Linked · connected");
-    expect(pairStatusLabel("connecting")).toBe("Linked · connecting");
-    expect(pairStatusLabel("degraded")).toBe("Linked · degraded");
-    expect(pairStatusLabel("down")).toBe("Linked · down");
-  });
-
-  it("has no label for an unchained ('none') parent", () => {
-    expect(pairStatusLabel("none")).toBe("");
+describe("hasHopName", () => {
+  it("is the name a companion is made with, until the user changes it", () => {
+    const companion = deriveCompanion(agentLocalParent(), "ssh");
+    expect(hasHopName(companion)).toBe(true);
+    expect(hasHopName({ name: "My own name" })).toBe(false);
   });
 });
 

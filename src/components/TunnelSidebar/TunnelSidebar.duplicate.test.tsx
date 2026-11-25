@@ -68,6 +68,7 @@ function seedStore(
   tunnel = makeTunnel("tun-1", "My Tunnel")
 ) {
   (useAppStore as unknown as { setState: (p: Record<string, unknown>) => void }).setState({
+    embeddedServers: [],
     tunnels: [tunnel],
     tunnelStates: {},
     connections: [],

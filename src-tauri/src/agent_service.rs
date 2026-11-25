@@ -34,7 +34,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use chrono::{DateTime, Local};
 use tauri::{AppHandle, Manager, Runtime};
+use termihub_core::util::service_cause::ServiceCause;
 
 use self::hosted::{Away, WaitFor};
 
@@ -55,6 +57,36 @@ pub fn agent_rpc_client<R: Runtime>(app: &AppHandle<R>) -> Option<Arc<dyn AgentR
         .map(|state| (*state).clone())
 }
 
+/// Why a service does not run: the sentence its row shows, and the kind of cause
+/// its remedy is chosen by (#6063). The row names the machine once, beside the
+/// service, so the sentences say "its agent".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reason {
+    pub text: String,
+    pub cause: Option<ServiceCause>,
+}
+
+impl Reason {
+    pub fn new(text: impl Into<String>, cause: Option<ServiceCause>) -> Self {
+        Self {
+            text: text.into(),
+            cause,
+        }
+    }
+}
+
+impl From<String> for Reason {
+    fn from(text: String) -> Self {
+        Self::new(text, None)
+    }
+}
+
+impl From<&str> for Reason {
+    fn from(text: &str) -> Self {
+        Self::new(text, None)
+    }
+}
+
 /// The reason a service whose stored host cannot be read is not started
 /// (#6028). Shown on its row.
 pub const HOST_UNREADABLE: &str =
@@ -66,7 +98,7 @@ enum SavedAgent {
     Unknown,
     /// No saved agent has this id.
     Removed,
-    Named(String),
+    Saved,
 }
 
 fn saved_agent<R: Runtime>(app: &AppHandle<R>, agent_id: &str) -> SavedAgent {
@@ -77,15 +109,8 @@ fn saved_agent<R: Runtime>(app: &AppHandle<R>, agent_id: &str) -> SavedAgent {
         return SavedAgent::Unknown;
     };
     match all.agents.into_iter().find(|agent| agent.id == agent_id) {
-        Some(agent) => SavedAgent::Named(agent.name),
+        Some(_) => SavedAgent::Saved,
         None => SavedAgent::Removed,
-    }
-}
-
-fn agent_label<R: Runtime>(app: &AppHandle<R>, agent_id: &str) -> String {
-    match saved_agent(app, agent_id) {
-        SavedAgent::Named(name) if !name.trim().is_empty() => name.trim().to_string(),
-        _ => agent_id.to_string(),
     }
 }
 
@@ -105,98 +130,103 @@ pub fn agent_is_ready<R: Runtime>(app: &AppHandle<R>, agent_id: &str) -> bool {
 pub fn agent_for_start<R: Runtime>(
     app: &AppHandle<R>,
     agent_id: &str,
-) -> Result<Arc<dyn AgentRpcClient>, String> {
+) -> Result<Arc<dyn AgentRpcClient>, Reason> {
     if agent_is_removed(app, agent_id) {
         return Err(
-            "Not started: the agent it runs on was removed. Edit it and choose a machine."
-                .to_string(),
+            "Not started: the agent it runs on was removed. Edit it and choose a machine.".into(),
         );
     }
     agent_rpc_client(app)
         .filter(|client| client.is_reachable(agent_id))
         .ok_or_else(|| {
-            let name = agent_label(app, agent_id);
-            format!("Not started: agent {name} is not connected. Connect it, then start again.")
+            Reason::new(
+                "Not started: its agent is not connected.",
+                Some(ServiceCause::AgentOffline),
+            )
         })
 }
 
-/// The reason to show on a service's row when agent `agent_id` did not start
-/// it (#6028). Not for an [unanswered](hosted::is_unanswered) start: that one
-/// may run there.
-pub fn agent_start_error<R: Runtime>(
-    app: &AppHandle<R>,
-    agent_id: &str,
-    error: &TerminalError,
-) -> String {
-    let name = agent_label(app, agent_id);
+/// The reason to show on a service's row when its agent did not start it
+/// (#6028). Not for an [unanswered](hosted::is_unanswered) start: that one may
+/// run there.
+pub fn agent_start_error(error: &TerminalError) -> Reason {
     match error {
         TerminalError::AgentUnsupported(_) => {
-            format!("Not started: agent {name} is too old to run it. Update the agent.")
+            "Not started: its agent is too old to run it. Update the agent.".into()
         }
-        error => format!("Not started: agent {name} could not start it: {error}"),
+        error => format!("Not started: its agent could not start it: {error}").into(),
     }
 }
 
-/// What a waiting service's row says.
-pub fn waiting_reason<R: Runtime>(app: &AppHandle<R>, on: &WaitFor) -> String {
-    match on {
-        WaitFor::Agent(agent_id) => {
-            let name = agent_label(app, agent_id);
-            format!("Waiting for agent {name}. Starts by itself when the agent is connected.")
-        }
-        WaitFor::CredentialStore => {
-            "Waiting for the credential store. Starts by itself when you unlock it.".to_string()
-        }
-    }
+/// What the row of a service on this computer says whose port is taken.
+pub fn port_in_use_here(port: u16) -> String {
+    format!("Port {port} is already in use on this computer.")
+}
+
+/// What a waiting service's row says: until when, and what comes after.
+pub fn waiting_reason(on: &WaitFor, until: DateTime<Local>) -> Reason {
+    let until = until.format("%H:%M");
+    let (when, cause) = match on {
+        WaitFor::Agent(_) => ("when its agent connects", ServiceCause::AgentOffline),
+        WaitFor::CredentialStore => (
+            "when you unlock the credential store",
+            ServiceCause::StoreLocked,
+        ),
+    };
+    Reason::new(
+        format!("Starts {when}, until {until}. After that, start it yourself."),
+        Some(cause),
+    )
 }
 
 /// What the row of a service says whose wait is over.
-pub fn waited_too_long<R: Runtime>(app: &AppHandle<R>, on: &WaitFor) -> String {
+pub fn waited_too_long(on: &WaitFor) -> Reason {
     let minutes = hosted::WAIT_LIMIT.as_secs() / 60;
     match on {
-        WaitFor::Agent(agent_id) => {
-            let name = agent_label(app, agent_id);
-            format!(
-                "Not started: agent {name} was not connected within {minutes} minutes. Connect \
-                 it, then start again."
-            )
-        }
-        WaitFor::CredentialStore => format!(
-            "Not started: the credential store stayed locked for {minutes} minutes. Unlock it, \
-             then start again."
+        WaitFor::Agent(_) => Reason::new(
+            format!("Not started: its agent was not connected within {minutes} minutes."),
+            Some(ServiceCause::AgentOffline),
+        ),
+        WaitFor::CredentialStore => Reason::new(
+            format!("Not started: the credential store stayed locked for {minutes} minutes."),
+            Some(ServiceCause::StoreLocked),
         ),
     }
 }
 
 /// What the row of a service says that is not reachable.
-pub fn not_reachable_reason<R: Runtime>(app: &AppHandle<R>, agent_id: &str, why: Away) -> String {
+pub fn not_reachable_reason<R: Runtime>(app: &AppHandle<R>, agent_id: &str, why: Away) -> Reason {
     if agent_is_removed(app, agent_id) {
         return "The agent it runs on was removed. It may still run there; termiHub cannot tell."
-            .to_string();
+            .into();
     }
-    let name = agent_label(app, agent_id);
     let what = match why {
         Away::Offline => "is offline. It may still run there",
         Away::Silent => "does not answer. It may still run there",
         Away::StartUnanswered => "did not answer the start. It may run there",
     };
-    format!("Agent {name} {what}; termiHub cannot tell.")
+    let offline = !agent_is_ready(app, agent_id);
+    Reason::new(
+        format!("Its agent {what}; termiHub cannot tell."),
+        offline.then_some(ServiceCause::AgentOffline),
+    )
 }
 
 /// What the row of a service says whose stop the agent has not confirmed.
-pub fn stopping_reason<R: Runtime>(app: &AppHandle<R>, agent_id: &str) -> String {
-    let name = agent_label(app, agent_id);
+pub fn stopping_reason<R: Runtime>(app: &AppHandle<R>, agent_id: &str) -> Reason {
     if agent_is_ready(app, agent_id) {
-        format!("Waiting for agent {name} to stop it.")
+        "Waiting for its agent to stop it.".into()
     } else {
-        format!("Agent {name} is offline. Stops as soon as the agent is connected again.")
+        Reason::new(
+            "Its agent is offline. It may still run there; it is stopped when the agent is back.",
+            Some(ServiceCause::AgentOffline),
+        )
     }
 }
 
 /// What the row of a service says whose unanswered start turned out not to run.
-pub fn unanswered_start_failed<R: Runtime>(app: &AppHandle<R>, agent_id: &str) -> String {
-    let name = agent_label(app, agent_id);
-    format!("Not started: agent {name} did not answer the start, and it does not run there.")
+pub fn unanswered_start_failed() -> Reason {
+    "Not started: its agent did not answer the start, and it does not run there.".into()
 }
 
 /// The service-specific parts of one agent status-poll tick.

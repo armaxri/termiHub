@@ -39,6 +39,10 @@ export interface VisualScenario {
   importConfirmations?: boolean;
   /** The `tunnels` and `services` regions (#6028): servicesGallery.spec.ts. */
   serviceData?: { tunnels: unknown; services: unknown };
+  /** Answer `list_network_interfaces` with these instead of one LAN address. */
+  networkInterfaces?: { name: string; addr: string }[];
+  /** Answer `get_embedded_server_activity` with this. */
+  serverActivity?: unknown;
   /**
    * Seed saved connections whose schema secrets are stored (#4431): a plugin
    * connection with stored token fields and an SSH connection whose inline
@@ -862,6 +866,13 @@ function foldWorkflowRuns(kind: string, payload: Record<string, unknown>): void 
   }
 }
 
+/** Like the backend: only the requests the page does not have yet. */
+function activitySince(activity: unknown, since: number): unknown {
+  if (!activity) return null;
+  const { entries, ...rest } = activity as { entries: { seq: number }[] };
+  return { ...rest, entries: entries.filter((entry) => entry.seq > since) };
+}
+
 /** Answer one IPC command. Unknown commands resolve to `null` and are recorded. */
 export function handleCommand(cmd: string, args: Args): unknown {
   const scenario = window.__VISUAL_SCENARIO__ ?? {};
@@ -924,6 +935,16 @@ export function handleCommand(cmd: string, args: Args): unknown {
       return { version: "0.1.0", gitHash: "visual", isDev: true, buildBranch: "develop" };
     case "get_app_mode":
       return { isPortable: false, dataDir: null };
+    case "list_network_interfaces":
+      return (
+        scenario.networkInterfaces ?? [
+          { name: "Loopback", addr: "127.0.0.1" },
+          { name: "All interfaces", addr: "0.0.0.0" },
+          { name: "en0", addr: "192.168.1.20" },
+        ]
+      );
+    case "get_embedded_server_activity":
+      return activitySince(scenario.serverActivity, Number(args?.sinceSeq ?? 0));
     case "list_windows":
       return [{ label: "main", tabCount: 0 }];
     case "list_session_owners":

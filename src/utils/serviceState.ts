@@ -39,7 +39,14 @@ interface ServiceStateInfo {
 
 const STATES: Record<ServiceState, ServiceStateInfo> = {
   stopped: { label: "service.state.stopped", tone: "neutral", run: "start" },
-  waiting: { label: "service.state.waiting", tone: "warning", run: "stopWaiting", saysWhy: true },
+  // Nothing to do: it goes on by itself. Grey, so that amber means "look".
+  waiting: {
+    label: "service.state.waiting",
+    tone: "neutral",
+    hollow: true,
+    run: "stopWaiting",
+    saysWhy: true,
+  },
   starting: {
     label: "service.state.starting",
     tone: "warning",
@@ -59,12 +66,15 @@ const STATES: Record<ServiceState, ServiceStateInfo> = {
   stopping: {
     label: "service.state.stopping",
     tone: "warning",
-    run: "stop",
+    pulse: true,
+    // Pressed already.
+    run: null,
     saysWhy: true,
     active: true,
   },
   error: { label: "service.state.error", tone: "error", run: "retry", saysWhy: true },
-  needsConnection: { label: "service.state.needsConnection", tone: "warning", run: null },
+  // It can never start by itself.
+  needsConnection: { label: "service.state.needsConnection", tone: "error", run: null },
   notReachable: {
     label: "service.state.notReachable",
     tone: "warning",

@@ -49,7 +49,8 @@ export interface StatusDotProps {
   pulse?: boolean;
   /**
    * Draw only the dot's ring, for a state that is not known for sure (a service
-   * whose agent is offline). Only with the `warning` tone.
+   * whose agent is offline) or not yet there (one that waits). Only with the
+   * `warning` and `neutral` tones.
    */
   hollow?: boolean;
   /**

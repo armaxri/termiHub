@@ -188,7 +188,23 @@ tell what one is for or how to use it (maintainer, 2026-11-25,
 [#6028](https://github.com/armaxri/termiHub/issues/6028)): their state and what they are for in plain
 words ("Running · Open a folder in a browser"), the machine when that is not this computer, and,
 only while they run, the address with Copy. Why one does not run takes the address's place. Nothing
-on the row is cut: it wraps. The row is `ServiceListItem`, its words are in `serviceModel.ts`.
+on the row is cut: it wraps, and an address or a machine's name that does not fit loses its middle.
+The row is `ServiceListItem`, its words are in `serviceModel.ts`. Rules for them
+([#6063](https://github.com/armaxri/termiHub/issues/6063)):
+
+- The **state comes first**. What it is for names the server ("Reach something through Build Box")
+  and what others may really do ("Download only", "Download and upload"). The user's description
+  takes its place. The technical name is at the end of the name's line ("Local", "FTP").
+- The **machine is named once**, under the name, on every row that runs elsewhere and on no other.
+  Reasons say "its agent".
+- The address says **who reaches it**: "only this computer", "anyone on your network", "only on that
+  machine". An address nobody knows is said, never a `localhost` that is wrong for the reader.
+- **A remedy is a button** beside the reason, when it can be done now: Use 8081, Edit, Connect agent,
+  Unlock, Edit connection, Retry now. The reason does not repeat it in words.
+- **Red** is for what needs the user, **amber** for what moves or is in doubt, a grey ring for what
+  waits by itself.
+- The run button is a filled square (Stop) or triangle (Start), and a cross gives up waiting or
+  starting. Two actions never share a name; one that was pressed is not offered again.
 
 Everything else is configuration or history and goes in the row's **tooltip**, the editor or a
 detail view, never on the row: host, user and port, the trigger and its target, step or command

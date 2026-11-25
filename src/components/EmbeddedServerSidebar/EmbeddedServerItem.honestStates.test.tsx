@@ -52,6 +52,7 @@ function render(status: ServerStatus) {
           onEdit={vi.fn()}
           onDuplicate={vi.fn()}
           onDelete={vi.fn()}
+          onUsePort={vi.fn()}
         />
       </TooltipProvider>
     );
@@ -75,7 +76,6 @@ describe("EmbeddedServerItem — honest states (#6028)", () => {
   it.each<[ServerStatus, string, string]>([
     ["waiting", "Waiting", "Stop waiting"],
     ["notReachable", "Not reachable", "Stop"],
-    ["stopping", "Stopping", "Stop"],
   ])("%s says so, says why, and can be stopped", (status, word, control) => {
     render(status);
     expect(q("server-status-srv-1")?.getAttribute("aria-label")).toBe(word);
@@ -96,6 +96,13 @@ describe("EmbeddedServerItem — honest states (#6028)", () => {
     });
     expect(q("ctx-stop-srv-1")?.textContent).toContain("Stop waiting");
     expect(q("ctx-start-srv-1")).toBeNull();
+  });
+
+  it("stopping says so and says why, and is not stopped a second time", () => {
+    render("stopping");
+    expect(q("server-status-srv-1")?.getAttribute("aria-label")).toBe("Stopping");
+    expect(q("server-reason-srv-1")?.textContent).toBe(WHY);
+    expect(q("server-primary-srv-1")).toBeNull();
   });
 
   it("a ring, not a green dot, when it is not known whether it runs", () => {

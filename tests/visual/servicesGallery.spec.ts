@@ -44,12 +44,21 @@ const STATES = {
   "tunnels--starting": "A tunnel was just started: is it there yet?",
   "tunnels--running": "The tunnel runs: what do you type to use it?",
   "tunnels--reconnecting": "The connection dropped: what happens now?",
+  "tunnels--reconnecting-last": "It has tried nine times: what happens after this one?",
   "tunnels--stopping": "Stop was pressed while the agent is away: is it stopped?",
   "tunnels--error": "A tunnel did not start: why, and what now?",
   "tunnels--needs-connection": "A connection was deleted: what about its tunnel?",
   "tunnels--not-reachable": "The agent is gone: does the tunnel still run?",
   "tunnels--on-agent": "Tunnels on other machines: where can you use each?",
   "tunnels--chained": "A hop to this computer: does localhost work, and if not, what now?",
+  "tunnels--chained-working": "A hop to this computer: does localhost work?",
+  "tunnels--wide": "Tunnels that others can use: who, and where?",
+  "tunnels--mixed": "Fifteen tunnels: which work right now, which need you?",
+  "tunnels--empty": "There is no tunnel yet: make one.",
+  "tunnels--tooltip": "What exactly does this tunnel do?",
+  "tunnels--stop": "Stop a tunnel that is in use: what happens?",
+  "tunnels--delete": "Delete a running tunnel: what happens?",
+  "tunnels--edit": "Change the port of a tunnel.",
   "tunnels--narrow": "The narrowest sidebar, long names: read everything.",
   "tunnels--hover": "Change, copy or delete a running tunnel.",
   "tunnels--menu": "The same, from its menu.",
@@ -57,6 +66,8 @@ const STATES = {
   "servers--waiting": "Two servers have not started yet: why, and will they?",
   "servers--starting": "A server was just started: is it there yet?",
   "servers--running": "The server runs: what do you tell the other person?",
+  "servers--open": "Servers for others: what do you tell them, and who can upload?",
+  "servers--open-unknown": "A server for the network, and no network: what do you tell them?",
   "servers--stopping": "Stop was pressed while the agent is away: is it stopped?",
   "servers--error": "A server did not start: why, and what now?",
   "servers--not-reachable": "The agent is gone: does the server still run?",
@@ -65,7 +76,14 @@ const STATES = {
   "servers--hover": "Open, change or delete a running server.",
   "servers--menu": "The same, from its menu.",
   "servers--activity": "Who uses the server right now?",
+  "servers--activity-nobody": "Does anybody use the server?",
+  "servers--activity-unavailable": "The log cannot be read: does the server run, and what now?",
+  "servers--mixed": "Fifteen servers: which work right now, which need you?",
+  "servers--empty": "There is no file server yet: make one.",
+  "servers--tooltip": "What exactly does this server share?",
+  "servers--delete": "Delete a running server: what happens?",
   "servers--new": "Make a new file server: which kind is right?",
+  "servers--new-missing": "Saving did nothing: what is missing?",
 } as const;
 type State = keyof typeof STATES;
 
@@ -75,16 +93,24 @@ const STATS = { bytesSent: 2048, bytesReceived: 8192, activeConnections: 1, tota
 
 /** The sentences the backend writes (src-tauri/src/agent_service.rs). */
 const WHY = {
-  agent: `Waiting for agent ${EDGE}. Starts by itself when the agent is connected.`,
-  store: "Waiting for the credential store. Starts by itself when you unlock it.",
-  stopping: `Agent ${EDGE} is offline. Stops as soon as the agent is connected again.`,
-  expired: `Not started: agent ${EDGE} was not connected within 30 minutes. Connect it, then start again.`,
-  port: "Port 8080 is already in use on 127.0.0.1. Choose another port, or stop what uses it.",
-  ssh: "SSH connect failed: Connection refused (os error 61)",
-  away: `Agent ${EDGE} is offline. It may still run there; termiHub cannot tell.`,
-  silent: `Agent ${EDGE} did not answer the start. It may run there; termiHub cannot tell.`,
-  reconnecting: "connection lost: SSH session closed. Reconnecting (attempt 3/10) in 8s",
+  agent: "Starts when its agent connects, until 14:32. After that, start it yourself.",
+  store: "Starts when you unlock the credential store, until 14:32. After that, start it yourself.",
+  stopping: "Its agent is offline. It may still run there; it is stopped when the agent is back.",
+  expired: "Not started: its agent was not connected within 30 minutes.",
+  port: (port: number) => `Port ${port} is already in use on this computer.`,
+  ssh: "Build Box refused the connection. Is its SSH server running?",
+  away: "Its agent is offline. It may still run there; termiHub cannot tell.",
+  silent: "Its agent did not answer the start. It may run there; termiHub cannot tell.",
+  reconnecting: "Connection lost. Try 3 of 10.",
+  last: "Connection lost. Try 10 of 10, then it gives up.",
 };
+/** What goes with each, as the backend sends it. */
+const AGENT = { cause: "agentOffline" };
+const STORE = { cause: "storeLocked" };
+const PORT = { cause: "portInUse" };
+const SSH = { cause: "connection" };
+
+type Fields = Record<string, unknown>;
 
 interface Row {
   id: string;
@@ -92,8 +118,8 @@ interface Row {
   type?: string;
   status: string;
   error?: string;
-  over?: Record<string, unknown>;
-  state?: Record<string, unknown>;
+  over?: Fields;
+  state?: Fields;
 }
 
 const LISTEN = { localHost: "127.0.0.1", localPort: 15432 };
@@ -107,17 +133,30 @@ const TUNNEL_TYPES: Record<string, unknown> = {
 };
 
 /** The three tunnel types in one status. */
-const tunnelsIn = (status: string, error?: string, over?: Record<string, unknown>): Row[] => [
-  { id: "db", name: "Shop database", type: "local", status, error, over },
-  { id: "web", name: "Show my web app", type: "remote", status, error, over },
-  { id: "proxy", name: "Browse the office network", type: "dynamic", status, error, over },
+const tunnelsIn = (status: string, error?: string, over?: Fields, state?: Fields): Row[] => [
+  { id: "db", name: "Shop database", type: "local", status, error, over, state },
+  { id: "web", name: "Show my web app", type: "remote", status, error, over, state },
+  { id: "proxy", name: "Browse the office network", type: "dynamic", status, error, over, state },
 ];
 
 /** The three kinds of file server in one status. */
-const serversIn = (status: string, error?: string, over?: Record<string, unknown>): Row[] => [
-  { id: "web", name: "Release builds", type: "http", status, error, over },
-  { id: "scans", name: "Scanner inbox", type: "ftp", status, error, over },
-  { id: "boot", name: "Switch firmware", type: "tftp", status, error, over },
+const serversIn = (status: string, error?: string, over?: Fields, state?: Fields): Row[] => [
+  { id: "web", name: "Release builds", type: "http", status, error, over, state },
+  {
+    id: "scans",
+    name: "Scanner inbox",
+    type: "ftp",
+    status,
+    error,
+    // Scanners put files there, after signing in.
+    over: {
+      readOnly: false,
+      ftpAuth: { type: "credentials", username: "scan", password: "" },
+      ...over,
+    },
+    state,
+  },
+  { id: "boot", name: "Switch firmware", type: "tftp", status, error, over, state },
 ];
 
 function data(tunnels: Row[], servers: Row[]): NonNullable<VisualScenario["serviceData"]> {
@@ -159,23 +198,110 @@ function data(tunnels: Row[], servers: Row[]): NonNullable<VisualScenario["servi
 }
 
 const LONG = "Postgres on the production database replica in Frankfurt";
+const WIDE = (port: number): Fields => ({
+  tunnelType: {
+    type: "local",
+    config: { localHost: "0.0.0.0", localPort: port, remoteHost: "db", remotePort: 5432 },
+  },
+});
+const onPort = (port: number): Fields => ({
+  tunnelType: {
+    type: "local",
+    config: { localHost: "127.0.0.1", localPort: port, remoteHost: "db", remotePort: 5432 },
+  },
+});
+
+/** Fifteen names an administrator may have, most of them fine. */
+const MIXED_NAMES = [
+  "Orders database",
+  "Grafana",
+  "Kibana",
+  "Office proxy",
+  "Jenkins",
+  "Wiki",
+  "Build cache",
+  "Customer portal",
+  "Reporting database",
+  "Mail relay",
+  "Printer admin page",
+  "Backup status",
+  "Staging shop",
+  "Legacy ERP",
+  "Switch console",
+];
+
+/** The state of the nth of fifteen. */
+function mixed(index: number, running: string, stopped: string): Partial<Row> {
+  switch (index) {
+    case 2:
+      return { status: "error", error: WHY.port(15002), state: PORT };
+    case 5:
+      return { status: "waiting", error: WHY.store, state: STORE };
+    case 8:
+      return { status: "notReachable", error: WHY.away, over: { host: ON_EDGE }, state: AGENT };
+    case 11:
+      return { status: running, over: { host: ON_EDGE } };
+    default:
+      return { status: index % 3 === 1 ? stopped : running };
+  }
+}
+
+const MIXED_TUNNELS: Row[] = MIXED_NAMES.map((name, index) => {
+  const row = mixed(index, "connected", "disconnected");
+  return {
+    id: `m${index}`,
+    name,
+    type: "local",
+    status: "disconnected",
+    ...row,
+    over: { ...onPort(15000 + index), ...row.over },
+  };
+});
+const MIXED_SERVERS: Row[] = MIXED_NAMES.map((name, index) => {
+  const row = mixed(index, "running", "stopped");
+  return {
+    id: `m${index}`,
+    name,
+    type: ["http", "ftp", "tftp"][index % 3],
+    status: "stopped",
+    ...row,
+    over: { port: 15000 + index, ...row.over },
+  };
+});
+
 const TUNNEL_ROWS: Partial<Record<State, Row[]>> = {
   "tunnels--stopped": tunnelsIn("disconnected"),
   "tunnels--waiting": [
-    ...tunnelsIn("waiting", WHY.agent, { host: ON_EDGE }).slice(0, 1),
-    { id: "bastion", name: "Behind a bastion", status: "waiting", error: WHY.store },
+    ...tunnelsIn("waiting", WHY.agent, { host: ON_EDGE }, AGENT).slice(0, 1),
+    { id: "bastion", name: "Behind a bastion", status: "waiting", error: WHY.store, state: STORE },
   ],
   "tunnels--starting": tunnelsIn("connecting"),
   "tunnels--running": tunnelsIn("connected"),
   "tunnels--reconnecting": tunnelsIn("reconnecting", WHY.reconnecting),
-  "tunnels--stopping": tunnelsIn("stopping", WHY.stopping, { host: ON_EDGE }),
+  "tunnels--reconnecting-last": tunnelsIn("reconnecting", WHY.last).slice(0, 1),
+  "tunnels--stopping": tunnelsIn("stopping", WHY.stopping, { host: ON_EDGE }, AGENT),
   "tunnels--error": [
-    ...tunnelsIn("error", WHY.ssh).slice(0, 1),
-    { id: "late", name: "Metrics", status: "error", error: WHY.expired, over: { host: ON_EDGE } },
+    ...tunnelsIn("error", WHY.ssh, undefined, SSH).slice(0, 1),
+    {
+      id: "late",
+      name: "Metrics",
+      status: "error",
+      error: WHY.expired,
+      over: { host: ON_EDGE },
+      state: AGENT,
+    },
+    {
+      id: "taken",
+      name: "Grafana",
+      status: "error",
+      error: WHY.port(13000),
+      over: onPort(13000),
+      state: PORT,
+    },
   ],
   "tunnels--needs-connection": tunnelsIn("missingConnection"),
   "tunnels--not-reachable": [
-    ...tunnelsIn("notReachable", WHY.away, { host: ON_EDGE }).slice(0, 2),
+    ...tunnelsIn("notReachable", WHY.away, { host: ON_EDGE }, AGENT).slice(0, 2),
     {
       id: "un",
       name: "Grafana",
@@ -199,17 +325,47 @@ const TUNNEL_ROWS: Partial<Record<State, Row[]>> = {
       over: { host: ON_EDGE },
       state: { boundAddress: "0.0.0.0:15432", reachableFrom: "agentLan" },
     },
+    { id: "here", name: "On this computer", status: "connected", over: onPort(15433) },
   ],
   "tunnels--chained": [
-    { id: "parent", name: "Shop database", status: "connected", over: { host: ON_EDGE } },
+    {
+      id: "parent",
+      name: "Shop database",
+      status: "connected",
+      over: { host: ON_EDGE },
+    },
     {
       id: "hop",
       name: "Shop database (hop on this computer)",
       status: "error",
-      error: WHY.port,
+      error: WHY.port(15432),
+      over: { companionOf: "parent" },
+      state: PORT,
+    },
+  ],
+  "tunnels--chained-working": [
+    { id: "parent", name: "Shop database", status: "connected", over: { host: ON_EDGE } },
+    {
+      id: "hop",
+      name: "Shop database (hop on this computer)",
+      status: "connected",
       over: { companionOf: "parent" },
     },
   ],
+  "tunnels--wide": [
+    { id: "lan", name: "For the office", status: "connected", over: WIDE(15432) },
+    {
+      id: "unknown",
+      name: "On a removed agent",
+      status: "connected",
+      over: { host: { kind: "agent", agentId: "agent-gone" }, ...WIDE(15433) },
+    },
+  ],
+  "tunnels--mixed": MIXED_TUNNELS,
+  "tunnels--tooltip": tunnelsIn("connected"),
+  "tunnels--stop": tunnelsIn("connected"),
+  "tunnels--delete": tunnelsIn("connected"),
+  "tunnels--edit": tunnelsIn("disconnected"),
   "tunnels--narrow": [
     {
       id: "l1",
@@ -217,7 +373,14 @@ const TUNNEL_ROWS: Partial<Record<State, Row[]>> = {
       status: "connected",
       over: { host: ON_EDGE, description: "Read only" },
     },
-    { id: "l2", name: LONG, status: "notReachable", error: WHY.away, over: { host: ON_EDGE } },
+    {
+      id: "l2",
+      name: LONG,
+      status: "notReachable",
+      error: WHY.away,
+      over: { host: ON_EDGE },
+      state: AGENT,
+    },
     { id: "l3", name: "Proxy", type: "dynamic", status: "connected" },
   ],
   "tunnels--hover": tunnelsIn("connected"),
@@ -226,18 +389,77 @@ const TUNNEL_ROWS: Partial<Record<State, Row[]>> = {
 const SERVER_ROWS: Partial<Record<State, Row[]>> = {
   "servers--stopped": serversIn("stopped"),
   "servers--waiting": [
-    ...serversIn("waiting", WHY.agent, { host: ON_EDGE }).slice(0, 1),
-    { id: "pw", name: "With a password", status: "waiting", error: WHY.store },
+    ...serversIn("waiting", WHY.agent, { host: ON_EDGE }, AGENT).slice(0, 1),
+    { id: "pw", name: "With a password", status: "waiting", error: WHY.store, state: STORE },
   ],
   "servers--starting": serversIn("starting"),
   "servers--running": [
     ...serversIn("running"),
-    { id: "wide", name: "For the team", status: "running", over: { bindHost: "0.0.0.0" } },
+    {
+      id: "wide",
+      name: "For the team",
+      status: "running",
+      over: { bindHost: "0.0.0.0", port: 8081 },
+    },
   ],
-  "servers--stopping": serversIn("stopping", WHY.stopping, { host: ON_EDGE }),
-  "servers--error": serversIn("error", WHY.port),
+  "servers--open": [
+    {
+      id: "web",
+      name: "Release builds",
+      status: "running",
+      over: { bindHost: "0.0.0.0" },
+    },
+    {
+      id: "in",
+      name: "Scanner inbox",
+      type: "ftp",
+      status: "running",
+      over: { bindHost: "0.0.0.0", readOnly: false, ftpAuth: { type: "anonymous" } },
+    },
+    {
+      id: "pw",
+      name: "Contractor upload",
+      type: "ftp",
+      status: "running",
+      over: {
+        bindHost: "0.0.0.0",
+        port: 2122,
+        readOnly: false,
+        ftpAuth: { type: "credentials", username: "c", password: "" },
+      },
+    },
+    {
+      id: "boot",
+      name: "Switch backup",
+      type: "tftp",
+      status: "running",
+      over: { bindHost: "0.0.0.0", readOnly: false, host: ON_EDGE },
+    },
+  ],
+  "servers--open-unknown": [
+    { id: "web", name: "Release builds", status: "running", over: { bindHost: "0.0.0.0" } },
+  ],
+  "servers--stopping": serversIn("stopping", WHY.stopping, { host: ON_EDGE }, AGENT),
+  "servers--error": [
+    {
+      id: "web",
+      name: "Release builds",
+      status: "error",
+      error: WHY.port(8080),
+      state: PORT,
+    },
+    {
+      id: "scans",
+      name: "Scanner inbox",
+      type: "ftp",
+      status: "error",
+      error: WHY.expired,
+      over: { host: ON_EDGE },
+      state: AGENT,
+    },
+  ],
   "servers--not-reachable": [
-    ...serversIn("notReachable", WHY.away, { host: ON_EDGE }).slice(0, 2),
+    ...serversIn("notReachable", WHY.away, { host: ON_EDGE }, AGENT).slice(0, 2),
     { id: "un", name: "Docs", status: "notReachable", error: WHY.silent, over: { host: ON_EDGE } },
   ],
   "servers--on-agent": [
@@ -248,15 +470,101 @@ const SERVER_ROWS: Partial<Record<State, Row[]>> = {
       status: "running",
       over: { host: ON_EDGE, bindHost: "0.0.0.0" },
     },
+    { id: "here", name: "On this computer", status: "running", over: { port: 8081 } },
   ],
+  "servers--mixed": MIXED_SERVERS,
+  "servers--tooltip": serversIn("running"),
+  "servers--delete": serversIn("running"),
   "servers--narrow": [
     { id: "l1", name: LONG, status: "running", over: { host: ON_EDGE, description: "Read only" } },
-    { id: "l2", name: LONG, status: "notReachable", error: WHY.away, over: { host: ON_EDGE } },
+    {
+      id: "l2",
+      name: LONG,
+      status: "notReachable",
+      error: WHY.away,
+      over: { host: ON_EDGE },
+      state: AGENT,
+    },
     { id: "l3", name: "Boot", type: "tftp", status: "running", over: { bindHost: "0.0.0.0" } },
   ],
   "servers--hover": serversIn("running"),
   "servers--menu": serversIn("running"),
-  "servers--activity": serversIn("running").slice(0, 1),
+  "servers--activity": serversIn("running", undefined, { bindHost: "0.0.0.0" }).slice(0, 1),
+  "servers--activity-nobody": serversIn("running").slice(0, 1),
+  "servers--activity-unavailable": serversIn("running").slice(0, 1),
+};
+
+const request = (seq: number, client: string, path: string, bytes: number, status = "200") => ({
+  seq,
+  timestamp: `2026-11-25T10:0${seq}:12Z`,
+  client,
+  method: "GET",
+  path,
+  status,
+  success: status === "200",
+  bytes,
+  durationMs: 12 * seq,
+});
+const NO_REQUESTS = {
+  entries: [],
+  latestSeq: 0,
+  epoch: 0,
+  dropped: 0,
+  capacity: 500,
+  stats: {
+    activeConnections: 0,
+    totalConnections: 0,
+    bytesSent: 0,
+    bytesReceived: 0,
+    totalRequests: 0,
+    errors: 0,
+    topPaths: [],
+    topClients: [],
+    currentTransfers: [],
+  },
+};
+/** Two clients, and one of them downloads. */
+const REQUESTS = {
+  ...NO_REQUESTS,
+  latestSeq: 4,
+  entries: [
+    request(1, "192.168.1.31", "/", 2048),
+    request(2, "192.168.1.31", "/termiHub-0.1.0.dmg", 48_000_000),
+    request(3, "192.168.1.44", "/old.zip", 0, "404"),
+    request(4, "192.168.1.44", "/", 2048),
+  ],
+  stats: {
+    ...NO_REQUESTS.stats,
+    activeConnections: 1,
+    totalConnections: 5,
+    bytesSent: 61_000_000,
+    totalRequests: 4,
+    errors: 1,
+    topPaths: [
+      { key: "/", count: 2 },
+      { key: "/termiHub-0.1.0.dmg", count: 1 },
+    ],
+    topClients: [
+      { key: "192.168.1.31", count: 2 },
+      { key: "192.168.1.44", count: 2 },
+    ],
+    currentTransfers: [
+      {
+        id: 1,
+        method: "GET",
+        client: "192.168.1.44",
+        path: "/termiHub-0.1.0.dmg",
+        bytes: 13_000_000,
+        startedAt: "2026-11-25T10:04:40Z",
+      },
+    ],
+  },
+};
+/** What else the backend answers in a state. */
+const ANSWERS: Partial<Record<State, Partial<VisualScenario>>> = {
+  "servers--open-unknown": { networkInterfaces: [] },
+  "servers--activity": { serverActivity: REQUESTS },
+  "servers--activity-nobody": { serverActivity: NO_REQUESTS },
 };
 
 async function settle(page: Page): Promise<void> {
@@ -284,6 +592,7 @@ async function boot(page: Page, theme: string, state: State): Promise<void> {
     {
       populated: true,
       serviceData: data(TUNNEL_ROWS[state] ?? [], SERVER_ROWS[state] ?? []),
+      ...ANSWERS[state],
     } satisfies VisualScenario
   );
   await page.goto("/tests/visual/harness/index.html");
@@ -312,6 +621,9 @@ function rowProblems(): string[] {
       ".service-row__kind",
       ".service-row__address",
       ".service-row__reason",
+      ".service-row__machine",
+      ".service-row__risk",
+      ".service-row__reach",
       ".service-row__address button",
       ".sidebar-list-item__primary",
     ]) {
@@ -391,14 +703,33 @@ for (const viewport of WINDOWS) {
             await page.locator(id(`${kind}-kind-${first}`)).hover();
             await page.locator(id(`${kind}-more-${first}`)).click();
             await page.locator("[role=menu]").waitFor();
-          } else if (state.endsWith("--activity")) {
+          } else if (state.includes("--activity")) {
             await page.locator(id(`${kind}-kind-${first}`)).hover();
             await page.locator(id(`server-activity-toggle-${first}`)).click();
             await page.locator(id(`server-activity-${first}`)).waitFor();
             await page.mouse.move(viewport.width - 20, viewport.height / 2);
             await page.evaluate(() => (document.activeElement as HTMLElement).blur());
           }
-          await shot(page, state, id(`${kind}-sidebar`), /--(hover|menu)$/.test(state));
+          if (state.endsWith("--tooltip")) {
+            await page.locator(id(`${kind}-name-${first}`)).hover();
+            await page
+              .locator(id(`${kind}-tooltip-${first}`))
+              .first()
+              .waitFor();
+          } else if (state.endsWith("--stop")) {
+            await page.locator(id(`tunnel-stop-${first}`)).click();
+            await page.locator("[role=alertdialog], [role=dialog]").waitFor();
+          } else if (state.endsWith("--delete")) {
+            await page.locator(id(`${kind}-item-${first}`)).focus();
+            await page.keyboard.press("Delete");
+            await page.locator("[role=alertdialog], [role=dialog]").waitFor();
+          } else if (state.endsWith("--edit")) {
+            await page.locator(id(`tunnel-item-${first}`)).focus();
+            await page.keyboard.press("Enter");
+            await page.locator(id("tunnel-editor")).waitFor();
+          }
+          const over = /--(hover|menu|tooltip|stop|delete)$/.test(state);
+          await shot(page, state, id(`${kind}-sidebar`), over);
         });
       }
 
@@ -407,7 +738,25 @@ for (const viewport of WINDOWS) {
         await page.locator(id("server-new-btn")).click();
         await page.locator(id("server-dialog-name")).waitFor();
         await shot(page, "servers--new", "[role=dialog]");
+        // It only looks disabled: activating it says what is missing.
+        await page.locator(id("server-dialog-save")).click({ force: true });
+        await shot(page, "servers--new-missing", "[role=dialog]");
       });
+
+      for (const [state, button] of [
+        ["tunnels--empty", "tunnel-empty-message"],
+        ["servers--empty", "server-empty-message"],
+      ] as const) {
+        test(state, async ({ page }) => {
+          await boot(page, theme, state);
+          await page.locator(id(button)).waitFor();
+          await shot(
+            page,
+            state,
+            id(state.startsWith("tunnels") ? "tunnel-sidebar" : "server-sidebar")
+          );
+        });
+      }
     });
   }
 }

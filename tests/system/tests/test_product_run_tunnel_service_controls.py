@@ -75,6 +75,20 @@ def test_grade_wrong_control_for_state_fails():
     assert problems == ["row: a 'Running' row offers 'Start', not 'Stop'"]
 
 
+def test_grade_stopping_offers_no_second_stop():
+    for word in ("Stopping", "Stop pending"):
+        assert _grade("tunnel", word, [], row_class="sidebar-list-item") == []
+        assert _grade("server", word, ["Stop"]) == [
+            f"row: a {word!r} row offers ['Stop'], not nothing"
+        ]
+
+
+def test_grade_giving_up_a_start_is_not_a_stop():
+    assert _grade("server", "Starting", ["Cancel start"]) == []
+    assert _grade("server", "Waiting", ["Stop waiting"]) == []
+    assert _grade("server", "Starting", ["Stop"]) != []
+
+
 def test_grade_unlabelled_dot_fails():
     problems = row_control_problems(
         "tunnel",
@@ -188,9 +202,9 @@ class TestProductRunTunnelServiceControls(
             "row-controls.service",
             "A service row starts and stops from its always-visible button; the dot says "
             "Stopped, then Running",
-            expect="the Services sidebar: 'Controls service …' with a green dot and a Stop "
-            "(square) button on the right without hovering; hovering the dot shows 'Running' "
-            "(#5852)",
+            expect="the File servers sidebar: 'Controls service …' with a green dot and a Stop "
+            "(filled square) button on the right without hovering; hovering the dot shows "
+            "'Running' (#5852)",
         ):
             name = f"Controls service {t}"
             server = self.create_server(name, proto="http", root="/tmp", port=self.free_port())

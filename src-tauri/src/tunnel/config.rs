@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+use crate::agent_service::Reason;
 use crate::connection::id_changes::ConnectionIdRemap;
 use termihub_core::util::entry_extra::{EntryExtra, StoreEntry};
+use termihub_core::util::service_cause::ServiceCause;
 use termihub_core::util::service_host::ServiceHost;
 
 // `LocalForwardConfig`, `RemoteForwardConfig`, `DynamicForwardConfig`, and
@@ -212,6 +214,10 @@ pub struct TunnelState {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub error: Option<String>,
+    /// What the row can offer about it (#6063).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "import(\"./ServiceCause\").ServiceCause"))]
+    pub cause: Option<ServiceCause>,
     /// Live traffic statistics.
     #[cfg_attr(test, ts(type = "import(\"./TunnelStats\").TunnelStats"))]
     pub stats: TunnelStats,
@@ -242,13 +248,14 @@ impl TunnelState {
     pub fn desktop(
         tunnel_id: String,
         status: TunnelStatus,
-        error: Option<String>,
+        reason: Option<Reason>,
         stats: TunnelStats,
     ) -> Self {
         Self {
             tunnel_id,
             status,
-            error,
+            cause: reason.as_ref().and_then(|reason| reason.cause),
+            error: reason.map(|reason| reason.text),
             stats,
             bound_on: None,
             bound_address: None,
@@ -508,6 +515,7 @@ mod tests {
             tunnel_id: "tun-agent".to_string(),
             status: TunnelStatus::Connected,
             error: None,
+            cause: None,
             stats: TunnelStats::default(),
             bound_on: Some("build-box".to_string()),
             bound_address: Some("127.0.0.1:5432".to_string()),
@@ -528,7 +536,7 @@ mod tests {
         let state = TunnelState::desktop(
             "tun-1".to_string(),
             TunnelStatus::Error,
-            Some("Connection refused".to_string()),
+            Some("Connection refused".into()),
             TunnelStats::default(),
         );
         let json = serde_json::to_string(&state).unwrap();

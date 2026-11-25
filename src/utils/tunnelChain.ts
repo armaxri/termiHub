@@ -9,7 +9,7 @@
  *
  * These pure functions (no store, no React) derive the companion config, walk
  * the parent↔companion link, and fold the two live statuses into the single
- * "Linked · …" status the UI renders — so the components stay thin and the logic
+ * status the UI renders — so the components stay thin and the logic
  * unit-tests directly, mirroring the style of {@link import("./tunnelHost")}.
  * The combined status is derived in the frontend per the concept's Open Design
  * Decision #3 (no region schema change).
@@ -69,7 +69,7 @@ export function deriveCompanion(parent: TunnelConfig, agentSshConnectionId: stri
   const listen = parentListenEndpoint(parent);
   return {
     id: companionIdFor(parent.id),
-    name: `${parent.name} (hop on this computer)`,
+    name: `${parent.name}${HOP_NAME_SUFFIX}`,
     sshConnectionId: agentSshConnectionId,
     tunnelType: {
       type: "local",
@@ -91,6 +91,14 @@ export function deriveCompanion(parent: TunnelConfig, agentSshConnectionId: stri
     reconnectOnDisconnect: parent.reconnectOnDisconnect,
     companionOf: parent.id,
   };
+}
+
+/** What a companion is called by default, after its parent's name. */
+const HOP_NAME_SUFFIX = " (hop on this computer)";
+
+/** Whether a companion still has the name it was made with. */
+export function hasHopName(config: Pick<TunnelConfig, "name">): boolean {
+  return config.name.endsWith(HOP_NAME_SUFFIX);
 }
 
 /** Whether a config is a chained companion (the desktop hop), not a parent. */
@@ -142,27 +150,6 @@ export function combinedPairStatus(
     default:
       // disconnected / error while the parent is up → localhost is broken.
       return "degraded";
-  }
-}
-
-/**
- * The short "Linked · …" label the UI shows for a chained pair's combined
- * {@link PairStatus}. `none` (an unchained parent) has no pair label, so the
- * caller renders the plain single-tunnel status instead — hence the empty
- * string.
- */
-export function pairStatusLabel(status: PairStatus): string {
-  switch (status) {
-    case "connected":
-      return "Linked · connected";
-    case "connecting":
-      return "Linked · connecting";
-    case "degraded":
-      return "Linked · degraded";
-    case "down":
-      return "Linked · down";
-    case "none":
-      return "";
   }
 }
 

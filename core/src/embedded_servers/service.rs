@@ -33,6 +33,7 @@ use crate::service::{
     EventChannel, Service, ServiceCapabilities, ServiceError, ServiceEvent, ServiceEventReceiver,
     ServiceStatus,
 };
+use crate::util::service_cause::{port_in_use_reason, tcp_port_in_use, udp_port_in_use};
 
 use super::activity::{ActivitySnapshot, ServerActivity};
 use super::config::{
@@ -60,17 +61,14 @@ impl EmbeddedServerError {
     }
 }
 
-/// Build the shared, actionable "port already in use" error for a failed bind.
-///
-/// Names the exact port and tells the user how to recover (stop the conflicting
-/// process or pick another port), so a manual start surfaces a clear, recoverable
-/// error rather than a bare OS message. The wrapped OS error is kept for
-/// diagnosis (SM-018).
-fn port_in_use(config: &EmbeddedServerConfig, source: std::io::Error) -> EmbeddedServerError {
-    EmbeddedServerError::new(format!(
-        "Port {} is already in use. Stop the conflicting process or choose a different port in the server settings. ({source})",
-        config.port
-    ))
+/// What a failed bind says: the exact port and how to recover when it is taken,
+/// the system's own words for any other failure.
+fn port_error(config: &EmbeddedServerConfig, source: std::io::Error) -> EmbeddedServerError {
+    EmbeddedServerError::new(if source.kind() == std::io::ErrorKind::AddrInUse {
+        port_in_use_reason(config.port)
+    } else {
+        format!("Port {} cannot be opened: {source}", config.port)
+    })
 }
 
 /// Machine-readable service id for the embedded HTTP server.
@@ -295,17 +293,24 @@ impl EmbeddedServerService {
         let addr = format!("{}:{}", config.bind_host, config.port);
         match config.server_type {
             ServerType::Tftp => {
-                let socket =
-                    std::net::UdpSocket::bind(&addr).map_err(|e| port_in_use(config, e))?;
+                let socket = std::net::UdpSocket::bind(&addr).map_err(|e| port_error(config, e))?;
                 drop(socket);
             }
             _ => {
                 let listener =
-                    std::net::TcpListener::bind(&addr).map_err(|e| port_in_use(config, e))?;
+                    std::net::TcpListener::bind(&addr).map_err(|e| port_error(config, e))?;
                 drop(listener);
             }
         }
         Ok(())
+    }
+
+    /// Whether something else listens on the port of `config`.
+    pub fn port_is_taken(config: &EmbeddedServerConfig) -> bool {
+        match config.server_type {
+            ServerType::Tftp => udp_port_in_use(&config.bind_host, config.port),
+            _ => tcp_port_in_use(&config.bind_host, config.port),
+        }
     }
 
     /// Start the server for `config` synchronously.
@@ -471,6 +476,7 @@ impl EmbeddedServerService {
                     server_id: config.id.clone(),
                     status,
                     error,
+                    cause: None,
                     stats: active.stats.snapshot(),
                     started_at: Some(active.started_at.clone()),
                 }
@@ -482,6 +488,7 @@ impl EmbeddedServerService {
                     server_id: config.id.clone(),
                     status,
                     error,
+                    cause: None,
                     stats: ServerStats::default(),
                     started_at: None,
                 }
@@ -676,6 +683,7 @@ pub(super) fn build_status_state(
         server_id: server_id.to_string(),
         status,
         error,
+        cause: None,
         stats,
         started_at,
     }
@@ -691,18 +699,6 @@ fn active_entry_is_live(error: &Arc<Mutex<Option<String>>>) -> bool {
     // If the lock is poisoned we cannot prove the server is healthy, so treat it
     // as not-live and allow a fresh start to recover.
     error.lock().map(|slot| slot.is_none()).unwrap_or(false)
-}
-
-/// Build the `Error` [`ServerState`] surfaced when a server marked `auto_start`
-/// fails to start at launch (e.g. its port is already in use) (GAP G7, #1145).
-pub fn auto_start_error_state(server_id: &str, error: &str) -> ServerState {
-    ServerState {
-        server_id: server_id.to_string(),
-        status: ServerStatus::Error,
-        error: Some(error.to_string()),
-        stats: ServerStats::default(),
-        started_at: None,
-    }
 }
 
 #[cfg(test)]
@@ -804,7 +800,7 @@ mod tests {
             "message must name the taken port: {msg}"
         );
         assert!(
-            msg.contains("choose a different port"),
+            msg.contains("Choose another one"),
             "message must guide the user to recover: {msg}"
         );
     }
@@ -826,7 +822,7 @@ mod tests {
             "message must name the taken port: {msg}"
         );
         assert!(
-            msg.contains("choose a different port"),
+            msg.contains("Choose another one"),
             "message must guide the user to recover: {msg}"
         );
     }

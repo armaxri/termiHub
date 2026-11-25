@@ -55,6 +55,7 @@ function renderItem(
           onEdit={handlers.onEdit ?? noop}
           onDuplicate={noop}
           onDelete={noop}
+          onUsePort={vi.fn()}
         />
       )
     );

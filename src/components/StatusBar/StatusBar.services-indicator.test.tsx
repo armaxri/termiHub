@@ -54,7 +54,9 @@ describe("StatusBar — services indicator (#4498, #5858)", () => {
     const item = indicator();
     expect(item).not.toBeNull();
     expect(item!.tagName).toBe("BUTTON");
-    expect(item!.getAttribute("aria-label")).toContain("click to open Services");
+    expect(item!.getAttribute("aria-label")).toBe(
+      "1 file server running — click to open File servers"
+    );
     act(() => item!.click());
     expect(setSidebarView).toHaveBeenCalledWith("services");
   });
@@ -67,8 +69,35 @@ describe("StatusBar — services indicator (#4498, #5858)", () => {
     const item = indicator();
     expect(item).not.toBeNull();
     expect(item!.tagName).toBe("BUTTON");
-    expect(item!.getAttribute("aria-label")).toContain("click to open Services");
+    expect(item!.getAttribute("aria-label")).toBe(
+      "1 file server running — click to open File servers"
+    );
     act(() => item!.click());
     expect(setSidebarView).toHaveBeenCalledWith("services");
+  });
+
+  it("counts tunnels, too, and opens them when no file server runs (#6063)", async () => {
+    seedSettings({ experimentalFeaturesEnabled: false });
+    const tunnelStates = {
+      a: { status: "connected" },
+      b: { status: "connected" },
+      c: { status: "notReachable" },
+    } as never;
+    const tunnels = [{ id: "a" }, { id: "b" }, { id: "c" }] as never;
+    useAppStore.setState({ tunnels, tunnelStates });
+    act(() => renderStatusBar(root));
+    await flushAsync();
+    expect(indicator()!.textContent).toBe("3 running");
+    expect(indicator()!.getAttribute("aria-label")).toBe(
+      "2 tunnels and 1 file server running — click to open File servers"
+    );
+
+    act(() => useAppStore.setState({ embeddedServerStates: {} }));
+    expect(indicator()!.textContent).toBe("2 running");
+    act(() => indicator()!.click());
+    expect(setSidebarView).toHaveBeenCalledWith("tunnels");
+
+    act(() => useAppStore.setState({ tunnelStates: {} }));
+    expect(indicator()).toBeNull();
   });
 });

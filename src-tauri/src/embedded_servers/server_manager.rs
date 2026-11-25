@@ -39,6 +39,7 @@ use anyhow::{Context, Result};
 use tauri::{AppHandle, Manager, Runtime, Wry};
 use termihub_core::service::drain_broadcast;
 use termihub_core::util::entry_extra::{upsert_keeping_extra, without_extra};
+use termihub_core::util::service_cause::ServiceCause;
 use termihub_core::util::service_host::{HostChoice, ServiceHost};
 
 use super::activity::ActivitySnapshot;
@@ -47,9 +48,7 @@ use super::config::{
 };
 use super::migration::{load_and_migrate, persist_store};
 use super::secrets::{self, ServerSecrets};
-use super::service::{
-    auto_start_error_state, service_id_for, EmbeddedServerService, STATUS_EVENT_KIND,
-};
+use super::service::{service_id_for, EmbeddedServerService, STATUS_EVENT_KIND};
 use super::storage::EmbeddedServerStorage;
 use crate::agent_service::hosted::{
     is_unanswered, Busy, Change, Finished, HostedKind, HostedServices, Outcome, Reading, Sample,
@@ -57,8 +56,9 @@ use crate::agent_service::hosted::{
 };
 use crate::agent_service::{
     agent_for_start, agent_is_ready, agent_is_removed, agent_rpc_client, agent_start_error,
-    not_reachable_reason, stopping_reason, unanswered_start_failed, waited_too_long,
-    waiting_reason, AgentStatusPollDelegate, AgentStatusPoller, HOST_UNREADABLE,
+    not_reachable_reason, port_in_use_here, stopping_reason, unanswered_start_failed,
+    waited_too_long, waiting_reason, AgentStatusPollDelegate, AgentStatusPoller, Reason,
+    HOST_UNREADABLE,
 };
 use crate::app_tasks::AppTasks;
 use crate::connection::recovery::RecoveryWarning;
@@ -140,7 +140,7 @@ pub struct EmbeddedServerManager<R: Runtime = Wry> {
     /// Why a server that belongs on an agent was not started, by config id
     /// (#6028): durable, so its row keeps saying it. Cleared by a good start,
     /// a stop, a save or a delete.
-    refusals: Mutex<HashMap<String, String>>,
+    refusals: Mutex<HashMap<String, Reason>>,
     /// The single periodic agent `service.status` poller (#2214). Runs while at
     /// least one agent-hosted server exists, self-reaping once none remain; the
     /// shared [`AgentStatusPoller`] owns the task lifecycle (DUP-020).
@@ -290,7 +290,12 @@ impl<R: Runtime> EmbeddedServerManager<R> {
             return Ok(self.hosted_state(&cfg.id, view));
         }
         if let Some(reason) = self.lock_refusals().get(&cfg.id) {
-            return Ok(auto_start_error_state(&cfg.id, reason));
+            return Ok(ServerState {
+                status: ServerStatus::Error,
+                error: Some(reason.text.clone()),
+                cause: reason.cause,
+                ..stopped_state(&cfg.id)
+            });
         }
         Ok(self
             .lock_services()?
@@ -302,14 +307,16 @@ impl<R: Runtime> EmbeddedServerManager<R> {
     /// The row of a server that [`HostedServices`] decides.
     fn hosted_state(&self, server_id: &str, view: View<ServerState>) -> ServerState {
         let app = &self.app_handle;
-        let (status, error) = match view {
+        let (status, reason) = match view {
             View::Running { state, .. } => return state,
             View::Starting => (ServerStatus::Starting, None),
             View::Stopping { agent_id } => (
                 ServerStatus::Stopping,
                 Some(stopping_reason(app, &agent_id)),
             ),
-            View::Waiting(on) => (ServerStatus::Waiting, Some(waiting_reason(app, &on))),
+            View::Waiting { on, until } => {
+                (ServerStatus::Waiting, Some(waiting_reason(&on, until)))
+            }
             View::NotReachable { agent_id, why, .. } => (
                 ServerStatus::NotReachable,
                 Some(not_reachable_reason(app, &agent_id, why)),
@@ -317,7 +324,8 @@ impl<R: Runtime> EmbeddedServerManager<R> {
         };
         ServerState {
             status,
-            error,
+            cause: reason.as_ref().and_then(|reason| reason.cause),
+            error: reason.map(|reason| reason.text),
             ..stopped_state(server_id)
         }
     }
@@ -356,7 +364,7 @@ impl<R: Runtime> EmbeddedServerManager<R> {
             HostChoice::ThisComputer => None,
             HostChoice::Agent(id) => Some(id.to_string()),
             HostChoice::Unreadable => {
-                return Err(self.refuse(server_id, HOST_UNREADABLE.to_string()));
+                return Err(self.refuse(server_id, HOST_UNREADABLE));
             }
         };
         // Only the user may undo the user's stop.
@@ -372,11 +380,10 @@ impl<R: Runtime> EmbeddedServerManager<R> {
                 return Ok(());
             }
             // "Start now" on a waiting server that still cannot: it goes on waiting.
-            if self.hosted.is_waiting(server_id) {
-                return Err(TerminalError::EmbeddedServerError(waiting_reason(
-                    &self.app_handle,
-                    &on,
-                )));
+            if let Some(until) = self.hosted.waits_until(server_id) {
+                return Err(TerminalError::EmbeddedServerError(
+                    waiting_reason(&on, until).text,
+                ));
             }
         }
         let ticket = match by {
@@ -434,7 +441,7 @@ impl<R: Runtime> EmbeddedServerManager<R> {
 
     fn start_ready_at(&self, now: Instant) {
         for (id, on) in self.hosted.take_expired(now) {
-            let reason = waited_too_long(&self.app_handle, &on);
+            let reason = waited_too_long(&on);
             let _ = self.refuse(&id, reason);
         }
         for (id, _) in self.hosted.waiting() {
@@ -477,10 +484,12 @@ impl<R: Runtime> EmbeddedServerManager<R> {
         let server_id = config.id.clone();
         self.lock_refusals().remove(&server_id);
         self.announce();
+        let asked = config.clone();
         let started = self
             .secrets
             .resolve(&mut config)
             .and_then(|()| self.listen_here(&server_id, config));
+        let taken = started.is_err() && EmbeddedServerService::port_is_taken(&asked);
         if !self.finish(ticket, Outcome::Failed, &server_id) {
             if let Some(service) = self.lock_services()?.get_mut(&server_id) {
                 service.shutdown();
@@ -496,7 +505,12 @@ impl<R: Runtime> EmbeddedServerManager<R> {
             }
             // Durable: the row keeps saying why, not only the toast.
             Err(e) => {
-                let _ = self.refuse(&server_id, e.to_string());
+                let reason = if taken {
+                    Reason::new(port_in_use_here(asked.port), Some(ServiceCause::PortInUse))
+                } else {
+                    plain_reason(&e).into()
+                };
+                let _ = self.refuse(&server_id, reason);
                 Err(e)
             }
         }
@@ -554,7 +568,7 @@ impl<R: Runtime> EmbeddedServerManager<R> {
         let server_id = config.id.clone();
         let server_id = server_id.as_str();
         self.announce();
-        let failed = |this: &Self, ticket: Ticket, reason: String| {
+        let failed = |this: &Self, ticket: Ticket, reason: Reason| {
             if this.finish(ticket, Outcome::Failed, server_id) {
                 Err(this.refuse(server_id, reason))
             } else {
@@ -597,7 +611,7 @@ impl<R: Runtime> EmbeddedServerManager<R> {
             let counts = self.finish(ticket, Outcome::Failed, server_id);
             self.announce();
             return if counts {
-                Err(TerminalError::EmbeddedServerError(reason))
+                Err(TerminalError::EmbeddedServerError(reason.text))
             } else {
                 Ok(())
             };
@@ -626,7 +640,7 @@ impl<R: Runtime> EmbeddedServerManager<R> {
                 }
             }
             Err(e) => {
-                let reason = agent_start_error(&self.app_handle, agent_id, &e);
+                let reason = agent_start_error(&e);
                 return failed(self, ticket, reason);
             }
         }
@@ -652,12 +666,13 @@ impl<R: Runtime> EmbeddedServerManager<R> {
 
     /// Record and announce why `server_id` was not started, and build the error
     /// for the caller. Durable (see [`refusals`](Self::refusals)).
-    fn refuse(&self, server_id: &str, reason: String) -> TerminalError {
-        tracing::warn!(%server_id, "{reason}");
+    fn refuse(&self, server_id: &str, reason: impl Into<Reason>) -> TerminalError {
+        let reason = reason.into();
+        tracing::warn!(%server_id, "{}", reason.text);
         self.lock_refusals()
             .insert(server_id.to_string(), reason.clone());
         self.announce();
-        TerminalError::EmbeddedServerError(reason)
+        TerminalError::EmbeddedServerError(reason.text)
     }
 
     /// Forget why `server_id` was not started, and put its row back to stopped.
@@ -667,7 +682,7 @@ impl<R: Runtime> EmbeddedServerManager<R> {
         }
     }
 
-    fn lock_refusals(&self) -> std::sync::MutexGuard<'_, HashMap<String, String>> {
+    fn lock_refusals(&self) -> std::sync::MutexGuard<'_, HashMap<String, Reason>> {
         self.refusals.lock().unwrap_or_else(|e| e.into_inner())
     }
 
@@ -805,7 +820,7 @@ impl<R: Runtime> EmbeddedServerManager<R> {
             return;
         }
         tracing::warn!(id = %server_id, "Failed to auto-start embedded server: {error}");
-        let _ = self.refuse(server_id, error.to_string());
+        let _ = self.refuse(server_id, plain_reason(error));
     }
 
     /// Ensure the single periodic agent `service.status` poller is running
@@ -831,12 +846,11 @@ impl<R: Runtime> EmbeddedServerManager<R> {
         for change in changes {
             if let Change::Gone {
                 id,
-                agent_id,
                 unanswered: true,
+                ..
             } = change
             {
-                let reason = unanswered_start_failed(&self.app_handle, &agent_id);
-                self.lock_refusals().insert(id, reason);
+                self.lock_refusals().insert(id, unanswered_start_failed());
             }
         }
         self.announce();
@@ -1020,11 +1034,20 @@ fn remove_local_service(
     }
 }
 
+/// What `error` says, without the prefix that says it is about a file server.
+fn plain_reason(error: &TerminalError) -> String {
+    match error {
+        TerminalError::EmbeddedServerError(reason) => reason.clone(),
+        other => other.to_string(),
+    }
+}
+
 fn stopped_state(server_id: &str) -> ServerState {
     ServerState {
         server_id: server_id.to_string(),
         status: ServerStatus::Stopped,
         error: None,
+        cause: None,
         stats: ServerStats::default(),
         started_at: None,
     }
@@ -1151,6 +1174,7 @@ fn synth_state_from_service_status(server_id: &str, status: &ServiceStatus) -> S
         server_id: server_id.to_string(),
         status: server_status,
         error,
+        cause: None,
         stats: ServerStats::default(),
         started_at: None,
     }

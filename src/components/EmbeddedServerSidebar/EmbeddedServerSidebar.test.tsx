@@ -74,6 +74,7 @@ function seedStore(
   servers: EmbeddedServerConfig[] = []
 ) {
   (useAppStore as unknown as { setState: (p: Record<string, unknown>) => void }).setState({
+    tunnels: [],
     embeddedServers: servers,
     embeddedServerStates: {},
     saveEmbeddedServer,

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use super::activity::ServerActivity;
 use crate::service::ServiceStatus;
 use crate::util::entry_extra::{EntryExtra, StoreEntry};
+use crate::util::service_cause::ServiceCause;
 use crate::util::service_host::ServiceHost;
 
 /// Protocol type for an embedded server.
@@ -277,6 +278,10 @@ pub struct ServerState {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub error: Option<String>,
+    /// What the row can offer about it (#6063). Desktop only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub cause: Option<ServiceCause>,
     pub stats: ServerStats,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]

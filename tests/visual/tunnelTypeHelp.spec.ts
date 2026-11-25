@@ -193,6 +193,23 @@ for (const viewport of [
         await shoot(page, "agent-hover");
       });
 
+      // A tooltip below its row lay on the next one and took its hover: on the way
+      // down the list, or with the pointer resting on a row it crosses, the row
+      // that is pointed at said nothing.
+      test("a row's tooltip leaves the next row its own", async ({ page }) => {
+        await boot(page, theme);
+        const tooltip = (tunnel: string) => page.locator(id(`tunnel-tooltip-${tunnel}`)).first();
+        const next = page.locator(id("tunnel-name-tun-socks"));
+        await hover(page, page.locator(id("tunnel-name-tun-db")));
+        await expect(tooltip("tun-db")).toBeVisible();
+        const shown = (await tooltip("tun-db").boundingBox())!;
+        const row = (await page.locator(id("tunnel-item-tun-db")).boundingBox())!;
+        expect(shown.x).toBeGreaterThanOrEqual(row.x + row.width);
+        await hover(page, next);
+        await expect(tooltip("tun-socks")).toBeVisible();
+        await expect(tooltip("tun-db")).toHaveCount(0);
+      });
+
       test("the sidebar row's tooltip and the Port Forwarding section", async ({ page }) => {
         await boot(page, theme);
         await hover(page, page.locator(id("tunnel-name-tun-socks")));
@@ -200,7 +217,10 @@ for (const viewport of [
           "Use the SSH server as a proxy for many destinations."
         );
         await shoot(page, "row-tooltip");
-        await page.mouse.move(0, 0);
+        // Away along the top edge, so the way to the editor crosses no row: a row
+        // passed on it would show its tooltip over the editor.
+        await page.mouse.move(viewport.width - 1, 0, { steps: 20 });
+        await expect(page.locator(id("tunnel-tooltip-tun-socks"))).toHaveCount(0);
         await page.evaluate(() => {
           void window.__visual.store.getState().openConnectionEditorTab("Work/Build Box");
         });

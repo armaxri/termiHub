@@ -65,6 +65,7 @@ function renderItem(state: TunnelState | undefined, handlers: Handlers = {}): vo
           onEdit={noop}
           onDuplicate={noop}
           onDelete={noop}
+          onUsePort={vi.fn()}
         />
       )
     );
@@ -158,13 +159,13 @@ describe("TunnelListItem — shared Button primitive (#1259)", () => {
     expect(stop.classList.contains("ui-btn--pending")).toBe(false);
   });
 
-  it("offers a force-Reconnect on a connected tunnel that fires onReconnect (#1243)", async () => {
+  it("offers Restart on a connected tunnel, which fires onReconnect (#1243)", async () => {
     const onReconnect = vi.fn(() => Promise.resolve());
     renderItem({ tunnelId: "tun-1", status: "connected" } as TunnelState, { onReconnect });
     await flush();
 
     const reconnect = serviceMenuItem("tunnel-reconnect-tun-1")!;
-    expect(reconnect.textContent).toContain("Reconnect");
+    expect(reconnect.textContent).toContain("Restart");
     click(reconnect);
     await flush();
     expect(onReconnect).toHaveBeenCalledWith("tun-1");

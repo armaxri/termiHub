@@ -2,7 +2,7 @@
  * The test ids of a service row, per kind. Literal, so the test-id catalog sees
  * every family; both kinds keep the ids they had before they shared a row.
  */
-import type { ServiceActionId, ServiceKind } from "@/utils/serviceModel";
+import type { ServiceActionId, ServiceKind, ServiceNextStepId } from "@/utils/serviceModel";
 
 /** Spread onto the button or the item of an action. */
 export type ServiceActionTestIds = Record<ServiceActionId, { "data-testid": string }>;
@@ -17,7 +17,11 @@ export interface ServiceRowTestIds {
   kindTestId: string;
   addressTestId: string;
   reasonTestId: string;
-  nextStepTestId: string;
+  technicalTestId: string;
+  machineTestId: string;
+  riskTestId: string;
+  /** Beside the reason. */
+  nextStepTestIds: Record<ServiceNextStepId, { "data-testid": string }>;
   /** The button of the "…" menu. */
   moreTestId: string;
   /** Buttons on the row. */
@@ -39,7 +43,18 @@ function tunnelTestIds(id: string): ServiceRowTestIds {
     kindTestId: `tunnel-kind-${id}`,
     addressTestId: `tunnel-address-${id}`,
     reasonTestId: `tunnel-reason-${id}`,
-    nextStepTestId: `tunnel-choose-connection-${id}`,
+    technicalTestId: `tunnel-technical-${id}`,
+    machineTestId: `tunnel-machine-${id}`,
+    riskTestId: `tunnel-risk-${id}`,
+    nextStepTestIds: {
+      chooseConnection: { "data-testid": `tunnel-choose-connection-${id}` },
+      usePort: { "data-testid": `tunnel-use-port-${id}` },
+      edit: { "data-testid": `tunnel-edit-port-${id}` },
+      connectAgent: { "data-testid": `tunnel-connect-agent-${id}` },
+      unlock: { "data-testid": `tunnel-unlock-${id}` },
+      editConnection: { "data-testid": `tunnel-edit-connection-${id}` },
+      retryNow: { "data-testid": `tunnel-retry-now-${id}` },
+    },
     moreTestId: `tunnel-more-${id}`,
     actionTestIds: {
       start: { "data-testid": `tunnel-start-${id}` },
@@ -94,7 +109,18 @@ function serverTestIds(id: string): ServiceRowTestIds {
     kindTestId: `server-kind-${id}`,
     addressTestId: `server-address-${id}`,
     reasonTestId: `server-reason-${id}`,
-    nextStepTestId: `server-next-step-${id}`,
+    technicalTestId: `server-technical-${id}`,
+    machineTestId: `server-machine-${id}`,
+    riskTestId: `server-risk-${id}`,
+    nextStepTestIds: {
+      chooseConnection: { "data-testid": `server-choose-connection-${id}` },
+      usePort: { "data-testid": `server-use-port-${id}` },
+      edit: { "data-testid": `server-edit-port-${id}` },
+      connectAgent: { "data-testid": `server-connect-agent-${id}` },
+      unlock: { "data-testid": `server-unlock-${id}` },
+      editConnection: { "data-testid": `server-edit-connection-${id}` },
+      retryNow: { "data-testid": `server-retry-now-${id}` },
+    },
     moreTestId: `server-more-${id}`,
     actionTestIds: {
       start: { "data-testid": `server-start-${id}` },

@@ -20,22 +20,24 @@ from typing import Optional, Sequence
 PRIMARY_ACTION_CLASS = "sidebar-list-item--primary-action"
 
 #: Dot label → the run control the row must offer, per row kind.
-EXPECTED_CONTROL: dict[str, dict[str, str]] = {
+EXPECTED_CONTROL: dict[str, dict[str, Optional[str]]] = {
     "tunnel": {
         "Stopped": "Start",
-        "Starting": "Stop",
+        "Starting": "Cancel start",
         "Running": "Stop",
         "Reconnecting": "Stop",
         "Waiting": "Stop waiting",
-        "Stopping": "Stop",
+        "Stopping": None,
+        "Stop pending": None,
         "Not reachable": "Stop",
         "Error": "Retry",
     },
     "server": {
         "Stopped": "Start",
-        "Starting": "Stop",
+        "Starting": "Cancel start",
         "Running": "Stop",
-        "Stopping": "Stop",
+        "Stopping": None,
+        "Stop pending": None,
         "Waiting": "Stop waiting",
         "Not reachable": "Stop",
         "Error": "Retry",
@@ -65,9 +67,14 @@ def row_control_problems(
         problems.append(f"{item}: the status dot reads {dot_label!r}, not a known state")
     if dot_title != dot_label:
         problems.append(f"{item}: the dot's tooltip {dot_title!r} differs from {dot_label!r}")
+    labels = [label for label in primary_labels if label]
+    if states.get(dot_label or "", "") is None:
+        # Stop was pressed already: nothing to run.
+        if labels:
+            problems.append(f"{item}: a {dot_label!r} row offers {labels!r}, not nothing")
+        return problems
     if PRIMARY_ACTION_CLASS not in (row_class or "").split():
         problems.append(f"{item}: the run control is hover-only, not visible at rest")
-    labels = [label for label in primary_labels if label]
     if len(labels) != 1:
         problems.append(f"{item}: expected one run control on the row, found {labels!r}")
     elif dot_label in states and labels[0] != states[dot_label]:

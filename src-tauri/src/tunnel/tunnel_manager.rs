@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use chrono::{DateTime, Local};
 use tauri::{AppHandle, Manager, Runtime, Wry};
 use termihub_core::backends::ssh::auth::connect_and_authenticate_cancellable_with_liveness as core_connect_cancellable_with_liveness;
 use termihub_core::backends::ssh::handler::{ForwardedChannelRegistry, LivenessWatch, SshSession};
@@ -16,7 +17,9 @@ use termihub_core::reconnect_backoff::{
     ReconnectPhase, INITIAL_RECONNECT_STATE,
 };
 use termihub_core::tunnel::ActiveForwarder;
+use termihub_core::util::service_cause::{tcp_port_in_use, ServiceCause};
 use termihub_core::util::service_host::HostChoice;
+use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 use crate::terminal::backend::SshConfig;
@@ -38,8 +41,8 @@ use crate::agent_service::hosted::{
 };
 use crate::agent_service::{
     agent_for_start, agent_is_ready, agent_is_removed, agent_rpc_client, agent_start_error,
-    not_reachable_reason, stopping_reason, unanswered_start_failed, waited_too_long,
-    waiting_reason, AgentStatusPollDelegate, AgentStatusPoller,
+    not_reachable_reason, port_in_use_here, stopping_reason, unanswered_start_failed,
+    waited_too_long, waiting_reason, AgentStatusPollDelegate, AgentStatusPoller, Reason,
 };
 use crate::app_tasks::AppTasks;
 use crate::connection::jump_host_resolver::ReferenceRole;
@@ -136,15 +139,19 @@ impl PooledSessionGuards {
 /// durable, queryable resting state (GAP 3, #1238). Poison-safe: a poisoned
 /// mutex silently no-ops rather than panicking, consistent with the manager's
 /// other lock handling.
-fn record_last_error(errors: &Mutex<HashMap<String, String>>, tunnel_id: &str, error: String) {
+fn record_last_error(
+    errors: &Mutex<HashMap<String, Reason>>,
+    tunnel_id: &str,
+    reason: impl Into<Reason>,
+) {
     if let Ok(mut map) = errors.lock() {
-        map.insert(tunnel_id.to_string(), error);
+        map.insert(tunnel_id.to_string(), reason.into());
     }
 }
 
 /// Clear a tunnel's persisted last error (on a successful start or an explicit
 /// stop), returning it to the "never failed" resting state.
-fn clear_last_error(errors: &Mutex<HashMap<String, String>>, tunnel_id: &str) {
+fn clear_last_error(errors: &Mutex<HashMap<String, Reason>>, tunnel_id: &str) {
     if let Ok(mut map) = errors.lock() {
         map.remove(tunnel_id);
     }
@@ -152,7 +159,7 @@ fn clear_last_error(errors: &Mutex<HashMap<String, String>>, tunnel_id: &str) {
 
 /// Look up a tunnel's persisted last error, if any. Reading never mutates the
 /// map, so repeated `get_statuses` calls (a reload) keep reporting `Error`.
-fn last_error_for(errors: &Mutex<HashMap<String, String>>, tunnel_id: &str) -> Option<String> {
+fn last_error_for(errors: &Mutex<HashMap<String, Reason>>, tunnel_id: &str) -> Option<Reason> {
     errors
         .lock()
         .ok()
@@ -168,8 +175,8 @@ fn last_error_for(errors: &Mutex<HashMap<String, String>>, tunnel_id: &str) -> O
 /// "never started" (no error entry) from "died with an error" (entry present).
 fn resting_status(
     is_connecting: bool,
-    last_error: Option<String>,
-) -> (TunnelStatus, Option<String>) {
+    last_error: Option<Reason>,
+) -> (TunnelStatus, Option<Reason>) {
     if is_connecting {
         (TunnelStatus::Connecting, None)
     } else if let Some(error) = last_error {
@@ -394,17 +401,17 @@ fn gone_tunnel(unanswered: bool, reconnect_on_disconnect: bool) -> GoneTunnel {
     }
 }
 
-/// [`Reasons`] with the agents' names.
+/// [`Reasons`] of this app.
 struct AppReasons<'a, R: Runtime>(&'a AppHandle<R>);
 
 impl<R: Runtime> Reasons for AppReasons<'_, R> {
-    fn waiting(&self, on: &WaitFor) -> String {
-        waiting_reason(self.0, on)
+    fn waiting(&self, on: &WaitFor, until: DateTime<Local>) -> Reason {
+        waiting_reason(on, until)
     }
-    fn stopping(&self, agent_id: &str) -> String {
+    fn stopping(&self, agent_id: &str) -> Reason {
         stopping_reason(self.0, agent_id)
     }
-    fn not_reachable(&self, agent_id: &str, why: Away) -> String {
+    fn not_reachable(&self, agent_id: &str, why: Away) -> Reason {
         not_reachable_reason(self.0, agent_id, why)
     }
 }
@@ -467,13 +474,13 @@ pub struct TunnelManager<R: Runtime = Wry> {
     /// entry is set when a start fails and committed (not cancelled), and
     /// cleared on a successful start or an explicit stop. `Arc`-shared so the
     /// supervisor can record a death cause (#1243).
-    last_errors: Arc<Mutex<HashMap<String, String>>>,
+    last_errors: Arc<Mutex<HashMap<String, Reason>>>,
     /// Cancel tokens for in-flight reconnect-backoff loops, keyed by tunnel id
     /// (#1246, GAP 5). A tunnel with `reconnect_on_disconnect` on is NOT in
     /// `active_tunnels` while retrying, so `stop_tunnel`/`stop_all` cancel the
     /// backoff loop through this registry instead. `Arc`-shared so the supervisor
     /// task can register/deregister its own loop without `&self`.
-    reconnecting: Arc<Mutex<HashMap<String, CancellationToken>>>,
+    reconnecting: Arc<Mutex<HashMap<String, Reconnecting>>>,
     connecting: ConnectingTracker,
     /// What is known about the tunnels on agents, and about the automatic starts
     /// that wait (S3, #2185, #6028). Disjoint from `active_tunnels`, which holds
@@ -693,13 +700,13 @@ impl<R: Runtime> TunnelManager<R> {
                     // Running on an agent, not reachable there, waiting, starting
                     // or stopping (#2185, #6028).
                     state
-                } else if reconnecting.contains_key(&config.id) {
+                } else if let Some(reconnecting) = reconnecting.get(&config.id) {
                     // In a reconnect-backoff loop (#1246) — report `Reconnecting`
                     // so a reload does not briefly launder it back to Error.
                     TunnelState::desktop(
                         config.id.clone(),
                         TunnelStatus::Reconnecting,
-                        None,
+                        Some(reconnecting_reason(reconnecting.attempt).into()),
                         TunnelStats::default(),
                     )
                 } else if let Some(status) = self.connection_refs.resting_status(config) {
@@ -813,11 +820,8 @@ impl<R: Runtime> TunnelManager<R> {
                 return Ok(());
             }
             // "Start now" on a waiting tunnel that still cannot: it goes on waiting.
-            if self.hosted.is_waiting(tunnel_id) {
-                return Err(TerminalError::TunnelError(waiting_reason(
-                    &self.app_handle,
-                    &on,
-                )));
+            if let Some(until) = self.hosted.waits_until(tunnel_id) {
+                return Err(TerminalError::TunnelError(waiting_reason(&on, until).text));
             }
         }
 
@@ -896,6 +900,9 @@ impl<R: Runtime> TunnelManager<R> {
     /// Stop and start a tunnel, on the user's request. When it cannot start yet
     /// it waits; the stop is done first either way.
     pub fn restart_tunnel(&self, tunnel_id: &str) -> Result<(), TerminalError> {
+        if self.retry_reconnect_now(tunnel_id) {
+            return Ok(());
+        }
         self.stop_tunnel(tunnel_id)?;
         let config = self
             .get_tunnels()?
@@ -924,7 +931,7 @@ impl<R: Runtime> TunnelManager<R> {
 
     fn start_ready_at(&self, now: Instant) {
         for (id, on) in self.hosted.take_expired(now) {
-            let _ = self.refuse(&id, waited_too_long(&self.app_handle, &on));
+            let _ = self.refuse(&id, waited_too_long(&on));
         }
         for (id, _) in self.hosted.waiting() {
             if let Err(e) = self.start(&id, StartedBy::Wait) {
@@ -955,11 +962,7 @@ impl<R: Runtime> TunnelManager<R> {
                     self.emit_status(&id, status);
                 }
                 Change::Stopped(id) => self.emit_status(&id, TunnelStatus::Disconnected),
-                Change::Gone {
-                    id,
-                    agent_id,
-                    unanswered,
-                } => {
+                Change::Gone { id, unanswered, .. } => {
                     let reconnect = self
                         .get_tunnels()
                         .unwrap_or_default()
@@ -967,8 +970,7 @@ impl<R: Runtime> TunnelManager<R> {
                         .any(|t| t.id == id && t.reconnect_on_disconnect);
                     match gone_tunnel(unanswered, reconnect) {
                         GoneTunnel::NotStarted => {
-                            let reason = unanswered_start_failed(&self.app_handle, &agent_id);
-                            let _ = self.refuse(&id, reason);
+                            let _ = self.refuse(&id, unanswered_start_failed());
                         }
                         GoneTunnel::Stopped => self.emit_status(&id, TunnelStatus::Disconnected),
                         GoneTunnel::StartAgain => {
@@ -988,10 +990,25 @@ impl<R: Runtime> TunnelManager<R> {
 
     /// Record and announce why `tunnel_id` was not started, and build the error
     /// for the caller.
-    fn refuse(&self, tunnel_id: &str, reason: String) -> TerminalError {
+    fn refuse(&self, tunnel_id: &str, reason: impl Into<Reason>) -> TerminalError {
+        let reason = reason.into();
         record_last_error(&self.last_errors, tunnel_id, reason.clone());
         self.emit_status(tunnel_id, TunnelStatus::Error);
-        TerminalError::TunnelError(reason)
+        TerminalError::TunnelError(reason.text)
+    }
+
+    /// Why `config` did not start on this computer, as its row says it (#6063).
+    fn local_start_reason(&self, config: &TunnelConfig, error: &TerminalError) -> Reason {
+        let server = self
+            .app_handle
+            .try_state::<ConnectionManager>()
+            .and_then(|connections| connections.saved_connection_name(&config.ssh_connection_id))
+            .unwrap_or_else(|| "The SSH server".to_string());
+        // Behind a jump host it may be that one that refused.
+        let direct = self
+            .resolve_ssh_config(&config.ssh_connection_id)
+            .is_ok_and(|ssh| ssh.proxy_jump.is_empty());
+        start_reason(&config.tunnel_type, &server, direct, error)
     }
 
     /// End a start: `true` when it counts, `false` when a stop was pressed
@@ -1042,8 +1059,8 @@ impl<R: Runtime> TunnelManager<R> {
                         // Persist the failure so `Error` is a durable, queryable
                         // resting state, not just a fire-and-forget event that a
                         // reload launders away (GAP 3, #1238).
-                        record_last_error(&self.last_errors, tunnel_id, e.to_string());
-                        self.emit_status(tunnel_id, TunnelStatus::Error);
+                        let reason = self.local_start_reason(config, &e);
+                        return Err(self.refuse(tunnel_id, reason));
                     }
                 }
                 return Err(e);
@@ -1140,7 +1157,7 @@ impl<R: Runtime> TunnelManager<R> {
 
         self.emit_status(tunnel_id, TunnelStatus::Connecting);
 
-        let failed = |ticket: Ticket, reason: String| {
+        let failed = |ticket: Ticket, reason: Reason| {
             if self.finish(ticket, Outcome::Failed, tunnel_id) {
                 Err(self.refuse(tunnel_id, reason))
             } else {
@@ -1152,7 +1169,7 @@ impl<R: Runtime> TunnelManager<R> {
         // "via" server itself; any inline jump-host chain is already expanded.
         let ssh_config = match self.resolve_ssh_config(&config.ssh_connection_id) {
             Ok(cfg) => cfg,
-            Err(e) => return failed(ticket, e.to_string()),
+            Err(e) => return failed(ticket, plain_reason(&e).into()),
         };
         let client = match agent_for_start(&self.app_handle, agent_id) {
             Ok(client) => client,
@@ -1179,7 +1196,7 @@ impl<R: Runtime> TunnelManager<R> {
             Ok(params) => params,
             Err(e) => {
                 let reason = format!("Failed to serialize tunnel.start params: {e}");
-                return failed(ticket, reason);
+                return failed(ticket, reason.into());
             }
         };
 
@@ -1189,7 +1206,7 @@ impl<R: Runtime> TunnelManager<R> {
             .hosted
             .send_owed_stop(client.as_ref(), agent_id, tunnel_id, Instant::now())
         {
-            let reason = stopping_reason(&self.app_handle, agent_id);
+            let reason = stopping_reason(&self.app_handle, agent_id).text;
             if !self.finish(ticket, Outcome::Failed, tunnel_id) {
                 return Ok(());
             }
@@ -1231,7 +1248,7 @@ impl<R: Runtime> TunnelManager<R> {
                 self.emit_status(tunnel_id, TunnelStatus::NotReachable);
             }
             Err(e) => {
-                let reason = agent_start_error(&self.app_handle, agent_id, &e);
+                let reason = agent_start_error(&e);
                 return failed(ticket, reason);
             }
         }
@@ -1454,7 +1471,7 @@ impl<R: Runtime> TunnelManager<R> {
             Ok((session, registry, PooledSessionGuards::gateway(gateway)))
         } else {
             let (session, registry) = connect_with_registry_cancellable(ssh_config, cancel)
-                .map_err(|e| TerminalError::TunnelError(format!("SSH connect failed: {}", e)))?;
+                .map_err(|e| TerminalError::SshError(e.to_string()))?;
             Ok((session, registry, PooledSessionGuards::default()))
         }
     }
@@ -1680,7 +1697,7 @@ impl<R: Runtime> TunnelManager<R> {
     /// `Disconnected` and deregisters itself.
     fn cancel_reconnect(&self, tunnel_id: &str) -> bool {
         let token = match self.reconnecting.lock() {
-            Ok(map) => map.get(tunnel_id).cloned(),
+            Ok(map) => map.get(tunnel_id).map(|entry| entry.cancel.clone()),
             Err(_) => None,
         };
         match token {
@@ -1692,13 +1709,28 @@ impl<R: Runtime> TunnelManager<R> {
         }
     }
 
+    /// Make the next try of a reconnecting tunnel now (#6063). Returns true if
+    /// there is one; the loop goes on when that try fails, too.
+    fn retry_reconnect_now(&self, tunnel_id: &str) -> bool {
+        let Ok(map) = self.reconnecting.lock() else {
+            return false;
+        };
+        match map.get(tunnel_id) {
+            Some(entry) => {
+                entry.retry_now.notify_one();
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Stop all active tunnels (used during app shutdown).
     pub fn stop_all(&self) {
         // Cancel every in-flight reconnect-backoff loop so no zombie backoff task
         // survives shutdown (#1246).
         if let Ok(map) = self.reconnecting.lock() {
-            for token in map.values() {
-                token.cancel();
+            for entry in map.values() {
+                entry.cancel.cancel();
             }
         }
 
@@ -2011,8 +2043,8 @@ fn orchestrate_companion<R: Runtime>(
 #[allow(clippy::too_many_arguments)]
 async fn supervise<R: Runtime>(
     active_tunnels: Arc<Mutex<HashMap<String, ActiveTunnel>>>,
-    last_errors: Arc<Mutex<HashMap<String, String>>>,
-    reconnecting: Arc<Mutex<HashMap<String, CancellationToken>>>,
+    last_errors: Arc<Mutex<HashMap<String, Reason>>>,
+    reconnecting: Arc<Mutex<HashMap<String, Reconnecting>>>,
     app_handle: AppHandle<R>,
     tunnel_id: String,
     death: Option<tokio::sync::oneshot::Receiver<()>>,
@@ -2043,13 +2075,13 @@ async fn supervise<R: Runtime>(
     teardown_parts(forwarder, guards);
 
     let reason = match cause {
-        DeathCause::Forwarder => "connection lost: forwarder stopped",
-        DeathCause::Session => "connection lost: SSH session closed",
+        DeathCause::Forwarder => "Connection lost: the forwarding stopped.",
+        DeathCause::Session => "Connection lost: the SSH session was closed.",
     };
 
     // With reconnect off, death is a terminal Error resting state (#1243).
     if !reconnect_on_disconnect {
-        record_last_error(&last_errors, &tunnel_id, reason.to_string());
+        record_last_error(&last_errors, &tunnel_id, reason);
         emit_tunnel_status(&app_handle, &tunnel_id, TunnelStatus::Error);
         tracing::warn!("Tunnel {tunnel_id} died — transitioned to Error");
         return;
@@ -2063,16 +2095,24 @@ async fn supervise<R: Runtime>(
     // app token, ARCH-007) also ends the backoff; an explicit Stop still reaches
     // it through the `reconnecting` registry.
     let loop_cancel = cancel.child_token();
+    let retry_now = Arc::new(Notify::new());
     if let Ok(mut map) = reconnecting.lock() {
-        map.insert(tunnel_id.clone(), loop_cancel.clone());
+        let entry = Reconnecting {
+            cancel: loop_cancel.clone(),
+            retry_now: Arc::clone(&retry_now),
+            attempt: 1,
+        };
+        map.insert(tunnel_id.clone(), entry);
     }
 
     let mut jitter = system_jitter;
     let outcome = run_reconnect_loop(
         &loop_cancel,
+        &retry_now,
         &TUNNEL_RECONNECT_POLICY,
         &mut jitter,
         |attempt, delay| {
+            note_attempt(&reconnecting, &tunnel_id, attempt);
             tracing::info!(
                 "Tunnel {tunnel_id} reconnecting — attempt {attempt} of \
                  {RECONNECT_MAX_ATTEMPTS} (retry in {}s)",
@@ -2099,7 +2139,9 @@ async fn supervise<R: Runtime>(
             tracing::info!("Tunnel {tunnel_id} reconnect cancelled by stop");
         }
         ReconnectOutcome::Exhausted => {
-            let msg = format!("reconnect failed after {RECONNECT_MAX_ATTEMPTS} attempts");
+            let msg = format!(
+                "Connection lost, and {RECONNECT_MAX_ATTEMPTS} tries to get it back failed."
+            );
             record_last_error(&last_errors, &tunnel_id, msg);
             emit_tunnel_status(&app_handle, &tunnel_id, TunnelStatus::Error);
             tracing::warn!("Tunnel {tunnel_id} reconnect exhausted — transitioned to Error");
@@ -2117,6 +2159,82 @@ const TUNNEL_RECONNECT_POLICY: BackoffConfig = policy_for(ReconnectKind::Tunnel)
 /// Max reconnect attempts before giving up to `Error` (#1246) — the shared
 /// policy's budget.
 const RECONNECT_MAX_ATTEMPTS: u32 = TUNNEL_RECONNECT_POLICY.max_attempts as u32;
+
+/// A tunnel in its reconnect-backoff loop (#1246).
+struct Reconnecting {
+    cancel: CancellationToken,
+    retry_now: Arc<Notify>,
+    /// Which try comes next, or runs.
+    attempt: u32,
+}
+
+/// Keep which try of `tunnel_id` comes next, for its row.
+fn note_attempt(
+    reconnecting: &Mutex<HashMap<String, Reconnecting>>,
+    tunnel_id: &str,
+    attempt: u32,
+) {
+    if let Ok(mut map) = reconnecting.lock() {
+        if let Some(entry) = map.get_mut(tunnel_id) {
+            entry.attempt = attempt;
+        }
+    }
+}
+
+/// What the row of a reconnecting tunnel says.
+fn reconnecting_reason(attempt: u32) -> String {
+    let then = if attempt >= RECONNECT_MAX_ATTEMPTS {
+        ", then it gives up"
+    } else {
+        ""
+    };
+    format!("Connection lost. Try {attempt} of {RECONNECT_MAX_ATTEMPTS}{then}.")
+}
+
+/// Why a tunnel did not start on this computer: what is taken or who refused, in
+/// words for its row. Pure but for the look at the port.
+fn start_reason(tunnel: &TunnelType, server: &str, direct: bool, error: &TerminalError) -> Reason {
+    let listens_on = match tunnel {
+        TunnelType::Local(c) => Some((&c.local_host, c.local_port)),
+        TunnelType::Dynamic(c) => Some((&c.local_host, c.local_port)),
+        TunnelType::Remote(_) => None,
+    };
+    match error {
+        TerminalError::SshError(what) if direct && is_refused(what) => Reason::new(
+            format!("{server} refused the connection. Is its SSH server running?"),
+            Some(ServiceCause::Connection),
+        ),
+        TerminalError::SshError(what) => Reason::new(
+            format!(
+                "Could not connect to {server}: {}",
+                what.strip_prefix("Connection failed: ").unwrap_or(what)
+            ),
+            Some(ServiceCause::Connection),
+        ),
+        error => match listens_on {
+            Some((host, port)) if tcp_port_in_use(host, port) => {
+                Reason::new(port_in_use_here(port), Some(ServiceCause::PortInUse))
+            }
+            _ => plain_reason(error).into(),
+        },
+    }
+}
+
+/// Whether the machine answered that nothing listens there. By the number the
+/// system gives it, which no language changes.
+fn is_refused(error: &str) -> bool {
+    ["(os error 61)", "(os error 111)", "(os error 10061)"]
+        .iter()
+        .any(|code| error.contains(code))
+}
+
+/// What `error` says, without the prefix that says it is about a tunnel.
+fn plain_reason(error: &TerminalError) -> String {
+    match error {
+        TerminalError::TunnelError(reason) => reason.clone(),
+        other => other.to_string(),
+    }
+}
 
 /// Outcome of a reconnect-backoff loop (#1246).
 #[derive(Debug, PartialEq, Eq)]
@@ -2159,8 +2277,12 @@ where
 /// `Reconnected` on the first success, `Cancelled` if the token fires, or
 /// `Exhausted` once the reducer gives up. `attempt` is synchronous (the
 /// manager's connect blocks internally).
+///
+/// `retry_now` ends a wait at once ("Retry now", #6063); the try then counts like
+/// any other.
 async fn run_reconnect_loop(
     cancel: &CancellationToken,
+    retry_now: &Notify,
     config: &BackoffConfig,
     rand: &mut (dyn FnMut() -> f64 + Send),
     mut on_attempt: impl FnMut(u32, Duration),
@@ -2184,6 +2306,7 @@ async fn run_reconnect_loop(
             biased;
             // Stop always wins the Stop-vs-backoff race and clears the pending timer.
             _ = cancel.cancelled() => return ReconnectOutcome::Cancelled,
+            _ = retry_now.notified() => {}
             _ = tokio::time::sleep(delay) => {}
         }
         // A stop that fired exactly as the timer elapsed still wins.
@@ -2257,12 +2380,14 @@ mod tests {
     use super::super::connecting::{ConnectingTracker, FinishOutcome};
     use super::{
         clear_last_error, companion_action, connection_bound_tunnel_ids, find_companion,
-        gone_tunnel, has_active_tunnels, last_error_for, record_last_error, resolve_managed_arc,
-        resting_status, run_reconnect_loop, tunnel_host_ssh_config, type_supports_tunneling,
-        wait_forwarder_death, wait_session_death, ActiveTunnel, CompanionAction, GoneTunnel,
-        ReconnectOutcome, TUNNEL_RECONNECT_POLICY,
+        gone_tunnel, has_active_tunnels, last_error_for, reconnecting_reason, record_last_error,
+        resolve_managed_arc, resting_status, run_reconnect_loop, start_reason,
+        tunnel_host_ssh_config, type_supports_tunneling, wait_forwarder_death, wait_session_death,
+        ActiveTunnel, CompanionAction, GoneTunnel, Reason, ReconnectOutcome, ServiceCause,
+        TUNNEL_RECONNECT_POLICY,
     };
     use crate::tunnel::config::{LocalForwardConfig, TunnelConfig, TunnelStatus, TunnelType};
+    use crate::utils::errors::TerminalError;
     use tauri::Manager;
     use termihub_core::backends::ssh::session_pool::{PooledRef, RefPool};
     use termihub_core::connection::{Capabilities, ConnectionTypeInfo, SettingsSchema};
@@ -2475,7 +2600,7 @@ mod tests {
             last_error_for(&errors, TUNNEL_ID),
         );
         assert_eq!(status, TunnelStatus::Error);
-        assert_eq!(error.as_deref(), Some("connect refused"));
+        assert_eq!(error, Some("connect refused".into()));
     }
 
     /// GAP 3: "never started" (no map entry) stays `Disconnected` — distinct
@@ -2543,7 +2668,7 @@ mod tests {
 
         let second = resting_status(false, last_error_for(&errors, TUNNEL_ID));
         assert_eq!(second.0, TunnelStatus::Error);
-        assert_eq!(second.1.as_deref(), Some("session died"));
+        assert_eq!(second.1, Some("session died".into()));
     }
 
     // ── Supervisor: liveness signals + death-driven Error (S2, GAP 1 + GAP 2, #1243) ──
@@ -2646,7 +2771,7 @@ mod tests {
         );
         let (status, msg) = resting_status(false, last_error_for(&errors, TUNNEL_ID));
         assert_eq!(status, TunnelStatus::Error);
-        assert_eq!(msg.as_deref(), Some("connection lost: SSH session closed"));
+        assert_eq!(msg, Some("connection lost: SSH session closed".into()));
     }
 
     /// A shared pooled session backing two tunnels: when it dies, each tunnel's
@@ -2795,6 +2920,7 @@ mod tests {
         let start = tokio::time::Instant::now();
         let outcome = run_reconnect_loop(
             &cancel,
+            &tokio::sync::Notify::new(),
             &TUNNEL_RECONNECT_POLICY,
             &mut draw,
             |_, delay| announced.push(delay),
@@ -2829,6 +2955,7 @@ mod tests {
         let mut tries = 0u32;
         let outcome = run_reconnect_loop(
             &cancel,
+            &tokio::sync::Notify::new(),
             &fast_backoff(),
             &mut || 0.5,
             |n, _delay| emitted.push(n),
@@ -2853,6 +2980,7 @@ mod tests {
         let mut emitted: Vec<u32> = Vec::new();
         let outcome = run_reconnect_loop(
             &cancel,
+            &tokio::sync::Notify::new(),
             &fast_backoff(),
             &mut || 0.5,
             |n, _delay| emitted.push(n),
@@ -2870,6 +2998,7 @@ mod tests {
         let mut tries = 0u32;
         let outcome = run_reconnect_loop(
             &cancel,
+            &tokio::sync::Notify::new(),
             &fast_backoff(),
             &mut || 0.5,
             |_, _| {},
@@ -2881,6 +3010,102 @@ mod tests {
         .await;
         assert_eq!(outcome, ReconnectOutcome::Cancelled);
         assert_eq!(tries, 0, "Stop wins the race — no reconnect attempt runs");
+    }
+
+    /// "Retry now" (#6063) ends the wait, not the retries: a minute of waiting is
+    /// skipped, and a try that fails is followed by the next one.
+    #[tokio::test(start_paused = true)]
+    async fn reconnect_loop_retries_now_when_asked() {
+        let cancel = CancellationToken::new();
+        let retry_now = Arc::new(tokio::sync::Notify::new());
+        let policy = BackoffConfig {
+            base_delay_ms: 60_000.0,
+            max_delay_ms: 60_000.0,
+            ..fast_backoff()
+        };
+        let started = tokio::time::Instant::now();
+        let mut tries = 0u32;
+        let ask = Arc::clone(&retry_now);
+        let outcome = run_reconnect_loop(
+            &cancel,
+            &retry_now,
+            &policy,
+            &mut || 0.5,
+            |_, _| ask.notify_one(),
+            |_| {
+                tries += 1;
+                tries == 3
+            },
+        )
+        .await;
+        assert_eq!(outcome, ReconnectOutcome::Reconnected);
+        assert_eq!(tries, 3);
+        assert!(started.elapsed() < Duration::from_secs(1), "did not wait");
+    }
+
+    #[test]
+    fn a_reconnecting_row_says_which_try_and_that_the_last_one_is_the_last() {
+        assert_eq!(reconnecting_reason(3), "Connection lost. Try 3 of 10.");
+        assert_eq!(
+            reconnecting_reason(10),
+            "Connection lost. Try 10 of 10, then it gives up."
+        );
+    }
+
+    fn local_on(port: u16) -> TunnelType {
+        TunnelType::Local(LocalForwardConfig {
+            local_host: "127.0.0.1".into(),
+            local_port: port,
+            remote_host: "db".into(),
+            remote_port: 5432,
+        })
+    }
+
+    /// The reason names the port or the server, in words, and what its button is
+    /// chosen by (#6063).
+    #[test]
+    fn a_failed_start_says_what_is_taken_or_who_refused() {
+        let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = taken.local_addr().unwrap().port();
+        let bind = TerminalError::TunnelError("Failed to start local forwarder: x".into());
+        assert_eq!(
+            start_reason(&local_on(port), "Build Box", true, &bind),
+            Reason::new(
+                format!("Port {port} is already in use on this computer."),
+                Some(ServiceCause::PortInUse)
+            )
+        );
+        // The connection comes before the port: that is what failed.
+        for code in [61, 111, 10061] {
+            let refused = TerminalError::SshError(format!("Verbindung (os error {code})"));
+            assert_eq!(
+                start_reason(&local_on(port), "Build Box", true, &refused),
+                Reason::new(
+                    "Build Box refused the connection. Is its SSH server running?",
+                    Some(ServiceCause::Connection)
+                )
+            );
+        }
+        // Who refused behind a jump host is not known.
+        let refused = TerminalError::SshError("Connection refused (os error 61)".into());
+        assert_eq!(
+            start_reason(&local_on(port), "Build Box", false, &refused).text,
+            "Could not connect to Build Box: Connection refused (os error 61)"
+        );
+        let other = TerminalError::SshError("Connection failed: no route to host".into());
+        assert_eq!(
+            start_reason(&local_on(port), "Build Box", true, &other),
+            Reason::new(
+                "Could not connect to Build Box: no route to host",
+                Some(ServiceCause::Connection)
+            )
+        );
+        // Nothing is taken: what was said, without the prefix.
+        drop(taken);
+        assert_eq!(
+            start_reason(&local_on(port), "Build Box", true, &bind),
+            "Failed to start local forwarder: x".into()
+        );
     }
 
     // --- App teardown (ARCH-007, #3105) ---------------------------------------
@@ -2965,6 +3190,7 @@ mod tests {
         let backoff = tasks.spawn(async move {
             run_reconnect_loop(
                 &loop_cancel,
+                &tokio::sync::Notify::new(),
                 &TUNNEL_RECONNECT_POLICY,
                 &mut || 0.5,
                 |_, _| {},

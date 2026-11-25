@@ -11,6 +11,7 @@ import { hostChoice, sameHost, type HostChoice } from "@/utils/hostChoice";
 import { isServiceActive, serverServiceState } from "@/utils/serviceState";
 import { useServiceContext } from "@/hooks/useServiceContext";
 import { isWideBind } from "@/utils/serviceAddress";
+import { serviceCounts } from "@/utils/serviceModel";
 import { EmbeddedServerItem } from "./EmbeddedServerItem";
 import { EmbeddedServerDialog } from "./EmbeddedServerDialog";
 import { newId } from "@/services/transport/ids";
@@ -23,7 +24,8 @@ function hasPassword(config: EmbeddedServerConfig): boolean {
 }
 
 /**
- * Services sidebar panel for managing embedded HTTP/FTP/TFTP servers.
+ * The file servers: HTTP, FTP and TFTP. Called "File servers" while the tunnels
+ * are a sidebar of their own (#6063); Services is both.
  */
 export function EmbeddedServerSidebar() {
   const servers = useAppStore((s) => s.embeddedServers);
@@ -132,6 +134,19 @@ export function EmbeddedServerSidebar() {
     [servers, saveEmbeddedServer]
   );
 
+  // "Use 8081" beside "Port 8080 is already in use" (#6063).
+  const handleUsePort = useCallback(
+    async (id: string, port: number) => {
+      const server = servers.find((s) => s.id === id);
+      if (!server) return;
+      // Without the host: the backend keeps the stored one.
+      const { host: _stored, ...rest } = server;
+      await saveEmbeddedServer({ ...rest, port });
+      await startEmbeddedServer(id);
+    },
+    [servers, saveEmbeddedServer, startEmbeddedServer]
+  );
+
   // Delete is destructive (and stops a running server), so gate it behind an
   // explicit confirmation — consistent with tunnels and workspaces (#1393).
   const requestDelete = serverDelete.request;
@@ -161,14 +176,18 @@ export function EmbeddedServerSidebar() {
     handleActivate
   );
 
+  const counts = serviceCounts(
+    servers.map((s) => ({ state: serverServiceState(serverStates[s.id]?.status) }))
+  );
+
   return (
     <div className="server-sidebar" data-testid="server-sidebar">
       <SidebarToolbar
-        aria-label="Service actions"
+        aria-label="File server actions"
         actions={[
           {
             id: "new",
-            label: "New service",
+            label: "New file server",
             icon: <Plus size={14} />,
             onClick: handleNew,
             primary: true,
@@ -179,39 +198,45 @@ export function EmbeddedServerSidebar() {
 
       {servers.length === 0 ? (
         <EmptyState
-          title="No services configured."
-          description={<>Click &quot;+ New service&quot; to add one.</>}
+          title="No file servers configured."
+          description={<>Click &quot;+ New file server&quot; to add one.</>}
           data-testid="server-empty-message"
         />
       ) : (
-        <div
-          className="server-sidebar__list"
-          data-testid="server-list"
-          role="tree"
-          aria-label="Services"
-          onKeyDown={nav.onKeyDown}
-        >
-          {servers.map((cfg, index) => {
-            const { ref, ...rowProps } = nav.getItemProps(index);
-            return (
-              <EmbeddedServerItem
-                key={cfg.id}
-                config={cfg}
-                state={serverStates[cfg.id]}
-                agents={agents}
-                context={context}
-                onStart={startEmbeddedServer}
-                onStop={stopEmbeddedServer}
-                onRestart={restartEmbeddedServer}
-                onEdit={handleEdit}
-                onDuplicate={handleDuplicate}
-                onDelete={handleDelete}
-                rowRef={ref}
-                rowProps={rowProps}
-              />
-            );
-          })}
-        </div>
+        <>
+          <p className="service-counts" data-testid="server-counts">
+            {counts}
+          </p>
+          <div
+            className="server-sidebar__list"
+            data-testid="server-list"
+            role="tree"
+            aria-label="File servers"
+            onKeyDown={nav.onKeyDown}
+          >
+            {servers.map((cfg, index) => {
+              const { ref, ...rowProps } = nav.getItemProps(index);
+              return (
+                <EmbeddedServerItem
+                  key={cfg.id}
+                  config={cfg}
+                  state={serverStates[cfg.id]}
+                  agents={agents}
+                  context={context}
+                  onStart={startEmbeddedServer}
+                  onStop={stopEmbeddedServer}
+                  onRestart={restartEmbeddedServer}
+                  onEdit={handleEdit}
+                  onDuplicate={handleDuplicate}
+                  onDelete={handleDelete}
+                  onUsePort={handleUsePort}
+                  rowRef={ref}
+                  rowProps={rowProps}
+                />
+              );
+            })}
+          </div>
+        </>
       )}
 
       <EmbeddedServerDialog
@@ -230,7 +255,7 @@ export function EmbeddedServerSidebar() {
 
       <ConfirmDialog
         {...serverDelete.dialogProps}
-        title="Delete service"
+        title="Delete file server"
         message={
           pendingState === "notReachable"
             ? `"${pendingServer?.name}" may still run on its agent, which is offline. Deleting it stops it there as soon as the agent is connected again. This cannot be undone.`

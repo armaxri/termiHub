@@ -99,6 +99,7 @@ setupAgentsRegion();
 
 function seedStore(servers = [makeServer("srv-1", "Docs")], states: Record<string, unknown> = {}) {
   (useAppStore as unknown as { setState: (p: Record<string, unknown>) => void }).setState({
+    tunnels: [],
     embeddedServers: servers,
     embeddedServerStates: states,
     saveEmbeddedServer,

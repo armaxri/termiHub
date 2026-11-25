@@ -167,6 +167,11 @@ export interface TunnelSlice {
   /** Force-reconnect a connected tunnel (stop + start), for a stale-but-green tunnel (#1243). */
   reconnectTunnel: (tunnelId: string) => Promise<void>;
   /**
+   * Make the next try of a reconnecting tunnel now (#6063). Its row shows how it
+   * goes, so there is no toast; a try that fails is followed by the next one.
+   */
+  retryTunnelNow: (tunnelId: string) => Promise<void>;
+  /**
    * A terminal session for the saved SSH connection `connectionId` just
    * connected: start the tunnels bound to it with `startWithConnection`
    * (PROD-023). No-op (no intent) when none are bound. The backend selects the
@@ -312,7 +317,7 @@ export const createTunnelSlice: StateCreator<AppState, [], [], TunnelSlice> = (s
     _tunnelStopInFlight.add(tunnelId);
     _tunnelStartInFlight.add(tunnelId);
     const name = get().tunnels.find((t) => t.id === tunnelId)?.name ?? "tunnel";
-    const toastId = toast.loading(`Reconnecting ${name}…`);
+    const toastId = toast.loading(`Restarting ${name}…`);
     try {
       const ack = await dispatchTunnelIntent("tunnel.reconnect", { id: tunnelId });
       throwIfRejected(ack, "reconnect tunnel");
@@ -327,6 +332,19 @@ export const createTunnelSlice: StateCreator<AppState, [], [], TunnelSlice> = (s
     } finally {
       _tunnelStopInFlight.delete(tunnelId);
       _tunnelStartInFlight.delete(tunnelId);
+    }
+  },
+
+  retryTunnelNow: async (tunnelId) => {
+    const name = get().tunnels.find((t) => t.id === tunnelId)?.name ?? "tunnel";
+    try {
+      // The backend makes its next try at once when the tunnel reconnects.
+      const ack = await dispatchTunnelIntent("tunnel.reconnect", { id: tunnelId });
+      throwIfRejected(ack, "retry tunnel");
+    } catch (err) {
+      frontendLog("app_store", `Failed to retry tunnel: ${errorMessage(err)}`);
+      toast.error(`Failed to retry ${name}: ${errorMessage(err)}`);
+      throw err;
     }
   },
 
