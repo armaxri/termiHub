@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { InputRecorder, recordedParts, withoutSecrets } from "./inputRecorder";
 import type { PromptReader } from "./passwordPrompt";
 
@@ -178,7 +178,45 @@ describe("what is typed at a password prompt", () => {
     };
     recorder.push("a", broken);
     recorder.push("b", broken);
-    expect(recorder.finish().chunks.map((c) => c.data)).toEqual(["a", "b"]);
+    const recorded = recorder.finish();
+    expect(recorded.chunks.map((c) => c.data)).toEqual(["a", "b"]);
+    // Not known whether it was a password: kept apart (#6070).
+    expect(recorded.secrets).toEqual([{ start: 0, end: 2, prompt: "" }]);
+  });
+
+  it("judges each chunk by its own screen, in the order it was typed (#6070)", () => {
+    const answers: ((before: string) => void)[] = [];
+    const judged = vi.fn();
+    const recorder = new InputRecorder(() => 0, judged);
+    for (const data of ["sudo\r", "pw\r", "ls\r"])
+      recorder.push(data, (then) => answers.push(then));
+    answers[2]("$ ");
+    answers[1]("Password: ");
+    expect(recorder.atPrompt).toBe(false);
+    answers[0]("$ ");
+    expect(judged).toHaveBeenCalledTimes(3);
+    expect(recorder.finish().secrets).toEqual([{ start: 1, end: 2, prompt: "Password:" }]);
+  });
+
+  it("ends an answer with the Enter of a paste that was read meanwhile (#6070)", () => {
+    const answers: ((before: string) => void)[] = [];
+    const recorder = new InputRecorder(() => 0);
+    const paste = recorder.reserve((then) => answers.push(then));
+    recorder.push("l", (then) => answers.push(then));
+    paste.fill("pw\r");
+    answers[0]("Password: ");
+    answers[1]("$ ");
+    expect(recorder.finish().secrets).toEqual([{ start: 0, end: 1, prompt: "Password:" }]);
+  });
+
+  it("is not dropped as an echo by an answer that comes after Stop (#6070)", () => {
+    let late = (_: string) => {};
+    const recorder = new InputRecorder(() => 0);
+    recorder.push("p", (then) => then("Password: "));
+    recorder.push("w", (then) => ((late = then), undefined));
+    const recorded = recorder.finish();
+    late("Password: pw");
+    expect(recorded.secrets).toEqual([{ start: 0, end: 2, prompt: "Password:" }]);
   });
 
   it("is not looked for without a screen to read", () => {

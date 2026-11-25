@@ -72,10 +72,10 @@ describe("wait", () => {
   });
 
   it("says when a wait is longer than the runner waits", async () => {
-    await open({ kind: "wait", delayMs: 60_000 });
+    await open({ kind: "wait", delayMs: 3_600_001 });
     const body = query("automation-editor-step-body-0")!;
-    expect(body.textContent).toContain("A wait lasts at most 5 s.");
-    typeText("automation-editor-step-delay-0", "5");
+    expect(body.textContent).toContain("A wait lasts at most an hour (3600 s).");
+    typeText("automation-editor-step-delay-0", "3600");
     expect(body.textContent).not.toContain("at most");
   });
 });

@@ -924,15 +924,16 @@ Editor "● Record steps" ─▶ the editor collapses to a bar above the target 
             on: whether a prompt was answered cannot be told from outside (a wrong password asks
             again), so only Continue counts, only while that terminal shows (else the bar offers to
             show it), and while the terminal still shows a password prompt the first Continue only
-            says so. After five minutes, or when the terminal is closed or disconnects, the run
-            fails and the History says why; neither "continue if it fails" nor a retry, of the step
-            or of anything around it, can tolerate that. What is typed meanwhile is kept apart if it
-            is recorded, like a password. Several terminals wait on their own. A run nobody watches
-            (a schedule, On disconnect, On output match) does not start at all; such a trigger is
-            offered disabled with that reason, and a row that has one says so instead of "Triggers
-            on" (#6050). An older build does not know the kind and refuses the automation.
-            Recordings made before this kept only a pause in the place; they cannot be told from one
-            whose password is stored, and type on.
+            says so. Output that has arrived counts before it shows; what cannot be told in a second
+            is asked about (#6070). After five minutes, or when the terminal is closed or
+            disconnects, the run fails and the History says why; neither "continue if it fails" nor
+            a retry, of the step or of anything around it, can tolerate that. What is typed
+            meanwhile is kept apart if it is recorded, like a password. Several terminals wait on
+            their own. A run nobody watches (a schedule, On disconnect, On output match) does not
+            start at all; such a trigger is offered disabled with that reason, and a row that has
+            one says so instead of "Triggers on" (#6050). An older build does not know the kind and
+            refuses the automation. Recordings made before this kept only a pause in the place; they
+            cannot be told from one whose password is stored, and type on.
           </li>
           <li>
             <strong>Lifecycle:</strong> a dropped connection pauses the recording and it goes on
@@ -1790,14 +1791,15 @@ flowchart LR
                   If this step fails, Move up/down, Duplicate and Delete; the handle drags and takes
                   the arrow keys; a deleted step comes back with Undo. Each trigger shows its
                   settings under itself (R-158), several of one kind are allowed. Waits, timeouts
-                  and retry waits are in seconds (R-167); the runner still cuts a wait above 5 s (<a
+                  and retry waits are in seconds (R-167); a Wait lasts up to an hour (<a
                     href="https://github.com/armaxri/termiHub/issues/6008"
                     >#6008</a
-                  >), which the editor says. Saving an unchanged automation writes nothing. Differs
-                  from 3.4: Description has no 0/80 counter (its field stops at 80), a step that
-                  cannot run without experimental features says so in its row, "On a schedule…" of a
-                  new automation opens the schedule editor right after Save, and Enter runs the
-                  primary action only from Name, Description and Tags, never from a step
+                  >), and the editor says so above that. Saving an unchanged automation writes
+                  nothing. Differs from 3.4: Description has no 0/80 counter (its field stops at
+                  80), a step that cannot run without experimental features says so in its row, "On
+                  a schedule…" of a new automation opens the schedule editor right after Save, and
+                  Enter runs the primary action only from Name, Description and Tags, never from a
+                  step
                 </td>
                 <td>
                   <code>src/components/AutomationEditor/</code> (<code>automationDraft.ts</code>,
@@ -1983,8 +1985,8 @@ flowchart LR
               <tr>
                 <td>2</td>
                 <td>A wait runs as long as it says</td>
-                <td>The runner cuts a wait above 5 s, which the editor says</td>
-                <td>Code divergence</td>
+                <td>It does, up to an hour, and Stop ends it at once</td>
+                <td>Resolved</td>
                 <td><a href="https://github.com/armaxri/termiHub/issues/6008">#6008</a></td>
               </tr>
               <tr>

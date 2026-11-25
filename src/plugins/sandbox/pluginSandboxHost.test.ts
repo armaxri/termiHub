@@ -16,6 +16,7 @@ import {
   sandboxHasParsers,
   sandboxSessionPending,
   enqueueSandboxTransform,
+  enqueueSandboxMarker,
   enqueueSandboxPassthrough,
   discardSandboxSession,
   __setSandboxWorkerFactory,
@@ -166,6 +167,28 @@ describe("ordered transform pipeline", () => {
     fake.emit({ t: "transformResult", seq: req.seq, changed: true, bytes: enc("LAST LINE") });
     expect(out).toEqual(["LAST LINE", "[exit]"]);
     expect(sandboxSessionPending("s1")).toBe(false);
+  });
+
+  it("marks where a session's output stands, between its chunks (#6070)", () => {
+    const out: string[] = [];
+    const sink = (b: Uint8Array) => out.push(dec(b));
+    expect(enqueueSandboxMarker("s1", () => out.push("|"))).toBe(false);
+    enqueueSandboxTransform("s1", enc("a"), sink);
+    expect(enqueueSandboxMarker("s1", () => out.push("|"))).toBe(true);
+    enqueueSandboxTransform("s1", enc("b"), sink);
+    const [a, b] = fake.postsOfType("transform");
+    fake.emit({ t: "transformResult", seq: b.seq, changed: false });
+    expect(out).toEqual([]);
+    fake.emit({ t: "transformResult", seq: a.seq, changed: false });
+    expect(out).toEqual(["a", "|", "b"]);
+  });
+
+  it("never reaches a mark of a discarded session", () => {
+    const reached = vi.fn();
+    enqueueSandboxTransform("s1", enc("a"), () => {});
+    enqueueSandboxMarker("s1", reached);
+    discardSandboxSession("s1");
+    expect(reached).not.toHaveBeenCalled();
   });
 
   it("leaves a pass-through line to the caller when nothing is in flight (#5965)", () => {

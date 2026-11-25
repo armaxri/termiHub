@@ -15,7 +15,11 @@ import { registerTerminalPrompt } from "@/services/passwordPrompt";
 import { WAIT_FOR_USER_LIMIT_MS, type WaitForUserResult } from "@/services/workflowRunner";
 import { useAppStore } from "@/store/appStore";
 import { __emitSessionViewForTest, type ProjectedSessionLifecycle } from "@/store/sessionBridge";
-import { SHOW_WAITING_TERMINAL_EVENT } from "@/store/slices/automationWaitSlice";
+import {
+  PROMPT_CHECK_LIMIT_MS,
+  PROMPT_CHECK_SHOWS_MS,
+  SHOW_WAITING_TERMINAL_EVENT,
+} from "@/store/slices/automationWaitSlice";
 import { checkA11y } from "@/test/axe";
 import { click, query } from "@/test/automationEditorHarness";
 import { flushAsync } from "@/test/flushAsync";
@@ -202,6 +206,61 @@ describe("Continue", () => {
     startWait();
     act(() => store().recheckWaitingPrompts());
     expect(query("automation-wait-message-a")?.textContent).not.toContain("No password prompt");
+  });
+
+  it("asks in a terminal it cannot read, and the next press goes on (#6070)", async () => {
+    takeBack.forEach((fn) => fn());
+    const wait = startWait();
+    click("automation-wait-continue-a");
+    expect(query("automation-wait-message-a")?.textContent).toContain("It cannot be told yet");
+    expect(query("automation-wait-continue-a")?.textContent).toBe("Continue anyway");
+    await flushAsync();
+    expect(wait.result).toBeUndefined();
+    click("automation-wait-continue-a");
+    await flushAsync();
+    expect(wait.result).toBe("continued");
+  });
+
+  it("insists on the prompt it was said of, not on the next one (#6070)", async () => {
+    prompt = "Password: ";
+    const wait = startWait();
+    click("automation-wait-continue-a");
+    cursorLine = 2;
+    click("automation-wait-continue-a");
+    await flushAsync();
+    expect(wait.result).toBeUndefined();
+    click("automation-wait-continue-a");
+    await flushAsync();
+    expect(wait.result).toBe("continued");
+  });
+
+  it("does not go on while another computer controls the terminal (#6070)", async () => {
+    const wait = startWait();
+    act(() => emitSessions({ a: { status: "evicted" } }));
+    click("automation-wait-continue-a");
+    click("automation-wait-continue-a");
+    await flushAsync();
+    expect(wait.result).toBeUndefined();
+    expect(query("automation-wait-message-a")?.textContent).toContain("Take it back first");
+    act(() => emitSessions({ a: { status: "connected" } }));
+    act(() => store().recheckWaitingPrompts());
+    expect(query("automation-wait-message-a")?.textContent).not.toContain("Take it back");
+    click("automation-wait-continue-a");
+    await flushAsync();
+    expect(wait.result).toBe("continued");
+  });
+
+  it("says that it looks when it takes a moment, and asks when it takes too long (#6070)", () => {
+    vi.useFakeTimers();
+    takeBack.push(registerTerminalPrompt("a", { read: () => {}, pin: () => () => true }));
+    startWait();
+    click("automation-wait-continue-a");
+    expect(query("automation-wait-message-a")?.textContent).toContain("Type your password");
+    act(() => void vi.advanceTimersByTime(PROMPT_CHECK_SHOWS_MS));
+    expect(query("automation-wait-message-a")?.textContent).toContain("Looking at");
+    expect((query("automation-wait-continue-a") as HTMLButtonElement).disabled).toBe(true);
+    act(() => void vi.advanceTimersByTime(PROMPT_CHECK_LIMIT_MS));
+    expect(query("automation-wait-message-a")?.textContent).toContain("It cannot be told yet");
   });
 
   it("is the way on again once the password is typed", async () => {

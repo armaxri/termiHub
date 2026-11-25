@@ -14,6 +14,7 @@
  */
 import { describe, it, expect, vi } from "vitest";
 import {
+  MAX_WAIT_STEP_MS,
   runWorkflow,
   executeStep,
   resolveStepParams,
@@ -221,11 +222,29 @@ describe("executeStep", () => {
       expect(wait).toHaveBeenCalledWith(250);
     });
 
-    it("clamps an over-long wait to MAX_STEP_DELAY_MS", async () => {
+    it.each([
+      [60_000, 60_000],
+      [MAX_WAIT_STEP_MS, MAX_WAIT_STEP_MS],
+      [MAX_WAIT_STEP_MS + 1, MAX_WAIT_STEP_MS],
+      [Number.NaN, undefined],
+    ])("waits %i ms as long as it says, up to an hour (#6008)", async (delayMs, waited) => {
       const wait: WorkflowWaitSeam = vi.fn(async () => {});
-      await executeStep({ kind: "wait", delayMs: MAX_STEP_DELAY_MS + 999_999 }, deps({ wait }));
+      await executeStep({ kind: "wait", delayMs }, deps({ wait }));
+      expect(vi.mocked(wait).mock.calls).toEqual(waited === undefined ? [] : [[waited]]);
+    });
 
-      expect(wait).toHaveBeenCalledWith(MAX_STEP_DELAY_MS);
+    it("a long wait ends at once when the run is stopped (#6008)", async () => {
+      let stop = () => {};
+      const whenCancelled = new Promise<void>((resolve) => (stop = resolve));
+      let cancelled = false;
+      const wait: WorkflowWaitSeam = () => new Promise(() => {});
+      const step = executeStep({ kind: "wait", delayMs: 600_000 }, deps({ wait }), {
+        isCancelled: () => cancelled,
+        whenCancelled,
+      });
+      cancelled = true;
+      stop();
+      expect(await step).toEqual({ ok: true, cancelled: true });
     });
   });
 
