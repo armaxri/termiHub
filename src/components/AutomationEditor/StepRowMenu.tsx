@@ -32,8 +32,8 @@ export interface StepRowMenuProps {
   /** Position in its list, from 0. */
   index: number;
   total: number;
-  /** It sits in a nested list. */
-  nested: boolean;
+  /** Path of the nested list it sits in, if any. */
+  nestedIn?: string;
   /** Add a step of `kind` right after this one; returns what to do once the menu closed. */
   onAddBelow: (kind: AutomationStepKind) => () => void;
   /** Show the step's failure options; absent for a step that has none. */
@@ -50,7 +50,7 @@ export function StepRowMenu({
   path,
   index,
   total,
-  nested,
+  nestedIn,
   onAddBelow,
   onFailure,
   onSpeed,
@@ -117,9 +117,9 @@ export function StepRowMenu({
           </MenuSubTrigger>
           <MenuSubContent container={portalContainer} collisionPadding={8}>
             <AddStepItems
-              nested={nested}
+              nestedIn={nestedIn}
+              below={path}
               onAdd={(kind) => later(onAddBelow(kind))()}
-              testId={(kind) => `automation-editor-step-add-below-${path}-${kind}`}
             />
           </MenuSubContent>
         </MenuSub>

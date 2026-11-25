@@ -151,7 +151,7 @@ export function StepList({ steps, onChange, nested }: StepListProps) {
                     </li>
                   )}
                   <StepRow
-                    nested={nested !== undefined}
+                    nestedIn={base}
                     onAddBelow={(kind) => {
                       addStepAt(kind, index + 1);
                       return handleAdded;

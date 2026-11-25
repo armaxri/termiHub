@@ -24,15 +24,16 @@ import {
 interface AddStepItemsProps {
   /** A step of the chosen kind was asked for. */
   onAdd: (kind: AutomationStepKind) => void;
-  /** It adds to a nested list, which holds no nested lists of its own. */
-  nested: boolean;
-  testId: (kind: AutomationStepKind) => string;
+  /** Path of the nested list it adds to, which holds no nested lists of its own. */
+  nestedIn?: string;
+  /** Path of the step it adds below; absent in the "Add step" menu. */
+  below?: string;
 }
 
 /** The kinds a step can be, each with what it does: the everyday ones first. */
-export function AddStepItems({ onAdd, nested, testId }: AddStepItemsProps) {
+export function AddStepItems({ onAdd, nestedIn, below }: AddStepItemsProps) {
   const experimental = useExperimentalFeatures();
-  const offered = offeredStepKinds(experimental, nested);
+  const offered = offeredStepKinds(experimental, nestedIn !== undefined);
   const item = (kind: AutomationStepKind) => {
     const Icon = stepKindIcon(kind);
     return (
@@ -41,7 +42,13 @@ export function AddStepItems({ onAdd, nested, testId }: AddStepItemsProps) {
         icon={<Icon size={14} />}
         hint={stepKindDescription(kind)}
         onSelect={() => onAdd(kind)}
-        data-testid={testId(kind)}
+        data-testid={
+          below !== undefined
+            ? `automation-editor-step-add-below-${below}-${kind}`
+            : nestedIn !== undefined
+              ? `automation-editor-add-substep-${nestedIn}-${kind}`
+              : `automation-editor-add-step-${kind}`
+        }
       >
         {stepKindLabel(kind)}
       </MenuItem>
@@ -119,12 +126,11 @@ export function AddStepMenu({ nestedIn, before, onAdd, onAdded }: AddStepMenuPro
         }}
       >
         <AddStepItems
-          nested={nestedIn !== undefined}
+          nestedIn={nestedIn}
           onAdd={(kind) => {
             addedRef.current = true;
             onAdd(kind);
           }}
-          testId={(kind) => `${testIdBase}-${kind}`}
         />
       </DropdownMenuContent>
     </DropdownMenuRoot>

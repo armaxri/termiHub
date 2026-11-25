@@ -34,8 +34,8 @@ export interface StepRowProps {
   onMove: (direction: -1 | 1, keepFocus: boolean) => void;
   onDuplicate: () => void;
   onDelete: () => void;
-  /** It sits in a nested list. */
-  nested: boolean;
+  /** Path of the nested list it sits in, if any. */
+  nestedIn?: string;
   /** Add a step after this one; returns what to do once the menu closed. */
   onAddBelow: (kind: AutomationStepKind) => () => void;
 }
@@ -54,7 +54,7 @@ export function StepRow({
   onMove,
   onDuplicate,
   onDelete,
-  nested,
+  nestedIn,
   onAddBelow,
 }: StepRowProps) {
   const { automations, expanded, setExpanded, failureOpen, showFailure, errors, openSettings } =
@@ -165,7 +165,7 @@ export function StepRow({
           path={path}
           index={index}
           total={total}
-          nested={nested}
+          nestedIn={nestedIn}
           onAddBelow={onAddBelow}
           onFailure={
             hasFailure
