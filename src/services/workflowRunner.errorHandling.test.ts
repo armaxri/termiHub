@@ -12,11 +12,11 @@ import {
   retryDelayMs,
   MAX_STEP_RETRIES,
   MAX_RETRY_DELAY_MS,
+  type RunnableStep,
   type WorkflowRunnerDeps,
   type WorkflowStepRetryEvent,
   type WorkflowStepContinuedEvent,
 } from "./workflowRunner";
-import type { WorkflowStep } from "@/types/workflow";
 
 /** A send seam that fails the first `failures` calls, then succeeds. */
 function flakySend(failures: number) {
@@ -27,8 +27,8 @@ function flakySend(failures: number) {
   });
 }
 
-const cmd = (command: string, extra: Partial<WorkflowStep> = {}): WorkflowStep =>
-  ({ kind: "send-command", command, ...extra }) as WorkflowStep;
+const cmd = (command: string, extra: Partial<RunnableStep> = {}): RunnableStep =>
+  ({ kind: "send-command", command, ...extra }) as RunnableStep;
 
 const deps = (over: Partial<WorkflowRunnerDeps> = {}): WorkflowRunnerDeps => ({
   send: vi.fn(async () => true),
@@ -221,7 +221,7 @@ describe("runWorkflow — continueOnError", () => {
 
   it("applies to nested steps inside a conditional, attributed to the top-level step", async () => {
     const send = vi.fn(async (data: string) => data !== "inner\n");
-    const conditional: WorkflowStep = {
+    const conditional: RunnableStep = {
       kind: "conditional",
       condition: { left: "1", op: "eq", right: "1" },
       then: [cmd("inner", { continueOnError: true }), cmd("after-inner")],
@@ -244,7 +244,7 @@ describe("executeStepWithPolicy", () => {
       timedOut: false,
       cancelled: true,
     }));
-    const step: WorkflowStep = {
+    const step: RunnableStep = {
       kind: "run-local-process",
       program: "p",
       args: [],

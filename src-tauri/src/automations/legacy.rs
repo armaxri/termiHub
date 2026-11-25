@@ -1,9 +1,9 @@
 //! Read-only access to the legacy stores for the boot migration (#5818,
 //! slice 2).
 //!
-//! The migration never writes a legacy file: a newer file is skipped, and a
-//! corrupt one is salvaged in memory only (the legacy manager that still owns
-//! the file does its own on-disk recovery).
+//! Nothing writes a legacy file: a newer or corrupt one is left as it is, and
+//! what can be salvaged of it is salvaged in memory. Both are reported, because
+//! nothing else reads these files.
 
 use std::fs;
 use std::path::Path;
@@ -33,10 +33,12 @@ pub enum LegacyRead<T> {
         version: u32,
         /// SHA-256 (hex) of the file's bytes.
         sha256: String,
+        /// The corrupt entries that were left out, one message each.
+        dropped: Vec<String>,
     },
     /// The file exists but cannot be used by this build (newer schema or
-    /// beyond salvage). It is left as it is.
-    Unreadable,
+    /// beyond salvage), and why. It is left as it is.
+    Unreadable(String),
 }
 
 /// Read one legacy store file without ever writing it.
@@ -46,29 +48,32 @@ pub fn read_legacy<T: VersionedStore>(path: &Path) -> Result<LegacyRead<T>> {
     }
     let bytes = fs::read(path).with_context(|| format!("Failed to read {}", path.display()))?;
     let sha256 = sha256_hex(&bytes);
-    let Ok(raw) = String::from_utf8(bytes) else {
-        return Ok(LegacyRead::Unreadable);
+    let raw = match String::from_utf8(bytes) {
+        Ok(raw) => raw,
+        Err(e) => return Ok(LegacyRead::Unreadable(e.to_string())),
     };
     let version = serde_json::from_str::<serde_json::Value>(&raw)
         .ok()
         .and_then(|v| read_version(&v))
         .unwrap_or(ASSUMED_VERSION);
-    let store = match load_versioned::<T>(&raw) {
-        LoadOutcome::Loaded { data, .. } => data,
+    let (store, dropped) = match load_versioned::<T>(&raw) {
+        LoadOutcome::Loaded { data, .. } => (data, Vec::new()),
         LoadOutcome::Newer(err) => {
             tracing::warn!("Automations migration skipped {}: {err}", T::STORE_NAME);
-            return Ok(LegacyRead::Unreadable);
+            return Ok(LegacyRead::Unreadable(err.to_string()));
         }
         LoadOutcome::Corrupt(detail) => {
             let salvaged = salvage_input::<T>(&raw).map(|v| T::salvage(v, T::STORE_NAME));
             match salvaged {
-                Some(Salvage::Recovered { data, .. }) => data,
+                Some(Salvage::Recovered { data, warnings }) => {
+                    (data, warnings.into_iter().map(|w| w.message).collect())
+                }
                 _ => {
                     tracing::warn!(
                         "Automations migration skipped corrupt {}: {detail}",
                         T::STORE_NAME
                     );
-                    return Ok(LegacyRead::Unreadable);
+                    return Ok(LegacyRead::Unreadable(detail));
                 }
             }
         }
@@ -77,6 +82,7 @@ pub fn read_legacy<T: VersionedStore>(path: &Path) -> Result<LegacyRead<T>> {
         store,
         version,
         sha256,
+        dropped,
     })
 }
 

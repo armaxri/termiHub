@@ -13,8 +13,13 @@ use tauri::{AppHandle, Runtime};
 use super::history::{apply_retention, AutomationRun, AutomationRunHistoryStore};
 use super::storage::StoreFile;
 use crate::connection::recovery::RecoveryWarning;
-use crate::macros::history_manager::{MAX_TARGET_LABELS, MAX_TEXT_CHARS};
 use crate::utils::errors::TerminalError;
+
+/// At most this many target labels are kept per record.
+pub const MAX_TARGET_LABELS: usize = 10;
+
+/// Longest target label / error string kept, in characters.
+pub const MAX_TEXT_CHARS: usize = 200;
 
 /// Central automation run-history manager.
 pub struct AutomationRunHistoryManager {

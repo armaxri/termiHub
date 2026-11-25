@@ -464,6 +464,10 @@
 /* Portaled menus stack on the popover tier so they open above modals (#4347). */
 .ui-menu__content {
   min-width: 170px;
+  /* Menu.tsx sets it to the room Radix found for a dropdown menu. */
+  --ui-menu-max-height: none;
+  max-height: var(--ui-menu-max-height);
+  overflow-y: auto;
   background-color: var(--bg-dropdown);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-lg);

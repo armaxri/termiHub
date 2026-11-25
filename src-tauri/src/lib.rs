@@ -890,13 +890,6 @@ pub fn run() -> anyhow::Result<()> {
             // native-dialog path, the grant a real dialog pick makes.
             #[cfg(feature = "test-bridge")]
             commands::test_dialog::test_allow_dialog_path,
-            // Macros
-            commands::macros::list_macros,
-            commands::macros::save_macro,
-            commands::macros::delete_macro,
-            commands::macros::list_macro_runs,
-            commands::macros::record_macro_run,
-            commands::macros::clear_macro_run_history,
             // Session history
             commands::session_history::get_session_history,
             commands::session_history::record_session,
@@ -904,13 +897,6 @@ pub fn run() -> anyhow::Result<()> {
             commands::session_history::mark_history_entry_promoted,
             commands::session_history::remove_history_entry,
             commands::session_history::clear_session_history,
-            // Workflows
-            commands::workflows::list_workflows,
-            commands::workflows::save_workflow,
-            commands::workflows::delete_workflow,
-            commands::workflows::list_workflow_runs,
-            commands::workflows::record_workflow_run,
-            commands::workflows::clear_workflow_run_history,
             // Automations (#5818): the merged macro + workflow store
             commands::automations::list_automations,
             commands::automations::get_automation,

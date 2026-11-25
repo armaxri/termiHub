@@ -9,7 +9,14 @@ import { fromStepDraft, type StepDraft } from "./automationDraft";
 import { FailureOptions } from "./FailureOptions";
 import { useStepEditor } from "./stepEditorContext";
 import { StepFields } from "./StepFields";
-import { stepKindIcon, stepKindLabel, stepNotes, stepSummary } from "./stepMeta";
+import {
+  UNKNOWN_STEP_REASON,
+  isKnownStepKind,
+  stepKindIcon,
+  stepKindLabel,
+  stepNotes,
+  stepSummary,
+} from "./stepMeta";
 import { StepRowMenu } from "./StepRowMenu";
 
 /** Props of {@link StepRow}. */
@@ -57,7 +64,11 @@ export function StepRow({
   const open = expanded.has(draft.uid);
   const Icon = stepKindIcon(step.kind);
   const notes = stepNotes(step);
-  const blocked = step.kind === "run-local-process" && !experimental;
+  const blocked = !isKnownStepKind(step.kind)
+    ? UNKNOWN_STEP_REASON
+    : step.kind === "run-local-process" && !experimental
+      ? LOCAL_PROCESS_REASON
+      : null;
   const hasPolicy = step.continueOnError === true || step.retry !== undefined;
   const bodyId = `automation-step-body-${path}`;
 
@@ -132,7 +143,7 @@ export function StepRow({
             {!open && notes.length > 0 && (
               <span className="automation-step__notes">{notes.join(" · ")}</span>
             )}
-            {blocked && (
+            {blocked !== null && (
               <span className="automation-step__blocked">
                 <TriangleAlert size={12} aria-hidden="true" /> Will not run
               </span>
@@ -163,12 +174,12 @@ export function StepRow({
           className="automation-step__body"
           data-testid={`automation-editor-step-body-${path}`}
         >
-          {blocked && (
+          {blocked !== null && (
             <p
               className="automation-step__note automation-step__note--warning"
               data-testid={`automation-editor-step-blocked-${path}`}
             >
-              {LOCAL_PROCESS_REASON}
+              {blocked}
             </p>
           )}
           <StepFields draft={draft} path={path} stepNumber={index + 1} onChange={onChange} />

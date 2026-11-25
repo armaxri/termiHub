@@ -266,7 +266,7 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
       // (#3596). Workflows have no change event of their own, so re-read them
       // for the on-connect triggers; schedules, tunnels and settings update
       // through their own event / regions.
-      if (changes.length > 0) void get().loadWorkflows();
+      if (changes.length > 0) void get().loadAutomations();
     },
 
     retargetConnectionEditorFolder: (tabId, folderId) => {

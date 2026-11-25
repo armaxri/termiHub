@@ -1323,43 +1323,8 @@ pub(crate) fn init_secondary_managers_with<R: tauri::Runtime>(
     }
 
     // Automations (#5818): migrate the legacy macro and workflow files first,
-    // then load the merged store and its run history. Runs before the macro
-    // and workflow managers so they never see a half-migrated profile.
+    // then load the merged store and its run history.
     init_automations(app, recovery_warnings);
-
-    // Initialize macro manager with recovery loading.
-    // On failure, the app still starts but macros are unavailable.
-    match macros::manager::MacroManager::new(app.handle()) {
-        Ok(manager) => {
-            recovery_warnings.extend(manager.take_recovery_warnings());
-            app.manage(manager);
-        }
-        Err(e) => {
-            tracing::error!("Failed to initialize macro manager: {e}");
-            recovery_warnings.push(RecoveryWarning {
-                file_name: "macros.json".to_string(),
-                message: "Could not initialize macro storage. Macros are unavailable until the app is restarted.".to_string(),
-                details: Some(e.to_string()),
-            });
-        }
-    }
-
-    // Initialize the macro run-history manager (#3543). On failure the app still
-    // starts; recording is fire-and-forget on the frontend regardless.
-    match macros::history_manager::MacroRunHistoryManager::new(app.handle()) {
-        Ok(manager) => {
-            recovery_warnings.extend(manager.take_recovery_warnings());
-            app.manage(manager);
-        }
-        Err(e) => {
-            tracing::error!("Failed to initialize macro run-history manager: {e}");
-            recovery_warnings.push(RecoveryWarning {
-                file_name: "macro-runs.json".to_string(),
-                message: "Could not initialize macro run-history storage. Macro run history is unavailable until the app is restarted.".to_string(),
-                details: Some(e.to_string()),
-            });
-        }
-    }
 
     // Initialize the session-history manager with recovery loading.
     // On failure, the app still starts but session history is unavailable.
@@ -1373,23 +1338,6 @@ pub(crate) fn init_secondary_managers_with<R: tauri::Runtime>(
             recovery_warnings.push(RecoveryWarning {
                 file_name: "session-history.json".to_string(),
                 message: "Could not initialize session-history storage. Recent sessions are unavailable until the app is restarted.".to_string(),
-                details: Some(e.to_string()),
-            });
-        }
-    }
-
-    // Initialize workflow manager with recovery loading.
-    // On failure, the app still starts but workflows are unavailable.
-    match workflows::manager::WorkflowManager::new(app.handle()) {
-        Ok(manager) => {
-            recovery_warnings.extend(manager.take_recovery_warnings());
-            app.manage(manager);
-        }
-        Err(e) => {
-            tracing::error!("Failed to initialize workflow manager: {e}");
-            recovery_warnings.push(RecoveryWarning {
-                file_name: "workflows.json".to_string(),
-                message: "Could not initialize workflow storage. Workflows are unavailable until the app is restarted.".to_string(),
                 details: Some(e.to_string()),
             });
         }
@@ -1463,24 +1411,6 @@ pub(crate) fn init_secondary_managers_with<R: tauri::Runtime>(
             recovery_warnings.push(RecoveryWarning {
                 file_name: "http-monitor-history.json".to_string(),
                 message: "Could not initialize HTTP monitor history storage. Monitor check history is unavailable until the app is restarted.".to_string(),
-                details: Some(e.to_string()),
-            });
-        }
-    }
-
-    // Initialize the workflow run-history manager with recovery loading
-    // (PROD-0046). On failure, the app still starts but run history is
-    // unavailable (recording is fire-and-forget on the frontend regardless).
-    match workflows::history_manager::WorkflowRunHistoryManager::new(app.handle()) {
-        Ok(manager) => {
-            recovery_warnings.extend(manager.take_recovery_warnings());
-            app.manage(manager);
-        }
-        Err(e) => {
-            tracing::error!("Failed to initialize workflow run-history manager: {e}");
-            recovery_warnings.push(RecoveryWarning {
-                file_name: "runs.json".to_string(),
-                message: "Could not initialize workflow run-history storage. Run history is unavailable until the app is restarted.".to_string(),
                 details: Some(e.to_string()),
             });
         }
@@ -1706,6 +1636,7 @@ fn init_automations<R: tauri::Runtime>(
             recovery_warnings.extend(crate::schedules::migrate::failure_warning(
                 &report.schedules,
             ));
+            recovery_warnings.extend(migrate::legacy_warnings(&report.library));
             migrate::merge_warning(&report.library)
         }
         Err(e) => {

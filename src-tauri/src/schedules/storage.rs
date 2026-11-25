@@ -13,7 +13,7 @@ use crate::utils::migrate::{guard_not_newer, load_store_with_recovery, Versioned
 const FILE_NAME: &str = "schedules.json";
 
 /// Handles reading/writing the schedules JSON file. Mirrors
-/// [`crate::workflows::storage::WorkflowStorage`].
+/// [`crate::automations::storage`].
 pub struct ScheduleStorage {
     file_path: PathBuf,
 }

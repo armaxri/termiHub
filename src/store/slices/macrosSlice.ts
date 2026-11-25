@@ -6,7 +6,8 @@ import {
   type MacroInjector,
   type MacroPlaybackStatus,
 } from "@/services/macroPlayback";
-import { Macro, MacroRun, MacroRunOrigin } from "@/types/macro";
+import type { AutomationRun } from "@/types/generated/AutomationRun";
+import type { Macro } from "@/types/macro";
 import { frontendLog } from "@/utils/frontendLog";
 
 import { currentSessionView, regionExited } from "../sessionBridge";
@@ -22,7 +23,12 @@ import {
   type MacroKeysPlayback,
   type MacroTargetsPlayback,
 } from "./macroKeysPlayback";
-import { buildMacroRun, macroTargetLabel, recordMacroRun } from "./macroRunHistory";
+import {
+  buildMacroRun,
+  macroTargetLabel,
+  recordMacroRun,
+  type PlaybackOrigin,
+} from "./macroRunHistory";
 
 /** UI-facing metadata describing an in-flight macro playback (#1675). */
 export interface MacroPlaybackState {
@@ -67,13 +73,13 @@ export interface PlayMacroOptions {
    */
   parallel?: boolean;
   /** What launched the playback, for the run history (#3543); defaults to `"manual"`. */
-  origin?: MacroRunOrigin;
+  origin?: PlaybackOrigin;
   /**
    * Called with each run-history record the playback writes (one per terminal
    * it started on, #5818), before {@link AppState.playMacro} resolves, so a
    * caller (a scheduled run) can reference them.
    */
-  onRecorded?: (run: MacroRun) => void;
+  onRecorded?: (run: AutomationRun) => void;
 }
 
 /**
@@ -111,18 +117,6 @@ function stopActivePlayback(): void {
 export interface MacrosSlice {
   // Macros
   macros: Macro[];
-  loadMacros: () => Promise<void>;
-  /** Delete a macro by ID; only mutates local state after the backend delete resolves. */
-  deleteMacroFromBackend: (macroId: string) => Promise<void>;
-
-  // Macro run history (#3543)
-  /** Recorded playbacks, newest first. Metadata only — never the macro's input. */
-  macroRuns: MacroRun[];
-  /** Load the recorded playbacks from the backend. Logs (never throws) on failure. */
-  loadMacroRuns: () => Promise<void>;
-  /** Clear the whole macro run history. Rejects when the backend clear fails. */
-  clearMacroRunHistory: () => Promise<void>;
-
   // Macro playback (#1675)
   /** Metadata for the in-flight playback, or `null` when nothing is playing. */
   macroPlayback: MacroPlaybackState | null;
@@ -307,24 +301,6 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
   return {
     // Macros
     macros: [],
-
-    // The library lives in the automation store (#5818, slice 4); these are
-    // thin adapters that read and write it through the macro view.
-    loadMacros: () => get().loadAutomations(),
-
-    deleteMacroFromBackend: async (macroId) => {
-      // Only mutate local state after the backend delete resolves, and rethrow
-      // on failure so the caller can surface the error (mirrors workspaces).
-      await get().deleteAutomationFromBackend(macroId);
-    },
-
-    // Macro run history (#3543)
-    macroRuns: [],
-
-    loadMacroRuns: () => get().loadAutomationRuns(),
-
-    // Clears only the runs this history shows; workflow runs stay.
-    clearMacroRunHistory: () => get().clearAutomationRuns(get().macroRuns.map((r) => r.id)),
 
     // Macro playback (#1675)
     macroPlayback: null,

@@ -132,11 +132,11 @@ class TestProductRunWorkflowDisarm(
                 "false"
             )
             self.assert_no_editor_open()
-            before = len(self.workflow_runs(wid))
+            before = len(self.automation_runs(wid))
             self._fire(tab, "OFF")
             time.sleep(QUIET_S)
             text = self.driver.read_terminal(tab)
-            runs = self.workflow_runs(wid)
+            runs = self.automation_runs(wid)
             self.evidence(f"runs {before} -> {len(runs)}; tail {self.terminal_tail(tab)!r}")
             assert f"PR_DISARM_ANSWER_42_{t}" not in text, "a disarmed workflow typed its answer"
             assert len(runs) == before, f"a disarmed workflow recorded a run: {runs[:1]}"
@@ -164,10 +164,10 @@ class TestProductRunWorkflowDisarm(
             self._fire(tab, "ON")
             self.wait_for_output(f"PR_DISARM_ANSWER_42_{t}", tab_id=tab, timeout=30.0)
             run = self.wait(
-                lambda: next(iter(self.workflow_runs(wid)), None), what="the triggered run"
+                lambda: next(iter(self.automation_runs(wid)), None), what="the triggered run"
             )
-            self.evidence(f"run: {run.get('status')} triggeredBy={run.get('triggeredBy')}")
-            assert run.get("triggeredBy") == "on-output-match", run
+            self.evidence(f"run: {run.get('status')} origin={run.get('origin')}")
+            assert run.get("origin") == "on-output-match", run
 
     def assert_no_editor_open(self) -> None:
         """The switch must not open the workflow editor."""

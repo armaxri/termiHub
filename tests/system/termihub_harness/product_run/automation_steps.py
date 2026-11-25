@@ -3,7 +3,7 @@
 :class:`AutomationPhaseUi` drives automations and schedules the way a
 user does (sidebar toolbar, editor dialogs, row menus, Settings ->
 Schedules) and reads the stores the steps grade on (``macros``,
-``macroRuns``, ``workflows``, ``workflowRuns``, ``schedules``). Mix it in after
+``workflows``, ``automationRuns``, ``schedules``). Mix it in after
 :class:`~.ui.ProductRunUi` with ``WorkflowUi``, ``SettingsUi``, ``SidebarUi``
 and ``TerminalUi``.
 """
@@ -51,14 +51,14 @@ class AutomationPhaseUi(AutomationSidebarUi):
     def macro(self, macro_id: str) -> Optional[dict[str, Any]]:
         return next((m for m in self._state_list("macros") if m.get("id") == macro_id), None)
 
-    def macro_runs(self, macro_id: str) -> list[dict[str, Any]]:
-        return [r for r in self._state_list("macroRuns") if r.get("macroId") == macro_id]
+    def automation_runs(self, automation_id: str) -> list[dict[str, Any]]:
+        """The recorded runs of one automation, newest first."""
+        return [
+            r for r in self._state_list("automationRuns") if r.get("automationId") == automation_id
+        ]
 
     def workflow(self, workflow_id: str) -> Optional[dict[str, Any]]:
         return next((w for w in self._state_list("workflows") if w.get("id") == workflow_id), None)
-
-    def workflow_runs(self, workflow_id: str) -> list[dict[str, Any]]:
-        return [r for r in self._state_list("workflowRuns") if r.get("workflowId") == workflow_id]
 
     def schedule(self, schedule_id: str) -> Optional[dict[str, Any]]:
         return next((s for s in self._state_list("schedules") if s.get("id") == schedule_id), None)

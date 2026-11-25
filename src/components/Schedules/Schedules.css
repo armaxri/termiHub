@@ -3,7 +3,9 @@
 /* Wraps the fields so leaving one, or a failed Save, can reveal errors (#5917);
    it adds no box, so the Modal body lays the fields out as before. */
 .schedule-editor__form {
-  display: contents;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
 }
 
 .schedule-editor__row {

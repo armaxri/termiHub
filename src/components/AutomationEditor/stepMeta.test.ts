@@ -83,7 +83,6 @@ describe("labels and icons", () => {
     expect(triggerKindLabel("manual")).toBe("Manual");
     expect(triggerKindLabel("on-connect")).toBe("On connect");
     expect(triggerKindLabel("hotkey")).toBe("Hotkey");
-    expect(triggerKindLabel("scheduled")).toBe("Scheduled");
     expect(triggerKindLabel("on-disconnect")).toBe("On disconnect");
     expect(triggerKindLabel("on-output-match")).toBe("On output match");
   });

@@ -16,7 +16,6 @@ pub mod inventory_import;
 pub mod local_process;
 pub mod local_process_policy;
 pub mod logs;
-pub mod macros;
 pub mod mobaxterm_import;
 pub mod named_credential;
 pub mod network;
@@ -57,6 +56,5 @@ pub mod window;
 // Static guard: no synchronous command may reach window creation (#4024).
 #[cfg(test)]
 mod window_creation_guard;
-pub mod workflows;
 pub mod workspace;
 pub mod xserver;

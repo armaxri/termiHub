@@ -68,16 +68,6 @@ export function scheduleTone(s: ScheduleView, paused: boolean): StatusTone {
  */
 export interface SchedulesSectionProps {
   /**
-   * Show the create/edit actions (default `true`). The Settings panel passes
-   * `false`: it only views, pauses/resumes and deletes schedules (#4623).
-   */
-  editable?: boolean;
-  /**
-   * Offer "New schedule" (in the header and the empty state). Defaults to
-   * {@link editable}; Settings turns it on while keeping editing off (#5633).
-   */
-  creatable?: boolean;
-  /**
    * Render the "Schedules" section header (default `true`). A page that already
    * titles itself "Schedules" passes `false` and gets a plain toolbar instead,
    * so the title is not repeated (#5633).
@@ -88,12 +78,7 @@ export interface SchedulesSectionProps {
 }
 
 /** Renders the schedules list; see the module notes above. */
-export function SchedulesSection({
-  editable = true,
-  creatable = editable,
-  showTitle = true,
-  collapse,
-}: SchedulesSectionProps) {
+export function SchedulesSection({ showTitle = true, collapse }: SchedulesSectionProps) {
   const contentId = useId();
   const open = collapse?.expanded ?? true;
   const schedules = useAppStore((s) => s.schedules);
@@ -157,10 +142,10 @@ export function SchedulesSection({
 
   const confirmTargets = confirming ? labels.targets(confirming.targets) : null;
 
-  // The sidebar's header has nothing to pause without a schedule (R-135); a pause
-  // left on stays reachable.
+  // There is nothing to pause without a schedule (R-135); a pause left on stays
+  // reachable.
   const pauseToggle =
-    collapse && schedules.length === 0 && !paused ? null : (
+    schedules.length === 0 && !paused ? null : (
       <Tooltip content="Pause all schedules" side="top" disabled={!compactHeader}>
         <label className="schedules__pause" htmlFor="schedules-pause-toggle">
           {compactHeader ? null : <span>Pause all</span>}
@@ -215,25 +200,24 @@ export function SchedulesSection({
                 />
               ) : null}
               {pauseToggle}
-              {creatable ? (
-                <Tooltip content="New schedule" side="top">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    iconOnly
-                    aria-label="New schedule"
-                    data-testid="schedules-new-btn"
-                    icon={<Plus size={12} />}
-                    onClick={openNew}
-                  />
-                </Tooltip>
-              ) : null}
+
+              <Tooltip content="New schedule" side="top">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  aria-label="New schedule"
+                  data-testid="schedules-new-btn"
+                  icon={<Plus size={12} />}
+                  onClick={openNew}
+                />
+              </Tooltip>
             </>
           }
         />
       ) : (
         <div className="schedules__toolbar" data-testid="schedules-toolbar">
-          {creatable && schedules.length > 0 ? (
+          {schedules.length > 0 ? (
             <Button
               variant="secondary"
               size="sm"
@@ -253,17 +237,15 @@ export function SchedulesSection({
             title="No schedules yet"
             description="Schedule an automation to run it on saved connections at set times."
             action={
-              creatable ? (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  data-testid="schedules-empty-new-btn"
-                  icon={<Plus size={12} />}
-                  onClick={() => openScheduleEditor()}
-                >
-                  New schedule
-                </Button>
-              ) : undefined
+              <Button
+                variant="secondary"
+                size="sm"
+                data-testid="schedules-empty-new-btn"
+                icon={<Plus size={12} />}
+                onClick={() => openScheduleEditor()}
+              >
+                New schedule
+              </Button>
             }
             data-testid="schedules-empty"
           />
@@ -337,19 +319,19 @@ export function SchedulesSection({
                         />
                       </Tooltip>
                     ) : null}
-                    {editable ? (
-                      <Tooltip content="Edit" side="top">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          iconOnly
-                          aria-label="Edit schedule"
-                          data-testid={`schedule-edit-${s.id}`}
-                          icon={<Pencil size={12} />}
-                          onClick={() => openScheduleEditor({ scheduleId: s.id })}
-                        />
-                      </Tooltip>
-                    ) : null}
+
+                    <Tooltip content="Edit" side="top">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        iconOnly
+                        aria-label="Edit schedule"
+                        data-testid={`schedule-edit-${s.id}`}
+                        icon={<Pencil size={12} />}
+                        onClick={() => openScheduleEditor({ scheduleId: s.id })}
+                      />
+                    </Tooltip>
+
                     <Tooltip content="Delete" side="top">
                       <Button
                         variant="ghost"

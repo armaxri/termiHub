@@ -200,19 +200,15 @@ fn unusable_tunnel_storage_adds_a_warning_and_no_tunnel_manager() {
 // ── Secondary-managers phase ────────────────────────────────────────────────
 
 /// Every store the secondary-managers phase loads with recovery, in phase order.
-const SECONDARY_STORES: [&str; 13] = [
+const SECONDARY_STORES: [&str; 9] = [
     "workspaces.json",
     "automations.json",
     "automation-runs.json",
-    "macros.json",
-    "macro-runs.json",
     "session-history.json",
-    "workflows.json",
     "schedules.json",
     "network-tool-history.json",
     "file-browser-bookmarks.json",
     "http-monitor-history.json",
-    "runs.json",
     "embedded_servers.json",
 ];
 
@@ -225,9 +221,7 @@ fn boot_secondary(config_dir: &Path) -> (MockApp, Vec<RecoveryWarning>, usize) {
 }
 
 fn assert_secondary_managed(app: &MockApp) {
-    use crate::{
-        embedded_servers, files, macros, network, schedules, session_history, workflows, workspace,
-    };
+    use crate::{embedded_servers, files, network, schedules, session_history, workspace};
     assert!(app
         .try_state::<workspace::manager::WorkspaceManager>()
         .is_some());
@@ -237,15 +231,8 @@ fn assert_secondary_managed(app: &MockApp) {
     assert!(app
         .try_state::<crate::automations::history_manager::AutomationRunHistoryManager>()
         .is_some());
-    assert!(app.try_state::<macros::manager::MacroManager>().is_some());
-    assert!(app
-        .try_state::<macros::history_manager::MacroRunHistoryManager>()
-        .is_some());
     assert!(app
         .try_state::<session_history::manager::SessionHistoryManager>()
-        .is_some());
-    assert!(app
-        .try_state::<workflows::manager::WorkflowManager>()
         .is_some());
     assert!(app
         .try_state::<Arc<schedules::manager::ScheduleManager>>()
@@ -258,9 +245,6 @@ fn assert_secondary_managed(app: &MockApp) {
         .is_some());
     assert!(app
         .try_state::<network::monitor_history_manager::HttpMonitorHistoryManager>()
-        .is_some());
-    assert!(app
-        .try_state::<workflows::history_manager::WorkflowRunHistoryManager>()
         .is_some());
     assert!(app
         .try_state::<workspace::last_session::LastSessionManager>()

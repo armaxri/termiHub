@@ -206,7 +206,7 @@ export const createPluginsSlice: StateCreator<AppState, [], [], PluginsSlice> = 
       // to the default (concept edge case).
       applyEffectiveTheme(currentSettingsView());
     } catch (err) {
-      // Read-only refresh: log rather than toast, matching loadMacros.
+      // Read-only refresh: log rather than toast, matching loadAutomations.
       frontendLog("app_store", `Failed to load plugins: ${errorMessage(err)}`);
     }
   },

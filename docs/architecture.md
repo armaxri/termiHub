@@ -365,8 +365,8 @@ The table lists the top-level modules of `src-tauri/src/` (regenerated from the 
 | **Agent service**        | `src-tauri/src/agent_service.rs`                  | Shared "desktop controls a service hosted on a remote agent" layer (tunnels, embedded servers, tools)                                                                                                                                                                                                                                                                                                                                                   |
 | **Run location**         | `src-tauri/src/run_location.rs`                   | Routes a service/tool invocation to the local registry or a remote agent proxy                                                                                                                                                                                                                                                                                                                                                                          |
 | **Workspace**            | `src-tauri/src/workspace/`                        | Workspace save/restore, per-workspace settings, last session, import trust                                                                                                                                                                                                                                                                                                                                                                              |
-| **Macros / Workflows**   | `src-tauri/src/macros/`, `workflows/`             | Stored macros and workflows with run history                                                                                                                                                                                                                                                                                                                                                                                                            |
-| **Automations**          | `src-tauri/src/automations/`                      | The merged macro + workflow model (`Automation`, `type-keys` / `run-automation` steps) and the pure legacy converters with golden-file tests. Not wired in yet; storage, migration and UI follow ([concept](concepts/partial/automations.html), #5818)                                                                                                                                                                                                  |
+| **Macros / Workflows**   | `src-tauri/src/macros/`, `workflows/`             | Read-only readers of the stored files of older builds (migration, reconcile, old backups), and the step vocabulary automations share                                                                                                                                                                                                                                                                                                                    |
+| **Automations**          | `src-tauri/src/automations/`                      | The one automation model (`type-keys` / `run-automation` steps next to the shared ones), its store and run history, the migration from macros and workflows and its reconcile pass ([concept](concepts/implemented/automations.html), #5818)                                                                                                                                                                                                            |
 | **Schedules**            | `src-tauri/src/schedules/`                        | Scheduled automation runs (PROD-043; schema v3 since #5818)                                                                                                                                                                                                                                                                                                                                                                                             |
 | **Session history**      | `src-tauri/src/session_history/`                  | Persisted history of opened sessions                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | **Backup**               | `src-tauri/src/backup/`                           | Unified backup and restore of all app data (PROD-068)                                                                                                                                                                                                                                                                                                                                                                                                   |
@@ -2106,34 +2106,34 @@ lock-step macro fan-out. Since slice 4 every run goes through them (see below).
 Since slice 4 of #5818 the frontend keeps one library and one run history
 (`src/store/slices/automationsSlice.ts`), backed by the `*_automation*` commands
 (`src/services/automationApi.ts`, `src-tauri/src/commands/automations.rs`). It is the only writer
-of `automations.json` and `automation-runs.json`. The two editors and the palette entries still
-read `macros` and `workflows`, which are derived from the store by the pure adapters in
-`src/store/slices/automationViews.ts`, and write back through them:
+of `automations.json` and `automation-runs.json`. Everything that shows, edits, imports or starts an
+automation reads `automations` and starts it through the store's `runAutomation`. Behind it are two
+run paths, which take the two views `src/store/slices/automationViews.ts` derives:
 
-- An automation with only `type-keys` steps, no triggers and no parameters shows as a macro, and
-  every other automation shows as a workflow. An empty automation follows its `legacy` provenance.
-- The workflow view reads `run-automation` as `run-macro` and always shows the `manual` trigger.
-  Saving maps both back.
-
-Macro playback runs the stored automation with `runAutomation`
-(`src/store/slices/macroKeysPlayback.ts`). Its `type-keys` step uses its saved typing speed, and
-the Play dialog's timing is a one-run override. Multi-terminal playback stays lock-step until
-slice 5. A workflow run executes the stored automation, so a `run-automation` step runs the
-called automation inline and is recorded once, in the caller's history.
+- An automation with only `type-keys` steps, no triggers and no parameters is typed by `playMacro`
+  (`macrosSlice.ts`, `macroKeysPlayback.ts`), with each step's saved typing speed. Every other one is
+  run by `runWorkflow` (`workflowsSlice.ts`, `workflowRunOnTarget.ts`). An empty automation follows
+  its `legacy` provenance.
+- Both execute the stored automation, never the view. The workflow view spells `run-automation` as
+  `run-macro` and always carries the `manual` trigger; the same conversion reads the entries of old
+  files. Both paths record `AutomationRun`s, one per terminal, and a called automation its own.
+- Several terminals are independent runs, at most 8 at once. Typed keys fan out through
+  `runAutomationOnTargets`, step-by-step runs still through `runWithConcurrency` (#5984).
 
 The **Automations sidebar** (`src/components/AutomationSidebar/`, slice 6) reads the store directly:
 one list of every automation, run through `runAutomation`, which sends an automation that only
 types keystrokes to `playMacro` and every other one to `runWorkflow`. Its running markers come from
 the `workflow-run` region and `macroPlayback`, its Failed marker from the run history
-(`automationRowInfo.summarizeRuns`: an unattended run failed and nothing completed since). Until
-slice 7, Edit opens the keystroke editor or the step editor by the same shape rule. It replaced the
+(`automationRowInfo.summarizeRuns`: an unattended run failed and nothing completed since). It replaced the
 `macros` and `workflows` sidebar views: settings v4 (`migrate_automations_view` in
 `src-tauri/src/connection/settings.rs`) maps the hidden activity-bar views (hidden only when both
 were) and the last open view to `automations`.
 
-The legacy `macros.json`, `workflows.json`, `macro-runs.json` and `runs.json` are frozen. The UI
-never writes them, their commands stay registered for slice 12 to remove, and connection-id
-changes re-point the automations' trigger ids instead (`AutomationManager::
+The legacy `macros.json`, `workflows.json`, `macro-runs.json` and `runs.json` are frozen: nothing
+writes them and no command reads them. Only the boot migration, its reconcile pass and the restore of
+an old backup do (`legacy.rs`, `macros/`, `workflows/`). What cannot be read of a library file is
+left as it is and reported in the recovery warnings (`migrate::legacy_warnings`): a corrupt entry
+when the file is new, an unreadable file on every start. Connection-id changes re-point the automations' trigger ids instead (`AutomationManager::
 follow_connection_id_changes`). The first boot of such a build sets `legacyFrozenAt` in
 `automations.json` and follows, once, the deletions the old UI made in the legacy files during the
 transition (slices 2 and 3), so they do not reappear. It does this only for a source file that
@@ -2286,12 +2286,10 @@ sequenceDiagram
   save or a discard ends it; `prepareWindowClose` and `prepareAppQuit` ask while one exists. Input
   typed while the text before the cursor is a password prompt, and not echoed, is kept apart and
   stored only on request.
-- **Macro run history** (`src-tauri/src/macros/history*.rs`, #3543) — every started macro
-  playback (manual, command palette, a workflow's `run-macro` step, scheduled) is recorded
-  fire-and-forget in `macro-runs.json`: macro id + name, start/end, outcome, steps played,
-  target count + tab titles, origin. Metadata only — never the macro's recorded input. Capped at
-  the newest 200 records and 90 days; merged into `automation-runs.json` and shown in the
-  Automations sidebar's History section (#5818).
+- **Run history** (`src-tauri/src/automations/history*.rs`, #3543, #5818) — every run on a terminal is
+  recorded fire-and-forget in `automation-runs.json`: automation id + name, start/end, outcome,
+  steps, terminal, origin. Metadata only, never what was typed or printed. Capped at the newest 200
+  records and 90 days; shown in the Automations sidebar's History section.
 
 #### Unified backup and restore
 
@@ -2299,8 +2297,9 @@ Settings → **Backup & restore** backs up all app data to one file and restores
 `src-tauri/src/backup/`). Each persisted store is one **section** carrying the store's own schema
 version; the registry in `backup/sections.rs` lists them — connections (with agents; passwords are
 stripped as defence in depth), settings (including custom themes and keyboard shortcuts),
-workspaces, macros, workflows, schedules, tunnels, embedded servers, Wake-on-LAN devices, HTTP
-monitors and network-tool history. Session history, workflow and macro run history, the last session and transfer state
+workspaces, automations, schedules, tunnels, embedded servers, Wake-on-LAN devices, HTTP
+monitors and network-tool history (and the frozen macro and workflow files, for an older build).
+Session history, automation run history, the last session and transfer state
 are deliberately not backed up. The optional **credentials** section is the credential-vault file
 object above, sealed with the backup passphrase and gated exactly like a vault export
 (master-password re-authentication, or a fresh OS user verification in OS-keychain mode —
@@ -2550,7 +2549,7 @@ uses, and everything else goes through typed backend commands:
   `src/services/nativeDialog.ts`. A real pick makes the dialog plugin add that one path to the fs
   plugin's **runtime** scope, so the follow-up `readTextFile` / `writeTextFile` is allowed — and
   nothing else is. This covers all the flows that read or write a user-chosen file from the
-  webview: connection, backup, credential-vault, theme, grammar, macro / workflow / workspace,
+  webview: connection, backup, credential-vault, theme, grammar, automation, workspace,
   network-tool result, terminal-output, log and cheat-sheet export / import. In the test-bridge
   build the dialog is stubbed and the test-bridge-only `test_allow_dialog_path` command makes the
   same grant (`src-tauri/src/commands/test_dialog.rs`); a release build has no command that widens

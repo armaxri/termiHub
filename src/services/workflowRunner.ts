@@ -4,7 +4,7 @@
  *
  * Generalises the macro playback scheduler ({@link "@/services/macroPlayback"})
  * from a homogeneous list of recorded input chunks to an ordered list of *typed*
- * {@link WorkflowStep}s. The runner walks the steps in order, dispatching each by
+ * {@link RunnableStep}s. The runner walks the steps in order, dispatching each by
  * `kind` through **injectable seams** so it is fully unit-testable with mocks and
  * no live terminal — exactly the `inject` seam macro playback uses.
  *
@@ -19,7 +19,6 @@
  *
  * Executable step kinds and the seam each routes through:
  *  - `send-command` / `run-script` — the `send_input` seam ({@link WorkflowRunnerDeps.send}).
- *  - `run-macro` — the macro-playback replay seam ({@link WorkflowRunnerDeps.runMacro}).
  *  - `wait` / `run-script` inter-line delays — the timer seam
  *    ({@link WorkflowRunnerDeps.wait}), with every delay clamped to
  *    {@link "@/services/macroPlayback".MAX_STEP_DELAY_MS} exactly as macro
@@ -52,7 +51,7 @@ import {
 } from "@/services/macroPlayback";
 import type { Automation } from "@/types/generated/Automation";
 import type { AutomationStep } from "@/types/generated/AutomationStep";
-import type { WorkflowCondition, WorkflowStep, WorkflowStepRetry } from "@/types/workflow";
+import type { WorkflowCondition, WorkflowStepRetry } from "@/types/workflow";
 import { frontendWarn } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
 
@@ -87,12 +86,8 @@ export const MAX_LOOP_DEPTH = MAX_CONDITIONAL_DEPTH;
  */
 export const MAX_AUTOMATION_DEPTH = MAX_CONDITIONAL_DEPTH;
 
-/**
- * A step the runner can execute: any workflow step or any automation step
- * (#5818). The two unions share every kind except `run-macro` (workflow only)
- * and `type-keys` / `run-automation` (automation only).
- */
-export type RunnableStep = WorkflowStep | AutomationStep;
+/** A step the runner can execute. */
+export type RunnableStep = AutomationStep;
 
 /** The `type-keys` automation step. */
 export type TypeKeysStep = Extract<AutomationStep, { kind: "type-keys" }>;
@@ -308,13 +303,6 @@ export interface WorkflowRunResult {
 export type WorkflowSendSeam = (data: string) => Promise<boolean> | boolean;
 
 /**
- * Replays a stored macro by id via the macro-playback service, reusing the
- * macro's own timing mode. Resolves `true` when the macro replayed to
- * completion, `false` when it was missing, empty, or the target session vanished.
- */
-export type WorkflowRunMacroSeam = (macroId: string) => Promise<boolean> | boolean;
-
-/**
  * Looks up a stored automation by id for a `run-automation` step (#5818).
  * Returns `undefined` when no automation has that id.
  */
@@ -428,8 +416,6 @@ export type WorkflowRunLocalProcessSeam = (
 export interface WorkflowRunnerDeps {
   /** Injects text into the target session (the `send_input` seam). */
   send: WorkflowSendSeam;
-  /** Replays a stored macro by id (the `run-macro` seam). */
-  runMacro?: WorkflowRunMacroSeam;
   /**
    * Looks up an automation by id (the `run-automation` seam, #5818). Absent →
    * a `run-automation` step fails loudly.
@@ -642,7 +628,7 @@ function splitScriptLines(script: string): string[] {
  * with a clear error instead of silently running the embedded copy.
  */
 async function resolveScriptBody(
-  step: Extract<WorkflowStep, { kind: "run-script" }>,
+  step: Extract<RunnableStep, { kind: "run-script" }>,
   deps: WorkflowRunnerDeps
 ): Promise<{ ok: true; body: string } | { ok: false; error: string }> {
   const path = step.sourcePath;
@@ -762,7 +748,6 @@ function resolveAnyStepParams(
       // that adds the reserved `${iteration}` value (mirroring how a
       // conditional's sub-steps are resolved when the arm executes them).
       return step;
-    case "run-macro":
     case "wait":
       return step;
     case "type-keys":
@@ -948,7 +933,7 @@ async function runNestedAutomation(
 
 /**
  * Execute a single workflow step by dispatching on its `kind`. The `switch` is
- * exhaustive over the {@link WorkflowStep} union (the `never` default is a
+ * exhaustive over the {@link RunnableStep} union (the `never` default is a
  * compile-time guard), so adding a step kind to the model forces a matching
  * dispatch entry here.
  *
@@ -1003,15 +988,6 @@ export async function executeStep(
         if (!delivered) return { ok: false, error: SESSION_GONE };
       }
       return { ok: true };
-    }
-    case "run-macro": {
-      if (!deps.runMacro) {
-        return { ok: false, error: 'the "run-macro" step requires a macro-playback seam' };
-      }
-      const replayed = await deps.runMacro(resolved.macroId);
-      return replayed
-        ? { ok: true }
-        : { ok: false, error: `macro "${resolved.macroId}" could not be replayed` };
     }
     case "wait": {
       await sleepFor(clampDelay(resolved.delayMs), deps);

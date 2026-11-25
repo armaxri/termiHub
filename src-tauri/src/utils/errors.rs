@@ -116,7 +116,6 @@ pub enum IpcErrorCode {
     SftpSessionNotFound,
     TunnelError,
     WorkspaceError,
-    MacroError,
     SessionHistoryError,
     WorkflowError,
     /// An automation store or run-history operation failed (#5818).
@@ -291,9 +290,6 @@ pub enum TerminalError {
     #[error("Workspace error: {0}")]
     WorkspaceError(String),
 
-    #[error("Automation error: {0}")]
-    MacroError(String),
-
     #[error("Session history error: {0}")]
     SessionHistoryError(String),
 
@@ -466,7 +462,6 @@ impl TerminalError {
             TerminalError::SftpSessionNotFound(_) => C::SftpSessionNotFound,
             TerminalError::TunnelError(_) => C::TunnelError,
             TerminalError::WorkspaceError(_) => C::WorkspaceError,
-            TerminalError::MacroError(_) => C::MacroError,
             TerminalError::SessionHistoryError(_) => C::SessionHistoryError,
             TerminalError::WorkflowError(_) => C::WorkflowError,
             TerminalError::AutomationError(_) => C::AutomationError,

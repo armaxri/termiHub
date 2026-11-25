@@ -43,7 +43,7 @@ pub const MAX_SUMMARY_CHARS: usize = 500;
 pub const MAX_ERROR_CHARS: usize = 2_000;
 
 /// Central network-tool run-history manager. Mirrors
-/// [`crate::workflows::history_manager::WorkflowRunHistoryManager`].
+/// [`crate::automations::history_manager::AutomationRunHistoryManager`].
 pub struct NetworkToolHistoryManager {
     store: Mutex<NetworkToolHistoryStore>,
     storage: NetworkToolHistoryStorage,

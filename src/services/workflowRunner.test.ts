@@ -24,9 +24,9 @@ import {
   MAX_LOOP_DEPTH,
   MAX_LOOP_ITERATIONS,
   WAIT_FOR_OUTPUT_DEFAULT_TIMEOUT_MS,
+  type RunnableStep,
   type WorkflowRunnerDeps,
   type WorkflowSendSeam,
-  type WorkflowRunMacroSeam,
   type WorkflowWaitSeam,
   type WorkflowReadFileSeam,
   type WorkflowRunLocalProcessSeam,
@@ -35,9 +35,9 @@ import {
   type WorkflowParamValues,
 } from "./workflowRunner";
 import { MAX_STEP_DELAY_MS } from "./macroPlayback";
-import type { WorkflowComparisonOp, WorkflowCondition, WorkflowStep } from "@/types/workflow";
+import type { WorkflowComparisonOp, WorkflowCondition } from "@/types/workflow";
 
-const sendCommand = (command: string): WorkflowStep => ({ kind: "send-command", command });
+const sendCommand = (command: string): RunnableStep => ({ kind: "send-command", command });
 
 /** Build deps with a no-op send by default; override any seam per test. */
 const deps = (over: Partial<WorkflowRunnerDeps> = {}): WorkflowRunnerDeps => ({
@@ -64,7 +64,7 @@ describe("executeStep", () => {
   describe("run-script", () => {
     it("streams each line into the send seam with a trailing newline", async () => {
       const send = vi.fn(async (_data: string) => true);
-      const step: WorkflowStep = { kind: "run-script", script: "echo a\necho b\necho c" };
+      const step: RunnableStep = { kind: "run-script", script: "echo a\necho b\necho c" };
       const outcome = await executeStep(step, deps({ send }));
 
       expect(outcome).toEqual({ ok: true });
@@ -73,7 +73,7 @@ describe("executeStep", () => {
 
     it("drops a single trailing newline but keeps interior blank lines", async () => {
       const send = vi.fn(async (_data: string) => true);
-      const step: WorkflowStep = { kind: "run-script", script: "a\n\nb\n" };
+      const step: RunnableStep = { kind: "run-script", script: "a\n\nb\n" };
       await executeStep(step, deps({ send }));
 
       expect(send.mock.calls.map((c) => c[0])).toEqual(["a\n", "\n", "b\n"]);
@@ -82,7 +82,7 @@ describe("executeStep", () => {
     it("waits the clamped per-line delay between lines (not before the first)", async () => {
       const send = vi.fn(async () => true);
       const wait = vi.fn(async () => {});
-      const step: WorkflowStep = {
+      const step: RunnableStep = {
         kind: "run-script",
         script: "a\nb\nc",
         perLineDelayMs: MAX_STEP_DELAY_MS + 10_000,
@@ -98,7 +98,7 @@ describe("executeStep", () => {
         .fn<(data: string) => Promise<boolean>>()
         .mockResolvedValueOnce(true)
         .mockResolvedValueOnce(false);
-      const step: WorkflowStep = { kind: "run-script", script: "a\nb\nc" };
+      const step: RunnableStep = { kind: "run-script", script: "a\nb\nc" };
       const outcome = await executeStep(step, deps({ send }));
 
       expect(outcome.ok).toBe(false);
@@ -109,7 +109,7 @@ describe("executeStep", () => {
       const send = vi.fn(async (_data: string) => true);
       const readScriptFile: WorkflowReadFileSeam = vi.fn(async () => "fromdisk1\nfromdisk2");
       const isScriptSourceTrusted = vi.fn((path: string) => path === "/tmp/s.sh");
-      const step: WorkflowStep = {
+      const step: RunnableStep = {
         kind: "run-script",
         script: "stale",
         sourcePath: "/tmp/s.sh",
@@ -131,7 +131,7 @@ describe("executeStep", () => {
     it("refuses to read a sourcePath the user never confirmed", async () => {
       const send = vi.fn(async (_data: string) => true);
       const readScriptFile: WorkflowReadFileSeam = vi.fn(async () => "PRIVATE KEY");
-      const step: WorkflowStep = {
+      const step: RunnableStep = {
         kind: "run-script",
         script: "echo harmless",
         sourcePath: "/home/u/.ssh/id_ed25519",
@@ -152,7 +152,7 @@ describe("executeStep", () => {
     it("refuses to read a sourcePath when no trust seam is wired (fail-closed)", async () => {
       const send = vi.fn(async (_data: string) => true);
       const readScriptFile: WorkflowReadFileSeam = vi.fn(async () => "secret");
-      const step: WorkflowStep = { kind: "run-script", script: "x", sourcePath: "/etc/shadow" };
+      const step: RunnableStep = { kind: "run-script", script: "x", sourcePath: "/etc/shadow" };
       const outcome = await executeStep(step, deps({ send, readScriptFile }));
 
       expect(outcome.ok).toBe(false);
@@ -165,7 +165,7 @@ describe("executeStep", () => {
       const readScriptFile: WorkflowReadFileSeam = vi.fn(async () => {
         throw new Error("no such file");
       });
-      const step: WorkflowStep = {
+      const step: RunnableStep = {
         kind: "run-script",
         script: "embedded",
         sourcePath: "/tmp/missing.sh",
@@ -185,7 +185,7 @@ describe("executeStep", () => {
     it("runs a locally created step without a sourcePath from its visible script", async () => {
       const send = vi.fn(async (_data: string) => true);
       const readScriptFile: WorkflowReadFileSeam = vi.fn(async () => "never");
-      const step: WorkflowStep = { kind: "run-script", script: "uptime" };
+      const step: RunnableStep = { kind: "run-script", script: "uptime" };
       const outcome = await executeStep(
         step,
         deps({ send, readScriptFile, isScriptSourceTrusted: () => false })
@@ -199,7 +199,7 @@ describe("executeStep", () => {
     it("aborts remaining lines when the signal reports cancellation", async () => {
       const send = vi.fn(async () => true);
       let cancelled = false;
-      const step: WorkflowStep = { kind: "run-script", script: "a\nb\nc" };
+      const step: RunnableStep = { kind: "run-script", script: "a\nb\nc" };
       // Cancel right after the first line is sent.
       send.mockImplementation(async () => {
         cancelled = true;
@@ -209,30 +209,6 @@ describe("executeStep", () => {
 
       expect(outcome).toEqual({ ok: true, cancelled: true });
       expect(send).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  describe("run-macro", () => {
-    it("delegates to the run-macro seam and succeeds when it replays", async () => {
-      const runMacro: WorkflowRunMacroSeam = vi.fn(async () => true);
-      const outcome = await executeStep({ kind: "run-macro", macroId: "m-1" }, deps({ runMacro }));
-
-      expect(outcome).toEqual({ ok: true });
-      expect(runMacro).toHaveBeenCalledWith("m-1");
-    });
-
-    it("fails when the macro cannot be replayed", async () => {
-      const runMacro: WorkflowRunMacroSeam = vi.fn(async () => false);
-      const outcome = await executeStep({ kind: "run-macro", macroId: "gone" }, deps({ runMacro }));
-
-      expect(outcome.ok).toBe(false);
-    });
-
-    it("fails loudly when no run-macro seam is wired", async () => {
-      const outcome = await executeStep({ kind: "run-macro", macroId: "m-1" }, deps());
-
-      expect(outcome.ok).toBe(false);
-      if (!outcome.ok) expect(outcome.error).toContain("run-macro");
     });
   });
 
@@ -254,7 +230,7 @@ describe("executeStep", () => {
   });
 
   describe("run-local-process (guarded, #1857)", () => {
-    const step = (program: string, args: string[] = []): WorkflowStep => ({
+    const step = (program: string, args: string[] = []): RunnableStep => ({
       kind: "run-local-process",
       program,
       args,
@@ -423,20 +399,16 @@ describe("runWorkflow", () => {
       order.push(`send:${JSON.stringify(data)}`);
       return true;
     });
-    const runMacro: WorkflowRunMacroSeam = vi.fn(async (id: string) => {
-      order.push(`macro:${id}`);
-      return true;
-    });
     const wait: WorkflowWaitSeam = vi.fn(async (ms: number) => {
       order.push(`wait:${ms}`);
     });
-    const steps: WorkflowStep[] = [
+    const steps: RunnableStep[] = [
       sendCommand("first"),
       { kind: "run-script", script: "s1\ns2" },
       { kind: "wait", delayMs: 500 },
-      { kind: "run-macro", macroId: "tail-log" },
+      { kind: "type-keys", chunks: [{ data: "tail -f log\r", delayMs: 0 }] },
     ];
-    const result = await runWorkflow(steps, deps({ send, runMacro, wait })).done;
+    const result = await runWorkflow(steps, deps({ send, wait })).done;
 
     expect(result).toEqual({ status: "completed", stepsCompleted: 4 });
     expect(order).toEqual([
@@ -444,7 +416,7 @@ describe("runWorkflow", () => {
       'send:"s1\\n"',
       'send:"s2\\n"',
       "wait:500",
-      "macro:tail-log",
+      'send:"tail -f log\\r"',
     ]);
   });
 
@@ -522,7 +494,7 @@ describe("runWorkflow", () => {
       }
       return true;
     });
-    const steps: WorkflowStep[] = [{ kind: "run-script", script: "a\nb\nc" }, sendCommand("z")];
+    const steps: RunnableStep[] = [{ kind: "run-script", script: "a\nb\nc" }, sendCommand("z")];
     const handle = runWorkflow(steps, deps({ send }));
 
     await started;
@@ -612,7 +584,7 @@ describe("parameter interpolation (PROD-0040)", () => {
 
   describe("resolveStepParams", () => {
     it("returns the same step reference when there are no values (identity pass)", () => {
-      const step: WorkflowStep = sendCommand("git status");
+      const step: RunnableStep = sendCommand("git status");
       expect(resolveStepParams(step, {})).toBe(step);
     });
 
@@ -622,7 +594,7 @@ describe("parameter interpolation (PROD-0040)", () => {
     });
 
     it("substitutes run-script.script and preserves other fields", () => {
-      const step: WorkflowStep = {
+      const step: RunnableStep = {
         kind: "run-script",
         script: "ping ${host}",
         perLineDelayMs: 50,
@@ -635,7 +607,7 @@ describe("parameter interpolation (PROD-0040)", () => {
     });
 
     it("substitutes run-local-process program and each arg", () => {
-      const step: WorkflowStep = {
+      const step: RunnableStep = {
         kind: "run-local-process",
         program: "${host}-tool",
         args: ["--port", "${port}", "static"],
@@ -647,15 +619,15 @@ describe("parameter interpolation (PROD-0040)", () => {
       });
     });
 
-    it("leaves run-macro and wait untouched", () => {
-      const macro: WorkflowStep = { kind: "run-macro", macroId: "m-1" };
-      const wait: WorkflowStep = { kind: "wait", delayMs: 500 };
-      expect(resolveStepParams(macro, values)).toEqual(macro);
+    it("leaves run-automation and wait untouched", () => {
+      const called: RunnableStep = { kind: "run-automation", automationId: "m-1" };
+      const wait: RunnableStep = { kind: "wait", delayMs: 500 };
+      expect(resolveStepParams(called, values)).toEqual(called);
       expect(resolveStepParams(wait, values)).toEqual(wait);
     });
 
     it("does not mutate the input step", () => {
-      const step: WorkflowStep = {
+      const step: RunnableStep = {
         kind: "run-local-process",
         program: "${host}",
         args: ["${port}"],
@@ -733,9 +705,9 @@ describe("evaluateCondition", () => {
 describe("executeStep conditional", () => {
   const conditional = (
     condition: WorkflowCondition,
-    thenSteps: WorkflowStep[],
-    elseSteps?: WorkflowStep[]
-  ): WorkflowStep => ({
+    thenSteps: RunnableStep[],
+    elseSteps?: RunnableStep[]
+  ): RunnableStep => ({
     kind: "conditional",
     condition,
     then: thenSteps,
@@ -808,7 +780,7 @@ describe("executeStep conditional", () => {
   it("fails when nesting exceeds the maximum depth", async () => {
     const send = vi.fn(async () => true);
     // Build a chain of conditionals nested one-per-branch deeper than the bound.
-    let step: WorkflowStep = sendCommand("leaf");
+    let step: RunnableStep = sendCommand("leaf");
     for (let i = 0; i <= MAX_CONDITIONAL_DEPTH; i++) {
       step = conditional(cond("a", "eq", "a"), [step]);
     }
@@ -836,7 +808,7 @@ describe("runWorkflow with conditional steps", () => {
   it("counts a conditional as one completed top-level step", async () => {
     const send = vi.fn(async (_data: string) => true);
     const progress: number[] = [];
-    const steps: WorkflowStep[] = [
+    const steps: RunnableStep[] = [
       {
         kind: "conditional",
         condition: cond("a", "eq", "a"),
@@ -856,7 +828,7 @@ describe("runWorkflow with conditional steps", () => {
 
   it("resolveStepParams interpolates only the condition operands, not then/else", () => {
     const values: WorkflowParamValues = { env: "prod", host: "h" };
-    const step: WorkflowStep = {
+    const step: RunnableStep = {
       kind: "conditional",
       condition: cond("${env}", "eq", "prod"),
       then: [sendCommand("ssh ${host}")],
@@ -873,12 +845,12 @@ describe("runWorkflow with conditional steps", () => {
 });
 
 describe("executeStep loop", () => {
-  const countLoop = (count: number, body: WorkflowStep[]): WorkflowStep => ({
+  const countLoop = (count: number, body: RunnableStep[]): RunnableStep => ({
     kind: "loop",
     loop: { kind: "count", count },
     body,
   });
-  const whileLoop = (condition: WorkflowCondition, body: WorkflowStep[]): WorkflowStep => ({
+  const whileLoop = (condition: WorkflowCondition, body: RunnableStep[]): RunnableStep => ({
     kind: "loop",
     loop: { kind: "while", condition },
     body,
@@ -989,7 +961,7 @@ describe("executeStep loop", () => {
 
   it("fails when loop nesting exceeds the maximum depth", async () => {
     const send = vi.fn(async () => true);
-    let step: WorkflowStep = sendCommand("leaf");
+    let step: RunnableStep = sendCommand("leaf");
     for (let i = 0; i <= MAX_LOOP_DEPTH; i++) {
       step = countLoop(1, [step]);
     }
@@ -1002,7 +974,7 @@ describe("executeStep loop", () => {
   it("counts a loop as one completed top-level step", async () => {
     const send = vi.fn(async (_data: string) => true);
     const progress: number[] = [];
-    const steps: WorkflowStep[] = [countLoop(3, [sendCommand("x")]), sendCommand("after")];
+    const steps: RunnableStep[] = [countLoop(3, [sendCommand("x")]), sendCommand("after")];
     const result = await runWorkflow(steps, deps({ send }), {
       onProgress: (completed) => progress.push(completed),
     }).done;
@@ -1028,8 +1000,8 @@ describe("matchesOutput", () => {
 });
 
 describe("executeStep wait-for-output", () => {
-  const waitStep = (over: Partial<Extract<WorkflowStep, { kind: "wait-for-output" }>> = {}) =>
-    ({ kind: "wait-for-output", pattern: "ready", ...over }) as WorkflowStep;
+  const waitStep = (over: Partial<Extract<RunnableStep, { kind: "wait-for-output" }>> = {}) =>
+    ({ kind: "wait-for-output", pattern: "ready", ...over }) as RunnableStep;
 
   it("fails loudly when no wait-for-output seam is provided", async () => {
     const outcome = await executeStep(waitStep(), deps());
