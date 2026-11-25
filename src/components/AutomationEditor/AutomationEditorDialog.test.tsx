@@ -3,6 +3,7 @@
  * round trip of every golden automation, validation timing and the footer.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act } from "react";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
@@ -142,6 +143,41 @@ describe("fields and steps", () => {
     expect(
       query("automation-editor-dialog")!.contains(query("automation-editor-add-step-wait"))
     ).toBe(true);
+  });
+
+  it("adds a step between two others, and right below one (A-029)", async () => {
+    await open(stored);
+    await chooseFrom("automation-editor-insert-step-1", "automation-editor-add-step-wait");
+    const kinds = () =>
+      [0, 1, 2, 3, 4].map((i) => query(`automation-editor-step-kind-${i}`)?.dataset.kind);
+    expect(kinds()).toEqual(["send-command", "wait", "wait", "run-automation", undefined]);
+    expect(document.activeElement).toBe(query("automation-editor-step-delay-1"));
+    openMenu("automation-editor-step-more-3");
+    press("automation-editor-step-add-below-3", "ArrowRight");
+    await flushAsync();
+    click("automation-editor-step-add-below-3-send-command");
+    await flushAsync();
+    await flushAsync();
+    expect(kinds()).toEqual(["send-command", "wait", "wait", "run-automation", "send-command"]);
+    expect(document.activeElement).toBe(query("automation-editor-step-command-4"));
+  });
+
+  it("a wait for the user has a wording, and no failure to tolerate (#6025)", async () => {
+    await open(stored);
+    await chooseFrom("automation-editor-add-step", "automation-editor-add-step-wait-for-user");
+    typeText("automation-editor-step-message-3", "Enter the token");
+    openMenu("automation-editor-step-more-3");
+    expect(query("automation-editor-step-failure-menu-3")).toBeNull();
+    act(() => {
+      document.activeElement!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true })
+      );
+    });
+    await flushAsync();
+    expect((await editor.save()).steps[3]).toEqual({
+      kind: "wait-for-user",
+      message: "Enter the token",
+    });
   });
 
   it("moves a step with the arrow keys on its handle, keeping the focus there", async () => {

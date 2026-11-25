@@ -66,6 +66,7 @@ const EVERYTHING = {
     { kind: "send-command", command: "echo ${env}" },
     { kind: "run-script", script: "a\nb", perLineDelayMs: 5 },
     { kind: "wait", delayMs: 10 },
+    { kind: "wait-for-user", message: "Type your password" },
     { kind: "run-local-process", program: "echo", args: ["hi"] },
     { kind: "wait-for-output", pattern: "\\$ $", isRegex: true, timeoutMs: 5000 },
     {
@@ -113,7 +114,7 @@ describe("export → import", () => {
   it("loses nothing: every field, every nested step, every byte", () => {
     const [copy] = importFile(exported(EVERYTHING)).automations;
     const expected = JSON.parse(JSON.stringify(EVERYTHING));
-    expected.steps[7].else[0].body[0].automationId = "n1"; // runs its own copy
+    expected.steps[8].else[0].body[0].automationId = "n1"; // runs its own copy
     expect(importFile(exported(EVERYTHING)).leftOut).toEqual([]);
     expect(copy).toEqual({
       ...expected,

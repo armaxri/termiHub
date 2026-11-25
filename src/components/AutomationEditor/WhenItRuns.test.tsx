@@ -10,6 +10,7 @@ import { useAppStore } from "@/store/appStore";
 import {
   automationWith,
   chooseFrom,
+  chooseStep,
   click,
   mountEditor,
   pick,
@@ -167,6 +168,31 @@ describe("triggers", () => {
     leaveField(query("automation-trigger-pattern-0"));
     expect(document.querySelector('[role="alert"]')).not.toBeNull();
     expect(query("automation-editor-save")?.hasAttribute("data-invalid")).toBe(true);
+  });
+
+  it("says what a step that waits for the user means for them (#6025)", async () => {
+    editor = await mountEditor(
+      automationWith([{ kind: "wait-for-user" }], {
+        triggers: [{ kind: "on-connect", connectionIds: ["conn-1"] }],
+      })
+    );
+    click("automation-editor-when-toggle");
+    await flushAsync();
+    expect(query("automation-editor-when-waits")?.textContent).toContain(
+      "Schedules, On disconnect and On output match do not start it"
+    );
+    await chooseStep("0", "delete");
+    expect(query("automation-editor-when-waits")).toBeNull();
+  });
+
+  it("shows the limits that apply as placeholders (A-026)", async () => {
+    await open([{ kind: "on-output-match", connectionIds: ["conn-1"], pattern: "x" }]);
+    expect(query("automation-trigger-cooldown-0")).toHaveProperty("placeholder", "10");
+    expect(query("automation-trigger-max-fires-0")).toHaveProperty("placeholder", "5");
+    const text = () => query("automation-editor-trigger-0")!.textContent;
+    expect(text()).toContain("At most 5 times until the terminal disconnects.");
+    typeText("automation-trigger-max-fires-0", "7");
+    expect(text()).toContain("At most 7 times until the terminal disconnects.");
   });
 
   it("keeps several triggers of one kind apart", async () => {
