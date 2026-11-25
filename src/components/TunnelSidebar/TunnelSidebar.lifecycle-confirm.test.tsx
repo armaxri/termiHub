@@ -40,11 +40,11 @@ function makeTunnel(id: string, name: string): TunnelConfig {
   };
 }
 
-function makeState(id: string, status: TunnelState["status"]): TunnelState {
+function makeState(id: string, status: TunnelState["status"], open = 1): TunnelState {
   return {
     tunnelId: id,
     status,
-    stats: { bytesSent: 0, bytesReceived: 0, activeConnections: 0, totalConnections: 0 },
+    stats: { bytesSent: 0, bytesReceived: 0, activeConnections: open, totalConnections: 3 },
   };
 }
 
@@ -108,16 +108,40 @@ describe("TunnelSidebar — stop/reconnect confirmation (UX-021)", () => {
 
     // Dialog shows, stop has NOT fired yet.
     expect(
-      document.querySelector('[data-testid="confirm-tunnel-lifecycle-dialog"]')
+      document.querySelector('[data-testid="confirm-service-lifecycle-dialog"]')
     ).not.toBeNull();
     expect(mockStopTunnel).not.toHaveBeenCalled();
 
     const confirm = document.querySelector<HTMLButtonElement>(
-      '[data-testid="confirm-tunnel-lifecycle-confirm"]'
+      '[data-testid="confirm-service-lifecycle-confirm"]'
     );
     await act(async () => confirm!.click());
     await flush();
     expect(mockStopTunnel).toHaveBeenCalledWith("tun-1");
+  });
+
+  it("stops and restarts at once when nobody is connected (#6068)", async () => {
+    seedStore(makeTunnel("tun-1", "Idle Tunnel"), makeState("tun-1", "connected", 0));
+    await renderSidebar();
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="tunnel-stop-tun-1"]')!.click()
+    );
+    expect(mockStopTunnel).toHaveBeenCalledWith("tun-1");
+    const restart = serviceMenuItem("tunnel-reconnect-tun-1")!;
+    await act(async () => restart.click());
+    expect(mockReconnectTunnel).toHaveBeenCalledWith("tun-1");
+    expect(document.querySelector('[data-testid="confirm-service-lifecycle-dialog"]')).toBeNull();
+  });
+
+  it("says what is dropped", async () => {
+    seedStore(makeTunnel("tun-1", "Busy"), makeState("tun-1", "connected", 2));
+    await renderSidebar();
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="tunnel-stop-tun-1"]')!.click()
+    );
+    const dialog = document.querySelector('[data-testid="confirm-service-lifecycle-dialog"]')!;
+    expect(dialog.textContent).toContain('Stop "Busy"?');
+    expect(dialog.textContent).toContain("2 connections are open now. They will be dropped.");
   });
 
   it("aborts the stop when the dialog is cancelled", async () => {
@@ -130,12 +154,12 @@ describe("TunnelSidebar — stop/reconnect confirmation (UX-021)", () => {
     await flush();
 
     const cancel = document.querySelector<HTMLButtonElement>(
-      '[data-testid="confirm-tunnel-lifecycle-cancel"]'
+      '[data-testid="confirm-service-lifecycle-cancel"]'
     );
     await act(async () => cancel!.click());
     await flush();
 
-    expect(document.querySelector('[data-testid="confirm-tunnel-lifecycle-dialog"]')).toBeNull();
+    expect(document.querySelector('[data-testid="confirm-service-lifecycle-dialog"]')).toBeNull();
     expect(mockStopTunnel).not.toHaveBeenCalled();
   });
 
@@ -150,7 +174,7 @@ describe("TunnelSidebar — stop/reconnect confirmation (UX-021)", () => {
     await act(async () => stopBtn!.click());
     await flush();
 
-    expect(document.querySelector('[data-testid="confirm-tunnel-lifecycle-dialog"]')).toBeNull();
+    expect(document.querySelector('[data-testid="confirm-service-lifecycle-dialog"]')).toBeNull();
     expect(mockStopTunnel).toHaveBeenCalledWith("tun-1");
   });
 
@@ -164,12 +188,12 @@ describe("TunnelSidebar — stop/reconnect confirmation (UX-021)", () => {
     await flush();
 
     expect(
-      document.querySelector('[data-testid="confirm-tunnel-lifecycle-dialog"]')
+      document.querySelector('[data-testid="confirm-service-lifecycle-dialog"]')
     ).not.toBeNull();
     expect(mockReconnectTunnel).not.toHaveBeenCalled();
 
     const confirm = document.querySelector<HTMLButtonElement>(
-      '[data-testid="confirm-tunnel-lifecycle-confirm"]'
+      '[data-testid="confirm-service-lifecycle-confirm"]'
     );
     await act(async () => confirm!.click());
     await flush();

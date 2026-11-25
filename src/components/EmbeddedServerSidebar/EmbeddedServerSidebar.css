@@ -187,6 +187,20 @@
   gap: var(--spacing-sm);
 }
 
+.server-activity__top li.server-activity__transfer {
+  flex-direction: column;
+  gap: 0;
+}
+
+.server-activity__who {
+  color: var(--text-primary);
+}
+
+.server-activity__transfer .server-activity__mono {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 .server-activity__mono {
   font-family: var(--font-mono);
   overflow: hidden;
@@ -202,12 +216,13 @@
 
 .server-activity__toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--spacing-xs);
 }
 
 .server-activity__toolbar > :first-child {
-  flex: 1;
+  flex: 1 0 100%;
   min-width: 0;
 }
 

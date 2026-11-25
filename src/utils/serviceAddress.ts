@@ -65,11 +65,11 @@ function reachOf(listener: Listener, open: boolean): string {
 }
 
 /** What to say of an open listener whose address nobody knows. */
-function unknownReach(listener: Listener): string {
-  if (listener.on === "here") return t("service.reach.networkUnknown");
+function unknownReach(listener: Listener, port: number): string {
+  if (listener.on === "here") return tf("service.reach.networkUnknown", { port: String(port) });
   return listener.shown
-    ? t("service.reach.thereUnknown")
-    : tf("service.reach.onUnknown", { machine: listener.name });
+    ? tf("service.reach.thereUnknown", { port: String(port) })
+    : tf("service.reach.onUnknown", { machine: listener.name, port: String(port) });
 }
 
 /**
@@ -95,7 +95,7 @@ export function serviceAddress(
   const host = isWideBind(bind) ? known : bind.trim();
   return host
     ? { copy: at(host), open: true, reach: reachOf(listener, true) }
-    : { open: true, reach: unknownReach(listener) };
+    : { open: true, reach: unknownReach(listener, port) };
 }
 
 /** Split a reported `host:port`; `undefined` when it is not one. */

@@ -3,6 +3,7 @@
  * tunnels — the Tunnels sidebar and the connection editor's "Port Forwarding"
  * section (PROD-023) — so both describe and guard a tunnel identically.
  */
+import { t, tf } from "@/i18n/catalog";
 import type { TunnelConfig, TunnelState } from "@/types/tunnel";
 import { isServiceActive, tunnelServiceState } from "@/utils/serviceState";
 import { findCompanion } from "@/utils/tunnelChain";
@@ -20,12 +21,12 @@ export function tunnelPortMapping(tunnel: TunnelConfig): string {
 }
 
 /**
- * The confirmation message to show before deleting `tunnelId`, or `null` when
- * the delete is safe to run directly (an idle, unchained tunnel).
+ * What to say before deleting `tunnelId`, or `null` when the delete is safe to
+ * run directly (an idle, unchained tunnel).
  *
  * - a chained companion: deleting it breaks localhost while the agent port keeps
  *   running (#2597);
- * - a chained parent: the delete cascades to its companion — name both;
+ * - a chained parent: the delete cascades to its companion;
  * - an active tunnel: the delete silently tears down a live connection.
  */
 export function tunnelDeleteConfirmMessage(
@@ -33,24 +34,13 @@ export function tunnelDeleteConfirmMessage(
   tunnelStates: Record<string, TunnelState>,
   tunnelId: string
 ): string | null {
-  const target = tunnels.find((t) => t.id === tunnelId);
-  const name = target?.name ?? "this tunnel";
-  const status = tunnelStates[tunnelId]?.status;
-  const state = tunnelServiceState(status);
-  const isActive = isServiceActive(state);
+  const target = tunnels.find((tunnel) => tunnel.id === tunnelId);
+  const state = tunnelServiceState(tunnelStates[tunnelId]?.status);
   const companion = target ? findCompanion(tunnels, tunnelId) : undefined;
-
-  if (target?.companionOf) {
-    return `Deleting "${name}" removes the hop on this computer. localhost will stop reaching the port (it still works on the agent). Continue?`;
-  }
-  if (companion) {
-    return `Deleting "${name}" also removes its linked hop "${companion.name}" on this computer. Continue?`;
-  }
-  if (state === "notReachable") {
-    return `"${name}" may still run on its agent, which is offline. Deleting it stops it there as soon as the agent is connected again. Continue?`;
-  }
-  if (isActive) {
-    return `"${name}" is currently active. Deleting it will stop the tunnel. Continue?`;
-  }
-  return null;
+  const says: string[] = [];
+  if (state === "notReachable") says.push(t("service.delete.notReachable"));
+  else if (isServiceActive(state)) says.push(t("service.delete.running"));
+  if (target?.companionOf) says.push(t("service.delete.hop"));
+  else if (companion) says.push(tf("service.delete.parent", { name: companion.name }));
+  return says.length > 0 ? [...says, t("service.delete.undo")].join(" ") : null;
 }

@@ -308,10 +308,10 @@ class TestProductRunRowsNames(
                     "Stopped · Reaches the DB",
                 ],
                 [
-                    "Local (ssh -L) · 127.0.0.1:18577 → db.internal:5432",
+                    "Local (ssh -L) · localhost:18577 → db.internal:5432",
                     "Use something on the SSH server's side as if it ran here.",
                     f"Via {ssh}",
-                    "Hosted on this computer",
+                    "Runs on this computer",
                 ],
             )
             desc = self.driver.get_text(f"tunnel-description-{tunnel['id']}").strip()
@@ -341,7 +341,7 @@ class TestProductRunRowsNames(
                 row,
                 [name, "HTTP", "Stopped · Lab firmware"],
                 [
-                    f"HTTP · http://127.0.0.1:{port}",
+                    f"HTTP · http://localhost:{port}",
                     "Share a folder that others open in a web browser.",
                     "Serves /tmp",
                 ],

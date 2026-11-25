@@ -53,6 +53,7 @@ const STATES = {
   "tunnels--chained": "A hop to this computer: does localhost work, and if not, what now?",
   "tunnels--chained-working": "A hop to this computer: does localhost work?",
   "tunnels--wide": "Tunnels that others can use: who, and where?",
+  "tunnels--mixed-error": "Show only what has an error.",
   "tunnels--mixed": "Fifteen tunnels: which work right now, which need you?",
   "tunnels--empty": "There is no tunnel yet: make one.",
   "tunnels--tooltip": "What exactly does this tunnel do?",
@@ -81,6 +82,7 @@ const STATES = {
   "servers--mixed": "Fifteen servers: which work right now, which need you?",
   "servers--empty": "There is no file server yet: make one.",
   "servers--tooltip": "What exactly does this server share?",
+  "servers--stop": "Stop a server while somebody downloads: what happens?",
   "servers--delete": "Delete a running server: what happens?",
   "servers--new": "Make a new file server: which kind is right?",
   "servers--new-missing": "Saving did nothing: what is missing?",
@@ -95,17 +97,19 @@ const STATS = { bytesSent: 2048, bytesReceived: 8192, activeConnections: 1, tota
 const WHY = {
   agent: "Starts when its agent connects, until 14:32. After that, start it yourself.",
   store: "Starts when you unlock the credential store, until 14:32. After that, start it yourself.",
-  stopping: "Its agent is offline. It may still run there; it is stopped when the agent is back.",
-  expired: "Not started: its agent was not connected within 30 minutes.",
+  stopping:
+    "Its agent is offline. It may still run there; it will be stopped when the agent is back.",
+  expired: "Not started: its agent was not connected within 30 minutes. Connect it, then retry.",
   port: (port: number) => `Port ${port} is already in use on this computer.`,
   ssh: "Build Box refused the connection. Is its SSH server running?",
   away: "Its agent is offline. It may still run there; termiHub cannot tell.",
-  silent: "Its agent did not answer the start. It may run there; termiHub cannot tell.",
-  reconnecting: "Connection lost. Try 3 of 10.",
-  last: "Connection lost. Try 10 of 10, then it gives up.",
+  silent: "Its agent did not answer the start. It may run there; termiHub keeps asking.",
+  reconnecting: "Connection lost. Try 3 of 10 at 14:32:08.",
+  last: "Connection lost. Try 10 of 10 at 14:32:08, then it gives up.",
 };
 /** What goes with each, as the backend sends it. */
 const AGENT = { cause: "agentOffline" };
+const SILENT = { cause: "agentSilent" };
 const STORE = { cause: "storeLocked" };
 const PORT = { cause: "portInUse" };
 const SSH = { cause: "connection" };
@@ -204,10 +208,10 @@ const WIDE = (port: number): Fields => ({
     config: { localHost: "0.0.0.0", localPort: port, remoteHost: "db", remotePort: 5432 },
   },
 });
-const onPort = (port: number): Fields => ({
+const onPort = (port: number, remoteHost = "db"): Fields => ({
   tunnelType: {
     type: "local",
-    config: { localHost: "127.0.0.1", localPort: port, remoteHost: "db", remotePort: 5432 },
+    config: { localHost: "127.0.0.1", localPort: port, remoteHost, remotePort: 5432 },
   },
 });
 
@@ -254,7 +258,10 @@ const MIXED_TUNNELS: Row[] = MIXED_NAMES.map((name, index) => {
     type: "local",
     status: "disconnected",
     ...row,
-    over: { ...onPort(15000 + index), ...row.over },
+    over: {
+      ...onPort(15000 + index, name.toLowerCase().split(" ").pop()),
+      ...row.over,
+    },
   };
 });
 const MIXED_SERVERS: Row[] = MIXED_NAMES.map((name, index) => {
@@ -308,6 +315,7 @@ const TUNNEL_ROWS: Partial<Record<State, Row[]>> = {
       status: "notReachable",
       error: WHY.silent,
       over: { host: ON_EDGE },
+      state: SILENT,
     },
   ],
   "tunnels--on-agent": [
@@ -362,6 +370,7 @@ const TUNNEL_ROWS: Partial<Record<State, Row[]>> = {
     },
   ],
   "tunnels--mixed": MIXED_TUNNELS,
+  "tunnels--mixed-error": MIXED_TUNNELS,
   "tunnels--tooltip": tunnelsIn("connected"),
   "tunnels--stop": tunnelsIn("connected"),
   "tunnels--delete": tunnelsIn("connected"),
@@ -460,7 +469,14 @@ const SERVER_ROWS: Partial<Record<State, Row[]>> = {
   ],
   "servers--not-reachable": [
     ...serversIn("notReachable", WHY.away, { host: ON_EDGE }, AGENT).slice(0, 2),
-    { id: "un", name: "Docs", status: "notReachable", error: WHY.silent, over: { host: ON_EDGE } },
+    {
+      id: "un",
+      name: "Docs",
+      status: "notReachable",
+      error: WHY.silent,
+      over: { host: ON_EDGE },
+      state: SILENT,
+    },
   ],
   "servers--on-agent": [
     { id: "there", name: "Only on the gateway", status: "running", over: { host: ON_EDGE } },
@@ -474,6 +490,7 @@ const SERVER_ROWS: Partial<Record<State, Row[]>> = {
   ],
   "servers--mixed": MIXED_SERVERS,
   "servers--tooltip": serversIn("running"),
+  "servers--stop": serversIn("running"),
   "servers--delete": serversIn("running"),
   "servers--narrow": [
     { id: "l1", name: LONG, status: "running", over: { host: ON_EDGE, description: "Read only" } },
@@ -717,7 +734,7 @@ for (const viewport of WINDOWS) {
               .first()
               .waitFor();
           } else if (state.endsWith("--stop")) {
-            await page.locator(id(`tunnel-stop-${first}`)).click();
+            await page.locator(id(`${kind}-stop-${first}`)).click();
             await page.locator("[role=alertdialog], [role=dialog]").waitFor();
           } else if (state.endsWith("--delete")) {
             await page.locator(id(`${kind}-item-${first}`)).focus();
@@ -727,6 +744,10 @@ for (const viewport of WINDOWS) {
             await page.locator(id(`tunnel-item-${first}`)).focus();
             await page.keyboard.press("Enter");
             await page.locator(id("tunnel-editor")).waitFor();
+          }
+          if (state.endsWith("--mixed-error")) {
+            await page.locator(id("service-count-error")).click();
+            await expect(page.locator("[role=treeitem]")).toHaveCount(1);
           }
           const over = /--(hover|menu|tooltip|stop|delete)$/.test(state);
           await shot(page, state, id(`${kind}-sidebar`), over);

@@ -48,6 +48,7 @@ describe("useServiceContext (#6028)", () => {
     await render(false);
     expect(seen).toEqual({
       agents,
+      agentsKnown: true,
       connections,
       networkAddress: undefined,
       usedPorts: new Set(),
@@ -84,6 +85,30 @@ describe("useServiceContext (#6028)", () => {
     ]);
     await render(true);
     expect(seen.networkAddress).toBe("192.168.1.20");
+  });
+
+  it("asks again while there is none, and when this computer gets online (T-006)", async () => {
+    vi.useFakeTimers();
+    try {
+      listNetworkInterfaces.mockResolvedValue([]);
+      await render(true);
+      expect(listNetworkInterfaces).toHaveBeenCalledTimes(1);
+      await act(async () => void vi.advanceTimersByTime(10_000));
+      expect(listNetworkInterfaces).toHaveBeenCalledTimes(2);
+      listNetworkInterfaces.mockResolvedValue([{ name: "en0", addr: "192.168.1.20" }]);
+      await act(async () => void window.dispatchEvent(new Event("online")));
+      expect(seen.networkAddress).toBe("192.168.1.20");
+      // It is known: nothing to poll for.
+      listNetworkInterfaces.mockClear();
+      await act(async () => void vi.advanceTimersByTime(60_000));
+      expect(listNetworkInterfaces).not.toHaveBeenCalled();
+      // Another network.
+      listNetworkInterfaces.mockResolvedValue([{ name: "en0", addr: "10.0.0.9" }]);
+      await act(async () => void window.dispatchEvent(new Event("focus")));
+      expect(seen.networkAddress).toBe("10.0.0.9");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("goes without it when there is none or it cannot be read", async () => {

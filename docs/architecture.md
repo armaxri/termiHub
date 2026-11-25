@@ -3139,7 +3139,7 @@ one runs, so the record keeps apart what a row must not mix up:
 stateDiagram-v2
   [*] --> Waiting: starts by itself, agent or credential store not there
   Waiting --> Starting: it is there
-  Waiting --> [*]: Stop waiting, or 30 minutes
+  Waiting --> [*]: Cancel waiting, or 30 minutes
   [*] --> Starting: Start
   Starting --> Running: the agent answered
   Starting --> NotReachable: no answer
@@ -3189,7 +3189,8 @@ model is pure, and the rules live there, not in components:
   knows that one there is nothing to copy.
 - **Next steps** follow the cause that the backend sends with a reason (`ServiceCause` in
   `core/src/util/service_cause.rs`: port in use, agent offline, store locked, connection), never its
-  words. A cause of a newer build reads `other` and offers nothing. "Use another port" takes the next
+  words. "Check again" runs the status poll at once (`poll_now`). A service whose agent was removed is
+  never shown as running, whatever was last reported. A cause of a newer build reads `other` and offers nothing. "Use another port" takes the next
   one that no service of this computer is set to. "Connect agent" is `connectAgent.ts`, the same
   steps as on the agent's row. A cause is known for what runs on this computer; an agent's own start
   failures come as text only.

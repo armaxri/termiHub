@@ -46,6 +46,11 @@ export async function stopEmbeddedServer(serverId: string): Promise<void> {
   await invoke("stop_embedded_server", { serverId });
 }
 
+/** Ask the agents about the servers they run, now. */
+export async function checkEmbeddedServers(): Promise<void> {
+  await invoke("check_embedded_servers");
+}
+
 /**
  * Create a new server configuration and immediately start it.
  * The backend tries up to 10 sequential ports if the requested port is busy.

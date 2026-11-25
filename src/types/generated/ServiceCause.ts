@@ -4,4 +4,4 @@
  * The kind of cause behind a service's reason. The reason is for reading, this
  * is for choosing the button beside it.
  */
-export type ServiceCause = "portInUse" | "agentOffline" | "storeLocked" | "connection" | "other";
+export type ServiceCause = "portInUse" | "agentOffline" | "agentSilent" | "storeLocked" | "connection" | "other";

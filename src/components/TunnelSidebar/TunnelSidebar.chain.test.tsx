@@ -159,7 +159,7 @@ describe("TunnelSidebar — chained pair (#2597)", () => {
     await flush();
 
     const dialog = document.querySelector('[data-testid="confirm-delete-dialog"]');
-    expect(dialog!.textContent).toContain("localhost will stop reaching the port");
+    expect(dialog!.textContent).toContain("localhost no longer reaches the port");
     expect(mockDeleteTunnel).not.toHaveBeenCalled();
   });
 });

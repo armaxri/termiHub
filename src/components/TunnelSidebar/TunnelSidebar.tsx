@@ -1,10 +1,12 @@
 import { useCallback, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { toast, ConfirmDialog, EmptyState } from "@/components/ui";
+import { Button, toast, ConfirmDialog, EmptyState } from "@/components/ui";
+import { onlyHealth, ServiceCounts } from "@/components/ServiceListItem";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
+import { useServiceLifecycleConfirm } from "@/hooks/useServiceLifecycleConfirm";
 import { useServiceContext } from "@/hooks/useServiceContext";
 import { useTunnelDeleteConfirm } from "@/hooks/useTunnelDeleteConfirm";
 import type { TunnelConfig, TunnelStatus } from "@/types/tunnel";
@@ -15,11 +17,11 @@ import {
   orderTunnelRows,
 } from "@/utils/tunnelChain";
 import { isWideBind } from "@/utils/serviceAddress";
-import { serviceCounts } from "@/utils/serviceModel";
-import { tunnelServiceState } from "@/utils/serviceState";
+import { serviceCounts, tunnelModel, type ServiceHealth } from "@/utils/serviceModel";
 import { TunnelListItem } from "./TunnelListItem";
 import { newId } from "@/services/transport/ids";
 import "./TunnelSidebar.css";
+import { t } from "@/i18n/catalog";
 import { errorMessage } from "@/utils/errorMessage";
 
 const DISCONNECTED: TunnelStatus = "disconnected";
@@ -60,23 +62,19 @@ export function TunnelSidebar() {
   // Confirm + Undo for a tunnel delete, shared with the connection editor's
   // Port Forwarding section (#5158, #5216).
   const tunnelDelete = useTunnelDeleteConfirm();
-  // A live tunnel pending a Stop / force-Reconnect confirmation (UX-021): both
-  // drop every connection currently forwarded through it, so they are guarded
-  // like Delete. Null when idle.
-  const [pendingLifecycle, setPendingLifecycle] = useState<{
-    id: string;
-    name: string;
-    kind: "stop" | "reconnect";
-  } | null>(null);
-
-  // Only a "connected" tunnel actually carries established, in-use forwards.
-  // A "connecting"/"reconnecting" tunnel has none yet (they were already torn
-  // down), so stopping it there is a cheap cancel — gate the confirm on the
-  // connected state so the prompt is accurate and idle actions are not nagged.
-  const carriesLiveForwards = useCallback(
-    (tunnelId: string) => tunnelStates[tunnelId]?.status === "connected",
-    [tunnelStates]
+  const models = useMemo(
+    () =>
+      new Map(
+        tunnels.map((tunnel) => [tunnel.id, tunnelModel(tunnel, tunnelStates[tunnel.id], context)])
+      ),
+    [tunnels, tunnelStates, context]
   );
+  const modelOf = useCallback(
+    (tunnelId: string) => models.get(tunnelId) ?? { name: "this tunnel" },
+    [models]
+  );
+  const lifecycle = useServiceLifecycleConfirm();
+  const requestLifecycle = lifecycle.request;
 
   const handleNew = useCallback(() => {
     openTunnelEditorTab(null);
@@ -91,7 +89,7 @@ export function TunnelSidebar() {
 
   const handleDuplicate = useCallback(
     (tunnelId: string) => {
-      const original = tunnels.find((t) => t.id === tunnelId);
+      const original = tunnels.find((tunnel) => tunnel.id === tunnelId);
       if (!original) return;
       // A copy keeps where it runs, and is its own tunnel: it starts by hand and
       // is not a second hop of the original's parent (#6028, F-4).
@@ -118,7 +116,7 @@ export function TunnelSidebar() {
   // "Use 8081" beside "Port 8080 is already in use" (#6063).
   const handleUsePort = useCallback(
     async (tunnelId: string, port: number) => {
-      const tunnel = tunnels.find((t) => t.id === tunnelId);
+      const tunnel = tunnels.find((item) => item.id === tunnelId);
       if (!tunnel) return;
       try {
         await saveTunnel(withLocalPort(tunnel, port));
@@ -133,48 +131,31 @@ export function TunnelSidebar() {
     [tunnels, saveTunnel, startTunnel]
   );
 
-  // Stopping a live tunnel drops every connection flowing through it — confirm
-  // first (UX-021). A tunnel with no live forwards has nothing to lose, so stop
-  // directly (e.g. cancelling a hung connect).
   const handleStop = useCallback(
-    (tunnelId: string) => {
-      if (!carriesLiveForwards(tunnelId)) return stopTunnel(tunnelId);
-      const target = tunnels.find((t) => t.id === tunnelId);
-      setPendingLifecycle({ id: tunnelId, name: target?.name ?? "this tunnel", kind: "stop" });
-    },
-    [carriesLiveForwards, stopTunnel, tunnels]
+    (tunnelId: string) => requestLifecycle("stop", modelOf(tunnelId), () => stopTunnel(tunnelId)),
+    [requestLifecycle, modelOf, stopTunnel]
   );
 
-  // Force-Reconnect tears a live tunnel down and re-establishes it, dropping its
-  // active forwards (tunnelSlice.ts). Confirm when it carries live forwards;
-  // otherwise reconnect directly.
   const handleReconnect = useCallback(
-    (tunnelId: string) => {
-      if (!carriesLiveForwards(tunnelId)) return reconnectTunnel(tunnelId);
-      const target = tunnels.find((t) => t.id === tunnelId);
-      setPendingLifecycle({ id: tunnelId, name: target?.name ?? "this tunnel", kind: "reconnect" });
-    },
-    [carriesLiveForwards, reconnectTunnel, tunnels]
+    (tunnelId: string) =>
+      requestLifecycle("restart", modelOf(tunnelId), () => reconnectTunnel(tunnelId)),
+    [requestLifecycle, modelOf, reconnectTunnel]
   );
-
-  const confirmLifecycle = useCallback(() => {
-    if (!pendingLifecycle) return;
-    const { id, kind } = pendingLifecycle;
-    setPendingLifecycle(null);
-    if (kind === "stop") void stopTunnel(id);
-    else void reconnectTunnel(id);
-  }, [pendingLifecycle, stopTunnel, reconnectTunnel]);
-
-  const cancelLifecycle = useCallback(() => setPendingLifecycle(null), []);
 
   // Order rows so each chained companion (#2597) renders directly beneath its
   // parent, then flatten to the nav order. Keyboard nav walks the same visible
   // order, including nested companion rows.
   const rows = useMemo(() => orderTunnelRows(tunnels), [tunnels]);
-  const counts = serviceCounts(
-    tunnels.map((t) => ({ state: tunnelServiceState(tunnelStates[t.id]?.status) }))
+  const [only, setOnly] = useState<ServiceHealth | null>(null);
+  const healthOf = useCallback(
+    (tunnel: TunnelConfig): ServiceHealth => models.get(tunnel.id)?.health ?? "quiet",
+    [models]
   );
-  const rowTunnels = useMemo(() => rows.map((r) => r.tunnel), [rows]);
+  const shown = useMemo(
+    () => onlyHealth(rows, only, ({ tunnel }) => healthOf(tunnel)),
+    [rows, only, healthOf]
+  );
+  const rowTunnels = useMemo(() => shown.map((r) => r.tunnel), [shown]);
 
   // Roving-tabindex keyboard navigation over the flat tunnel list, matching the
   // Connections tree's arrow-key + Enter model. Enter edits the focused tunnel
@@ -203,15 +184,24 @@ export function TunnelSidebar() {
       />
       {tunnels.length === 0 ? (
         <EmptyState
-          title="No SSH tunnels configured."
-          description={<>Click &quot;+ New tunnel&quot; to create one.</>}
+          className="service-empty"
+          title={t("tunnel.empty.title")}
+          description={t("tunnel.empty.text")}
+          action={
+            <Button variant="secondary" size="sm" onClick={handleNew}>
+              New tunnel
+            </Button>
+          }
           data-testid="tunnel-empty-message"
         />
       ) : (
         <>
-          <p className="service-counts" data-testid="tunnel-counts">
-            {counts}
-          </p>
+          <ServiceCounts
+            counts={serviceCounts([...models.values()])}
+            only={only}
+            onOnly={setOnly}
+            data-testid="tunnel-counts"
+          />
           <div
             className="tunnel-sidebar__list"
             data-testid="tunnel-list"
@@ -219,7 +209,7 @@ export function TunnelSidebar() {
             aria-label="SSH tunnels"
             onKeyDown={nav.onKeyDown}
           >
-            {rows.map(({ tunnel, parent }, index) => {
+            {shown.map(({ tunnel, parent }, index) => {
               const { ref, ...itemProps } = nav.getItemProps(index);
               // A parent's combined pair status folds both live states so the row
               // reads "does localhost:PORT work?" rather than juggling two rows.
@@ -264,22 +254,11 @@ export function TunnelSidebar() {
       )}
       <ConfirmDeleteDialog {...tunnelDelete.dialogProps} />
       <ConfirmDialog
-        open={pendingLifecycle !== null}
+        {...lifecycle.dialogProps}
         variant="danger"
-        title={pendingLifecycle?.kind === "reconnect" ? "Restart the tunnel?" : "Stop the tunnel?"}
-        message={
-          pendingLifecycle
-            ? pendingLifecycle.kind === "reconnect"
-              ? `Restarting "${pendingLifecycle.name}" drops every connection that goes through it now.`
-              : `Stopping "${pendingLifecycle.name}" drops every connection that goes through it now.`
-            : ""
-        }
-        confirmLabel={pendingLifecycle?.kind === "reconnect" ? "Restart" : "Stop"}
         confirmVariant="danger"
-        testIdBase="confirm-tunnel-lifecycle"
-        data-testid="confirm-tunnel-lifecycle-dialog"
-        onConfirm={confirmLifecycle}
-        onCancel={cancelLifecycle}
+        testIdBase="confirm-service-lifecycle"
+        data-testid="confirm-service-lifecycle-dialog"
       />
     </div>
   );

@@ -61,7 +61,7 @@ describe("tunnelSummary", () => {
       "away"
     );
     expect(message).toContain("may still run on its agent, which is offline");
-    expect(message).not.toContain("currently active");
+    expect(message).not.toContain("It is running");
     const waiting = { away: state("away", "waiting") };
     expect(tunnelDeleteConfirmMessage([tunnel("away")], waiting, "away")).toBeNull();
   });
@@ -69,8 +69,18 @@ describe("tunnelSummary", () => {
   it("confirms an active tunnel, a chained parent and a companion", () => {
     const tunnels = [tunnel("parent"), tunnel("hop", { companionOf: "parent" }), tunnel("busy")];
     const states = { busy: state("busy", "reconnecting") };
-    expect(tunnelDeleteConfirmMessage(tunnels, states, "busy")).toContain("currently active");
-    expect(tunnelDeleteConfirmMessage(tunnels, states, "parent")).toContain('linked hop "hop"');
-    expect(tunnelDeleteConfirmMessage(tunnels, states, "hop")).toContain("removes the hop");
+    const says = (id: string) => tunnelDeleteConfirmMessage(tunnels, states, id);
+    expect(says("busy")).toBe(
+      "It is running. Deleting stops it and drops what goes through it. You can undo it right after."
+    );
+    expect(says("parent")).toBe(
+      'Its part on this computer, "hop", is deleted, too. You can undo it right after.'
+    );
+    expect(says("hop")).toContain("localhost no longer reaches the port");
+    // Both reasons when both hold.
+    const busyParent = { parent: state("parent", "connected") };
+    expect(tunnelDeleteConfirmMessage(tunnels, busyParent, "parent")).toMatch(
+      /^It is running\..* Its part on this computer/
+    );
   });
 });

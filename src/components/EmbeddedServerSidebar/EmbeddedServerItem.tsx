@@ -4,6 +4,7 @@ import { ServiceListItem, type ServiceRowAction } from "@/components/ServiceList
 import { toast } from "@/components/ui";
 import { EmbeddedServerActivityPanel, type ActivityHostAgent } from "./EmbeddedServerActivityPanel";
 import { useConnectAgent } from "@/hooks/useConnectAgent";
+import { checkEmbeddedServers } from "@/services/embeddedServerApi";
 import { useAppStore } from "@/store/appStore";
 import { errorMessage } from "@/utils/errorMessage";
 import type { RemoteAgentDefinition } from "@/types/connection";
@@ -131,7 +132,10 @@ export function EmbeddedServerItem({
         return model.where.agentId === undefined ? undefined : connectAgent(model.where.agentId);
       case "unlock":
         return setUnlockDialogOpen(true);
+      case "checkAgain":
+        return told("check", checkEmbeddedServers());
       case "edit":
+      case "chooseMachine":
         return onEdit(config.id);
       case "chooseConnection":
       case "editConnection":

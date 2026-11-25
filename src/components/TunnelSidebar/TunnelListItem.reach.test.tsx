@@ -102,7 +102,7 @@ describe("TunnelListItem — reported reachability note (#2199)", () => {
   it("says on which machine a loopback bind on the agent opens (#6028)", () => {
     renderItem(AGENT_TUNNEL, stateWith("agentOnly", "connected", "127.0.0.1:8080"));
     expect(address()).toBe("localhost:8080only on that machine");
-    expect(rowTooltip()).toContain("Bound 127.0.0.1:8080: reachable only on build-box");
+    expect(rowTooltip()).toContain("Bound localhost:8080: reachable only on build-box");
   });
 
   it("puts a widened bind on the agent LAN in the tooltip", () => {

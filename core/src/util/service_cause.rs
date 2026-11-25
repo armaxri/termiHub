@@ -13,6 +13,8 @@ pub enum ServiceCause {
     PortInUse,
     /// The agent it runs on is not connected.
     AgentOffline,
+    /// The agent it runs on is connected and does not answer about it.
+    AgentSilent,
     /// A password it needs is behind the locked credential store.
     StoreLocked,
     /// Its SSH connection could not be made.
@@ -72,6 +74,7 @@ mod tests {
         for (cause, wire) in [
             (ServiceCause::PortInUse, "\"portInUse\""),
             (ServiceCause::AgentOffline, "\"agentOffline\""),
+            (ServiceCause::AgentSilent, "\"agentSilent\""),
             (ServiceCause::StoreLocked, "\"storeLocked\""),
             (ServiceCause::Connection, "\"connection\""),
         ] {

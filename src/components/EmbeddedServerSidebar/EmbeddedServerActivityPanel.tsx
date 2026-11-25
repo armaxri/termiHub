@@ -220,22 +220,27 @@ export function EmbeddedServerActivityPanel({ serverId, live, hostAgent, onClose
 
   return panel(
     <>
-      {stats && <StatsGrid stats={stats} dropped={view.dropped} />}
       {stats && stats.currentTransfers.length > 0 && (
         <div className="server-activity__top" data-testid={`server-activity-transfers-${serverId}`}>
-          <span className="server-activity__heading">Current transfers</span>
+          <span className="server-activity__heading">{t("server.activity.now")}</span>
           <ul>
-            {stats.currentTransfers.map((t) => (
-              <li key={t.id}>
-                <span className="server-activity__mono">
-                  {t.method} {t.path ?? ""} {t.client ? `· ${t.client}` : ""}
+            {stats.currentTransfers.map((transfer) => (
+              <li key={transfer.id} className="server-activity__transfer">
+                <span className="server-activity__who">
+                  {tf("server.activity.transfer", {
+                    client: transfer.client ?? t("server.activity.someone"),
+                    amount: formatBytes(transfer.bytes),
+                  })}
                 </span>
-                <span className="server-activity__count">{formatBytes(t.bytes)}</span>
+                <span className="server-activity__mono">
+                  {transfer.method} {transfer.path ?? ""}
+                </span>
               </li>
             ))}
           </ul>
         </div>
       )}
+      {stats && <StatsGrid stats={stats} dropped={view.dropped} />}
       {stats && <TopList title="Top paths" items={stats.topPaths} />}
       {stats && <TopList title="Top clients" items={stats.topClients} />}
       <div className="server-activity__toolbar">
@@ -249,24 +254,26 @@ export function EmbeddedServerActivityPanel({ serverId, live, hostAgent, onClose
         />
         <Button
           variant="ghost"
-          size="sm"
-          iconOnly
-          aria-label="Copy requests"
+          size="xs"
           icon={<Copy size={12} />}
           disabled={visible.length === 0}
+          aria-label={t("server.activity.copy.label")}
           onClick={handleCopy}
           data-testid={`server-activity-copy-${serverId}`}
-        />
+        >
+          {t("server.activity.copy")}
+        </Button>
         <Button
           variant="ghost"
-          size="sm"
-          iconOnly
-          aria-label="Clear requests"
+          size="xs"
           icon={<Trash2 size={12} />}
           errorToast={false}
+          aria-label={t("server.activity.clear.label")}
           onClick={handleClear}
           data-testid={`server-activity-clear-${serverId}`}
-        />
+        >
+          {t("server.activity.clear")}
+        </Button>
       </div>
       {error && <span className="sidebar-list-item__error">{error}</span>}
       {visible.length === 0 ? (

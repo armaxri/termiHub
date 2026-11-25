@@ -85,7 +85,7 @@ def test_grade_stopping_offers_no_second_stop():
 
 def test_grade_giving_up_a_start_is_not_a_stop():
     assert _grade("server", "Starting", ["Cancel start"]) == []
-    assert _grade("server", "Waiting", ["Stop waiting"]) == []
+    assert _grade("server", "Waiting", ["Cancel waiting"]) == []
     assert _grade("server", "Starting", ["Stop"]) != []
 
 

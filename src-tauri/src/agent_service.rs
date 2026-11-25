@@ -184,11 +184,11 @@ pub fn waited_too_long(on: &WaitFor) -> Reason {
     let minutes = hosted::WAIT_LIMIT.as_secs() / 60;
     match on {
         WaitFor::Agent(_) => Reason::new(
-            format!("Not started: its agent was not connected within {minutes} minutes."),
+            format!("Not started: its agent was not connected within {minutes} minutes. Connect it, then retry."),
             Some(ServiceCause::AgentOffline),
         ),
         WaitFor::CredentialStore => Reason::new(
-            format!("Not started: the credential store stayed locked for {minutes} minutes."),
+            format!("Not started: the credential store stayed locked for {minutes} minutes. Unlock it, then retry."),
             Some(ServiceCause::StoreLocked),
         ),
     }
@@ -197,19 +197,34 @@ pub fn waited_too_long(on: &WaitFor) -> Reason {
 /// What the row of a service says that is not reachable.
 pub fn not_reachable_reason<R: Runtime>(app: &AppHandle<R>, agent_id: &str, why: Away) -> Reason {
     if agent_is_removed(app, agent_id) {
-        return "The agent it runs on was removed. It may still run there; termiHub cannot tell."
-            .into();
+        return "Its agent was removed from termiHub. It may still run there.".into();
     }
-    let what = match why {
-        Away::Offline => "is offline. It may still run there",
-        Away::Silent => "does not answer. It may still run there",
-        Away::StartUnanswered => "did not answer the start. It may run there",
+    let (what, then, cause) = match why {
+        Away::Offline => (
+            "is offline. It may still run there",
+            "termiHub cannot tell",
+            ServiceCause::AgentOffline,
+        ),
+        Away::Silent => (
+            "does not answer. It may still run there",
+            "termiHub keeps asking",
+            ServiceCause::AgentSilent,
+        ),
+        Away::StartUnanswered => (
+            "did not answer the start. It may run there",
+            "termiHub keeps asking",
+            ServiceCause::AgentSilent,
+        ),
     };
-    let offline = !agent_is_ready(app, agent_id);
-    Reason::new(
-        format!("Its agent {what}; termiHub cannot tell."),
-        offline.then_some(ServiceCause::AgentOffline),
-    )
+    // Nobody can be asked while it is gone.
+    if agent_is_ready(app, agent_id) || cause == ServiceCause::AgentOffline {
+        Reason::new(format!("Its agent {what}; {then}."), Some(cause))
+    } else {
+        Reason::new(
+            format!("Its agent {what}; termiHub cannot tell."),
+            Some(ServiceCause::AgentOffline),
+        )
+    }
 }
 
 /// What the row of a service says whose stop the agent has not confirmed.
@@ -218,7 +233,7 @@ pub fn stopping_reason<R: Runtime>(app: &AppHandle<R>, agent_id: &str) -> Reason
         "Waiting for its agent to stop it.".into()
     } else {
         Reason::new(
-            "Its agent is offline. It may still run there; it is stopped when the agent is back.",
+            "Its agent is offline. It may still run there; it will be stopped when the agent is back.",
             Some(ServiceCause::AgentOffline),
         )
     }
@@ -227,6 +242,15 @@ pub fn stopping_reason<R: Runtime>(app: &AppHandle<R>, agent_id: &str) -> Reason
 /// What the row of a service says whose unanswered start turned out not to run.
 pub fn unanswered_start_failed() -> Reason {
     "Not started: its agent did not answer the start, and it does not run there.".into()
+}
+
+/// Ask the agents once, now ("Check again", #6068). Blocking.
+pub fn poll_now<D: AgentStatusPollDelegate>(delegate: &D) {
+    let Some(client) = delegate.client() else {
+        return;
+    };
+    let (targets, _) = delegate.snapshot_targets();
+    delegate.apply(D::poll(client, &targets));
 }
 
 /// The service-specific parts of one agent status-poll tick.

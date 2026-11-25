@@ -4,7 +4,7 @@ import {
   type EmbeddedServerConfig,
   type ServerStats,
 } from "@/types/embeddedServer";
-import { formatBytes } from "@/utils/formatters";
+import { localhostIn, serviceTrafficLine } from "@/utils/serviceTraffic";
 import { shareTypeHelp } from "@/utils/shareTypeHelp";
 
 /** The URL a server listens on, e.g. `http://127.0.0.1:8080`. */
@@ -26,7 +26,7 @@ export function serverRowTooltip(
   const out = [
     tf("server.tooltip.listen", {
       protocol: PROTOCOL_LABELS[config.serverType],
-      url: serverUrl(config),
+      url: localhostIn(serverUrl(config)),
     }),
     shareTypeHelp(config.serverType).lines[0],
     tf("server.tooltip.root", { path: config.rootDirectory }),
@@ -34,13 +34,7 @@ export function serverRowTooltip(
   if (config.readOnly) out.push(t("server.tooltip.readOnly"));
   if (opts.runsOn) out.push(opts.runsOn);
   if (opts.stats) {
-    out.push(
-      tf("server.tooltip.traffic", {
-        active: opts.stats.activeConnections,
-        up: formatBytes(opts.stats.bytesSent, { maxUnit: "MB" }),
-        down: formatBytes(opts.stats.bytesReceived, { maxUnit: "MB" }),
-      })
-    );
+    out.push(serviceTrafficLine(opts.stats));
   }
   return out;
 }

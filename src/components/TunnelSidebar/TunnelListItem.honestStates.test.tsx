@@ -72,7 +72,7 @@ describe("TunnelListItem — honest states (#6028)", () => {
   });
 
   it.each<[TunnelStatus, string, string]>([
-    ["waiting", "Waiting", "Stop waiting"],
+    ["waiting", "Waiting", "Cancel waiting"],
     ["notReachable", "Not reachable", "Stop"],
   ])("%s says so, says why, and can be stopped", (status, word, control) => {
     render(status);

@@ -453,11 +453,12 @@ describe("EmbeddedServerDialog", () => {
   it("says beside Save what is still missing", async () => {
     await render(<EmbeddedServerDialog {...baseProps} />);
     const missing = () => field("server-dialog-missing")?.textContent;
-    expect(missing()).toBe("Still needed: folder, name");
-    typeInto(field("server-dialog-name"), "Firmware");
-    expect(missing()).toBe("Still needed: folder");
+    expect(missing()).toBe("Still needed: the folder");
+    // It is called like its folder unless the user names it.
     typeInto(field("server-dialog-root"), "/srv/fw");
     expect(missing()).toBeUndefined();
+    typeInto(field("server-dialog-root"), "/");
+    expect(missing()).toBe("Still needed: a name");
   });
 
   it("takes the chosen folder, and its name when there is none yet", async () => {
@@ -574,21 +575,13 @@ describe("EmbeddedServerDialog", () => {
     expect(document.querySelector('[data-testid="server-dialog-http-auth-enable"]')).toBeNull();
   });
 
-  it("a whitespace-only name is treated as empty and blocks Save", async () => {
-    await render(<EmbeddedServerDialog {...baseProps} />);
-    typeInto(
-      document.querySelector('[data-testid="server-dialog-name"]') as HTMLInputElement,
-      "   "
-    );
-    typeInto(
-      document.querySelector('[data-testid="server-dialog-root"]') as HTMLInputElement,
-      "/srv/fw"
-    );
-    expect(
-      (
-        document.querySelector('[data-testid="server-dialog-save"]') as HTMLButtonElement
-      ).getAttribute("aria-disabled")
-    ).toBe("true");
+  it("a blank name is the folder's", async () => {
+    const onSave = vi.fn((_config: EmbeddedServerConfig) => true);
+    await render(<EmbeddedServerDialog {...baseProps} onSave={onSave} />);
+    typeInto(field("server-dialog-root"), "/srv/fw/");
+    typeInto(field("server-dialog-name"), "   ");
+    await act(async () => field("server-dialog-save").click());
+    expect(onSave.mock.calls[0][0].name).toBe("fw");
   });
 
   it("preserves the other fields (bind host, toggles) in the saved payload", async () => {
@@ -643,7 +636,7 @@ describe("EmbeddedServerDialog", () => {
       act(() => save().focus());
       act(() => save().click());
       expect(onSave).not.toHaveBeenCalled();
-      expect(errorFor("server-dialog-name-input")?.textContent).toBe("Name is required.");
+      expect(errorFor("server-dialog-name-input")).toBeNull();
       expect(errorFor("server-dialog-root-input")?.textContent).toBe("Choose the folder to share.");
       expect(document.activeElement).toBe(byTestId("server-dialog-root"));
 

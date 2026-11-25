@@ -70,7 +70,7 @@ function rowTooltip(): string {
 
 /** The traffic part of the tooltip, or `null` without one. */
 function connStat(): string | null {
-  return rowTooltip().match(/\d+ \/ \d+ connections/)?.[0] ?? null;
+  return rowTooltip().match(/\d+ connections? now, \d+ in all/)?.[0] ?? null;
 }
 
 setupAgentsRegion();
@@ -93,9 +93,9 @@ describe("TunnelListItem — connection stats (PROD-037)", () => {
       TUNNEL,
       stateWith({ bytesSent: 0, bytesReceived: 0, activeConnections: 2, totalConnections: 17 })
     );
-    expect(connStat()).toBe("2 / 17 connections");
+    expect(connStat()).toBe("2 connections now, 17 in all");
     const row = container.querySelector('[data-testid="tunnel-item-tun-1"]');
-    expect(row?.textContent).not.toContain("2 / 17");
+    expect(row?.textContent).not.toContain("17");
   });
 
   it("still renders when no connections have been seen yet", async () => {
@@ -103,7 +103,7 @@ describe("TunnelListItem — connection stats (PROD-037)", () => {
       TUNNEL,
       stateWith({ bytesSent: 0, bytesReceived: 0, activeConnections: 0, totalConnections: 0 })
     );
-    expect(connStat()).toBe("0 / 0 connections");
+    expect(connStat()).toBe("0 connections now, 0 in all");
   });
 
   it("shows no stats line while the tunnel is inactive", async () => {
@@ -141,8 +141,8 @@ describe("TunnelListItem — live rate (PROD-038)", () => {
     activeConnections: 1,
     totalConnections: 1,
   });
-  const up = () => rowTooltip().match(/↑ [^·]*/)?.[0] ?? "";
-  const down = () => rowTooltip().match(/↓ [^·]*/)?.[0] ?? "";
+  const up = () => rowTooltip().match(/sent [^·]*/)?.[0] ?? "";
+  const down = () => rowTooltip().match(/received [^·]*/)?.[0] ?? "";
 
   it("shows a smoothed KB/s rate next to each running total", async () => {
     await renderItem(TUNNEL, stateWith(stats(0, 0)));

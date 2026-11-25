@@ -962,6 +962,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::embedded_servers::clear_embedded_server_activity,
             commands::embedded_servers::start_embedded_server,
             commands::embedded_servers::stop_embedded_server,
+            commands::embedded_servers::check_embedded_servers,
             commands::embedded_servers::create_and_start_server,
             commands::embedded_servers::list_network_interfaces,
             // Credentials

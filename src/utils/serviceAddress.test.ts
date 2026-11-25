@@ -4,6 +4,8 @@ import { isWideBind, serviceAddress, splitHostPort, type Listener } from "./serv
 const HERE: Listener = { on: "here", network: "192.168.1.20" };
 const OFFLINE: Listener = { on: "here" };
 const AGENT: Listener = { on: "there", name: "Edge box", host: "edge.example", shown: true };
+const NO_NETWORK =
+  "Open to your network. This computer has no network address now; it appears here once you are connected. Port 80.";
 const SERVER: Listener = { on: "there", name: "Build Box", host: "build.example" };
 
 describe("serviceAddress (#6028)", () => {
@@ -21,8 +23,8 @@ describe("serviceAddress (#6028)", () => {
     ["fe80::1", HERE, "[fe80::1]:80", undefined, "anyone on your network"],
     ["[fe80::1]", HERE, "[fe80::1]:80", undefined, "anyone on your network"],
     // Open to others, and nobody knows how: never a localhost.
-    ["0.0.0.0", OFFLINE, undefined, undefined, "Open to your network. Address not known yet."],
-    ["::", OFFLINE, undefined, undefined, "Open to your network. Address not known yet."],
+    ["0.0.0.0", OFFLINE, undefined, undefined, NO_NETWORK],
+    ["::", OFFLINE, undefined, undefined, NO_NETWORK],
     // On another machine, localhost is that machine's.
     ["127.0.0.1", SERVER, "localhost:80", "Build Box", "only on Build Box"],
     ["", SERVER, "localhost:80", "Build Box", "only on Build Box"],
@@ -37,14 +39,14 @@ describe("serviceAddress (#6028)", () => {
       { ...SERVER, host: undefined },
       undefined,
       undefined,
-      "Open to Build Box's network. Address not known.",
+      "Open to Build Box's network. Its address is not known. Port 80.",
     ],
     [
       "0.0.0.0",
       { ...AGENT, host: undefined },
       undefined,
       undefined,
-      "Open to that machine's network. Address not known.",
+      "Open to that machine's network. Its address is not known. Port 80.",
     ],
   ])("bound to %j on %o is %s", (bind, listener, copy, on, reach) => {
     const address = serviceAddress(bind, 80, listener)!;

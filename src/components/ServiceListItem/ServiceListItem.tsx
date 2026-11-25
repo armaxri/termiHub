@@ -13,7 +13,6 @@ import {
   RotateCw,
   Square,
   Trash2,
-  X,
   type LucideIcon,
 } from "lucide-react";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
@@ -73,7 +72,7 @@ export interface ServiceListItemProps {
 const ICONS: Record<ServiceActionId, LucideIcon> = {
   start: Play,
   stop: Square,
-  stopWaiting: X,
+  stopWaiting: Square,
   retry: RotateCw,
   copyAddress: Copy,
   openInBrowser: ExternalLink,
@@ -87,16 +86,10 @@ const ICONS: Record<ServiceActionId, LucideIcon> = {
 /** Drawn solid, like on a player: an empty square reads as a box to tick. */
 const SOLID: ReadonlySet<LucideIcon> = new Set([Play, Square]);
 
-/** The icon of `action` in the state of `model`. */
-function ActionIcon({ model, action, size }: ActionIconProps) {
-  const Icon = action.id === "stop" && model.state === "starting" ? X : ICONS[action.id];
+/** The icon of `action`. */
+function ActionIcon({ id, size }: { id: ServiceActionId; size: number }) {
+  const Icon = ICONS[id];
   return <Icon size={size} fill={SOLID.has(Icon) ? "currentColor" : "none"} />;
-}
-
-interface ActionIconProps {
-  model: ServiceModel;
-  action: ServiceAction;
-  size: number;
 }
 
 /** The run control, always visible on the row's trailing edge (#5852). */
@@ -175,23 +168,31 @@ export function ServiceListItem({
   const button = (action: ServiceAction): React.ReactNode => {
     const help =
       action.id === "copyAddress" ? `${action.label}: ${address?.copy ?? ""}` : action.label;
+    // Giving up what has not started yet is a word: a cross on a row reads as
+    // "remove", and a square as the Stop of something that runs.
+    const gives =
+      action.id === "stopWaiting" || (action.id === "stop" && model.state === "starting");
     return (
       <Tooltip key={action.id} content={help} side="top">
         <Button
           variant="ghost"
-          size="sm"
-          iconOnly
+          size="xs"
+          iconOnly={!gives}
           aria-label={action.label}
           aria-pressed={action.id === "activity" ? activity !== undefined : undefined}
           {...ids.actionTestIds[action.id]}
-          icon={<ActionIcon model={model} action={action} size={12} />}
+          icon={gives ? undefined : <ActionIcon id={action.id} size={12} />}
           // Whoever acts shows its own failure.
           errorToast={false}
+          // Only Copy changes nothing else on screen.
+          successFlash={action.id === "copyAddress"}
           onClick={(e) => {
             e.stopPropagation();
             return perform(action.id);
           }}
-        />
+        >
+          {gives ? t("service.action.cancel") : undefined}
+        </Button>
       </Tooltip>
     );
   };
@@ -232,7 +233,7 @@ export function ServiceListItem({
             onSelect={() => performFromMenu(action.id)}
             {...testIds[action.id]}
           >
-            <ActionIcon model={model} action={action} size={14} /> {action.label}
+            <ActionIcon id={action.id} size={14} /> {action.label}
           </MenuItem>
         </MenuEntry>
       );
@@ -244,7 +245,7 @@ export function ServiceListItem({
         <DropdownMenuTrigger asChild>
           <Button
             variant="ghost"
-            size="sm"
+            size="xs"
             iconOnly
             aria-label={t("service.more")}
             data-testid={ids.moreTestId}
@@ -261,6 +262,8 @@ export function ServiceListItem({
 
   const { where } = model;
   const description = model.description?.trim();
+  // "Anyone on your network can upload" says who reaches it, too.
+  const riskSaysReach = model.risk !== undefined && address?.copy !== undefined;
 
   const details = (
     <>
@@ -289,12 +292,12 @@ export function ServiceListItem({
           {address.copy && (
             <span className="service-row__address-text">
               <code>
-                <MiddleEllipsis text={address.copy} tail={10} />
+                <BreakableAddress text={address.copy} />
               </code>
               {copy && button(copy)}
             </span>
           )}
-          <span className="service-row__reach">{address.reach}</span>
+          {!riskSaysReach && <span className="service-row__reach">{address.reach}</span>}
         </span>
       )}
       {model.risk && (
@@ -388,6 +391,18 @@ export function ServiceListItem({
         {menuItems(ids.menuTestIds)}
       </ContextMenuContent>
     </ContextMenuRoot>
+  );
+}
+
+/** An address that may break before its port, never inside it. */
+function BreakableAddress({ text }: { text: string }) {
+  const at = text.lastIndexOf(":");
+  return (
+    <>
+      {text.slice(0, at)}
+      <wbr />
+      <span className="service-row__port">{text.slice(at)}</span>
+    </>
   );
 }
 

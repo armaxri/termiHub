@@ -16,7 +16,7 @@ const HTTP: EmbeddedServerConfig = {
 describe("serverRowTooltip (#5770)", () => {
   it("lists the protocol, address and folder", () => {
     expect(serverRowTooltip(HTTP)).toEqual([
-      "HTTP · http://127.0.0.1:8080",
+      "HTTP · http://localhost:8080",
       "Share a folder that others open in a web browser.",
       "Serves /srv/fw",
     ]);
@@ -31,12 +31,12 @@ describe("serverRowTooltip (#5770)", () => {
       }
     );
     expect(lines).toEqual([
-      "TFTP · tftp://127.0.0.1:69",
+      "TFTP · tftp://localhost:69",
       "Give files to devices that only speak TFTP.",
       "Serves /srv/fw",
       "Read only",
       "Runs on agent build-box",
-      "2 connections · ↑ 2.0 KB · ↓ 0 B",
+      "2 connections now, 5 in all · sent 2.0 KB · received 0 B",
     ]);
   });
 

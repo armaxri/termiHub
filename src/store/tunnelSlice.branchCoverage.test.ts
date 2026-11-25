@@ -189,6 +189,15 @@ describe("tunnelSlice — residual branch coverage (TFE-006)", () => {
       expect(toastMock.error).toHaveBeenCalledWith("Failed to retry Third: gone");
     });
 
+    it("asks the agents again, and says when it cannot (#6068)", async () => {
+      dispatchMock.mockResolvedValueOnce(accepted);
+      await useAppStore.getState().checkTunnelsAgain();
+      expect(dispatchedKinds()).toEqual(["tunnel.checkAgain"]);
+      dispatchMock.mockRejectedValueOnce(new Error("gone"));
+      await expect(useAppStore.getState().checkTunnelsAgain()).rejects.toThrow("gone");
+      expect(toastMock.error).toHaveBeenCalledWith("Failed to check again: gone");
+    });
+
     it("no-ops a reconnect while a stop for the same tunnel is in flight", async () => {
       useAppStore.setState({ tunnels: [makeTunnel("tun-2", "Other")] });
       const deferred = makeDeferred<IntentAck>();
