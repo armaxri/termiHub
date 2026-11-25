@@ -4362,8 +4362,8 @@ flowchart LR
           8. Open questions for the maintainer <a class="anchor" href="#8-questions">#</a>
         </h2>
         <p>
-          Three. Everything else above is decided here and can be changed in the review of this
-          concept.
+          Three, all answered on 2026-11-25: the maintainer followed each recommendation. Everything
+          else above is decided here and can be changed in the review of this concept.
         </p>
         <ol>
           <li>
@@ -4402,6 +4402,12 @@ flowchart LR
           is kept until the agent confirms it. "Connect agent" on the row comes with slice 10, the
           product run step "agent killed and restarted" with slice 9. Slices 3 to 14 are not
           started. Step 0 of <a href="https://github.com/armaxri/termiHub/issues/6028">#6028</a>.
+        </p>
+        <p>
+          The maintainer followed the three recommendations of section 8 (comment on
+          <a href="https://github.com/armaxri/termiHub/issues/6028">#6028</a>): a row shows its
+          address with Copy only while it runs; quitting asks only when a service has connections
+          open; new file servers get the safer defaults. They bind slices 4, 11, 7 and 12.
         </p>
       </section>
       <section>
