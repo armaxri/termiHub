@@ -436,7 +436,7 @@ describe("running", () => {
     await render();
     expect(query("automation-running-workflow-1")!.textContent).toBe("Running");
     expect(query("automation-start-workflow-1")).toBeNull();
-    // One terminal has its line too: where, and which step (A-035).
+    // One terminal has its line too: where, and which step (A-017).
     expect(query("automation-target-r1")!.textContent).toContain("in web-1, step 1 of 1");
     click("automation-stop-workflow-1");
     expect(storeFns.cancelWorkflowRun).toHaveBeenCalledWith();
@@ -526,7 +526,7 @@ describe("markers", () => {
     expect(storeFns.setWorkflowTriggersEnabled).toHaveBeenCalledWith("workflow-2", true);
   });
 
-  it("keeps the switch of an automation with only a hotkey, on and off (A-018)", async () => {
+  it("keeps the switch of an automation with only a hotkey, on and off (A-014)", async () => {
     const hotkey: Automation = {
       ...triggered,
       triggers: [{ kind: "hotkey", binding: "Ctrl+Alt+D" }],
@@ -562,7 +562,7 @@ describe("markers", () => {
     expect(item.getAttribute("aria-label")).toContain("Cannot run");
   });
 
-  it("a run that waits for the user says so, and is not Running (A-036)", async () => {
+  it("a run that waits for the user says so, and is not Running (#6026)", async () => {
     setWorkflowRunViewForTest({
       run: {
         runId: "r1",

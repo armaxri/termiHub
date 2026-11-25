@@ -50,7 +50,7 @@
   height: 100%;
 }
 
-/* Edit shows on the selected row (A-014), and on any other while it is pointed at. */
+/* Edit shows on the selected row (A-015), and on any other while it is pointed at. */
 .automation-item:not(:hover, :focus-within) .automation-item__edit {
   display: none;
 }
