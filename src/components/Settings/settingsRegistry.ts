@@ -543,7 +543,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     id: "workflowLocalProcess",
     label: "Local programs run by automations",
     description:
-      "Allow automations to run local programs on this computer, and manage which programs are allowed",
+      "Allow automations to run local programs on this computer, and manage which programs and commands are allowed",
     category: "security",
     keywords: [
       "automation",
@@ -552,6 +552,9 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
       "allow workflows to run local programs",
       "local process",
       "run-local-process",
+      "confirmed commands",
+      "imported automation",
+      "revoke",
       "execute",
       "program",
       "allowlist",

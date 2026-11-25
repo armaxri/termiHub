@@ -31,7 +31,7 @@ use super::commit::{
     MANIFEST_FORMAT_FILES_ONLY, MANIFEST_FORMAT_WITH_PLUGINS,
 };
 use super::restore::{PendingManifest, MANIFEST_FILE, PENDING_DIR, STAGING_DIR};
-use super::{deferred, plugins, sections};
+use super::{deferred, plugins, restored_off, sections};
 use crate::connection::recovery::RecoveryWarning;
 use crate::utils::fs::write_atomic;
 
@@ -420,6 +420,7 @@ pub fn apply_pending_restore(config_dir: &Path) -> Option<RecoveryWarning> {
         }
     }
 
+    restored_off::promote(config_dir, &pending);
     // Hand a deferred credential import on before the pending dir goes.
     let warning = deferred::promote(config_dir, &pending);
     remove_dir(&pending);

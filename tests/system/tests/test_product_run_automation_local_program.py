@@ -35,6 +35,7 @@ from termihub_harness.product_run import ProductRunUi
 from termihub_harness.product_run.automation_files_grades import IMPORT_BUTTON, IMPORT_DIALOG
 from termihub_harness.product_run.automation_local_program import (
     TRUST_FILE,
+    confirmed_keys,
     mark_problems,
     question_problems,
     trust_problems,
@@ -44,6 +45,8 @@ from termihub_harness.product_run.ssh_steps import SshPhaseUi
 
 DIALOG = "local-process-auth-dialog"
 PROGRAM = "/usr/bin/touch"
+#: What `confirmed_keys` names one command by.
+KEY = "7b8428be9b6a25de82332d1d5a207a70f354f723b285036c7116ee0eca811ab0"
 
 
 # ── app-free grade tests ──────────────────────────────────────────────────
@@ -78,6 +81,13 @@ def test_grade_trust():
         "the imported automation is listed as the user's own",
     ]
     assert trust_problems(None, "theirs", confirmed=0) == [f"{TRUST_FILE} is not a JSON object"]
+
+
+def test_confirmed_keys():
+    trust = {"confirmed": {"a": [{"path": "/bin/make", "args": ["ä b"]}, "old"]}}
+    # The same as the Rust test `the_key_of_a_command_is_stable`.
+    assert confirmed_keys(trust, "a") == [KEY, "old"]
+    assert confirmed_keys(None, "a") == confirmed_keys(trust, "b") == []
 
 
 def test_grade_mark():
@@ -225,4 +235,31 @@ class TestProductRunAutomationLocalProgram(
             self.wait(marker.exists, what="it to run without a question")
             if self.driver.exists(DIALOG):
                 problems.append("it asked about a confirmed command")
+            assert not problems, problems
+
+    def test_20_revoke(self):
+        with self.step(
+            "imported-program.revoke",
+            "The confirmed command is listed in the settings and can be revoked",
+            expect="Settings, Security: the automation's name with one short command and a "
+            "revoke button; after revoking, the next run asks again",
+        ):
+            self.require("imported-program.asks")
+            self.open_settings_category("security")
+            self.wait(lambda: self.driver.exists("confirmed-commands"), what="the commands")
+            text = self.driver.get_text("confirmed-commands")
+            problems = []
+            if f"Imported helper {self.tag}" not in text or "touch" not in text:
+                problems.append(f"the settings say {text!r}")
+            self.shot(label="confirmed-commands")
+            (key,) = confirmed_keys(self._stored(TRUST_FILE), self.ids["automation"])
+            self.driver.click(f"confirmed-command-revoke-{key}")
+            self.wait(lambda: not self.driver.exists("confirmed-commands"), what="it to go")
+            problems += trust_problems(
+                self._stored(TRUST_FILE), self.ids["automation"], confirmed=0
+            )
+            self._marker("one").unlink()
+            self._run()
+            self.wait(lambda: self.driver.exists(DIALOG), what="the question again")
+            self.driver.click("local-process-auth-cancel")
             assert not problems, problems

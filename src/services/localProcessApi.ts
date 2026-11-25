@@ -9,13 +9,21 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { ConfirmedLocalCommand } from "@/types/generated/ConfirmedLocalCommand";
+import type { ConfirmedLocalCommands } from "@/types/generated/ConfirmedLocalCommands";
 import type { LocalProcessCheck } from "@/types/generated/LocalProcessCheck";
 import type { LocalProcessOutcome } from "@/types/generated/LocalProcessOutcome";
 import type { LocalProcessOutputChunk } from "@/types/generated/LocalProcessOutputChunk";
 
 // Generated from the Rust `LocalProcessOutcome` / `LocalProcessOutputEvent`
 // (src-tauri/src/commands/local_process.rs) via ts-rs (#3088).
-export type { LocalProcessCheck, LocalProcessOutcome, LocalProcessOutputChunk };
+export type {
+  ConfirmedLocalCommand,
+  ConfirmedLocalCommands,
+  LocalProcessCheck,
+  LocalProcessOutcome,
+  LocalProcessOutputChunk,
+};
 
 /** Tauri event name carrying one streamed line of local-process output. */
 const LOCAL_PROCESS_OUTPUT_EVENT = "workflow-local-process-output";
@@ -80,6 +88,27 @@ export async function confirmLocalProcess(
   path: string
 ): Promise<void> {
   await invoke("confirm_local_process", { program, args, automationChain, path });
+}
+
+/** The commands confirmed for imported automations (#6057). */
+export async function listConfirmedLocalCommands(): Promise<ConfirmedLocalCommands[]> {
+  return await invoke<ConfirmedLocalCommands[]>("list_confirmed_local_commands");
+}
+
+/**
+ * Take confirmations back (#6057): one command of an automation, all of one
+ * automation (no `key`), or all (no `automationId`).
+ */
+export async function revokeConfirmedLocalCommands(
+  automationId: string | null,
+  key: string | null
+): Promise<void> {
+  await invoke("revoke_confirmed_local_commands", { automationId, key });
+}
+
+/** Which of these allowlist entries are programs that run whatever they are told to. */
+export async function interpretersAmong(programs: readonly string[]): Promise<string[]> {
+  return await invoke<string[]>("interpreters_among", { programs });
 }
 
 /** Request cancellation of an in-flight local process by its run id. */

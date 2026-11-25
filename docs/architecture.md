@@ -2099,6 +2099,15 @@ step:
   would land in the shell) is a **fatal** outcome: `executeStepWithPolicy` neither retries nor
   tolerates it, at any level. Runs nobody watches are refused before they type anything
   (`reachesWaitForUser`): scheduled ones as skipped, triggered ones as a failed run in the History.
+  What the terminal asks is read through `promptOfTerminal` (`services/passwordPrompt.ts`, #6070):
+  its `read` answers once all output that had arrived at the call is in xterm's buffer
+  (`TerminalOutputFlow.whenShown`, behind a plugin's parser and a repaint in progress), and never when
+  that cannot be told. Continue reads again while output arrives (`arrived`), so it decides on all that
+  is in the app at that moment; when that does not settle within `PROMPT_CHECK_LIMIT_MS` of the press,
+  as in a terminal that never stops printing, it asks instead of going on, and while another window or computer controls the terminal it does not go
+  on at all. "Continue anyway" counts for the prompt it was said of. The recorder judges each key by
+  the answer of its own moment and keeps apart only the keys it cannot tell. A prompt that reaches the
+  app after the decision, the backend's included, cannot be seen.
   A recording gets such a step wherever it leaves a password out (`recordingSteps`).
 - **`run-automation`** runs another automation's steps inline on the same target. The chain of
   automation ids is passed down the call stack: a call back into the chain fails with the path
@@ -2277,7 +2286,10 @@ sequenceDiagram
   must have the command confirmed, because a caller also chooses the parameter values. Unconfirmed,
   it is asked about (exact command, what would not show is written out) or, unattended, refused. The
   first start with this check lists the whole library as the user's own. "Always allow" of a program
-  that runs whatever it is told to (`local_process_interpreters.rs`) is asked about twice.
+  that runs whatever it is told to (`local_process_interpreters.rs`) is asked about twice. Settings ▸
+  Security lists the confirmed commands per automation, with revoke one, all of an automation and all,
+  and warns at an allowed program of that kind (#6057); the file keeps the command itself, an older
+  entry only its hash.
 - **Schedules in the UI** (`src/components/Schedules/`, #6024) — a row says its state with the next
   run, the rule, the automation, the connections, why it will not run and how the last run ended
   with the whole reason (`scheduleStatus.ts`). The editor asks the scheduler for the next run before
@@ -2348,6 +2360,18 @@ machine's experimental, JavaScript-plugin and local-program switches, allowed pr
 workspace commands (`LOCAL_PERMISSION_KEYS`), and the preview says so and what the backup would have
 allowed. On a machine without them they stay off. A restored automation asks before its first local
 program unless it is the one made here.
+
+Nor does it start anything by itself (#6056, `backup/self_starting.rs`): an enabled schedule, an armed
+trigger (also of the frozen workflow file), a tunnel's `autoStart` and `startWithConnection` and a file
+server's `autoStart` are restored off, and a workspace that is not the one here holds its commands back
+like an imported one. What is on here stays on when it still does the same: the entry, the automations
+it runs, the connections, agents and broadcast groups it uses are compared over the whole restore, so an
+entry of a section that was not chosen is switched off too when the restore changes what it starts. A
+schedule that stays on keeps when it ran here; a changed one has to be confirmed again, also when it is
+off. The preview lists what arrives off and what would start it. The list travels with the staged
+restore and becomes `restored-off.json` when it is applied; the next start asks once which entries to
+turn on (`components/RestoredOff/`), and Settings ▸ Backup & restore offers it until it is dealt with.
+HTTP monitors load stopped and macros have no triggers.
 
 ```json
 {

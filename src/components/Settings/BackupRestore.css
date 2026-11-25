@@ -87,3 +87,38 @@
 .backup-restore__folded {
   margin: 0;
 }
+
+/* What starts by itself and arrives switched off (#6056). */
+.backup-restore__off {
+  overflow-wrap: anywhere;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+}
+
+.backup-restore__off summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.backup-restore__off p {
+  margin: var(--spacing-xs) 0;
+}
+
+.backup-restore__off ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  margin: 0;
+  padding-left: var(--spacing-lg);
+}
+
+/* What an earlier restore left off, under the two buttons (#6056). */
+.backup-restore__still-off {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-md);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+}

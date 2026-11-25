@@ -170,6 +170,14 @@ describe("RecordingSaveDialog", () => {
       expect(props.onSave).toHaveBeenCalledWith(expect.objectContaining({ keepSecrets: false }));
     });
 
+    it("says so when it is not known whether one showed (#6070)", async () => {
+      await render({ take: { ...withPassword, secrets: [{ start: 1, end: 3, prompt: "" }] } });
+      expect(query("recording-save-secrets")?.textContent).toContain(
+        "Some of what you typed may be a password"
+      );
+      expect(query("recording-save-secrets-leave-out")?.getAttribute("aria-checked")).toBe("true");
+    });
+
     it("stores it when that is chosen", async () => {
       await render({ take: withPassword });
       click("recording-save-secrets-keep");

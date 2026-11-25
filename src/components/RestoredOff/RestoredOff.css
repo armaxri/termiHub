@@ -1,0 +1,87 @@
+/* What a restore left switched off (#6056). */
+.restored-off {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.restored-off__intro {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.restored-off__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.restored-off__row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+}
+
+.restored-off__body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  min-width: 0;
+}
+
+.restored-off__name {
+  overflow-wrap: anywhere;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.restored-off__kind {
+  margin-left: var(--spacing-sm);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.restored-off__starts {
+  margin: 0;
+  padding: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  list-style: none;
+}
+
+.restored-off__steps {
+  overflow-wrap: anywhere;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.restored-off__steps summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.restored-off__steps p,
+.restored-off__steps ol {
+  margin: var(--spacing-xs) 0 0;
+}
+
+.restored-off__steps ol {
+  padding-left: var(--spacing-lg);
+}
+
+.restored-off__error {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--font-size-sm);
+  color: var(--color-error);
+}

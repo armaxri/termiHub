@@ -54,6 +54,10 @@ export interface VisualScenario {
    * with an update whose preview carries an access diff (#4418).
    */
   pluginUpdate?: boolean;
+  /** Answer these commands with these values (#6056, #6057). */
+  answers?: Record<string, unknown>;
+  /** The allowed programs (#6057). */
+  allowedPrograms?: string[];
   /** The file the open dialog picks, and its text (#5818). */
   openFile?: { path: string; text: string };
   /** Answer the automation and schedule lists with these (#5818). */
@@ -758,6 +762,9 @@ function settingsFor(scenario: VisualScenario): unknown {
     ...settings,
     ...(scenario.experimentalOff ? { experimentalFeaturesEnabled: false } : {}),
     ...(scenario.localProgramsOn ? { workflowLocalProcessEnabled: true } : {}),
+    ...(scenario.allowedPrograms
+      ? { workflowLocalProcessAllowlist: scenario.allowedPrograms }
+      : {}),
     ...(scenario.localProcessAsk ? { workflowLocalProcessEnabled: true } : {}),
   };
 }
@@ -880,6 +887,7 @@ export function handleCommand(cmd: string, args: Args): unknown {
   const wire = connectionsWire.loadConnectionsAndFolders;
   const intentKind = (args?.intent as { kind?: string } | undefined)?.kind;
   (window.__VISUAL_INVOKED__ ??= []).push(intentKind ? `${cmd}:${intentKind}` : cmd);
+  if (scenario.answers && cmd in scenario.answers) return scenario.answers[cmd];
 
   switch (cmd) {
     // ── projection substrate ──
@@ -968,6 +976,9 @@ export function handleCommand(cmd: string, args: Args): unknown {
     case "get_agent_crash_notices":
     case "folder_paste_take_interrupted":
     case "get_recovery_warnings":
+    case "list_restored_off":
+    case "list_confirmed_local_commands":
+    case "interpreters_among":
     case "list_plugins":
       return [];
     case "list_available_shells":

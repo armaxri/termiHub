@@ -41,6 +41,7 @@
  * worker reports parsers again.
  */
 
+import { callWaiter } from "@/utils/callWaiter";
 import { frontendLog } from "@/utils/frontendLog";
 import type { WidgetPosition } from "@/types/plugin";
 import type { HostToWorkerMessage, WorkerToHostMessage } from "./protocol";
@@ -62,6 +63,8 @@ interface Slot {
   original: Uint8Array;
   /** The bytes to emit once this slot drains (original on pass-through). */
   out: Uint8Array | null;
+  /** Called when the slot drains. */
+  reached?: () => void;
 }
 
 /** Per-session FIFO of slots plus the sink that drains them in order. */
@@ -443,6 +446,7 @@ function drain(sessionId: string): void {
   while (q.slots.length > 0 && q.slots[0].done) {
     const slot = q.slots.shift()!;
     if (slot.out) q.sink(slot.out);
+    if (slot.reached) callWaiter(slot.reached);
   }
   rearmWatchdog();
 }
@@ -587,6 +591,19 @@ export function enqueueSandboxPassthrough(sessionId: string, bytes: Uint8Array):
   if (!q || q.slots.length === 0) return false;
   q.slots.push({ seq: seqCounter++, done: true, original: bytes, out: bytes });
   drain(sessionId);
+  return true;
+}
+
+/**
+ * Call `reached` when every chunk a session has in flight has reached its sink, and
+ * none that comes later (#6070). Returns `false` when nothing is in flight. A
+ * discarded session ({@link discardSandboxSession}) never calls it.
+ */
+export function enqueueSandboxMarker(sessionId: string, reached: () => void): boolean {
+  const q = sessions.get(sessionId);
+  if (!q || q.slots.length === 0) return false;
+  const none = new Uint8Array();
+  q.slots.push({ seq: seqCounter++, done: true, original: none, out: null, reached });
   return true;
 }
 

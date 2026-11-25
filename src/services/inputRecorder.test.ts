@@ -1,5 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { InputRecorder, recordedParts, withoutSecrets } from "./inputRecorder";
+import { describe, expect, it, vi } from "vitest";
+import {
+  InputRecorder,
+  PROMPT_READ_LIMIT_MS,
+  recordedParts,
+  withoutSecrets,
+} from "./inputRecorder";
+import type { PromptReader } from "./passwordPrompt";
 
 /** A recorder on a clock and a screen the test sets. */
 function setup() {
@@ -8,7 +14,7 @@ function setup() {
   /** Type a chunk `after` ms later; `echo` is what it puts on the screen. */
   const type = (data: string, after = 0, echo: string | null = data) => {
     at.time += after;
-    recorder.push(data, () => at.screen);
+    recorder.push(data, (then) => then(at.screen));
     if (echo !== null) at.screen += echo;
   };
   return { at, recorder, type };
@@ -105,9 +111,8 @@ describe("what is typed at a password prompt", () => {
   it("is kept apart while something waits for it, whatever the screen shows (#6025)", () => {
     const { at, recorder } = setup();
     at.screen = "Deploy hunter2";
-    const read = () => at.screen;
+    const read: PromptReader = (then) => then(at.screen);
     recorder.push("hunter2", read, "Deploy");
-    expect(recorder.finish().secrets).toEqual([{ start: 0, end: 1, prompt: "Deploy" }]);
     recorder.reserve(read, "Deploy").fill("pasted");
     // The wait is over without an Enter: what follows is not part of it.
     at.screen = "$ ";
@@ -125,7 +130,7 @@ describe("what is typed at a password prompt", () => {
   it("is flagged when it is pasted", () => {
     const { at, recorder, type } = setup();
     at.screen = "Password: ";
-    const paste = recorder.reserve(() => at.screen);
+    const paste = recorder.reserve((then) => then(at.screen));
     paste.fill("hunter2");
     type("\r", 10, null);
     expect(recorder.finish().secrets).toEqual([{ start: 0, end: 2, prompt: "Password:" }]);
@@ -164,9 +169,9 @@ describe("what is typed at a password prompt", () => {
 
   it("stays hidden when other output moves the prompt while it is answered", () => {
     const recorder = new InputRecorder(() => 0);
-    recorder.push("p", () => "Password: ");
-    recorder.push("w", () => "[1]+  Done   sleep 1");
-    recorder.push("\r", () => "");
+    recorder.push("p", (then) => then("Password: "));
+    recorder.push("w", (then) => then("[1]+  Done   sleep 1"));
+    recorder.push("\r", (then) => then(""));
     expect(recorder.finish().secrets).toEqual([{ start: 0, end: 3, prompt: "Password:" }]);
   });
 
@@ -177,7 +182,114 @@ describe("what is typed at a password prompt", () => {
     };
     recorder.push("a", broken);
     recorder.push("b", broken);
-    expect(recorder.finish().chunks.map((c) => c.data)).toEqual(["a", "b"]);
+    const recorded = recorder.finish();
+    expect(recorded.chunks.map((c) => c.data)).toEqual(["a", "b"]);
+    // Not known whether it was a password: kept apart (#6070).
+    expect(recorded.secrets).toEqual([{ start: 0, end: 2, prompt: "" }]);
+  });
+
+  it("judges each chunk by its own screen, in the order it was typed (#6070)", () => {
+    const answers: ((before: string) => void)[] = [];
+    const judged = vi.fn();
+    const recorder = new InputRecorder(() => 0, judged);
+    for (const data of ["sudo\r", "pw\r", "ls\r"])
+      recorder.push(data, (then) => answers.push(then));
+    answers[0]("$ ");
+    answers[1]("Password: ");
+    answers[2]("$ ");
+    expect(judged).toHaveBeenCalledTimes(3);
+    expect(recorder.finish().secrets).toEqual([{ start: 1, end: 2, prompt: "Password:" }]);
+  });
+
+  it.each([
+    ["a later one is answered", 0],
+    ["it takes too long", PROMPT_READ_LIMIT_MS],
+  ])("keeps only the chunk apart whose answer is lost, once %s (#6070)", (_, passes) => {
+    vi.useFakeTimers();
+    const answers: ((before: string) => void)[] = [];
+    const recorder = new InputRecorder(() => 0);
+    recorder.push("a", (then) => then("$ "));
+    recorder.push("?", () => {});
+    vi.advanceTimersByTime(passes);
+    recorder.push("b", (then) => answers.push(then));
+    answers[0]("$ a");
+    recorder.push("c", (then) => then("$ ab"));
+    expect(recorder.finish().secrets).toEqual([{ start: 1, end: 2, prompt: "" }]);
+    vi.useRealTimers();
+  });
+
+  it("says that a password is typed although an answer before it was lost (#6070)", () => {
+    vi.useFakeTimers();
+    const recorder = new InputRecorder(() => 0);
+    recorder.push("?", () => {});
+    recorder.push("p", (then) => then("Password: "));
+    expect(recorder.atPrompt).toBe(true);
+    recorder.push("\r", (then) => then("Password: "));
+
+    recorder.push("?", () => {});
+    recorder.push("x", (then) => then("$ "), "Deploy");
+    // Nothing was read for that one, so it says nothing about the one before.
+    expect(recorder.atPrompt).toBe(false);
+    vi.advanceTimersByTime(PROMPT_READ_LIMIT_MS);
+    expect(recorder.atPrompt).toBe(true);
+    recorder.dispose();
+    vi.useRealTimers();
+  });
+
+  it("keeps a lost chunk with the password it belongs to (#6070)", () => {
+    const recorder = new InputRecorder(() => 0);
+    recorder.push("p", (then) => then("Password: "));
+    recorder.push("w", (then) => then(null));
+    recorder.push("\r", (then) => then("Password: "));
+    recorder.push("l", (then) => then("$ "));
+    expect(recorder.finish().secrets).toEqual([{ start: 0, end: 3, prompt: "Password:" }]);
+  });
+
+  it("keeps nothing in memory once it is finished or dropped (#6070)", () => {
+    vi.useFakeTimers();
+    for (const end of ["finish", "dispose"] as const) {
+      const recorder = new InputRecorder(() => 0);
+      let late = (_: string) => {};
+      const slot = recorder.reserve((then) => then("$ "));
+      recorder.push("hunter2", (then) => ((late = then), undefined));
+      recorder[end]();
+      slot.fill("pasted secret");
+      late("$ ");
+      expect(JSON.stringify(recorder)).not.toMatch(/hunter2|pasted/);
+    }
+    expect(vi.getTimerCount()).toBe(0);
+    vi.useRealTimers();
+  });
+
+  it("ends an answer with the Enter of a paste that was read meanwhile (#6070)", () => {
+    const answers: ((before: string) => void)[] = [];
+    const recorder = new InputRecorder(() => 0);
+    const paste = recorder.reserve((then) => answers.push(then));
+    recorder.push("l", (then) => answers.push(then));
+    paste.fill("pw\r");
+    answers[0]("Password: ");
+    answers[1]("$ ");
+    expect(recorder.finish().secrets).toEqual([{ start: 0, end: 1, prompt: "Password:" }]);
+  });
+
+  it("is one answer when a paste ends it before it is judged (#6070)", () => {
+    const answers: ((before: string) => void)[] = [];
+    const recorder = new InputRecorder(() => 0);
+    recorder.push("p", (then) => then("Password: "));
+    const paste = recorder.reserve((then) => answers.push(then));
+    paste.fill("w\r");
+    answers[0]("Password: ");
+    expect(recorder.finish().secrets).toEqual([{ start: 0, end: 2, prompt: "Password:" }]);
+  });
+
+  it("is not dropped as an echo by an answer that comes after Stop (#6070)", () => {
+    let late = (_: string) => {};
+    const recorder = new InputRecorder(() => 0);
+    recorder.push("p", (then) => then("Password: "));
+    recorder.push("w", (then) => ((late = then), undefined));
+    const recorded = recorder.finish();
+    late("Password: pw");
+    expect(recorded.secrets).toEqual([{ start: 0, end: 2, prompt: "Password:" }]);
   });
 
   it("is not looked for without a screen to read", () => {

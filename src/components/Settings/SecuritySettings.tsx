@@ -1,5 +1,4 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
-import { Trash2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import type { CredentialStorageMode } from "@/types/credential";
@@ -15,6 +14,8 @@ import { SettingsField } from "./SettingsField";
 import { CredentialVaultBackup } from "./CredentialVaultBackup";
 import { SharedCredentialsSettings } from "./SharedCredentialsSettings";
 import { BiometricUnlockSettings } from "./BiometricUnlockSettings";
+import { AllowedPrograms } from "./AllowedPrograms";
+import { ConfirmedCommands } from "./ConfirmedCommands";
 import { ImportedWorkspaceConfirmations } from "./ImportedWorkspaceConfirmations";
 import { MasterPasswordSetupFields } from "@/components/CredentialStorage/MasterPasswordSetupFields";
 import { credentialStorageRadioOptions } from "@/components/CredentialStorage/credentialStorageOptions";
@@ -598,33 +599,12 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
           </SettingsField>
 
           {localProcessEnabled && (
-            <div className="settings-panel__field">
-              <span className="settings-panel__field-label">Allowed programs</span>
-              {localProcessAllowlist.length === 0 ? (
-                <p className="settings-panel__description" data-testid="workflow-allowlist-empty">
-                  No programs are remembered yet. Choosing &ldquo;Always allow&rdquo; when an
-                  automation runs one adds it here.
-                </p>
-              ) : (
-                <ul className="settings-panel__list" data-testid="workflow-allowlist">
-                  {localProcessAllowlist.map((program) => (
-                    <li key={program} className="settings-panel__list-item">
-                      <code>{program}</code>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        iconOnly
-                        icon={<Trash2 size={14} />}
-                        aria-label={`Remove ${program} from the allowlist`}
-                        onClick={() => handleRemoveAllowedProgram(program)}
-                        data-testid={`workflow-allowlist-remove-${program}`}
-                      />
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
+            <AllowedPrograms
+              programs={localProcessAllowlist}
+              onRemove={handleRemoveAllowedProgram}
+            />
           )}
+          <ConfirmedCommands />
         </div>
       )}
 

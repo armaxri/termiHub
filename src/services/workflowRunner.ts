@@ -20,9 +20,9 @@
  * Executable step kinds and the seam each routes through:
  *  - `send-command` / `run-script` — the `send_input` seam ({@link WorkflowRunnerDeps.send}).
  *  - `wait` / `run-script` inter-line delays — the timer seam
- *    ({@link WorkflowRunnerDeps.wait}), with every delay clamped to
- *    {@link "@/services/macroPlayback".MAX_STEP_DELAY_MS} exactly as macro
- *    playback clamps its own delays.
+ *    ({@link WorkflowRunnerDeps.wait}). Inter-line delays are clamped to
+ *    {@link "@/services/macroPlayback".MAX_STEP_DELAY_MS} as macro playback clamps
+ *    its own delays, a `wait` step to {@link MAX_WAIT_STEP_MS}.
  *
  * `run-local-process` (guarded, security-critical) is wired by #1857. It routes
  * through **two** seams — {@link WorkflowRunnerDeps.authorizeLocalProcess} and
@@ -601,17 +601,20 @@ type StepOutcome =
  * it to the session's configured line ending. */
 const LINE_TERMINATOR = "\n";
 
+/** How long a `wait` step waits at most: an hour (#6008). Stop ends it at once. */
+export const MAX_WAIT_STEP_MS = 3_600_000;
+
 /** Error surfaced when a session vanishes mid-send. */
 const SESSION_GONE = "the target terminal is no longer connected";
 
 /**
- * Clamp a caller-authored delay to `[0, MAX_STEP_DELAY_MS]` (and treat a
- * non-finite value as 0), matching the guard macro playback applies so a single
- * `wait` or per-line delay can never appear to hang the run for minutes.
+ * Clamp a caller-authored delay to `[0, max]` (and treat a non-finite value as
+ * 0). Per-line delays keep macro playback's `MAX_STEP_DELAY_MS`, so they never
+ * appear to hang the run; a `wait` step has {@link MAX_WAIT_STEP_MS}.
  */
-function clampDelay(ms: number | undefined): number {
+function clampDelay(ms: number | undefined, max = MAX_STEP_DELAY_MS): number {
   if (ms === undefined || !Number.isFinite(ms)) return 0;
-  return Math.max(0, Math.min(ms, MAX_STEP_DELAY_MS));
+  return Math.max(0, Math.min(ms, max));
 }
 
 /**
@@ -625,13 +628,21 @@ function clampWaitTimeout(ms: number | undefined): number {
 }
 
 /** Default timer seam: a real `setTimeout` sleep (no-op for non-positive ms). */
-function defaultWait(ms: number): Promise<void> {
-  return ms <= 0 ? Promise.resolve() : new Promise((resolve) => setTimeout(resolve, ms));
+function defaultWait(ms: number, whenCancelled?: Promise<void>): Promise<void> {
+  if (ms <= 0) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    void whenCancelled?.then(() => clearTimeout(timer));
+  });
 }
 
 /** Sleep for `ms` through the injected timer seam, or the real timer by default. */
-async function sleepFor(ms: number, deps: WorkflowRunnerDeps): Promise<void> {
-  await (deps.wait ?? defaultWait)(ms);
+async function sleepFor(
+  ms: number,
+  deps: WorkflowRunnerDeps,
+  whenCancelled?: Promise<void>
+): Promise<void> {
+  await (deps.wait ? deps.wait(ms) : defaultWait(ms, whenCancelled));
 }
 
 /**
@@ -648,7 +659,7 @@ async function sleepUnlessCancelled(
   const cancelled = (): boolean => signal?.isCancelled() ?? false;
   if (cancelled()) return true;
   if (ms > 0) {
-    const sleep = Promise.resolve(sleepFor(ms, deps));
+    const sleep = sleepFor(ms, deps, signal?.whenCancelled);
     await (signal?.whenCancelled ? Promise.race([sleep, signal.whenCancelled]) : sleep);
   }
   return cancelled();
@@ -1045,7 +1056,11 @@ export async function executeStep(
     }
     case "wait": {
       // Stop ends the wait at once, not after it.
-      return (await sleepUnlessCancelled(clampDelay(resolved.delayMs), deps, signal))
+      return (await sleepUnlessCancelled(
+        clampDelay(resolved.delayMs, MAX_WAIT_STEP_MS),
+        deps,
+        signal
+      ))
         ? { ok: true, cancelled: true }
         : { ok: true };
     }

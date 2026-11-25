@@ -21,6 +21,9 @@ function waitText(wait: AutomationWait, hidden: boolean): string {
     if (password) return t("automation.wait.passwordHidden");
     return message ? tf("automation.wait.hidden", { message }) : t("automation.wait.messageHidden");
   }
+  if (wait.checking) return t("automation.wait.checking");
+  if (wait.elsewhere) return t("automation.wait.elsewhere");
+  if (wait.unchecked) return t("automation.wait.unchecked");
   if (wait.stillAsking) return t("automation.wait.stillAsking");
   if (wait.answered) return t("automation.wait.answered");
   if (password) return t("automation.wait.passwordThen");
@@ -68,6 +71,7 @@ export function WaitingRunBar() {
     <div className="waiting-runs" data-testid="automation-waits">
       {waits.map((wait) => {
         const hidden = wait.tabId !== activeTabId;
+        const insist = wait.stillAsking || wait.unchecked === true;
         return (
           <div
             key={wait.runId}
@@ -116,12 +120,13 @@ export function WaitingRunBar() {
                 </Button>
               ) : (
                 <Button
-                  variant={wait.stillAsking ? "secondary" : "primary"}
+                  variant={insist ? "secondary" : "primary"}
                   size="sm"
+                  aria-disabled={wait.checking === true || undefined}
                   onClick={() => continueWait(wait.runId)}
                   data-testid={`automation-wait-continue-${wait.tabId}`}
                 >
-                  {wait.stillAsking ? "Continue anyway" : "Continue"}
+                  {insist ? "Continue anyway" : "Continue"}
                 </Button>
               )}
             </span>
