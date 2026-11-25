@@ -45,7 +45,7 @@ import {
   tunnelReachabilityWarning,
   WIDE_BIND_HOST,
 } from "@/utils/tunnelHost";
-import { TUNNEL_TYPE_KINDS, tunnelTypeHelp } from "@/utils/tunnelTypeHelp";
+import { tunnelTypeHelp, type TunnelTypeKind } from "@/utils/tunnelTypeHelp";
 import { bestSshViaForAgent, deriveCompanion, findCompanion } from "@/utils/tunnelChain";
 import { TunnelDiagram } from "./TunnelDiagram";
 import { TunnelChainPreviewDialog } from "./TunnelChainPreviewDialog";
@@ -173,12 +173,7 @@ const tunnelFormSchema = z
  * it on hover and keyboard focus, for the machine the tunnel runs on (#6027).
  */
 function tunnelTypeOptions(host: RunLocation, agentName?: string): RadioGroupOption[] {
-  const testIds = {
-    local: "tunnel-type-local",
-    remote: "tunnel-type-remote",
-    dynamic: "tunnel-type-dynamic",
-  } as const;
-  return TUNNEL_TYPE_KINDS.map((kind) => {
+  const card = (kind: TunnelTypeKind): RadioGroupOption => {
     const help = tunnelTypeHelp(kind, host, agentName);
     return {
       value: kind,
@@ -190,9 +185,13 @@ function tunnelTypeOptions(host: RunLocation, agentName?: string): RadioGroupOpt
         </>
       ),
       help: help.lines,
-      "data-testid": testIds[kind],
     };
-  });
+  };
+  return [
+    { ...card("local"), "data-testid": "tunnel-type-local" },
+    { ...card("remote"), "data-testid": "tunnel-type-remote" },
+    { ...card("dynamic"), "data-testid": "tunnel-type-dynamic" },
+  ];
 }
 
 /**
