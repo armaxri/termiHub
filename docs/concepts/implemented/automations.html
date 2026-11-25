@@ -920,16 +920,19 @@ Editor "● Record steps" ─▶ the editor collapses to a bar above the target 
             <code>wait-for-user</code> step, "Wait for you", which can be added by hand too. The run
             stops, the terminal keeps the focus, and a bar above the terminals says which automation
             waits where and what to do, with <strong>Continue</strong> and <strong>Stop</strong>.
-            Nothing else goes on: whether a prompt was answered cannot be told from outside (a wrong
-            password asks again), so only Continue counts, and while the terminal still shows a
-            password prompt the first Continue only says so. After five minutes, or when the
-            terminal is closed or disconnects, the run fails and the History says why; neither
-            "continue if it fails" nor a retry, of the step or of anything around it, can tolerate
-            that. What is typed meanwhile is kept apart if it is recorded, like a password. Several
-            terminals wait on their own. A run nobody watches (a schedule, On disconnect, On output
-            match) does not start at all. An older build does not know the kind and refuses the
-            automation. Recordings made before this kept only a pause in the place; they cannot be
-            told from one whose password is stored, and type on.
+            Once a password prompt it saw is gone, it points to Continue (#6050). Nothing else goes
+            on: whether a prompt was answered cannot be told from outside (a wrong password asks
+            again), so only Continue counts, only while that terminal shows (else the bar offers to
+            show it), and while the terminal still shows a password prompt the first Continue only
+            says so. After five minutes, or when the terminal is closed or disconnects, the run
+            fails and the History says why; neither "continue if it fails" nor a retry, of the step
+            or of anything around it, can tolerate that. What is typed meanwhile is kept apart if it
+            is recorded, like a password. Several terminals wait on their own. A run nobody watches
+            (a schedule, On disconnect, On output match) does not start at all; such a trigger is
+            offered disabled with that reason, and a row that has one says so instead of "Triggers
+            on" (#6050). An older build does not know the kind and refuses the automation.
+            Recordings made before this kept only a pause in the place; they cannot be told from one
+            whose password is stored, and type on.
           </li>
           <li>
             <strong>Lifecycle:</strong> a dropped connection pauses the recording and it goes on
@@ -943,20 +946,22 @@ Editor "● Record steps" ─▶ the editor collapses to a bar above the target 
         </h3>
         <pre class="wireframe">
 ┌ Run "Deploy prep" ─────────────────────────────┐
-│ On  ◉ This terminal (prod-web)                 │
-│     ○ Broadcast set (3)   ○ This panel (2)     │
-│     ○ All terminals (5)   ○ Group [ops ▾]      │
-│     ○ Pick terminals…                          │
+│ Run in                                         │
+│ ◉ This terminal (prod-web)                     │
+│ ○ Broadcast set: …   ○ Terminals in this split │
+│ ○ All terminals: …   ○ Group [ops ▾]           │
+│ ○ Pick terminals…                              │
 │ ▸ More: ☑ Run in parallel                      │
 │ (parameters prompt follows, once)              │
 │                         Cancel · [Run]         │
 └────────────────────────────────────────────────┘</pre
         >
         <p>
-          A target with more than one terminal turns the button into "Run on N terminals…" and adds
-          the confirmation that names every terminal, as macros do today. Enter is ignored on that
-          step. Every receiving tab gets one "Running automation "&lt;name&gt;" (n/m)" badge. The
-          macro badge's violet color is reused.
+          "Terminals in this split" shows only in a split: without one it would be the same choice
+          as all terminals. A target with more than one terminal turns the button into "Run on N
+          terminals…" and adds the confirmation that names every terminal, as macros do today. Enter
+          is ignored on that step. Every receiving tab gets one "Running automation "&lt;name&gt;"
+          (n/m)" badge. The macro badge's violet color is reused.
         </p>
         <h3 id="3-7-history-one">3.7 History (one)</h3>
         <pre class="wireframe">

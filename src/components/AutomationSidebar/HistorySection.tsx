@@ -123,6 +123,7 @@ export function HistorySection({ automationId, onFilterChange, collapse }: Histo
   return (
     <section
       className="automation-history"
+      data-open={open ? "true" : "false"}
       data-testid="automation-history"
       aria-label="Automation history"
     >

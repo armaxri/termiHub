@@ -1075,6 +1075,7 @@ struct AgentMonitorPoll {
 }
 
 impl AgentStatusPollDelegate for AgentMonitorPoll {
+    type Target = (String, String);
     type Sample = (String, HttpCheckResult);
 
     fn interval(&self) -> Duration {

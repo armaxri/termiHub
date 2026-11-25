@@ -355,7 +355,6 @@ export function TerminalView() {
               onToggleLogging={() => void handleToggleLogging()}
               recordingLabel={recordingLabel}
               recording={recording !== null}
-              recordingAtPrompt={recording?.atPrompt === true}
               onToggleRecording={toggleRecording}
               playback={macroPlayback}
               onRunAutomation={() => setRunDialog({})}

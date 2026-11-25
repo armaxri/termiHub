@@ -39,13 +39,25 @@ export function unattendedParamValues(
   return { values };
 }
 
+/** The step at which `automation` waits for the user, 1-based, or `null`. */
+export function waitingStep(
+  automation: Automation,
+  resolve: (id: string) => Automation | undefined
+): number | null {
+  const index = automation.steps.findIndex((step) =>
+    reachesWaitForUser({ ...automation, steps: [step] }, resolve)
+  );
+  return index < 0 ? null : index + 1;
+}
+
 /** Why an unattended run of `automation` does not start, or `null`. */
 export function unattendedBlockedReason(
   automation: Automation,
   resolve: (id: string) => Automation | undefined
 ): string | null {
   if (isMacroShaped(automation)) return null;
-  if (reachesWaitForUser(automation, resolve)) return t("schedule.unattended.waits");
+  const waits = waitingStep(automation, resolve);
+  if (waits !== null) return tf("schedule.unattended.waits", { step: waits });
   const params = unattendedParamValues(automation.parameters ?? []);
   return "missing" in params ? tf("schedule.unattended.missing", { name: params.missing }) : null;
 }

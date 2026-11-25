@@ -29,6 +29,7 @@ import {
   automationRunsState,
 } from "./automationStoreState";
 import { isMacroShaped } from "./automationViews";
+import { runsReplacedBy, type RunningAutomation } from "./runningAutomations";
 
 /** Where {@link AutomationsSlice.runAutomation} runs an automation. */
 export interface RunAutomationOptions {
@@ -78,6 +79,9 @@ export interface AutomationsSlice {
    * experimental local process), progress and history.
    */
   runAutomation: (automationId: string, options?: RunAutomationOptions) => Promise<void>;
+  /** A run that would stop others waits for the user's answer here (#6042). */
+  runReplacePrompt: RunReplacePrompt | null;
+  resolveRunReplacePrompt: (stop: boolean) => void;
   /**
    * Save a copy named "Copy of …" under a fresh id. The copy keeps everything
    * but the migration's provenance, which names the original's legacy entry.
@@ -90,6 +94,14 @@ export interface AutomationsSlice {
    * Rejects when the backend clear fails; the store is unchanged then.
    */
   clearAutomationRuns: (runIds?: string[]) => Promise<void>;
+}
+
+/** The question whether a run may stop the ones in progress. */
+export interface RunReplacePrompt {
+  /** The automation to start. */
+  name: string;
+  running: RunningAutomation[];
+  resolve: (stop: boolean) => void;
 }
 
 export const createAutomationsSlice: StateCreator<AppState, [], [], AutomationsSlice> = (
@@ -159,6 +171,13 @@ export const createAutomationsSlice: StateCreator<AppState, [], [], AutomationsS
       return prepared;
     },
 
+    runReplacePrompt: null,
+    resolveRunReplacePrompt: (stop) => {
+      const prompt = get().runReplacePrompt;
+      set({ runReplacePrompt: null });
+      prompt?.resolve(stop);
+    },
+
     runAutomation: async (automationId, options) => {
       const automation = await get().fetchAutomationForRun(automationId);
       if (!automation) {
@@ -172,6 +191,16 @@ export const createAutomationsSlice: StateCreator<AppState, [], [], AutomationsS
         // Never falls back to the active terminal: it was not what was chosen.
         toast.error("None of the selected terminals are connected");
         return;
+      }
+      // Refused or still to be asked for values: nothing is stopped yet. The user is
+      // asked once, before anything of this run shows.
+      const running = runsReplacedBy(get(), isMacroShaped(automation));
+      if (running.length > 0) {
+        if (get().runReplacePrompt !== null) return;
+        const stop = await new Promise<boolean>((resolve) =>
+          set({ runReplacePrompt: { name: automation.name, running, resolve } })
+        );
+        if (!stop) return;
       }
       if (isMacroShaped(automation)) {
         await get().playMacro(automationId, {

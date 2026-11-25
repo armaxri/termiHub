@@ -311,6 +311,7 @@ function runsField(state: AppState): Pick<WindowCloseRequest, "runs"> {
       key: run.runId,
       name: run.workflowName,
       tabTitle: run.label || macroTargetLabel(state, run.tabId),
+      ...(state.automationWaits.some((w) => w.runId === run.runId) ? { waiting: true } : {}),
     })),
     ...(macroPlayback ? (macroPlayback.targetTabIds ?? [macroPlayback.tabId]) : []).map(
       (tabId) => ({

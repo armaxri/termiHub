@@ -463,6 +463,11 @@ pub struct Automation {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub legacy: Option<AutomationLegacy>,
+    /// What an import left out, in words, until the user has saved the
+    /// automation once (#6045). Empty for every other automation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(test, ts(as = "Option<Vec<String>>", optional))]
+    pub imported_in_part: Vec<String>,
     /// Keys this build does not know, kept verbatim (#6009).
     #[serde(flatten, default)]
     #[cfg_attr(test, ts(skip))]

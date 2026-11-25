@@ -54,6 +54,18 @@ describe("tunnelSummary", () => {
     ).toBeNull();
   });
 
+  it("does not claim that a tunnel runs whose agent is offline (#6028)", () => {
+    const message = tunnelDeleteConfirmMessage(
+      [tunnel("away")],
+      { away: state("away", "notReachable") },
+      "away"
+    );
+    expect(message).toContain("may still run on its agent, which is offline");
+    expect(message).not.toContain("currently active");
+    const waiting = { away: state("away", "waiting") };
+    expect(tunnelDeleteConfirmMessage([tunnel("away")], waiting, "away")).toBeNull();
+  });
+
   it("confirms an active tunnel, a chained parent and a companion", () => {
     const tunnels = [tunnel("parent"), tunnel("hop", { companionOf: "parent" }), tunnel("busy")];
     const states = { busy: state("busy", "reconnecting") };

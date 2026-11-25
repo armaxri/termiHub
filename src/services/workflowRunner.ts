@@ -429,7 +429,9 @@ export interface LocalProcessRunOptions {
 export type WorkflowAuthorizeLocalProcessSeam = (
   program: string,
   args: string[],
-  callChain: readonly string[]
+  callChain: readonly string[],
+  /** The step that asks continues on error: refusing it does not end the run. */
+  goesOn?: boolean
 ) => Promise<LocalProcessAuthorization> | LocalProcessAuthorization;
 
 /**
@@ -1034,7 +1036,7 @@ export async function executeStep(
       const perLineDelay = clampDelay(resolved.perLineDelayMs);
       for (let i = 0; i < lines.length; i++) {
         if (cancelled()) return { ok: true, cancelled: true };
-        if (i > 0 && perLineDelay > 0) await sleepFor(perLineDelay, deps);
+        if (i > 0 && perLineDelay > 0) await sleepUnlessCancelled(perLineDelay, deps, signal);
         if (cancelled()) return { ok: true, cancelled: true };
         const delivered = await deps.send(lines[i] + LINE_TERMINATOR);
         if (!delivered) return { ok: false, error: SESSION_GONE };
@@ -1042,8 +1044,10 @@ export async function executeStep(
       return { ok: true };
     }
     case "wait": {
-      await sleepFor(clampDelay(resolved.delayMs), deps);
-      return { ok: true };
+      // Stop ends the wait at once, not after it.
+      return (await sleepUnlessCancelled(clampDelay(resolved.delayMs), deps, signal))
+        ? { ok: true, cancelled: true }
+        : { ok: true };
     }
     case "type-keys":
       return typeKeys(resolved, deps, signal);
@@ -1064,14 +1068,17 @@ export async function executeStep(
       // GUARDRAIL: never spawn without explicit authorization. Absent seam or a
       // refusal both mean "not authorized" — the process is never spawned.
       const authorized = deps.authorizeLocalProcess
-        ? await deps.authorizeLocalProcess(resolved.program, resolved.args, callChain)
+        ? await deps.authorizeLocalProcess(
+            resolved.program,
+            resolved.args,
+            callChain,
+            resolved.continueOnError === true
+          )
         : false;
       if (authorized !== true) {
         return {
           ok: false,
-          error: authorized
-            ? authorized.refused
-            : `local process "${resolved.program}" is not authorized to run`,
+          error: authorized ? authorized.refused : `“${resolved.program}” was not allowed to run`,
         };
       }
       // A cancel observed before the spawn aborts the run without spawning.

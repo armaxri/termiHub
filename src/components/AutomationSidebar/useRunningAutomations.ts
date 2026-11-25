@@ -3,6 +3,7 @@ import { tf } from "@/i18n/catalog";
 import { useAppStore } from "@/store/appStore";
 import { macroTargetLabel } from "@/store/slices/macroRunHistory";
 import { useProjectedWorkflowRun } from "@/store/useProjectedWorkflowRun";
+import { currentStep, typedPercent } from "@/utils/runProgress";
 import { showTerminal } from "@/utils/showTerminal";
 import type { AutomationRunTarget } from "./AutomationRow";
 
@@ -30,14 +31,13 @@ export function useRunningAutomations(): Map<string, AutomationRunTarget[]> {
     for (const run of workflowRuns) {
       const tab = run.label || macroTargetLabel(useAppStore.getState(), run.tabId);
       const waiting = waits.some((w) => w.runId === run.runId);
-      const step = Math.min(run.completed + 1, run.total);
       add(run.workflowId, {
         key: run.runId,
         label: tab,
         waiting,
         progress: tf(waiting ? "automation.running.waiting" : "automation.running.step", {
           tab,
-          step,
+          step: currentStep(run.completed, run.total),
           total: run.total,
         }),
         onShow: () => showTerminal(run.tabId),
@@ -52,10 +52,9 @@ export function useRunningAutomations(): Map<string, AutomationRunTarget[]> {
           key: tabId,
           label: tab,
           waiting: false,
-          // A share, not a count: the parts of a recording are keys and pastes (A-003).
           progress: tf("automation.running.typed", {
             tab,
-            percent: playback.total > 0 ? Math.floor((typed / playback.total) * 100) : 0,
+            percent: typedPercent(typed, playback.total),
           }),
           onShow: () => showTerminal(tabId),
           onStop: () => cancelMacroPlaybackOnTab(tabId),

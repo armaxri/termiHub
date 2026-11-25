@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Modal, Button, Input, Field, Select, Toggle } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
+import { parameterUse } from "@/components/Automations/parameterUses";
 import type { WorkflowParameter } from "@/types/workflow";
 import type { WorkflowParamValues } from "@/services/workflowRunner";
 import "./WorkflowParamPromptDialog.css";
@@ -118,13 +119,17 @@ export function WorkflowParamPromptDialog() {
     >
       {prompt && (
         <div className="workflow-param-prompt">
+          <p className="workflow-param-prompt__where" data-testid="workflow-param-prompt-where">
+            Runs in {prompt.targets.join(", ")}.
+          </p>
           {prompt.parameters.map((param) => {
             const value = values[param.name] ?? initialValue(param);
             const label = `${param.label ?? param.name}${param.required ? " *" : ""}`;
+            const hint = parameterUse(param.name, prompt.steps) || undefined;
             const fieldId = `workflow-param-value-${param.name}`;
             if (param.type === "boolean") {
               return (
-                <Field key={param.name} label={label} htmlFor={fieldId}>
+                <Field key={param.name} label={label} htmlFor={fieldId} hint={hint}>
                   <Toggle
                     id={fieldId}
                     checked={value === true}
@@ -137,7 +142,7 @@ export function WorkflowParamPromptDialog() {
             }
             if (param.type === "enum") {
               return (
-                <Field key={param.name} label={label} htmlFor={fieldId}>
+                <Field key={param.name} label={label} htmlFor={fieldId} hint={hint}>
                   <Select
                     id={fieldId}
                     value={typeof value === "string" ? value : ""}
@@ -150,7 +155,7 @@ export function WorkflowParamPromptDialog() {
               );
             }
             return (
-              <Field key={param.name} label={label} htmlFor={fieldId}>
+              <Field key={param.name} label={label} htmlFor={fieldId} hint={hint}>
                 <Input
                   id={fieldId}
                   type={param.type === "number" ? "number" : "text"}

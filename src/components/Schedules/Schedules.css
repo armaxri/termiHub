@@ -120,6 +120,29 @@
   font-size: var(--font-size-sm);
 }
 
+/* A way on inside a line. */
+.schedules__link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-link);
+  font: inherit;
+  cursor: pointer;
+}
+
+.schedules__link:hover {
+  text-decoration: underline;
+}
+
+.schedules__link:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.schedule-editor__summary--cannot > :first-child {
+  color: var(--color-warning);
+}
+
 .schedule-confirm {
   display: flex;
   flex-direction: column;
@@ -142,6 +165,27 @@
   flex-direction: column;
   max-height: 50%;
   border-top: 1px solid var(--border-primary);
+}
+
+/* What went wrong, under the header's words and open or closed. */
+.schedules__concern {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: 0 var(--spacing-md) var(--spacing-xs) var(--spacing-xl);
+  border: none;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.schedules__concern:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
 }
 
 /* "Pause all" label + toggle in the section header. The label never wraps; at

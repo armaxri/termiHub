@@ -210,7 +210,7 @@ describe("CommandPalette", () => {
       typeInto("deploy");
       expect(activeLabel()).toBe("Run Deploy");
       expect(row("wf-1")?.querySelector(".command-palette__target")?.textContent).toBe(
-        "types 1 step in prod-web"
+        "types into prod-web, 1 step"
       );
       expect(row("wf-1")?.textContent).not.toMatch(/macro|workflow/i);
       typeInto("login");
@@ -233,7 +233,7 @@ describe("CommandPalette", () => {
     });
 
     it.each([
-      ["record macro", "Record automation (start/stop)"],
+      ["record macro", "Start recording in prod-web"],
       ["play macro", "Run automation…"],
     ])("the command once called %s is %s", (query, label) => {
       seed();
@@ -270,10 +270,10 @@ describe("CommandPalette", () => {
         ]),
       });
       typeInto("login");
-      expect(target("m-1")).toBe("types its keys in prod-web");
+      expect(target("m-1")).toBe("types into prod-web");
       typeInto("deploy");
-      expect(target("wf-1")).toBe("types 1 step in prod-web · triggers off");
-      expect(target("new-1")).toBe("Cannot run");
+      expect(target("wf-1")).toBe("types into prod-web, 1 step · triggers off");
+      expect(target("new-1")).toBe("Cannot run: needs a newer termiHub");
       typeInto("deploy later");
       keydown("Enter");
       expect(runAutomation).not.toHaveBeenCalled();
@@ -285,8 +285,9 @@ describe("CommandPalette", () => {
       window.addEventListener(OPEN_RUN_AUTOMATION_EVENT, listen);
       seed(null);
       typeInto("deploy");
+      // Nothing is open, so there is nothing to choose from (C-024).
       expect(row("wf-1")?.querySelector(".command-palette__target")?.textContent).toBe(
-        "asks where"
+        "open a terminal first"
       );
       keydown("Enter");
       window.removeEventListener(OPEN_RUN_AUTOMATION_EVENT, listen);

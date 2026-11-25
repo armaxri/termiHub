@@ -130,10 +130,16 @@ class TestScheduledRuns(
         self.wait(lambda: self.driver.exists(checkbox), what="the target connection checkbox")
         self.driver.click(checkbox)
         # Nothing is preselected (#6024): Save refuses until it is chosen.
-        assert self.is_blocked("schedule-editor-save"), "the closed-connection choice is preset"
+        missing = self.driver.get_text("schedule-editor-summary")
+        assert "if a connection is closed" in missing, f"the choice is preset: {missing!r}"
         self.driver.click("schedule-editor-closed-skip")
+        self.driver.select("schedule-editor-rule-kind", "interval")  # it starts as daily (#6050)
+        self.wait(lambda: self.driver.exists("schedule-editor-every"), what="the minutes")
         self.driver.type("schedule-editor-every", "1")
-        self.wait(lambda: not self.is_blocked("schedule-editor-save"), what="Save to enable")
+        self.wait(
+            lambda: "To save:" not in self.driver.get_text("schedule-editor-summary"),
+            what="nothing to be missing",
+        )
         self.driver.click("schedule-editor-save")
         self.wait(lambda: not self.driver.exists(EDITOR), what="the schedule editor to close")
         schedule = self.wait(

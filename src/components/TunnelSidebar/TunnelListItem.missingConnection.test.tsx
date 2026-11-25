@@ -81,7 +81,7 @@ describe("TunnelListItem — SSH connection deleted (#2850)", () => {
     expect(notice).not.toBeNull();
     expect(notice?.textContent).toContain(t("tunnel.missingConnection.detail"));
     expect(q("tunnel-status-tun-1")?.getAttribute("aria-label")).toBe(
-      t("tunnel.missingConnection.status")
+      t("service.state.needsConnection")
     );
   });
 

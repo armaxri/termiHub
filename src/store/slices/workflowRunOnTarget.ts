@@ -42,6 +42,7 @@ import {
   type WorkflowParamValues,
 } from "@/services/workflowRunner";
 import type { Automation } from "@/types/generated/Automation";
+import type { AutomationStep } from "@/types/generated/AutomationStep";
 import type { AutomationRun } from "@/types/generated/AutomationRun";
 import type { AutomationRunOrigin } from "@/types/generated/AutomationRunOrigin";
 import type { Workflow } from "@/types/workflow";
@@ -54,7 +55,7 @@ import {
   localProcessRefusal,
   localProcessRefusalToastId,
 } from "../localProcessRefusal";
-import { t } from "@/i18n/catalog";
+import { t, tf } from "@/i18n/catalog";
 import { LOCAL_PROCESS_REASON } from "@/utils/localProcessGate";
 import type { AppState } from "../appStore";
 import { collectLiveTabs } from "../layoutHelpers";
@@ -74,6 +75,7 @@ import { failedRunActions } from "./automationRunActions";
 import { automationForRun, recordAutomationRun } from "./automationStoreState";
 import { collectNestedRun, nestedRunRecord, workflowToAutomation } from "./automationViews";
 import type { LocalProcessAuthDecision, WorkflowRunOutputLine } from "./workflowsSlice";
+import { stepProgress } from "@/utils/runProgress";
 
 /**
  * Default timeout (ms) applied to a `run-local-process` step from the frontend.
@@ -197,6 +199,22 @@ export interface WorkflowTargetRun {
   sessionless?: boolean;
 }
 
+/** " (Run command: make)": what a step is, so the user need not count in the editor. */
+function stepWhat(step: AutomationStep): string {
+  return ` (${[stepKindLabel(step.kind), stepSummary(step)].filter(Boolean).join(": ")})`;
+}
+
+/** How the reason starts when the user did not allow a program. */
+function refusedStart(): string {
+  return t("automation.program.refused").split("{")[0];
+}
+
+/** "Step 1 was run." / "Steps 1 to 3 were run.": what a failed run did before (B-010). */
+function ranBefore(failedIndex: number, result: WorkflowRunResult): string {
+  if (result.notStarted || failedIndex === 0) return "";
+  return failedIndex === 1 ? "Step 1 was run." : `Steps 1 to ${failedIndex} were run.`;
+}
+
 /**
  * Show the terminal toast for a single-target run's outcome. A clean outcome
  * replaces the previous run's clean outcome; a failure stays (#5675).
@@ -206,7 +224,9 @@ export function toastRunOutcome(
   result: WorkflowRunResult,
   total: number,
   toastId: string,
-  automation?: Pick<Automation, "id" | "steps">
+  automation?: Pick<Automation, "id" | "steps">,
+  /** The terminal it ran in. */
+  where?: string
 ): void {
   const tolerated = result.continuedFailures ?? [];
   if (result.status === "completed" && tolerated.length === 0) {
@@ -225,26 +245,37 @@ export function toastRunOutcome(
     keepWorkflowRunFailure(toastId);
   } else if (result.status === "cancelled") {
     // toast-policy: explains-outcome — says how far the canceled run got
+    const at = automation?.steps[result.stepsCompleted];
     toast.info(`“${workflowName}” stopped`, {
       id: toastId,
-      description: `Stopped after ${result.stepsCompleted} of ${total} steps`,
+      // Something of the step it was at may have been typed (C-004).
+      description: [
+        `Stopped${where ? ` in ${where}` : ""} at ${stepProgress(result.stepsCompleted, total).toLowerCase()}${
+          at ? stepWhat(at) : ""
+        }.`,
+        ranBefore(result.stepsCompleted, result),
+      ]
+        .filter(Boolean)
+        .join(" "),
+      ...(automation ? { action: failedRunActions(automation.id).cancel } : {}),
     });
     collapseWorkflowRunOutcome(toastId);
   } else {
     const index = result.failedStepIndex ?? result.stepsCompleted;
     const step = automation?.steps[index];
     // What the step is, so the user need not count in the editor (#6026).
-    const what = step
-      ? ` (${[stepKindLabel(step.kind), stepSummary(step)].filter(Boolean).join(": ")})`
-      : "";
+    const what = step ? stepWhat(step) : "";
     toast.error(
       result.notStarted
         ? `“${workflowName}” was not run`
         : `“${workflowName}” failed at step ${index + 1}${what}`,
       {
         id: toastId,
-        description: result.error,
-        ...(automation ? failedRunActions(automation.id) : {}),
+        description: [ranBefore(index, result), result.error].filter(Boolean).join(" "),
+        // Nothing is wrong with the automation when its program was refused (C-003).
+        ...(automation
+          ? failedRunActions(automation.id, result.error?.startsWith(refusedStart()) === true)
+          : {}),
       }
     );
     keepWorkflowRunFailure(toastId);
@@ -335,7 +366,8 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
   const askAuthorization = async (
     program: string,
     args: string[],
-    callChain: readonly string[]
+    callChain: readonly string[],
+    goesOn: boolean
   ): Promise<LocalProcessDecision> => {
     if (!currentSettingsView().workflowLocalProcessEnabled) {
       toast.error("Local process execution is disabled", {
@@ -362,12 +394,15 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
     // Not yet trusted — ask the user, once, via the confirmation dialog, about the
     // file that would start. The approval is for that file only.
     const { path, remember, imported, interpreter } = verdict;
+    // The question is what it waits for; a spinner beside it would lie on it (B-004).
+    if (!fanout) toast.dismiss(toastId);
     const decision = await new Promise<LocalProcessAuthDecision>((resolve) => {
       set({
         localProcessPrompt: {
           program,
           path,
           args,
+          goesOn,
           workflowName: workflow.name,
           remember,
           imported,
@@ -377,8 +412,13 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
       });
     });
     set({ localProcessPrompt: null });
+    if (!fanout && decision !== "cancel") {
+      toast.loading(`Running automation “${workflow.name}”…`, { id: toastId });
+    }
 
-    if (decision === "cancel") return { ok: false };
+    if (decision === "cancel") {
+      return { ok: false, reason: tf("automation.program.refused", { program }) };
+    }
     if (decision === "always" && remember === "command") {
       // The backend remembers it, for this very command of these automations.
       try {
@@ -405,7 +445,8 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
   const authorizeLocalProcess: WorkflowAuthorizeLocalProcessSeam = async (
     program,
     args,
-    callChain
+    callChain,
+    goesOn = false
   ) => {
     // The run was checked before it started; this catches an automation or the
     // switch that changed while it runs (#5988). Before the shared decisions, so
@@ -425,7 +466,7 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
     let decision = fanout?.authDecisions?.get(key);
     if (!decision) {
       // One prompt slot: queue behind any prompt a concurrent target has open.
-      decision = authPromptQueue.then(() => askAuthorization(program, args, callChain));
+      decision = authPromptQueue.then(() => askAuthorization(program, args, callChain, goesOn));
       // The caller awaiting `decision` handles its rejection; the queue only has to
       // settle so the next prompt is not blocked. Trace it here too (#4520).
       authPromptQueue = decision.catch((err: unknown) =>
@@ -583,17 +624,15 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
 
   // A "Wait for you" step (#6025): the run stops here until the user continues.
   const waitForUser: WorkflowWaitForUserSeam = (message, { signal }) => {
-    const note = t("automation.wait.note");
-    if (fanout) fanout.onProgress?.(0, note);
-    else
-      toast.loading(`Running automation “${workflow.name}”…`, { id: toastId, description: note });
-    const tab = collectLiveTabs(get()).find((x) => x.id === targetTabId);
+    // The bar above the terminals says it (B-004); the next step brings the toast back.
+    if (fanout) fanout.onProgress?.(0, t("automation.wait.note"));
+    else toast.dismiss(toastId);
     return get().waitForUser(
       {
         runId,
         tabId: targetTabId,
         sessionId: targetSessionId,
-        tabTitle: targetLabel || tab?.title || "Terminal",
+        tabTitle,
         automationName: workflow.name,
         message,
       },
@@ -606,6 +645,10 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
   // (PROD-047, #3418).
   const toastId = `workflow-run-${workflowId}-${targetTabId}`;
   const total = workflow.steps.length;
+  const tabTitle =
+    targetLabel || collectLiveTabs(get()).find((x) => x.id === targetTabId)?.title || "Terminal";
+  const stepNote = (completed: number): string =>
+    `${stepProgress(completed, total)} in ${tabTitle}`;
   // Captured up front so the persisted history record (PROD-0046) carries the
   // real run duration; `triggeredBy` defaults to a manual launch.
   const startedAt = new Date().toISOString();
@@ -613,7 +656,7 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
     claimWorkflowRunToast(toastId);
     toast.loading(`Running automation “${workflow.name}”…`, {
       id: toastId,
-      description: `0 / ${total} steps`,
+      description: stepNote(0),
     });
     // Clear any prior run's frontend-owned streamed content when a fresh run
     // starts; a new panel is created lazily only if this run spawns a local
@@ -636,6 +679,15 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
     // from transport construction, and dispatchWorkflowRunStarted below hits
     // the same failure and logs it (#4520).
   }
+  // Stoppable from the moment it shows as running, which is before its first step: a
+  // Stop pressed meanwhile would find no run and be lost.
+  let stoppedEarly = false;
+  activeWorkflowRuns.set(runId, {
+    done: new Promise(() => {}),
+    cancel: () => {
+      stoppedEarly = true;
+    },
+  });
   await dispatchWorkflowRunStarted({
     runId,
     workflowId,
@@ -679,7 +731,7 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
         }
         toast.loading(`Running automation “${workflow.name}”…`, {
           id: toastId,
-          description: `${completed} / ${total} steps`,
+          description: stepNote(completed),
         });
       },
       // Per-step error handling (PROD-045): surface each retry in the progress
@@ -717,6 +769,7 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
     },
     paramValues
   );
+  if (stoppedEarly) handle.cancel();
   activeWorkflowRuns.set(runId, handle);
   fanout?.onStart?.(runId, () => handle.cancel());
 
@@ -757,6 +810,6 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
   );
 
   // A fan-out run summarises all targets once at the end instead (PROD-047).
-  if (!fanout) toastRunOutcome(workflow.name, result, total, toastId, automation);
+  if (!fanout) toastRunOutcome(workflow.name, result, total, toastId, automation, tabTitle);
   return { ...result, historyRunId: runRecord.id };
 }

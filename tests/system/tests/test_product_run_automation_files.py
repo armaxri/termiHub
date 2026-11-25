@@ -92,7 +92,7 @@ def test_grade_round_trip():
 
 
 def test_grade_disarmed():
-    assert disarmed_problems(_automation(triggersEnabled=False), "Triggers off: not on …") == []
+    assert disarmed_problems(_automation(triggersEnabled=False), "Triggers off: hotkey F9 does not start it.") == []
     assert disarmed_problems(_automation(), None) == [
         "it is stored armed",
         "its row shows no marker",
@@ -108,11 +108,11 @@ def test_grade_called():
 
 
 def test_grade_palette():
-    assert palette_problems("Run Deploytypes 1 step in prod-web", "Deploy", "prod-web") == []
+    assert palette_problems("Run Deploytypes into prod-web, 1 step", "Deploy", "prod-web") == []
     assert palette_problems(None, "Deploy", "t") == ["'Deploy' is not found"]
     assert len(palette_problems("Play macro: Deploymacro", "Deploy", "t")) == 3
     # The user's own name may hold the word.
-    assert palette_problems("Run My macrotypes 1 step in t", "My macro", "t") == []
+    assert palette_problems("Run My macrotypes into t", "My macro", "t") == []
 
 
 # ── live grade ────────────────────────────────────────────────────────────

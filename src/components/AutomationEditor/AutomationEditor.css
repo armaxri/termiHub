@@ -167,8 +167,10 @@
 
 .automation-steps__insert-button {
   position: absolute;
-  left: 50%;
+  left: 0;
   display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xxs);
   padding: var(--spacing-xxs);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-full);
@@ -176,7 +178,8 @@
   color: var(--text-primary);
   cursor: pointer;
   opacity: 0;
-  transform: translate(-50%, -50%);
+  font-size: var(--font-size-xs);
+  transform: translateY(-50%);
 }
 
 .automation-steps__insert-button:hover,
@@ -325,6 +328,11 @@
   gap: var(--spacing-xxs);
   flex-shrink: 0;
   font-size: var(--font-size-xs);
+  color: var(--text-primary);
+}
+
+/* The colour on the icon: the words need 4.5:1 in light too (C-026). */
+.automation-step__blocked > svg {
   color: var(--color-warning);
 }
 
@@ -662,4 +670,34 @@
   flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+/* The keys that have no letter (B-013): a wrapping row per group. */
+.type-keys__palette {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+}
+
+.type-keys__group {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-xs);
+}
+
+.type-keys__group-keys {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+}
+
+.type-keys__group-title {
+  flex-shrink: 0;
+  width: 88px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
 }

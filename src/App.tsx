@@ -18,6 +18,7 @@ import { CredentialStorageChooser } from "@/components/CredentialStorage";
 import { SshHostKeyPrompt } from "@/components/SshHostKeyPrompt/SshHostKeyPrompt";
 import { SshKeyboardInteractivePrompt } from "@/components/SshKeyboardInteractivePrompt/SshKeyboardInteractivePrompt";
 import { LocalProcessAuthDialog } from "@/components/WorkflowSidebar/LocalProcessAuthDialog";
+import { RunReplaceDialog } from "./components/Automations/RunReplaceDialog";
 import { WorkflowParamPromptDialog } from "@/components/WorkflowSidebar/WorkflowParamPromptDialog";
 import { ScheduleEditorHost } from "@/components/Schedules";
 import { RecordingHost } from "@/components/Recording";
@@ -394,6 +395,7 @@ function App() {
           <SshHostKeyPrompt />
           <SshKeyboardInteractivePrompt />
           <LocalProcessAuthDialog />
+          <RunReplaceDialog />
           <WorkflowParamPromptDialog />
           <AutomationEditorHost />
           <RecordingHost />

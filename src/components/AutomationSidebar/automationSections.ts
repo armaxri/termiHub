@@ -47,10 +47,14 @@ export const useAutomationSections = create<AutomationSectionsState>((set) => ({
   savedSchedule: null,
   markScheduleSaved: (id) =>
     set((s) => ({ savedSchedule: { id, seq: (s.savedSchedule?.seq ?? 0) + 1 } })),
-  setSchedulesOpen: (schedulesOpen) => set({ schedulesOpen }),
-  setHistoryOpen: (historyOpen) => set({ historyOpen }),
+  // One at a time: the open one needs the room (B-034).
+  setSchedulesOpen: (schedulesOpen) =>
+    set(schedulesOpen ? { schedulesOpen, historyOpen: false } : { schedulesOpen }),
+  setHistoryOpen: (historyOpen) =>
+    set(historyOpen ? { historyOpen, schedulesOpen: false } : { historyOpen }),
   setHistoryAutomationId: (historyAutomationId) => set({ historyAutomationId }),
-  showHistoryOf: (historyAutomationId) => set({ historyOpen: true, historyAutomationId }),
+  showHistoryOf: (historyAutomationId) =>
+    set({ historyOpen: true, schedulesOpen: false, historyAutomationId }),
 }));
 
 /** Show the Automations view with its Schedules section open. */

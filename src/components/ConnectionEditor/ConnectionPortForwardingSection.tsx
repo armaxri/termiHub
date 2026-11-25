@@ -7,6 +7,7 @@ import { useTunnelDeleteConfirm } from "@/hooks/useTunnelDeleteConfirm";
 import type { TunnelConfig } from "@/types/tunnel";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { isAgentHost, resolveTunnelHost } from "@/utils/tunnelHost";
+import { serviceStateLabel, tunnelServiceState } from "@/utils/serviceState";
 import { tunnelPortMapping } from "@/utils/tunnelSummary";
 import { TUNNEL_TYPE_KINDS, tunnelTypeHelp } from "@/utils/tunnelTypeHelp";
 import { errorMessage } from "@/utils/errorMessage";
@@ -105,7 +106,9 @@ export function ConnectionPortForwardingSection({
               {bound.map((tunnel) => {
                 const toggleId = `port-forward-start-${tunnel.id}`;
                 const helpId = `port-forward-help-${tunnel.id}`;
-                const status = tunnelStates[tunnel.id]?.status ?? "disconnected";
+                const status = serviceStateLabel(
+                  tunnelServiceState(tunnelStates[tunnel.id]?.status)
+                );
                 const host = resolveTunnelHost(tunnel);
                 const agentName = isAgentHost(host)
                   ? remoteAgents.find((a) => a.id === host.agentId)?.name

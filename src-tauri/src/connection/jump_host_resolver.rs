@@ -289,6 +289,21 @@ pub(crate) fn chain_has_reference(settings: &Value) -> bool {
     }
 }
 
+/// Whether `settings` has a jump-host chain with an inline hop that signs in
+/// with a password.
+pub(crate) fn inline_hop_has_password(settings: &Value) -> bool {
+    match settings
+        .get("proxyJump")
+        .or_else(|| settings.get("jumpHosts"))
+    {
+        Some(Value::Array(hops)) => hops.iter().any(|hop| {
+            reference_id(hop).is_none()
+                && hop.get("authMethod").and_then(Value::as_str) == Some("password")
+        }),
+        _ => false,
+    }
+}
+
 /// Resolve every `connectionId` jump-host reference in `settings` in place.
 ///
 /// Walks the `proxyJump` array (or its legacy `jumpHosts` alias), replacing each

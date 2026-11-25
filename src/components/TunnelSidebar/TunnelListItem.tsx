@@ -12,11 +12,16 @@ import {
 } from "lucide-react";
 import { Button, Tooltip, toast } from "@/components/ui";
 import { SidebarListItem, SidebarStatusDot } from "@/components/SidebarListItem";
-import type { SidebarStatusTone } from "@/components/SidebarListItem";
-import { TunnelConfig, TunnelState, TunnelStatus } from "@/types/tunnel";
+import { TunnelConfig, TunnelState } from "@/types/tunnel";
 import { SavedConnection } from "@/types/connection";
 import { useByteRate } from "@/hooks/useByteRate";
-import { tunnelStatusLabel } from "@/utils/statusLabel";
+import {
+  isServiceActive,
+  serviceReason,
+  serviceRunAction,
+  serviceStateDot,
+  tunnelServiceState,
+} from "@/utils/serviceState";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import {
   resolveTunnelHost,
@@ -69,23 +74,6 @@ interface TunnelListItemProps {
   onRemoveCompanion?: () => void;
 }
 
-/** Map a tunnel status onto the shared status-dot tone. */
-function statusTone(status: TunnelStatus): SidebarStatusTone {
-  switch (status) {
-    case "connected":
-      return "success";
-    case "connecting":
-    case "reconnecting":
-      return "warning";
-    case "error":
-      return "error";
-    case "missingConnection":
-      return "warning";
-    default:
-      return "neutral";
-  }
-}
-
 /**
  * A single SSH tunnel entry in the Tunnels sidebar. Composes the shared
  * {@link SidebarListItem} shell (status dot / name / actions / details) so
@@ -113,12 +101,17 @@ export function TunnelListItem({
 }: TunnelListItemProps) {
   const { remoteAgents } = useProjectedAgents();
   const status = state?.status ?? "disconnected";
-  const isActive = status === "connected" || status === "connecting" || status === "reconnecting";
+  const serviceState = tunnelServiceState(status);
+  const isActive = isServiceActive(serviceState);
   const isError = status === "error";
   // Its SSH connection was deleted (#2850): the backend refuses to start it
   // until the user repoints it in the editor.
   const isMissingConnection = status === "missingConnection";
   const lastError = state?.error;
+  // What it waits for, or why it is not reachable (#6028). An error and a
+  // reconnect keep their own lines.
+  const reason =
+    isError || status === "reconnecting" ? undefined : serviceReason(serviceState, lastError);
   // Live up/down throughput (PROD-038), smoothed from the cumulative stats
   // counters. Sampled only while connected; reset when the tunnel drops.
   const sampling = status === "connected" && !!state?.stats;
@@ -160,13 +153,14 @@ export function TunnelListItem({
     isMissingConnection ||
     (isError && !!lastError) ||
     (status === "reconnecting" && !!lastError) ||
+    !!reason ||
     (!!pairLabel && pairWarn) ||
     (companionRedundant && !!onRemoveCompanion) ||
     showDegradedFix;
   const tooltip = tunnelRowTooltip(tunnel, {
     sshLabel,
     host: hostBadge,
-    stats: isActive ? state?.stats : undefined,
+    stats: status === "connected" ? state?.stats : undefined,
     upRate,
     downRate,
     reach: reach && !reach.warn ? reach.label : null,
@@ -175,20 +169,22 @@ export function TunnelListItem({
   });
 
   // The row's run control (#5852): always visible on the trailing edge, like
-  // a macro's Play. Stop while it runs, Retry after an error, Start otherwise.
-  // A tunnel whose SSH connection was deleted cannot start; its row offers
-  // "Choose connection" instead.
+  // a macro's Play. Stop while it runs, Stop waiting before it starts by itself,
+  // Retry after an error, Start otherwise. A tunnel whose SSH connection was
+  // deleted cannot start; its row offers "Choose connection" instead.
   // The store surfaces its own start/stop toast, so each run control suppresses
   // the Button's duplicate error toast and keeps the pending spinner.
+  const run = serviceRunAction(serviceState);
   let primaryAction: React.ReactNode;
-  if (isActive) {
+  if (run === "stop" || run === "stopWaiting") {
+    const label = run === "stop" ? "Stop" : t("service.run.stopWaiting");
     primaryAction = (
-      <Tooltip content="Stop" side="top">
+      <Tooltip content={label} side="top">
         <Button
           variant="ghost"
           size="sm"
           iconOnly
-          aria-label="Stop"
+          aria-label={label}
           data-testid={`tunnel-stop-${tunnel.id}`}
           icon={<Square size={12} />}
           errorToast={false}
@@ -199,7 +195,7 @@ export function TunnelListItem({
         />
       </Tooltip>
     );
-  } else if (isError) {
+  } else if (run === "retry") {
     primaryAction = (
       <Tooltip content="Retry" side="top">
         <Button
@@ -217,7 +213,7 @@ export function TunnelListItem({
         />
       </Tooltip>
     );
-  } else if (!isMissingConnection) {
+  } else if (run === "start") {
     primaryAction = (
       <Tooltip content="Start" side="top">
         <Button
@@ -236,9 +232,6 @@ export function TunnelListItem({
       </Tooltip>
     );
   }
-  const statusLabel = isMissingConnection
-    ? t("tunnel.missingConnection.status")
-    : tunnelStatusLabel(status);
 
   return (
     <SidebarListItem
@@ -261,9 +254,7 @@ export function TunnelListItem({
       onDoubleClick={() => onEdit(tunnel.id)}
       status={
         <SidebarStatusDot
-          tone={statusTone(status)}
-          label={statusLabel}
-          title={statusLabel}
+          {...serviceStateDot(serviceState)}
           testId={`tunnel-status-${tunnel.id}`}
         />
       }
@@ -399,6 +390,14 @@ export function TunnelListItem({
               <span className="tunnel-item__reconnecting" title={lastError}>
                 <RotateCw size={12} className="tunnel-item__reconnecting-icon" />
                 <span className="tunnel-item__reconnecting-text">{lastError}</span>
+              </span>
+            )}
+            {reason && (
+              <span
+                className="sidebar-list-item__reason"
+                data-testid={`tunnel-reason-${tunnel.id}`}
+              >
+                {reason}
               </span>
             )}
             {pairLabel && pairWarn && (

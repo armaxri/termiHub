@@ -137,7 +137,7 @@ const STEP_DESCRIPTIONS: Record<AutomationStepKind, string> = {
   conditional: "Runs steps only if a comparison holds",
   loop: "Repeats steps",
   "wait-for-output": "Waits until the terminal shows a text",
-  "wait-for-user": "Stops until you press Continue, e.g. to type a password",
+  "wait-for-user": "Pauses until you press Continue, e.g. to type a password",
 };
 
 /** The "Add step" menu's second line for a step kind. */
@@ -224,7 +224,7 @@ export const TYPING_SPEEDS: readonly TypingSpeed[] = ["recorded", "fixed", "inst
 export function typingSpeedLabel(speed: TypingSpeed, recorded: boolean): string {
   switch (speed) {
     case "recorded":
-      return recorded ? "As recorded" : "Set for each row";
+      return recorded ? "As recorded" : "Own pause before each row";
     case "fixed":
       return "Same delay everywhere";
     case "instant":

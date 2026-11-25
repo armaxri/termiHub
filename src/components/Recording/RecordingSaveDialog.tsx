@@ -9,6 +9,7 @@ import { ITEM_DESCRIPTION_MAX_LENGTH, normalizeItemDescription } from "@/utils/i
 import { parseTags } from "@/utils/parseTags";
 import { recordedTime, recordingName } from "@/utils/recordingText";
 import "./Recording.css";
+import { t } from "@/i18n/catalog";
 
 /** Props of {@link RecordingSaveDialog}. Mount it with a fresh `key` per take. */
 export interface RecordingSaveDialogProps {
@@ -68,6 +69,8 @@ export function RecordingSaveDialog({
 
   const chunks = keepSecrets ? take.chunks : plain;
   const preview = useMemo(() => recordingPreview(take, keepSecrets), [take, keepSecrets]);
+  // Replayed, it types its last line and stops there (C-013).
+  const noEnter = chunks.length > 0 && !/[\r\n]$/.test(chunks[chunks.length - 1].data);
   const nothingLeft = chunks.length === 0;
   const nameError = to === "new" && name.trim() === "" ? "Name is required." : undefined;
   const automationError = to === "existing" && !automationId ? "Choose an automation." : undefined;
@@ -119,7 +122,7 @@ export function RecordingSaveDialog({
         <>
           {/* What the X does, by name (A-009). */}
           <Button
-            variant="ghost"
+            variant="secondary"
             className="recording-save__keep"
             onClick={onKeep}
             data-testid="recording-save-keep"
@@ -165,6 +168,11 @@ export function RecordingSaveDialog({
             </pre>
           )}
         </div>
+        {noEnter && (
+          <p className="recording-save__note" data-testid="recording-save-no-enter">
+            {t("recording.noEnter")}
+          </p>
+        )}
         {hasSecrets && (
           <div className="recording-save__secrets" data-testid="recording-save-secrets">
             <KeyRound size={14} aria-hidden="true" />
@@ -180,8 +188,7 @@ export function RecordingSaveDialog({
                 options={[
                   {
                     value: "leave-out",
-                    label:
-                      "Leave it out. The automation waits at this point until you have typed it.",
+                    label: t("recording.leaveOut"),
                     "data-testid": "recording-save-secrets-leave-out",
                   },
                   {

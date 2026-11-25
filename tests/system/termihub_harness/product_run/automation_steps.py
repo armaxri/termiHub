@@ -176,6 +176,8 @@ class AutomationPhaseUi(AutomationSidebarUi):
         self.wait(lambda: self.driver.exists(box), what="the target connection checkbox")
         self.driver.click(box)
         self.driver.click(f"schedule-editor-closed-{if_closed}")
+        self.driver.select("schedule-editor-rule-kind", "interval")  # it starts as daily (#6050)
+        self.wait(lambda: self.driver.exists("schedule-editor-every"), what="the minutes")
         self.driver.type("schedule-editor-every", "1")
         self.wait(lambda: not self.is_blocked("schedule-editor-save"), what="Save to enable")
         self.driver.click("schedule-editor-save")

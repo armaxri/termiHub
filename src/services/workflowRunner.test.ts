@@ -251,7 +251,7 @@ describe("executeStep", () => {
       const outcome = await executeStep(step("echo"), deps({ runLocalProcess }));
 
       expect(outcome.ok).toBe(false);
-      if (!outcome.ok) expect(outcome.error).toContain("not authorized");
+      if (!outcome.ok) expect(outcome.error).toContain("not allowed to run");
       // The security invariant: the process seam is NEVER reached unauthorized.
       expect(runLocalProcess).not.toHaveBeenCalled();
     });
@@ -265,7 +265,7 @@ describe("executeStep", () => {
       );
 
       expect(outcome.ok).toBe(false);
-      expect(authorizeLocalProcess).toHaveBeenCalledWith("rm", ["-rf", "/"], []);
+      expect(authorizeLocalProcess).toHaveBeenCalledWith("rm", ["-rf", "/"], [], false);
       expect(runLocalProcess).not.toHaveBeenCalled();
     });
 
@@ -474,6 +474,19 @@ describe("runWorkflow", () => {
     expect(result).toEqual({ status: "cancelled", stepsCompleted: 1 });
     expect(send).toHaveBeenCalledTimes(1);
     expect(send).toHaveBeenCalledWith("a\n");
+  });
+
+  it("Stop ends a Wait step at once, and does not count it as run (#6045)", async () => {
+    const wait = vi.fn(() => new Promise<void>(() => {}));
+    const send = vi.fn(async (_data: string) => true);
+    const handle = runWorkflow(
+      [{ kind: "wait", delayMs: 5000 }, sendCommand("b")],
+      deps({ send, wait })
+    );
+    await vi.waitFor(() => expect(wait).toHaveBeenCalled());
+    handle.cancel();
+    expect(await handle.done).toEqual({ status: "cancelled", stepsCompleted: 0 });
+    expect(send).not.toHaveBeenCalled();
   });
 
   it("aborts an in-flight run-script's remaining lines when cancelled", async () => {

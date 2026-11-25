@@ -1,6 +1,8 @@
 import { CalendarClock } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { Tooltip } from "@/components/ui";
+import { concernText, lastRunAttention } from "@/components/Schedules/scheduleStatus";
+import { useScheduleLabels } from "@/components/Schedules/useScheduleLabels";
 import { showSchedulesInSidebar } from "@/components/AutomationSidebar/automationSections";
 
 /**
@@ -11,7 +13,19 @@ import { showSchedulesInSidebar } from "@/components/AutomationSidebar/automatio
  * the Automations sidebar, where the schedules are managed. Renders nothing when no schedule is enabled.
  */
 export function ScheduleStatus() {
-  const enabled = useAppStore((s) => s.schedules.filter((x) => x.enabled).length);
+  const schedules = useAppStore((s) => s.schedules);
+  const { automations, connections, blockedShort } = useScheduleLabels();
+  const on = schedules.filter((x) => x.enabled);
+  const enabled = on.length;
+  // One that will not run is on, but nothing starts (B-016).
+  const concerns = on.map(lastRunAttention);
+  const concern = concernText(
+    concerns.filter((c) => c === "error").length,
+    concerns.filter((c) => c === "warning").length
+  );
+  // Not before the library and the connections have loaded.
+  const loaded = automations.length > 0 && connections.length > 0;
+  const blocked = loaded ? on.filter((x) => blockedShort(x) !== null).length : 0;
   const running = useAppStore((s) => s.schedules.some((x) => x.running));
   const paused = useAppStore((s) => s.schedulesPaused);
 
@@ -19,7 +33,9 @@ export function ScheduleStatus() {
 
   const label = paused
     ? "Schedules paused"
-    : `${enabled} schedule${enabled === 1 ? "" : "s"} on${running ? " · running" : ""}`;
+    : `${enabled} schedule${enabled === 1 ? "" : "s"} on${
+        running ? " · running" : ""
+      }${blocked > 0 ? ` · ${blocked} will not run` : ""}${concern ? ` · ${concern}` : ""}`;
   const tooltip = paused
     ? "All schedules are paused — no scheduled run fires. Click to manage schedules."
     : "Scheduled automations send input to their target hosts automatically. Click to manage schedules.";

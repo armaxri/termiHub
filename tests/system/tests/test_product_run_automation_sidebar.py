@@ -441,20 +441,20 @@ class TestProductRunAutomationSidebar(
     def test_70_sections(self):
         with self.step(
             "automation-sidebar.sections",
-            "Schedules and History are sections of the one sidebar",
-            expect="the Automations sidebar with Schedules and History open under the list, "
-            "which keeps a few rows in view",
+            "Schedules and History are sections of the one sidebar, one open at a time",
+            expect="the Automations sidebar with History open under the list, which keeps a few "
+            "rows in view; Schedules closed again",
         ):
             self.require("automation-sidebar.list", "automation-sidebar.run")
             self.open_automation_schedules()
+            row = f"schedule-item-{self.ids['schedule']}"
+            self.wait(lambda: self.driver.exists(row), what="the schedule's row")
             self.open_automation_history()
-            self.wait(
-                lambda: self.driver.exists(f"schedule-item-{self.ids['schedule']}"),
-                what="the schedule's row",
-            )
             self.wait(lambda: self.driver.exists("automation-history-list"), what="the history")
+            # The open one takes the room (#6045).
+            self.wait(lambda: not self.driver.exists(row), what="Schedules to close")
             pane = self.driver.measure_element("automation-list")["rect"]
-            self.evidence(f"list {pane} with both sections open")
+            self.evidence(f"list {pane} with a section open")
             self.shot(label="sections")
             assert pane["height"] >= 90, f"the sections leave the list {pane['height']:.0f}px"
             self.close_automation_schedules()

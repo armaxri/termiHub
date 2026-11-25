@@ -2,10 +2,10 @@ import { useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import { Modal, Button } from "@/components/ui";
 import { t, tf } from "@/i18n/catalog";
+import { joinWords } from "@/utils/joinWords";
 import { showExactly } from "@/utils/showExactly";
 import { useAppStore } from "@/store/appStore";
 import type { LocalProcessPromptState } from "@/store/slices/workflowsSlice";
-import { joinNames } from "./joinNames";
 import "./LocalProcessAuthDialog.css";
 
 /** Why the user is asked, above the command. */
@@ -16,7 +16,7 @@ function lead({ workflowName, imported }: LocalProcessPromptState): string {
   }
   return tf(
     imported.length === 1 ? "localProcess.imported.leadOther" : "localProcess.imported.leadOthers",
-    { name: workflowName, imported: joinNames(imported) }
+    { name: workflowName, imported: joinWords(imported.map((name) => `“${name}”`)) }
   );
 }
 
@@ -42,7 +42,7 @@ function note({ remember }: LocalProcessPromptState): string {
  * executes a program on the user's own machine, unlike every other workflow step.
  *
  * Three outcomes, mirroring the store's {@link LocalProcessAuthDecision}:
- * - **Cancel** — refuse; the step does not run (the safe default, focused).
+ * - **Don't allow** — refuse; the step fails (the safe default, focused).
  * - **Allow once** — run this time only; nothing is remembered.
  * - **Always allow** — run and remember the program on the allowlist. For a program
  *   that runs whatever it is told to, this says so and asks again. For an imported
@@ -192,6 +192,9 @@ export function LocalProcessAuthDialog() {
           </div>
           <p className="local-process-auth__note" data-testid="local-process-auth-note">
             {note(prompt)}
+          </p>
+          <p className="local-process-auth__refuse" data-testid="local-process-auth-refuse">
+            {t(prompt.goesOn ? "automation.program.goesOn" : "automation.program.stops")}
           </p>
         </div>
       )}

@@ -1,4 +1,4 @@
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 use crate::embedded_servers::activity::ActivitySnapshot;
 use crate::embedded_servers::config::{EmbeddedServerConfig, ServerState};
@@ -52,6 +52,24 @@ pub fn list_network_interfaces() -> Vec<NetworkInterface> {
     interfaces
 }
 
+/// Run `work` on the manager off the main thread: starting or stopping a server
+/// on an agent waits for that agent (#6028).
+async fn off_main_thread<T: Send + 'static>(
+    app_handle: AppHandle,
+    work: impl FnOnce(&EmbeddedServerManager) -> Result<T, TerminalError> + Send + 'static,
+) -> Result<T, TerminalError> {
+    tokio::task::spawn_blocking(move || {
+        let manager = app_handle
+            .try_state::<EmbeddedServerManager>()
+            .ok_or_else(|| {
+                TerminalError::EmbeddedServerError("Services are unavailable".to_string())
+            })?;
+        work(&manager)
+    })
+    .await
+    .map_err(|e| TerminalError::EmbeddedServerError(format!("Task join error: {e}")))?
+}
+
 /// Return all saved embedded server configurations.
 #[tauri::command]
 pub fn list_embedded_servers(
@@ -62,20 +80,20 @@ pub fn list_embedded_servers(
 
 /// Add or update an embedded server configuration.
 #[tauri::command]
-pub fn save_embedded_server(
+pub async fn save_embedded_server(
     config: EmbeddedServerConfig,
-    manager: State<'_, EmbeddedServerManager>,
+    app_handle: AppHandle,
 ) -> Result<(), TerminalError> {
-    manager.save_config(config)
+    off_main_thread(app_handle, move |manager| manager.save_config(config)).await
 }
 
 /// Delete an embedded server configuration by ID.
 #[tauri::command]
-pub fn delete_embedded_server(
+pub async fn delete_embedded_server(
     server_id: String,
-    manager: State<'_, EmbeddedServerManager>,
+    app_handle: AppHandle,
 ) -> Result<(), TerminalError> {
-    manager.delete_config(&server_id)
+    off_main_thread(app_handle, move |manager| manager.delete_config(&server_id)).await
 }
 
 /// Get the current runtime state of all configured servers.
@@ -151,20 +169,20 @@ pub async fn clear_embedded_server_activity(
 /// deliberate counterpart to [`create_and_start_server`]'s fallback, which only
 /// applies because quick-share starts from an unchosen default port (SM-018).
 #[tauri::command]
-pub fn start_embedded_server(
+pub async fn start_embedded_server(
     server_id: String,
-    manager: State<'_, EmbeddedServerManager>,
+    app_handle: AppHandle,
 ) -> Result<(), TerminalError> {
-    manager.start_server(&server_id)
+    off_main_thread(app_handle, move |manager| manager.start_server(&server_id)).await
 }
 
 /// Stop a running server by ID.
 #[tauri::command]
-pub fn stop_embedded_server(
+pub async fn stop_embedded_server(
     server_id: String,
-    manager: State<'_, EmbeddedServerManager>,
+    app_handle: AppHandle,
 ) -> Result<(), TerminalError> {
-    manager.stop_server(&server_id)
+    off_main_thread(app_handle, move |manager| manager.stop_server(&server_id)).await
 }
 
 /// Create a new server configuration and immediately start it.
@@ -177,9 +195,16 @@ pub fn stop_embedded_server(
 /// because its port is explicit and persisted (SM-018).
 /// Returns the ID of the newly created configuration.
 #[tauri::command]
-pub fn create_and_start_server(
+pub async fn create_and_start_server(
+    config: EmbeddedServerConfig,
+    app_handle: AppHandle,
+) -> Result<String, TerminalError> {
+    off_main_thread(app_handle, move |manager| create_and_start(manager, config)).await
+}
+
+fn create_and_start(
+    manager: &EmbeddedServerManager,
     mut config: EmbeddedServerConfig,
-    manager: State<'_, EmbeddedServerManager>,
 ) -> Result<String, TerminalError> {
     // Generate an ID if none was provided.
     if config.id.is_empty() {

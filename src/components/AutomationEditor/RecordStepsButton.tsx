@@ -52,7 +52,7 @@ export const RecordStepsButton = forwardRef<HTMLButtonElement, RecordStepsButton
             onClick={() => onRecord(only?.id ?? null)}
             data-testid="automation-editor-record"
           >
-            {only ? "Record steps" : "Open a terminal to record steps"}
+            {only ? "Record steps" : "Record steps in a new terminal"}
           </Button>
         </Tooltip>
       );

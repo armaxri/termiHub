@@ -211,7 +211,7 @@ fn auto_start_failure_surfaces_an_error_and_the_rest_still_start() {
 }
 
 #[test]
-fn auto_start_with_a_locked_credential_store_reports_why() {
+fn auto_start_with_a_locked_credential_store_waits_and_says_so() {
     let dir = tempfile::tempdir().unwrap();
     let root = tempfile::tempdir().unwrap();
     let h = harness(dir.path(), None);
@@ -222,13 +222,13 @@ fn auto_start_with_a_locked_credential_store_reports_why() {
 
     h.manager.start_auto_servers();
 
-    let last = h
-        .events_for("locked")
-        .pop()
-        .expect("the failure is announced");
-    assert_eq!(last.status, ServerStatus::Error);
+    let last = h.events_for("locked").pop().expect("the wait is announced");
+    assert_eq!(last.status, ServerStatus::Waiting);
     let reason = last.error.unwrap_or_default();
-    assert!(reason.contains("credential store is locked"), "{reason}");
+    assert!(
+        reason.contains("Waiting for the credential store"),
+        "{reason}"
+    );
     assert!(h.local_addr("locked").is_none());
 }
 

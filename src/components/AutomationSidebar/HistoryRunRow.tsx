@@ -1,9 +1,10 @@
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
 import { ChevronRight } from "lucide-react";
 import { StatusDot, TruncatedText } from "@/components/ui";
 import type { RunSchedule } from "./historyEntries";
 import type { AutomationRun } from "@/types/generated/AutomationRun";
 import { formatAbsoluteTime, formatDayTime } from "@/utils/formatters";
+import { useRevealWhenOpened } from "./useRevealWhenOpened";
 import { HistoryRunDetails } from "./HistoryRunDetails";
 import {
   automationRunStatusLabel,
@@ -33,10 +34,7 @@ export function HistoryRunRow({ run, schedule, expanded, onToggle }: HistoryRunR
   const detailsId = `automation-run-details-${run.id}`;
   const targets = automationRunTargets(run);
   const row = useRef<HTMLDivElement>(null);
-  // What it opened shows, also in a short window.
-  useEffect(() => {
-    if (expanded) row.current?.scrollIntoView?.({ block: "nearest" });
-  }, [expanded]);
+  useRevealWhenOpened(row, expanded);
 
   return (
     <div

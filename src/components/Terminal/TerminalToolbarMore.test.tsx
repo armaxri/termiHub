@@ -25,7 +25,6 @@ function props(overrides: Partial<TerminalToolbarMoreProps> = {}): TerminalToolb
     onToggleLogging: vi.fn(),
     recordingLabel: null,
     recording: (overrides.recordingLabel ?? null) !== null,
-    recordingAtPrompt: false,
     onToggleRecording: vi.fn(),
     playback: null,
     onRunAutomation: vi.fn(),
