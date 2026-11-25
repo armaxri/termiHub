@@ -818,6 +818,8 @@
   display: grid;
   grid-template-columns: 14px minmax(0, 1fr);
   align-items: center;
+  /* A card stretched by a taller neighbour keeps its text together at the top. */
+  align-content: start;
   column-gap: var(--spacing-sm);
   row-gap: var(--spacing-xs);
   margin: 0;
@@ -961,6 +963,23 @@
   letter-spacing: var(--letter-spacing-ui);
   z-index: var(--z-tooltip);
   user-select: none;
+}
+
+/* Multi-line help (#6027): a lead line, then the details. */
+.ui-tooltip__lines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-xs) 0;
+}
+
+.ui-tooltip__line {
+  color: var(--text-secondary);
+}
+
+.ui-tooltip__line:first-child {
+  color: var(--text-primary);
+  font-weight: 500;
 }
 
 .ui-tooltip__arrow {

@@ -1,11 +1,14 @@
 import { useCallback, useMemo } from "react";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { Button, Toggle, toast, EmptyState } from "@/components/ui";
+import { Button, Toggle, Tooltip, TooltipLines, toast, EmptyState } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { useTunnelDeleteConfirm } from "@/hooks/useTunnelDeleteConfirm";
 import type { TunnelConfig } from "@/types/tunnel";
-import { tunnelPortMapping, tunnelTypeFlag } from "@/utils/tunnelSummary";
+import { useProjectedAgents } from "@/store/useProjectedAgents";
+import { isAgentHost, resolveTunnelHost } from "@/utils/tunnelHost";
+import { tunnelPortMapping } from "@/utils/tunnelSummary";
+import { TUNNEL_TYPE_KINDS, tunnelTypeHelp } from "@/utils/tunnelTypeHelp";
 import { errorMessage } from "@/utils/errorMessage";
 
 interface ConnectionPortForwardingSectionProps {
@@ -33,6 +36,9 @@ interface ConnectionPortForwardingSectionProps {
  * Changes here apply immediately (tunnels are their own saved objects), not on
  * the connection editor's Save.
  *
+ * Each forward says in plain words what its type does (#6027); the longer
+ * explanation is the type's tooltip and part of its Edit button's description.
+ *
  * The hint names the SSH Tunnels sidebar, which is always available since it
  * graduated from the experimental switch (#5858).
  */
@@ -43,6 +49,7 @@ export function ConnectionPortForwardingSection({
   const tunnelStates = useAppStore((s) => s.tunnelStates);
   const saveTunnel = useAppStore((s) => s.saveTunnel);
   const openTunnelEditorTab = useAppStore((s) => s.openTunnelEditorTab);
+  const { remoteAgents } = useProjectedAgents();
 
   const bound = useMemo(
     () => (connectionId ? tunnels.filter((t) => t.sshConnectionId === connectionId) : []),
@@ -66,10 +73,21 @@ export function ConnectionPortForwardingSection({
     <div className="settings-panel__category" data-testid="connection-port-forwarding-section">
       <h3 className="settings-panel__category-title">Port Forwarding</h3>
       {!connectionId ? (
-        <p className="settings-form__hint" data-testid="connection-port-forwarding-unsaved">
-          Save this connection first, then attach local (<code>-L</code>), remote (<code>-R</code>)
-          or dynamic SOCKS (<code>-D</code>) forwards to it.
-        </p>
+        <div className="settings-form__hint" data-testid="connection-port-forwarding-unsaved">
+          <p className="port-forwarding__types-intro">
+            Save this connection first, then attach port forwards to it:
+          </p>
+          <ul className="port-forwarding__types">
+            {TUNNEL_TYPE_KINDS.map((kind) => {
+              const help = tunnelTypeHelp(kind);
+              return (
+                <li key={kind}>
+                  {help.label} (<code>{help.flag}</code>): {help.summary}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       ) : (
         <>
           <p className="settings-form__hint" data-testid="connection-port-forwarding-hint">
@@ -86,7 +104,13 @@ export function ConnectionPortForwardingSection({
             <ul className="port-forwarding__list">
               {bound.map((tunnel) => {
                 const toggleId = `port-forward-start-${tunnel.id}`;
+                const helpId = `port-forward-help-${tunnel.id}`;
                 const status = tunnelStates[tunnel.id]?.status ?? "disconnected";
+                const host = resolveTunnelHost(tunnel);
+                const agentName = isAgentHost(host)
+                  ? remoteAgents.find((a) => a.id === host.agentId)?.name
+                  : undefined;
+                const help = tunnelTypeHelp(tunnel.tunnelType.type, host, agentName);
                 return (
                   <li
                     key={tunnel.id}
@@ -96,7 +120,24 @@ export function ConnectionPortForwardingSection({
                     <div className="port-forwarding__info">
                       <span className="port-forwarding__name">{tunnel.name}</span>
                       <span className="port-forwarding__mapping">
-                        <code>{tunnelTypeFlag(tunnel)}</code> {tunnelPortMapping(tunnel)}
+                        <Tooltip
+                          content={<TooltipLines lines={help.lines} />}
+                          side="top"
+                          align="start"
+                          data-testid={`port-forward-type-help-${tunnel.id}`}
+                        >
+                          <span
+                            className="port-forwarding__type"
+                            data-testid={`port-forward-type-${tunnel.id}`}
+                          >
+                            {help.label} (<code>{help.flag}</code>)
+                          </span>
+                        </Tooltip>{" "}
+                        · {tunnelPortMapping(tunnel)}
+                      </span>
+                      <span className="port-forwarding__summary">{help.summary}</span>
+                      <span id={helpId} hidden>
+                        {help.lines.join(" ")}
                       </span>
                       <span
                         className="port-forwarding__status"
@@ -126,6 +167,7 @@ export function ConnectionPortForwardingSection({
                         size="xs"
                         iconOnly
                         aria-label={`Edit ${tunnel.name}`}
+                        aria-describedby={helpId}
                         icon={<Pencil size={12} />}
                         onClick={() => openTunnelEditorTab(tunnel.id)}
                         data-testid={`port-forward-edit-${tunnel.id}`}

@@ -302,7 +302,8 @@ class TestProductRunRowsNames(
                 f"tunnel-item-{tunnel['id']}",
                 [name, "Reaches the DB"],
                 [
-                    "Local · 127.0.0.1:18577 → db.internal:5432",
+                    "Local (ssh -L) · 127.0.0.1:18577 → db.internal:5432",
+                    "Use something on the SSH server's side as if it ran here.",
                     f"Via {ssh}",
                     "Hosted on this computer",
                 ],
