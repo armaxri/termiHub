@@ -274,6 +274,7 @@ export const createRecordingSlice: StateCreator<AppState, [], [], RecordingSlice
 
     cancelRecording: () => {
       if (!get().recording) return;
+      recorder?.dispose();
       recorder = null;
       set({ recording: null });
       frontendLog("recording", "canceled");

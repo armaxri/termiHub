@@ -41,6 +41,7 @@
  * worker reports parsers again.
  */
 
+import { callWaiter } from "@/utils/callWaiter";
 import { frontendLog } from "@/utils/frontendLog";
 import type { WidgetPosition } from "@/types/plugin";
 import type { HostToWorkerMessage, WorkerToHostMessage } from "./protocol";
@@ -445,7 +446,7 @@ function drain(sessionId: string): void {
   while (q.slots.length > 0 && q.slots[0].done) {
     const slot = q.slots.shift()!;
     if (slot.out) q.sink(slot.out);
-    slot.reached?.();
+    if (slot.reached) callWaiter(slot.reached);
   }
   rearmWatchdog();
 }

@@ -2102,11 +2102,12 @@ step:
   What the terminal asks is read through `promptOfTerminal` (`services/passwordPrompt.ts`, #6070):
   its `read` answers once all output that had arrived at the call is in xterm's buffer
   (`TerminalOutputFlow.whenShown`, behind a plugin's parser and a repaint in progress), and never when
-  that cannot be told. Continue decides on that answer; without one within `PROMPT_CHECK_LIMIT_MS` it
-  asks instead of going on, and while another window or computer controls the terminal it does not go
+  that cannot be told. Continue reads again while output arrives (`arrived`), so it decides on all that
+  is in the app at that moment; when that does not settle within `PROMPT_CHECK_LIMIT_MS` of the press,
+  as in a terminal that never stops printing, it asks instead of going on, and while another window or computer controls the terminal it does not go
   on at all. "Continue anyway" counts for the prompt it was said of. The recorder judges each key by
-  the same answer and keeps apart what it cannot tell. A prompt that arrives after the decision, or
-  that the backend still holds, cannot be seen.
+  the answer of its own moment and keeps apart only the keys it cannot tell. A prompt that reaches the
+  app after the decision, the backend's included, cannot be seen.
   A recording gets such a step wherever it leaves a password out (`recordingSteps`).
 - **`run-automation`** runs another automation's steps inline on the same target. The chain of
   automation ids is passed down the call stack: a call back into the chain fails with the path

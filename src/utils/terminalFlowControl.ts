@@ -29,6 +29,7 @@
 
 import { setTerminalOutputPaused } from "@/services/api";
 import type { SessionId } from "@/types/terminal";
+import { callWaiter } from "@/utils/callWaiter";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
 
@@ -127,15 +128,16 @@ export class TerminalOutputFlow {
    * some of it was dropped, as then nobody can tell what it did.
    */
   whenShown(then: () => void): void {
-    if (this.stagedLen + this.inflight + this.repaint === 0) then();
+    if (this.stagedLen + this.inflight + this.repaint === 0) callWaiter(then);
     else this.waiting.push({ at: this.received, then });
   }
 
   /**
    * Take the staged output as one batch for `xterm.write`, counting it as in
-   * flight; only up to where somebody waits ({@link whenShown}). Returns `null` when nothing is staged or xterm's backlog is at the
-   * high watermark (the next write callback makes room); `force` ignores the
-   * backlog (final drain on teardown).
+   * flight; only up to where somebody waits ({@link whenShown}). Returns `null` when
+   * nothing is staged or xterm's backlog is at the high watermark (the next write
+   * callback makes room); `force` ignores the backlog and who waits (final drain on
+   * teardown).
    */
   takeBatch(force = false): Uint8Array | null {
     if (this.staged.length === 0 || (!force && this.inflight >= this.high)) return null;
@@ -192,7 +194,9 @@ export class TerminalOutputFlow {
 
   private notifyShown(): void {
     const shown = this.received - this.stagedLen - this.inflight - this.repaint;
-    while (this.waiting.length > 0 && this.waiting[0].at <= shown) this.waiting.shift()!.then();
+    while (this.waiting.length > 0 && this.waiting[0].at <= shown) {
+      callWaiter(this.waiting.shift()!.then);
+    }
   }
 
   private enforceCap(): void {

@@ -122,7 +122,7 @@ export function WaitingRunBar() {
                 <Button
                   variant={insist ? "secondary" : "primary"}
                   size="sm"
-                  disabled={wait.checking === true}
+                  aria-disabled={wait.checking === true || undefined}
                   onClick={() => continueWait(wait.runId)}
                   data-testid={`automation-wait-continue-${wait.tabId}`}
                 >

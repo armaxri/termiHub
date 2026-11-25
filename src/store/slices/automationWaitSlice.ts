@@ -6,12 +6,20 @@
  */
 import { StateCreator } from "zustand";
 
-import { isPasswordPrompt, promptOfTerminal } from "@/services/passwordPrompt";
+import {
+  isPasswordPrompt,
+  promptOfTerminal,
+  readTerminalPrompt,
+  type PromptPin,
+} from "@/services/passwordPrompt";
 import {
   WAIT_FOR_USER_LIMIT_MS,
   type WaitForUserResult,
   type WorkflowStepSignal,
 } from "@/services/workflowRunner";
+
+import { errorMessage } from "@/utils/errorMessage";
+import { frontendLog } from "@/utils/frontendLog";
 
 import type { AppState } from "../appStore";
 import { getActiveTab } from "../layoutHelpers";
@@ -92,22 +100,23 @@ export const PROMPT_CHECK_SHOWS_MS = 150;
 const pending = new Map<string, { sessionId: string; end: (result: WaitForUserResult) => void }>();
 
 /** Whether the prompt that held Continue back is still the one that shows, by run. */
-const heldBackBy = new Map<string, () => boolean>();
+const heldBackBy = new Map<string, PromptPin>();
+
+function forgetPin(runId: string): void {
+  heldBackBy.get(runId)?.dispose();
+  heldBackBy.delete(runId);
+}
 
 /** Runs whose Continue is being decided. */
 const deciding = new Set<string>();
 
 /**
- * Read the prompt of terminal `tabId` with the output that has arrived, or give
- * `null` when that cannot be told within {@link PROMPT_CHECK_LIMIT_MS}. `slow` is
- * called when it takes long enough to notice.
+ * Read the prompt of terminal `tabId` with all output that has arrived when `then` is
+ * called: while output arrives, it is read again. `null` when that cannot be told
+ * within {@link PROMPT_CHECK_LIMIT_MS}. `slow` is called when it takes long enough to
+ * notice.
  */
 function readPrompt(tabId: string, slow: () => void, then: (before: string | null) => void): void {
-  const terminal = promptOfTerminal(tabId);
-  if (!terminal) {
-    then(null);
-    return;
-  }
   let done = false;
   const timers: ReturnType<typeof setTimeout>[] = [];
   const finish = (before: string | null) => {
@@ -116,10 +125,24 @@ function readPrompt(tabId: string, slow: () => void, then: (before: string | nul
     timers.forEach(clearTimeout);
     then(before);
   };
-  terminal.read(finish);
-  if (done) return;
+  const read = () => {
+    const terminal = promptOfTerminal(tabId);
+    const arrived = terminal?.arrived();
+    try {
+      readTerminalPrompt(tabId, (before) => {
+        if (done) return;
+        // More is in the app than was looked at, and it may be a prompt.
+        if (before !== null && terminal?.arrived() !== arrived) read();
+        else finish(before);
+      });
+    } catch (err) {
+      frontendLog("automation_wait", `reading the terminal failed: ${errorMessage(err)}`);
+      finish(null);
+    }
+  };
   timers.push(setTimeout(slow, PROMPT_CHECK_SHOWS_MS));
   timers.push(setTimeout(() => finish(null), PROMPT_CHECK_LIMIT_MS));
+  read();
 }
 
 export const createAutomationWaitSlice: StateCreator<AppState, [], [], AutomationWaitSlice> = (
@@ -166,7 +189,7 @@ export const createAutomationWaitSlice: StateCreator<AppState, [], [], Automatio
         const end = (result: WaitForUserResult): void => {
           if (pending.get(runId)?.end !== end) return;
           pending.delete(runId);
-          heldBackBy.delete(runId);
+          forgetPin(runId);
           clearTimeout(timer);
           set({ automationWaits: get().automationWaits.filter((w) => w.runId !== runId) });
           resolve(result);
@@ -209,7 +232,8 @@ export const createAutomationWaitSlice: StateCreator<AppState, [], [], Automatio
           }
         } else if (isPasswordPrompt(before)) {
           // Insisting counts for the prompt it was said of, not for the next one.
-          if (!now.stillAsking || heldBackBy.get(runId)?.() !== true) {
+          if (!now.stillAsking || heldBackBy.get(runId)?.holds() !== true) {
+            forgetPin(runId);
             const pin = promptOfTerminal(now.tabId)?.pin();
             if (pin) heldBackBy.set(runId, pin);
             change(runId, { stillAsking: true, unchecked: false, elsewhere: false });
@@ -224,9 +248,9 @@ export const createAutomationWaitSlice: StateCreator<AppState, [], [], Automatio
     recheckWaitingPrompts: () => {
       for (const { runId, tabId } of get().automationWaits) {
         // What cannot be told now is told the next time.
-        promptOfTerminal(tabId)?.read((before) => {
+        readTerminalPrompt(tabId, (before) => {
           const w = waitOf(runId);
-          if (!w) return;
+          if (!w || before === null) return;
           const asking = isPasswordPrompt(before);
           const prompted = w.prompted === true || asking || w.stillAsking;
           const next = {

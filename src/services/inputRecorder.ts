@@ -51,10 +51,15 @@ interface Asked {
   entry: Entry;
   readPrompt?: PromptReader;
   apart?: string;
-  /** The text it was typed behind, once it is known. */
+  /** The text it was typed behind; `null` when that cannot be told. */
   before: string | null;
+  /** Whether `before` is the answer. */
   known: boolean;
+  timer?: ReturnType<typeof setTimeout>;
 }
+
+/** How long a chunk waits for what it was typed at, before it counts as not known. */
+export const PROMPT_READ_LIMIT_MS = 5000;
 
 interface OpenRun {
   prompt: string;
@@ -63,11 +68,11 @@ interface OpenRun {
 }
 
 /** The screen must never get in the way of typing: what cannot be read is not known. */
-function readSafely(readPrompt: PromptReader, then: (before: string) => void): void {
+function readSafely(readPrompt: PromptReader, then: (before: string | null) => void): void {
   try {
     readPrompt(then);
   } catch {
-    // Never calls back, like a terminal that is gone.
+    then(null);
   }
 }
 
@@ -81,12 +86,14 @@ function showsEcho(prompt: string, now: string): boolean {
 
 /** Records one terminal's input. `now` is a monotonic clock in milliseconds. */
 export class InputRecorder {
-  private readonly entries: Entry[] = [];
+  private entries: Entry[] = [];
   private open: OpenRun | null = null;
   private readPrompt: PromptReader | null = null;
   private count = 0;
   /** Chunks that wait to be judged, in the order they were typed. */
   private readonly asked: Asked[] = [];
+  /** What cannot be told, as one run while nothing else comes between. */
+  private unknown: OpenRun | null = null;
 
   /** `onJudged` is called when a chunk was judged later than it was typed. */
   constructor(
@@ -120,7 +127,8 @@ export class InputRecorder {
     let open = true;
     return {
       fill: (data) => {
-        if (!open) return;
+        // Nothing is kept of what comes after the recording.
+        if (!open || !this.entries.includes(entry)) return;
         open = false;
         entry.data = data;
         this.count += 1;
@@ -134,12 +142,11 @@ export class InputRecorder {
 
   /** The recording so far. A pending paste is not part of it. */
   finish(): Recorded {
-    // Not known whether a password was asked for: kept apart, and the user decides.
-    const unknown: OpenRun = { prompt: "" };
-    for (const { entry } of this.asked.splice(0)) entry.secret = this.open ?? unknown;
+    for (const asked of this.asked) asked.known = true;
+    this.drain();
     const { readPrompt } = this;
     // An answer that comes later finds nothing to change.
-    if (readPrompt) readSafely(readPrompt, (before) => this.dropEchoedRun(before));
+    if (readPrompt) readSafely(readPrompt, (before) => before && this.dropEchoedRun(before));
     const kept = this.entries.filter((e): e is Entry & { data: string } => e.data !== null);
     const chunks = kept.map(({ data, at }, i) => ({
       data,
@@ -153,7 +160,17 @@ export class InputRecorder {
       run = secret;
     });
     const durationMs = kept.length > 0 ? Math.round(kept[kept.length - 1].at - kept[0].at) : 0;
+    this.dispose();
     return { chunks, secrets, durationMs };
+  }
+
+  /** Forget everything: keys typed at a prompt must not stay in memory. */
+  dispose(): void {
+    for (const { timer } of this.asked.splice(0)) clearTimeout(timer);
+    this.entries = [];
+    this.open = null;
+    this.unknown = null;
+    this.readPrompt = null;
   }
 
   /** Record `entry`, and find out what it was typed at. */
@@ -163,29 +180,37 @@ export class InputRecorder {
     this.asked.push(asked);
     let typing = true;
     const know = (before: string | null) => {
+      const index = this.asked.indexOf(asked);
+      if (index < 0) return;
       asked.before = before;
       asked.known = true;
+      // Answers come in order: those before this one are lost.
+      if (before !== null && readPrompt) {
+        for (const lost of this.asked.slice(0, index)) lost.known = true;
+      }
       this.drain();
       if (!typing) this.onJudged();
     };
     if (apart !== undefined || !readPrompt) know(null);
     else readSafely(readPrompt, know);
     typing = false;
+    if (!asked.known) asked.timer = setTimeout(() => know(null), PROMPT_READ_LIMIT_MS);
   }
 
   /** Judge what is known, in the order it was typed. */
   private drain(): void {
     while (this.asked[0]?.known) {
-      const { entry, readPrompt, apart, before } = this.asked.shift()!;
+      const { entry, readPrompt, apart, before, timer } = this.asked.shift()!;
+      clearTimeout(timer);
       this.readPrompt = readPrompt ?? null;
-      entry.secret = this.judge(before, apart);
+      entry.secret = this.judge(before, apart, readPrompt !== undefined);
       entry.judged = true;
       if (entry.data !== null && ENDS_ANSWER.test(entry.data)) this.open = null;
     }
   }
 
   /** The run the next chunk belongs to, if it is typed at a password prompt. */
-  private judge(before: string | null, apart?: string): OpenRun | null {
+  private judge(before: string | null, apart: string | undefined, read: boolean): OpenRun | null {
     if (apart !== undefined) {
       if (!this.open?.kept) this.open = { prompt: apart, kept: true };
       return this.open;
@@ -194,7 +219,10 @@ export class InputRecorder {
     // The wait it was typed for is over.
     if (this.open?.kept) this.open = null;
     if (!this.open && before !== null && isPasswordPrompt(before)) this.open = { prompt: before };
-    return this.open;
+    // Not known whether a password was asked for: kept apart, and the user decides.
+    const unknown = read && before === null;
+    this.unknown = unknown ? (this.unknown ?? { prompt: "" }) : null;
+    return this.open ?? this.unknown;
   }
 
   /** Keys that show up behind the "prompt" were echoed: it was no password. */

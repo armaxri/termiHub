@@ -628,13 +628,21 @@ function clampWaitTimeout(ms: number | undefined): number {
 }
 
 /** Default timer seam: a real `setTimeout` sleep (no-op for non-positive ms). */
-function defaultWait(ms: number): Promise<void> {
-  return ms <= 0 ? Promise.resolve() : new Promise((resolve) => setTimeout(resolve, ms));
+function defaultWait(ms: number, whenCancelled?: Promise<void>): Promise<void> {
+  if (ms <= 0) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    void whenCancelled?.then(() => clearTimeout(timer));
+  });
 }
 
 /** Sleep for `ms` through the injected timer seam, or the real timer by default. */
-async function sleepFor(ms: number, deps: WorkflowRunnerDeps): Promise<void> {
-  await (deps.wait ?? defaultWait)(ms);
+async function sleepFor(
+  ms: number,
+  deps: WorkflowRunnerDeps,
+  whenCancelled?: Promise<void>
+): Promise<void> {
+  await (deps.wait ? deps.wait(ms) : defaultWait(ms, whenCancelled));
 }
 
 /**
@@ -651,7 +659,7 @@ async function sleepUnlessCancelled(
   const cancelled = (): boolean => signal?.isCancelled() ?? false;
   if (cancelled()) return true;
   if (ms > 0) {
-    const sleep = Promise.resolve(sleepFor(ms, deps));
+    const sleep = sleepFor(ms, deps, signal?.whenCancelled);
     await (signal?.whenCancelled ? Promise.race([sleep, signal.whenCancelled]) : sleep);
   }
   return cancelled();

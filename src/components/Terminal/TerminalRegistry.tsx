@@ -33,7 +33,7 @@ import { useAppStore } from "@/store/appStore";
 import { currentBroadcastView } from "@/store/broadcastBridge";
 import { currentSettingsView } from "@/store/settingsBridge";
 import { frontendLog } from "@/utils/frontendLog";
-import { promptOfTerminal } from "@/services/passwordPrompt";
+import { readTerminalPrompt } from "@/services/passwordPrompt";
 import { bufferToLogicalLines } from "@/utils/terminalBuffer";
 import { getXtermTheme } from "@/themes";
 import { isFitReady, isProposedFitSafe } from "./safeFit";
@@ -651,7 +651,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       // Its place in a recording too (#5818), so it is recorded in that order.
       const recorded = useAppStore
         .getState()
-        .reserveRecordedPaste(tabId, (then) => promptOfTerminal(tabId)?.read(then));
+        .reserveRecordedPaste(tabId, (then) => readTerminalPrompt(tabId, then));
       const releaseSlots = () => {
         slots.forEach((slot) => slot.cancel());
         recorded?.cancel();

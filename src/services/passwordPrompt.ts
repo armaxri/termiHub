@@ -25,16 +25,25 @@ export function isPasswordPrompt(beforeCursor: string): boolean {
 /**
  * Reads the text in front of a terminal's cursor ({@link textBeforeCursor}) as it is
  * once all output that has arrived by now is in the buffer, and none that comes later
- * (#6070). Calls back at once when nothing is on its way, and never when that cannot
- * be told.
+ * (#6070). Calls back at once when nothing is on its way, with `null` when there is no
+ * terminal to read, and never when output was lost, so that it cannot be told.
  */
-export type PromptReader = (then: (beforeCursor: string) => void) => void;
+export type PromptReader = (then: (beforeCursor: string | null) => void) => void;
+
+/** The line a prompt was seen on. */
+export interface PromptPin {
+  /** Whether the cursor is still on that line. */
+  holds: () => boolean;
+  dispose: () => void;
+}
 
 /** What a live terminal knows about the prompt it shows. */
 export interface TerminalPrompt {
   read: PromptReader;
-  /** Remember the cursor's line; the result says whether the cursor is still on it. */
-  pin: () => () => boolean;
+  /** Grows with everything that arrives, whether it shows yet or not. */
+  arrived: () => number;
+  /** Remember the cursor's line. */
+  pin: () => PromptPin;
 }
 
 const terminals = new Map<string, TerminalPrompt>();
@@ -50,6 +59,13 @@ export function registerTerminalPrompt(tabId: string, prompt: TerminalPrompt): (
 /** The {@link TerminalPrompt} of tab `tabId`, while it shows a live session. */
 export function promptOfTerminal(tabId: string): TerminalPrompt | undefined {
   return terminals.get(tabId);
+}
+
+/** The {@link PromptReader} of tab `tabId`, as it is now. */
+export function readTerminalPrompt(tabId: string, then: Parameters<PromptReader>[0]): void {
+  const terminal = terminals.get(tabId);
+  if (terminal) terminal.read(then);
+  else then(null);
 }
 
 /** The parts of an xterm buffer {@link textBeforeCursor} reads. */
