@@ -57,7 +57,7 @@ import { currentEffectiveSettings, useEffectiveSettings } from "@/services/works
 import { getXtermTheme } from "@/themes";
 import { fireAndForget, frontendLog } from "@/utils/frontendLog";
 import { createSessionOutputFlow } from "@/utils/terminalFlowControl";
-import { writeSliced } from "@/utils/slicedWrite";
+import { writeAllSliced, writeAllSlicedAsync, writeSliced } from "@/utils/slicedWrite";
 import { parseBackendError } from "@/utils/backendErrorCode";
 import { connectionErrorKindFromCode } from "@/utils/connectionErrorHints";
 import {
@@ -718,7 +718,7 @@ export function Terminal({
                 // buffer rebuilds them without duplicates (#3420).
                 commandMarksRef.current?.reset();
                 xterm.reset();
-                await new Promise<void>((resolve) => xterm.write(buffer, resolve));
+                await writeAllSlicedAsync(xterm, buffer);
                 // `attach_session` on the agent (called via reconnect_existing
                 // during apiAttachPersistentTab) makes the daemon forward its
                 // ring buffer as live `connection.output` as well. Those chunks
@@ -754,7 +754,7 @@ export function Terminal({
                 // buffer rebuilds them without duplicates (#3420).
                 commandMarksRef.current?.reset();
                 xterm.reset();
-                await new Promise<void>((resolve) => xterm.write(buffer, resolve));
+                await writeAllSlicedAsync(xterm, buffer);
                 replayEnd = end;
               }
             } catch (err) {
@@ -1464,7 +1464,7 @@ export function Terminal({
               discardSandboxSession(sid);
               // It shows what was dropped: who waited for that waits for this.
               outputDuringRepaint?.unshift(...waitingForParser);
-              xterm.write(buffer, outputFlow.repainting(buffer.length));
+              writeAllSliced(xterm, buffer, outputFlow.repainting(buffer.length));
               replayEnd = end;
               beforeFirstOutput = null;
             })
@@ -1915,7 +1915,7 @@ export function Terminal({
       const serverWillSupplyBuffer =
         !!persistentConnectionIdRef.current || backendRedriveSuppliesScrollback(tabId);
       if (!serverWillSupplyBuffer) {
-        xterm.write(scrollbackSnapshotRef.current, () =>
+        writeAllSliced(xterm, scrollbackSnapshotRef.current, () =>
           commandMarks.restoreSnapshot(savedCommandMarks)
         );
       }
