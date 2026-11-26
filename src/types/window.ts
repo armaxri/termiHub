@@ -215,6 +215,16 @@ export interface WindowCloseRun {
   waiting?: boolean;
 }
 
+/** A service that quitting stops (#6028, slice 11). */
+export interface WindowCloseService {
+  key: string;
+  name: string;
+  /** Connections open now. */
+  open: number;
+  /** The agent it runs on, when it does. */
+  agent?: string;
+}
+
 /**
  * A pending close-with-live-tabs decision (#1903). Raised only when at least one
  * owned session would actually be lost (a non-persistent `terminate`); an empty
@@ -244,6 +254,11 @@ export interface WindowCloseRequest {
   recording?: WindowCloseRecording;
   /** The automations this window runs, which stop with it (#6026). */
   runs?: WindowCloseRun[];
+  /**
+   * The services that stop with the app (#6028), only when one has connections
+   * open right now. Absent otherwise.
+   */
+  services?: WindowCloseService[];
   /**
    * Why the dialog is up (#4296). `"close"` (the default when absent) closes
    * this window; `"quit"` answers an app-wide quit (Cmd+Q / menu Quit), which

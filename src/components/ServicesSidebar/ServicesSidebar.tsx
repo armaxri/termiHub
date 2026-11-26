@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
-import { ChevronDown, ChevronRight, HardDrive, Plus } from "lucide-react";
+import { ChevronDown, ChevronRight, HardDrive, Plus, Square } from "lucide-react";
 import { MiddleEllipsis, ServiceCounts } from "@/components/ServiceListItem";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
@@ -107,6 +107,35 @@ export function ServicesSidebar() {
 
   const noConnection = !context.connections.some(({ config }) => config.type === "ssh");
   const groups = useMemo(() => newServiceGroups(), []);
+  const stopTunnel = useAppStore((s) => s.stopTunnel);
+  const stopEmbeddedServer = useAppStore((s) => s.stopEmbeddedServer);
+  // What Stop all stops: what runs, starts or waits (#6028, slice 11).
+  const stoppable = models.filter(({ actions }) =>
+    actions.some(({ id }) => id === "stop" || id === "stopWaiting")
+  );
+  const stopAll = () =>
+    lifecycle.request(
+      "stopAll",
+      {
+        name: "",
+        counters: {
+          sent: 0,
+          received: 0,
+          total: 0,
+          active: stoppable.reduce((sum, { counters }) => sum + (counters?.active ?? 0), 0),
+        },
+      },
+      () =>
+        Promise.all(
+          stoppable.map(({ kind, id }) =>
+            kind === "tunnel" ? stopTunnel(id) : stopEmbeddedServer(id)
+          )
+        ).then(
+          () => undefined,
+          (err: unknown) =>
+            void toast.error(t("service.stopAll.failed"), { description: errorMessage(err) })
+        )
+    );
   const keepTunnelRunning = useAppStore((s) => s.keepTunnelRunning);
   /** Take back every stop that an offline agent has not got (V-004). */
   const keepAll = useCallback(
@@ -197,7 +226,17 @@ export function ServicesSidebar() {
             testId: "service-new-btn",
             menu,
           },
+          {
+            id: "stop-all",
+            label: t("service.stopAll"),
+            icon: <Square size={14} />,
+            disabled: stoppable.length === 0,
+            onClick: stopAll,
+            testId: "services-stop-all",
+          },
         ]}
+        overflowLabel={t("service.more")}
+        overflowTestId="services-more"
       />
       {entries.length === 0 ? (
         <EmptyState

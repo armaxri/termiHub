@@ -47,6 +47,8 @@ const STATES = {
   "services--search": "Find the service that uses port 15003.",
   "services--search-word": 'Search for what it is: "file server".',
   "services--only-errors": "You pressed the errors: what is wrong, and how to see all again?",
+  "services--stop-all": "Stop everything before you leave: what is cut off?",
+  "services--quit": "You quit while someone downloads: what stops?",
   "services--nothing": "You searched for something that is not there.",
   "services--empty": "There is no service yet: what is this for, and make one.",
   "services--palette": "Find the tunnels from the command palette.",
@@ -658,6 +660,8 @@ const BOTH_ROWS: Partial<Record<State, { tunnels: Row[]; servers: Row[] }>> = {
   "services--search": BOTH,
   "services--search-word": BOTH,
   "services--only-errors": BOTH,
+  "services--stop-all": BOTH,
+  "services--quit": BOTH,
   "services--nothing": BOTH,
   "services--palette": BOTH,
   "services--narrow": BOTH,
@@ -1021,6 +1025,25 @@ for (const viewport of WINDOWS) {
               await page.locator(id("service-count-error")).click();
               await page.locator(id("services-show-all")).waitFor();
               await page.mouse.move(viewport.width - 20, viewport.height / 2);
+              break;
+            case "services--stop-all":
+              // In the toolbar's "…" while the sidebar is narrow.
+              if (!(await page.locator(id("services-stop-all")).isVisible())) {
+                await page.locator(id("services-more")).click();
+              }
+              await page.locator(id("services-stop-all")).click();
+              await page.locator(id("confirm-service-lifecycle-dialog")).waitFor();
+              over = true;
+              break;
+            case "services--quit":
+              await page.evaluate(() => {
+                const store = window.__visual.store.getState() as unknown as {
+                  prepareAppQuit(owns: boolean): string;
+                };
+                store.prepareAppQuit(true);
+              });
+              await page.locator(id("close-window-decision-dialog")).waitFor();
+              over = true;
               break;
             case "services--nothing":
               await page.locator(id("services-search")).fill("jenkisn");
