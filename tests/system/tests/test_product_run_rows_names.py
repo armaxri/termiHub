@@ -329,7 +329,7 @@ class TestProductRunRowsNames(
             name = f"Rows service {t}"
             port = self.free_port()
             server = self.create_server(
-                name, proto="http", root="/tmp", port=port, description="Lab firmware"
+                name, proto="http", port=port, description="Lab firmware"
             )
             row = f"server-item-{server['id']}"
             self.wait(lambda: self.driver.exists(row), what="the service row")

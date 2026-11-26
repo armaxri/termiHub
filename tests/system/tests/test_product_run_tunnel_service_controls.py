@@ -203,7 +203,7 @@ class TestProductRunTunnelServiceControls(
             "'Running' (#5852)",
         ):
             name = f"Controls service {t}"
-            server = self.create_server(name, proto="http", root="/tmp", port=self.free_port())
+            server = self.create_server(name, proto="http", port=self.free_port())
             sid = server["id"]
             self.ids["server"] = sid
             self.wait(lambda: self.driver.exists(f"server-item-{sid}"), what="the service row")
