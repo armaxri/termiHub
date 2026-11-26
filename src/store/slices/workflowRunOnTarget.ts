@@ -8,6 +8,7 @@
  * `workflow-run` projection region, records the run in history (PROD-0046),
  * and surfaces progress, retries (PROD-045), and the outcome as a toast.
  */
+import { markAutomationInput } from "@/services/automationTypingMarks";
 import { stepKindLabel, stepSummary } from "@/components/AutomationEditor/stepText";
 import { toast } from "@/components/ui";
 import {
@@ -353,9 +354,17 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
   // the target tab, so send-based steps (send-command, run-script) route
   // through the single choke point.
   const injector = getTerminalInputInjector();
+  // Each line it starts typing is marked in the terminal (#6021).
+  const marked =
+    injector &&
+    markAutomationInput(injector, {
+      automationId: workflowId,
+      name: workflow.name,
+      origin: triggeredBy,
+    });
   const send: WorkflowSendSeam = (data) => {
-    if (!injector || sessionless) return false;
-    return injector(targetTabId, data);
+    if (!marked || sessionless) return false;
+    return marked(targetTabId, data);
   };
 
   // The authorization gate for a `run-local-process` step (#1857). The backend

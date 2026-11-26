@@ -89,6 +89,9 @@
   /* OSC 133 command-mark gutter bar width (#5563; 5px since #5854 — at 3px the
      marks were too thin to see and to hover). */
   --terminal-command-mark-width: 5px;
+  /* The automation badge of a typed line (#6021): the lucide "zap", as a mask. */
+  --terminal-automation-badge-size: 12px;
+  --terminal-automation-badge-icon: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><path d='M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z'/></svg>");
   /* Command-mark geometry (#5640): the bar sits --terminal-command-mark-inset
      from the terminal's left edge, then a gutter keeps it off the prompt text.
      The .xterm left padding holds all three, so FitAddon counts columns right. */

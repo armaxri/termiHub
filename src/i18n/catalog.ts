@@ -756,6 +756,17 @@ const en = {
   "automationHistory.via.onDisconnect": "When the connection closed",
   "automationHistory.via.onOutputMatch": "When the terminal output matched",
   "automationHistory.filter.all": "All automations",
+  // The mark of a line an automation typed into a terminal (#6021).
+  "automation.mark.title":
+    "Typed by the automation “{name}”, {how}, at {time}. Click to see its runs in History.",
+  "automation.mark.how.manual": "when you ran it",
+  "automation.mark.how.palette": "from the command palette",
+  "automation.mark.how.hotkey": "by its hotkey",
+  "automation.mark.how.onConnect": "when the connection opened",
+  "automation.mark.how.onDisconnect": "when the connection closed",
+  "automation.mark.how.onOutputMatch": "when the terminal output matched",
+  "automation.mark.how.scheduled": "on its schedule",
+  "automation.mark.how.byAutomation": "from another automation",
 
   // ── List rows: names on the row, settings in the tooltip (#5757) ────────
   "row.tooltip.tags": "Tags: {tags}",
