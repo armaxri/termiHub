@@ -32,9 +32,7 @@ import {
   Select,
   type SelectOption,
   toast,
-  Tooltip,
 } from "@/components/ui";
-import { TooltipLines } from "@/components/ui/Tooltip";
 import { choiceHelp, type ChoiceValue } from "@/utils/choiceHelp";
 import "./AgentSetupDialog.css";
 import { errorMessage } from "@/utils/errorMessage";
@@ -619,43 +617,47 @@ interface SourceOptionProps {
 }
 
 /**
- * One binary source: its radio and name, a line saying what it means, and its
- * three lines of help in a tooltip while it is hovered or focused (#6036), as
- * the tunnel type cards have.
+ * One binary source: its radio and name, and a line saying what it means
+ * (#6036). The chosen one also says more, in place under it, so the options
+ * stay in view while comparing; the others carry it as their description.
  */
 function SourceOption({ value, label, selected, children }: SourceOptionProps) {
   const id = useId();
   const help = choiceHelp("agentBinarySource", value)!;
   return (
-    <Tooltip
-      content={<TooltipLines lines={help.lines} />}
-      side="top"
-      data-testid={`agent-setup-source-${value}-help`}
+    <label
+      className={`agent-setup-dialog__source-option${selected ? " agent-setup-dialog__source-option--selected" : ""}`}
     >
-      <label
-        className={`agent-setup-dialog__source-option${selected ? " agent-setup-dialog__source-option--selected" : ""}`}
+      <div className="agent-setup-dialog__source-option-header">
+        <RadioGroupItem
+          value={value}
+          aria-label={label}
+          aria-describedby={`${id}-summary ${id}-lines`}
+          data-testid={`agent-setup-source-${value}`}
+        />
+        <span>{label}</span>
+      </div>
+      <div
+        className="agent-setup-dialog__source-summary"
+        id={`${id}-summary`}
+        data-testid={`agent-setup-source-${value}-summary`}
       >
-        <div className="agent-setup-dialog__source-option-header">
-          <RadioGroupItem
-            value={value}
-            aria-label={label}
-            aria-describedby={`${id}-summary ${id}-lines`}
-            data-testid={`agent-setup-source-${value}`}
-          />
-          <span>{label}</span>
-        </div>
+        {help.summary}
+      </div>
+      {selected ? (
         <div
-          className="agent-setup-dialog__source-summary"
-          id={`${id}-summary`}
-          data-testid={`agent-setup-source-${value}-summary`}
+          className="agent-setup-dialog__source-summary agent-setup-dialog__source-help"
+          id={`${id}-lines`}
+          data-testid={`agent-setup-source-${value}-help`}
         >
-          {help.summary}
+          {help.lines.join(" ")}
         </div>
+      ) : (
         <span id={`${id}-lines`} hidden>
           {help.lines.join(" ")}
         </span>
-        {children}
-      </label>
-    </Tooltip>
+      )}
+      {children}
+    </label>
   );
 }

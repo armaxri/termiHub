@@ -10,6 +10,7 @@ import {
 import { hopIdentity } from "@/utils/fieldSecrets";
 import { Field, RadioGroup, Select, SelectItem } from "@/components/ui";
 import { choiceHelp } from "@/utils/choiceHelp";
+import { t } from "@/i18n/catalog";
 
 interface JumpHostEntryProps {
   /** The hop being edited. */
@@ -155,9 +156,21 @@ export function JumpHostEntry({
 
   return (
     <>
-      <Field variant="settings" label="Source">
+      <Field
+        variant="settings"
+        label="Source"
+        // What the chosen source means for this connection (#6036).
+        hint={t(
+          mode === "saved"
+            ? "choice.jumpHostSource.saved.chosen"
+            : "choice.jumpHostSource.inline.chosen"
+        )}
+        hintTestId={`jump-host-source-chosen-${index}`}
+      >
         <RadioGroup
           variant="cards"
+          // Below the cards: the other card stays in view while comparing.
+          helpSide="bottom"
           orientation="horizontal"
           value={mode}
           onValueChange={(v) => (v === "saved" ? selectSaved() : selectInline())}

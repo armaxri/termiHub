@@ -82,6 +82,10 @@ describe("JumpHostEntry", () => {
     expect(query("jump-host-source-inline-0")?.textContent).toContain(
       "Type this hop's details here"
     );
+    // The chosen source says what it means for this connection.
+    expect(query("jump-host-source-chosen-0")?.textContent).toBe(
+      "Only this connection uses these details. Saved connections are not affected."
+    );
     await act(async () => {
       query("jump-host-source-saved-0")!.dispatchEvent(
         new PointerEvent("pointermove", { bubbles: true, pointerType: "mouse" })
@@ -90,7 +94,7 @@ describe("JumpHostEntry", () => {
     });
     // The tooltip is portalled out of the container.
     const help = document.querySelector('[data-testid="jump-host-source-saved-0-help"]');
-    expect(help?.textContent).toContain("every connection going through it follows.");
+    expect(help?.textContent).toContain("every connection going through it changes too.");
   });
 
   it("an unavailable saved source keeps its reason, not the help", () => {
@@ -103,7 +107,7 @@ describe("JumpHostEntry", () => {
       .split(" ")
       .map((ref) => document.getElementById(ref)?.textContent)
       .join(" ");
-    expect(said).not.toContain("every connection going through it follows");
+    expect(said).not.toContain("every connection going through it changes too");
   });
 
   it("disables the Saved-connection option when no SSH connections exist", () => {

@@ -150,13 +150,16 @@ describe("AgentSetupDialog Windows support", () => {
       .join(" ");
     expect(said).toContain("An agent file on this computer");
     expect(said).toContain("or it will not start.");
-    await act(async () => {
-      local.focus();
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    });
+    // Only the chosen source says more, in place.
+    expect(q("agent-setup-source-local-help")).toBeNull();
+    expect(q("agent-setup-source-github-help")?.textContent).toContain(
+      "released with this version of termiHub."
+    );
+    await act(async () => local.click());
     expect(q("agent-setup-source-local-help")?.textContent).toContain(
       "an agent you built yourself."
     );
+    expect(q("agent-setup-source-github-help")).toBeNull();
   });
 
   it("shows the extensionless download URL for POSIX hosts", async () => {

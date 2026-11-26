@@ -680,12 +680,11 @@ const CHOICE_HELP_TYPES = [
             {
               key: "securityMode",
               label: "Security",
-              description:
-                "How the session is secured. NLA (CredSSP) is recommended; legacy RDP security is insecure and offered only for old servers.",
+              description: "Will not connect? Try Auto, then TLS.",
               fieldType: {
                 type: "select",
                 options: [
-                  option("auto", "Auto (negotiate)"),
+                  option("auto", "Auto (recommended)"),
                   option("nla", "NLA (CredSSP)"),
                   option("tls", "TLS"),
                   option("rdp", "Legacy RDP (insecure)"),
@@ -714,8 +713,6 @@ const CHOICE_HELP_TYPES = [
             {
               key: "preferredEncoding",
               label: "Encoding",
-              description:
-                "Framebuffer encoding preference. ZRLE is compressed; Raw is uncompressed.",
               fieldType: {
                 type: "select",
                 options: [option("zrle", "ZRLE (compressed)"), option("raw", "Raw (uncompressed)")],

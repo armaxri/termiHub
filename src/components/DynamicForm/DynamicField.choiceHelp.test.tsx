@@ -54,29 +54,31 @@ describe("a schema choice with plain words", () => {
   it("says what the chosen value means under the select", () => {
     render(PARITY, "even");
     expect(byTestId("field-parity-choice")?.textContent).toBe(
-      "One extra bit makes the count of 1 bits even."
+      "Must match the device. Even: one extra bit per character makes the count of 1s even."
     );
     render(PARITY, "none");
-    expect(byTestId("field-parity-choice")?.textContent).toBe("No check bit; the usual choice.");
+    expect(byTestId("field-parity-choice")?.textContent).toBe(
+      "Must match the device; most devices use None."
+    );
   });
 
   it("describes the select by the summary and the three lines", () => {
     render(PARITY, "odd");
     const said = description(byTestId("field-parity")!);
-    expect(said).toContain("One extra bit makes the count of 1 bits odd.");
+    expect(said).toContain("Odd: one extra bit per character makes the count of 1s odd.");
     expect(said).toContain("such as 7O1.");
   });
 
-  it("shows the three lines in a tooltip on its help button", async () => {
+  it("shows the three lines in place under the line from its help button", async () => {
     render(PARITY, "odd");
     const button = byTestId("field-parity-choice-about")!;
     expect(button.getAttribute("aria-label")).toBe("About Odd");
-    await act(async () => {
-      button.focus();
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    });
+    expect(byTestId("field-parity-choice-help")).toBeNull();
+    expect(button.getAttribute("aria-expanded")).toBe("false");
+    act(() => button.click());
+    expect(button.getAttribute("aria-expanded")).toBe("true");
     const tip = byTestId("field-parity-choice-help")!.textContent;
-    expect(tip).toContain("cannot correct it.");
+    expect(tip).toContain("characters arrive garbled or not at all.");
     expect(tip).toContain("such as 7O1.");
   });
 

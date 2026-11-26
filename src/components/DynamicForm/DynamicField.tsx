@@ -10,8 +10,7 @@ import {
   groupContainersByComposeProject,
 } from "./dockerContainerGroups";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
-import { Button, Field, Input, Modal, NumberInput, Select, Toggle, Tooltip } from "@/components/ui";
-import { TooltipLines } from "@/components/ui/Tooltip";
+import { Button, Field, Input, Modal, NumberInput, Select, Toggle } from "@/components/ui";
 import { choiceHelp, schemaChoiceTopic } from "@/utils/choiceHelp";
 import { fieldPlatformLimitation } from "@/utils/platformFieldSupport";
 import { SavedConnectionField, type SavedConnectionContext } from "./SavedConnectionField";
@@ -831,6 +830,7 @@ function SelectField({
   testIdBase: string;
 }) {
   const isLocked = fieldType.options.length <= 1;
+  const [moreOpen, setMoreOpen] = useState(false);
   // A bare-word choice says what it means (#6036): each option in the list,
   // and the chosen one under the select, with its three lines as help.
   const topic = schemaChoiceTopic(field.key);
@@ -864,25 +864,30 @@ function SelectField({
           <span id={choiceId} data-testid={`${testIdBase}-choice`}>
             {chosen.summary}.
           </span>
-          <span id={linesId} hidden>
-            {chosen.lines.join(" ")}
-          </span>
-          <Tooltip
-            content={<TooltipLines lines={chosen.lines} />}
-            side="top"
-            data-testid={`${testIdBase}-choice-help`}
-          >
-            <Button
-              variant="ghost"
-              size="sm"
-              iconOnly
-              className="settings-form__help"
-              icon={<HelpCircle size={13} />}
-              aria-label={`About ${chosenLabel}`}
-              data-testid={`${testIdBase}-choice-about`}
-            />
-          </Tooltip>
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
+            className="settings-form__help"
+            icon={<HelpCircle size={13} />}
+            aria-label={`About ${chosenLabel}`}
+            aria-expanded={moreOpen}
+            aria-controls={linesId}
+            onClick={() => setMoreOpen((open) => !open)}
+            data-testid={`${testIdBase}-choice-about`}
+          />
         </div>
+      )}
+      {/* More, in place under the line: it never covers the choices (#6036). */}
+      {chosen && (
+        <span
+          id={linesId}
+          className="settings-form__choice-more"
+          hidden={!moreOpen}
+          data-testid={moreOpen ? `${testIdBase}-choice-help` : undefined}
+        >
+          {chosen.lines.join(" ")}
+        </span>
       )}
     </>
   );

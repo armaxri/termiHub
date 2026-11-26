@@ -136,6 +136,18 @@ for (const viewport of WINDOWS) {
         expect.soft(cut, `${what} is cut`).toBe(false);
       }
 
+      /** The help does not cover `other`, the thing it is compared with (C1-5). */
+      async function apart(help: Locator, other: Locator, what: string): Promise<void> {
+        const a = (await help.boundingBox())!;
+        const b = (await other.boundingBox())!;
+        const overlap =
+          a.x < b.x + b.width &&
+          b.x < a.x + a.width &&
+          a.y < b.y + b.height &&
+          b.y < a.y + a.height;
+        expect.soft(overlap, `the help covers ${what}`).toBe(false);
+      }
+
       async function shoot(page: Page, state: State, root: string): Promise<void> {
         await settle(page);
         const issues = await page.evaluate(auditLayout, { root, styledClasses: STYLED_CLASSES });
@@ -152,11 +164,12 @@ for (const viewport of WINDOWS) {
       async function choiceHelpOf(page: Page, field: string): Promise<void> {
         const about = page.locator(id(`field-${field}-choice-about`));
         await about.scrollIntoViewIfNeeded();
-        await hover(page, about);
+        await about.click();
         const help = page.locator(id(`field-${field}-choice-help`));
         await help.waitFor();
-        await placed(help);
+        await help.scrollIntoViewIfNeeded();
         await inWindow(help, `${field} help`);
+        await apart(help, page.locator(id(`field-${field}`)), `the ${field} select`);
       }
 
       for (const state of Object.keys(STATES) as State[]) {
@@ -166,10 +179,10 @@ for (const viewport of WINDOWS) {
             case "serial--chosen": {
               const editor = await openConnection(page, CHOICE_HELP_CONNECTIONS.serial);
               await expect(editor.locator(id("field-parity-choice"))).toHaveText(
-                "One extra bit makes the count of 1 bits even."
+                "Must match the device. Even: one extra bit per character makes the count of 1s even."
               );
               await expect(editor.locator(id("field-flowControl-choice"))).toHaveText(
-                "The RTS and CTS wires pause the sender."
+                "RTS/CTS wires pause the sender. Pick it if the device's manual says RTS/CTS."
               );
               await editor.locator(id("field-flowControl")).scrollIntoViewIfNeeded();
               await choiceHelpOf(page, "flowControl");
@@ -182,7 +195,7 @@ for (const viewport of WINDOWS) {
               await editor.locator(id("field-flowControl")).click();
               const list = page.locator(".ui-select__content");
               await list.waitFor();
-              await expect(list).toContainText("XON and XOFF characters pause the sender");
+              await expect(list).toContainText("XON/XOFF characters pause the sender");
               await inWindow(list, "flow control list");
               await shoot(page, state, EDITOR);
               break;
@@ -200,7 +213,7 @@ for (const viewport of WINDOWS) {
             case "vnc--help": {
               const editor = await openConnection(page, CHOICE_HELP_CONNECTIONS.vnc);
               await expect(editor.locator(id("field-preferredEncoding-choice"))).toHaveText(
-                "Uncompressed; only for a very fast link."
+                "Uncompressed; only for a very fast link. Slow? Choose ZRLE."
               );
               await choiceHelpOf(page, "preferredEncoding");
               await shoot(page, state, EDITOR);
@@ -216,6 +229,10 @@ for (const viewport of WINDOWS) {
               await help.waitFor();
               await placed(help);
               await inWindow(help, "saved source help");
+              await apart(help, editor.locator(id("jump-host-source-inline-0")), "the inline card");
+              await expect(editor.locator(id("jump-host-source-chosen-0"))).toHaveText(
+                "Only this connection uses these details. Saved connections are not affected."
+              );
               await shoot(page, state, EDITOR);
               break;
             }
@@ -236,11 +253,16 @@ for (const viewport of WINDOWS) {
               await expect(page.locator(id("agent-setup-source-github-summary"))).toHaveText(
                 "The released agent; the usual choice"
               );
-              await local.focus();
+              await local.click();
               const help = page.locator(id("agent-setup-source-local-help"));
               await help.waitFor();
-              await placed(help);
+              await help.scrollIntoViewIfNeeded();
               await inWindow(help, "local file help");
+              await apart(
+                help,
+                page.locator(id("agent-setup-source-github-summary")),
+                "the GitHub option"
+              );
               await shoot(page, state, "[role=dialog]");
               break;
             }

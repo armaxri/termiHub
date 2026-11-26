@@ -278,6 +278,13 @@
   color: var(--text-secondary);
 }
 
+.settings-form__choice-more {
+  display: block;
+  margin-top: var(--spacing-xs);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
 .settings-form__choice .settings-form__help {
   margin-left: 0;
 }

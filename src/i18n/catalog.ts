@@ -1201,64 +1201,73 @@ const en = {
   // ── What a bare-word choice means (choiceHelp.ts, #6036) ────────────────
   // Same shape as the tunnel types: a summary for the line under the choice,
   // then what it is, how it works and when to pick it.
-  "choice.parity.none.summary": "No check bit; the usual choice",
+  "choice.parity.none.summary": "Must match the device; most devices use None",
   "choice.parity.none.lead": "Each character is sent without an extra check bit.",
-  "choice.parity.none.how": "Most devices use 8 data bits, no parity and 1 stop bit (8N1).",
-  "choice.parity.none.example": "Pick this unless the device's manual names odd or even parity.",
-  "choice.parity.odd.summary": "One extra bit makes the count of 1 bits odd",
+  "choice.parity.none.how":
+    "If it does not match the device, characters arrive garbled or not at all.",
+  "choice.parity.none.example": "Most devices use 8 data bits, no parity and 1 stop bit (8N1).",
+  "choice.parity.odd.summary":
+    "Must match the device. Odd: one extra bit per character makes the count of 1s odd",
   "choice.parity.odd.lead": "Each character gets one extra bit, so the number of 1 bits is odd.",
   "choice.parity.odd.how":
-    "The receiving side notices a single flipped bit, but cannot correct it.",
+    "If it does not match the device, characters arrive garbled or not at all.",
   "choice.parity.odd.example": "Only when the device's manual says odd parity, such as 7O1.",
-  "choice.parity.even.summary": "One extra bit makes the count of 1 bits even",
+  "choice.parity.even.summary":
+    "Must match the device. Even: one extra bit per character makes the count of 1s even",
   "choice.parity.even.lead": "Each character gets one extra bit, so the number of 1 bits is even.",
   "choice.parity.even.how":
-    "The receiving side notices a single flipped bit, but cannot correct it.",
+    "If it does not match the device, characters arrive garbled or not at all.",
   "choice.parity.even.example": "Only when the device's manual says even parity, such as 7E1.",
   "choice.flowControl.none.summary": "Nothing pauses the data; the usual choice",
   "choice.flowControl.none.lead": "Data is sent as fast as the baud rate allows.",
   "choice.flowControl.none.how":
     "Right for consoles and most devices; a device too slow to keep up loses characters.",
   "choice.flowControl.none.example": "The console port of a router or a development board.",
-  "choice.flowControl.hardware.summary": "The RTS and CTS wires pause the sender",
+  "choice.flowControl.hardware.summary":
+    "RTS/CTS wires pause the sender. Pick it if the device's manual says RTS/CTS",
   "choice.flowControl.hardware.lead":
     "Each side tells the other to wait on its own wire: termiHub on RTS, the device on CTS.",
   "choice.flowControl.hardware.how":
     "The cable must connect RTS and CTS; with a three-wire cable nothing may be sent at all.",
   "choice.flowControl.hardware.example": "Modems, and devices whose manual says RTS/CTS.",
-  "choice.flowControl.software.summary": "XON and XOFF characters pause the sender",
+  "choice.flowControl.software.summary":
+    "XON/XOFF characters pause the sender. Pick it if the manual says XON/XOFF; text only",
   "choice.flowControl.software.lead":
     "The receiving side sends XOFF (Ctrl+S) to pause and XON (Ctrl+Q) to go on.",
   "choice.flowControl.software.how":
-    "Works over three wires, but those two characters can no longer be sent as data.",
+    "Works over three wires, but those two characters can no longer be sent as data, so not for binary transfers.",
   "choice.flowControl.software.example": "Older terminals, and devices whose manual says XON/XOFF.",
   "choice.preferredEncoding.zrle.summary": "Compressed; the usual choice",
   "choice.preferredEncoding.zrle.lead":
-    "The screen is sent compressed, so it stays quick over a network.",
+    "ZRLE compresses the picture and is the usual choice: it stays quick over a network.",
   "choice.preferredEncoding.zrle.how": "It costs a little processor time on both sides.",
   "choice.preferredEncoding.zrle.example": "Any server you reach over a network.",
-  "choice.preferredEncoding.raw.summary": "Uncompressed; only for a very fast link",
+  "choice.preferredEncoding.raw.summary":
+    "Uncompressed; only for a very fast link. Slow? Choose ZRLE",
   "choice.preferredEncoding.raw.lead": "Every pixel is sent as it is, without compression.",
   "choice.preferredEncoding.raw.how":
     "A full HD screen is about 8 MB each time all of it changes, so a slow link stutters.",
   "choice.preferredEncoding.raw.example":
     "A server on this computer or a fast local network, or one whose ZRLE shows errors.",
-  "choice.securityMode.auto.summary": "termiHub and the server agree on the best both have",
+  "choice.securityMode.auto.summary":
+    "Recommended: termiHub and the server agree on the best both have. Start here",
   "choice.securityMode.auto.lead":
     "termiHub and the server settle on the strongest security they both support.",
   "choice.securityMode.auto.how": "That is usually NLA; an older server may settle on TLS.",
-  "choice.securityMode.auto.example": "Pick this unless a server refuses to connect.",
-  "choice.securityMode.nla.summary": "You are signed in before the session starts",
+  "choice.securityMode.auto.example": "Will not connect? Try Auto, then TLS.",
+  "choice.securityMode.nla.summary":
+    "Your password is checked before the remote desktop opens. Most Windows servers",
   "choice.securityMode.nla.lead":
     "Network Level Authentication: the server checks who you are before it starts a session.",
   "choice.securityMode.nla.how":
     "The connection is encrypted with TLS, and a stranger never gets a sign-in screen.",
   "choice.securityMode.nla.example": "Current Windows and Windows Server use this by default.",
-  "choice.securityMode.tls.summary": "Encrypted; the server checks you after the session starts",
+  "choice.securityMode.tls.summary":
+    "Encrypted; you sign in on the remote login screen. Try this if NLA is refused",
   "choice.securityMode.tls.lead": "The connection is encrypted with TLS, without NLA.",
   "choice.securityMode.tls.how":
-    "The server starts a session before it knows who you are, which costs it work for anyone.",
-  "choice.securityMode.tls.example": "A server that has NLA turned off.",
+    "The server starts a session and shows its own login screen before it knows who you are.",
+  "choice.securityMode.tls.example": "A server that has NLA turned off, or refuses it.",
   "choice.securityMode.rdp.summary": "Old, weak encryption; only for old servers",
   "choice.securityMode.rdp.lead": "RDP's own encryption from before TLS.",
   "choice.securityMode.rdp.how":
@@ -1266,16 +1275,19 @@ const en = {
   "choice.securityMode.rdp.example": "Only a very old server that offers nothing else.",
   "choice.jumpHostSource.saved.summary": "An SSH connection you saved",
   "choice.jumpHostSource.saved.lead":
-    "This hop uses a saved SSH connection: its host, user and sign-in.",
+    "Saved connection: the hop reuses a saved SSH connection, with its host, user and sign-in.",
   "choice.jumpHostSource.saved.how":
-    "Change that connection, and every connection going through it follows.",
-  "choice.jumpHostSource.saved.example": "A bastion host that several connections go through.",
+    "If you change that connection, every connection going through it changes too.",
+  "choice.jumpHostSource.saved.example": "Pick this when several connections share one gateway.",
   "choice.jumpHostSource.inline.summary": "Type this hop's details here",
   "choice.jumpHostSource.inline.lead":
-    "This hop's host, user and sign-in are kept with this connection only.",
-  "choice.jumpHostSource.inline.how":
-    "Nothing else uses them, so changing them here changes only this connection.",
-  "choice.jumpHostSource.inline.example": "A hop that only this one connection needs.",
+    "Inline configuration: only this connection uses these details; saved connections are not affected.",
+  "choice.jumpHostSource.inline.how": "You type the hop's host, user and sign-in below.",
+  "choice.jumpHostSource.inline.example": "Pick this for a gateway only this connection needs.",
+  "choice.jumpHostSource.saved.chosen":
+    "This hop reuses the saved connection below. If you change it, every connection going through it changes too.",
+  "choice.jumpHostSource.inline.chosen":
+    "Only this connection uses these details. Saved connections are not affected.",
   "choice.agentBinarySource.github.summary": "The released agent; the usual choice",
   "choice.agentBinarySource.github.lead":
     "termiHub downloads the agent released with this version of termiHub.",
