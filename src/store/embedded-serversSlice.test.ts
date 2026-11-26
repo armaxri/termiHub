@@ -79,7 +79,6 @@ vi.mock("@/services/embeddedServerApi", () => ({
   restoreEmbeddedServer: vi.fn(() => Promise.resolve()),
   startEmbeddedServer: vi.fn(() => Promise.resolve()),
   stopEmbeddedServer: vi.fn(() => Promise.resolve()),
-  createAndStartServer: vi.fn(() => Promise.resolve("srv-new")),
   listNetworkInterfaces: vi.fn(() => Promise.resolve([])),
 }));
 

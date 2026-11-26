@@ -282,13 +282,10 @@ impl EmbeddedServerService {
     ///
     /// Static so the pre-flight check can be exercised without a live service.
     ///
-    /// The returned error is the shared, user-facing "port in use" message both
-    /// start paths surface. Manual start (`start_embedded_server`) returns it
-    /// verbatim as a *recoverable* error — the user picked and persisted that
-    /// exact port, so it must be honoured or clearly rejected, never silently
-    /// rebound elsewhere. Quick-share (`create_and_start_server`) instead swallows
-    /// it while stepping across ports, because it starts from an unchosen default
-    /// (SM-018).
+    /// The returned error is the shared, user-facing "port in use" message a
+    /// start surfaces as a *recoverable* error — the user picked and persisted
+    /// that exact port, so it must be honoured or clearly rejected, never
+    /// silently rebound elsewhere (SM-018).
     pub fn check_port_config(config: &EmbeddedServerConfig) -> Result<(), EmbeddedServerError> {
         let addr = format!("{}:{}", config.bind_host, config.port);
         match config.server_type {
