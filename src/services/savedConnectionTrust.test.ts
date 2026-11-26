@@ -119,6 +119,8 @@ describe("confirmed on this machine (#6065)", () => {
 
   it("confirms a connection saved in the editor as the backend keeps it", async () => {
     const stored = ssh({ host: "kept.example", port: 22 });
+    seedConnectionsRegion({ connections: [] });
+    await ensureSavedConnectionBaseline();
     seedConnectionsRegion({ connections: [stored] });
     await confirmOnceSaved(
       Promise.resolve("Prod"),
