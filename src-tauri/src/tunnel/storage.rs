@@ -20,6 +20,11 @@ pub struct TunnelStorage {
 impl TunnelStorage {
     /// Create a new storage instance, resolving the config directory.
     ///
+    /// Where the stops agents owe for tunnels are kept between runs (#6051).
+    pub fn owed_stops_path(&self) -> PathBuf {
+        self.file_path.with_file_name("tunnels_owed_stops.json")
+    }
+
     /// If `TERMIHUB_CONFIG_DIR` is set, it overrides the default Tauri config directory.
     pub fn new<R: Runtime>(app_handle: &AppHandle<R>) -> Result<Self> {
         let config_dir = resolve_app_config_dir(app_handle)?;

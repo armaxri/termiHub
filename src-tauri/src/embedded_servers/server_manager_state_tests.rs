@@ -746,3 +746,100 @@ async fn the_poller_starts_what_waits_and_follows_the_agent() {
     assert_eq!(sent(&agent, SERVICE_START), 1);
     manager.stop_all();
 }
+
+// ─── After an app restart (#6051) ────────────────────────────────────────────
+
+/// The app ends and starts again over the same files and agent.
+fn restart(run: Run) -> Run {
+    let Run {
+        h,
+        agent,
+        machine,
+        _dirs,
+    } = run;
+    drop(h);
+    let h = run_with(
+        _dirs.0.path(),
+        &agent,
+        &[("edge", "Edge box")],
+        FakeStore::new(UNLOCKED),
+    );
+    Run {
+        h,
+        agent,
+        machine,
+        _dirs,
+    }
+}
+
+/// "web" as it was stored, but not starting by itself.
+fn web_on_edge_by_hand() -> Run {
+    web_on_edge_with(
+        |web| web["autoStart"] = json!(false),
+        FakeStore::new(UNLOCKED),
+    )
+}
+
+#[test]
+fn what_still_runs_on_its_agent_after_a_restart_is_running_and_can_be_stopped() {
+    let run = web_on_edge_by_hand();
+    run.h.manager.start_server("web").unwrap();
+    let run = restart(run);
+    let Run {
+        h, agent, machine, ..
+    } = &run;
+    assert_eq!(
+        h.state("web").status,
+        ServerStatus::Stopped,
+        "until its agent says"
+    );
+    h.manager.start_auto_servers();
+    tick(h);
+    assert_row(h, "web", ServerStatus::Running, "");
+    assert_eq!(
+        sent(agent, SERVICE_START),
+        1,
+        "taken over, not started again"
+    );
+    h.manager.stop_server("web").unwrap();
+    assert!(!machine.hosts("web"));
+    assert_row(h, "web", ServerStatus::Stopped, "");
+}
+
+#[test]
+fn a_stop_owed_before_a_restart_is_sent_when_the_agent_is_back() {
+    let run = web_on_edge_by_hand();
+    run.h.manager.start_server("web").unwrap();
+    online(&run.agent, false);
+    tick(&run.h);
+    run.h.manager.stop_server("web").unwrap();
+    assert_eq!(run.h.state("web").status, ServerStatus::Stopping);
+    let run = restart(run);
+    let Run {
+        h, agent, machine, ..
+    } = &run;
+    h.manager.start_auto_servers();
+    assert_eq!(h.state("web").status, ServerStatus::Stopping, "still owed");
+    online(agent, true);
+    tick(h);
+    assert!(!machine.hosts("web"), "stopped there");
+    assert_row(h, "web", ServerStatus::Stopped, "");
+}
+
+#[test]
+fn a_deleted_server_that_still_runs_on_its_agent_is_stopped_there_after_a_restart() {
+    let run = web_on_edge_by_hand();
+    run.h.manager.start_server("web").unwrap();
+    online(&run.agent, false);
+    tick(&run.h);
+    run.h.manager.delete_config("web").unwrap();
+    let run = restart(run);
+    let Run {
+        h, agent, machine, ..
+    } = &run;
+    assert!(h.manager.get_configs().unwrap().is_empty(), "no row");
+    h.manager.start_auto_servers();
+    online(agent, true);
+    tick(h);
+    assert!(!machine.hosts("web"), "nothing stays open without a row");
+}

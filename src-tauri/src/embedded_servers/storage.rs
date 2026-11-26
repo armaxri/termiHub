@@ -47,6 +47,12 @@ impl EmbeddedServerStorage {
         })
     }
 
+    /// Where the stops agents owe for servers are kept between runs (#6051).
+    pub fn owed_stops_path(&self) -> PathBuf {
+        self.file_path
+            .with_file_name("embedded_servers_owed_stops.json")
+    }
+
     /// Storage backed by an explicit file path (tests only).
     #[cfg(test)]
     pub(crate) fn at_path(file_path: PathBuf) -> Self {

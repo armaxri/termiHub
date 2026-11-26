@@ -3140,6 +3140,13 @@ remote agent by id. The rule is **the right machine or not at all**:
   the entry. A save without a host keeps the stored one (a list in another window may be out of
   date), and so does restoring a backup that has none.
 - Moving a running service stops it where it ran; it is not started on the new machine by itself.
+- **After an app restart** (#6051) the desktop knows nothing of what runs on agents
+  (`agent_service/hosted.rs`). At launch each service stored to run on an agent is asked about
+  once that agent is connected (`HostedServices::expect`): one that still runs there is taken over
+  and reads Running; one the user stopped, moved or deleted before the answer is stopped there
+  instead. A start that meets a tunnel the agent still runs takes it over. Stops an agent has not
+  confirmed are kept in `embedded_servers_owed_stops.json` and `tunnels_owed_stops.json` beside the
+  configs and sent when the agent is back, also for a service that has no row any more.
 
 A server without a `host` runs on this computer, as it did before the field existed. Older builds
 kept an agent choice in memory only, so it cannot be recovered: the user has to choose it once more.
