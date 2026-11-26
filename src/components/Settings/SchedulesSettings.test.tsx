@@ -5,7 +5,7 @@ import { useAppStore } from "@/store/appStore";
 import { checkA11y } from "@/test/axe";
 import { useAutomationSections } from "@/components/AutomationSidebar/automationSections";
 import type { ScheduleView } from "@/types/schedule";
-import { SchedulesSettings, schedulesSummary } from "./SchedulesSettings";
+import { SchedulesSettings, schedulesSummary, schedulesTroubleText } from "./SchedulesSettings";
 
 /**
  * Settings ▸ Automation ▸ Schedules (#5860, R-018): schedules have one list, in
@@ -83,6 +83,43 @@ describe("SchedulesSettings (#5860)", () => {
     [3, 2, true, "3 schedules, 2 on; all paused."],
   ])("counts %i schedules with %i on (paused %s)", (total, on, paused, text) => {
     expect(schedulesSummary(total, on, paused)).toBe(text);
+  });
+
+  it("says what needs fixing, as the status bar does, and offers the fix (G-003)", () => {
+    render([
+      view({
+        lastResult: {
+          at: "2026-10-02T00:00:00Z",
+          outcome: "failed",
+          message: "Connection refused",
+        },
+      } as Partial<ScheduleView>),
+    ]);
+    expect(query("schedules-settings-summary")?.textContent).toBe("1 schedule, on.");
+    expect(query("schedules-settings-trouble")?.textContent).toBe("1 failed.");
+    expect(query("schedules-settings-open")?.textContent).toBe("Fix in automations");
+  });
+
+  it("offers no fix while nothing needs one", () => {
+    render([view()]);
+    expect(query("schedules-settings-trouble")).toBeNull();
+    expect(query("schedules-settings-open")?.textContent).toBe("Open schedules");
+  });
+
+  it.each([
+    [0, "", ""],
+    [1, "", "1 will not run"],
+    [1, "1 failed", "1 will not run · 1 failed"],
+    [0, "2 not run", "2 not run"],
+  ])("names %i that will not run and %j", (blocked, concern, text) => {
+    expect(schedulesTroubleText(blocked, concern)).toBe(text);
+  });
+
+  it("marks the list it opens, so the user sees what changed (G-009)", () => {
+    const before = useAutomationSections.getState().schedulesRevealed;
+    render([]);
+    act(() => query("schedules-settings-open")!.click());
+    expect(useAutomationSections.getState().schedulesRevealed).toBe(before + 1);
   });
 
   it("has no a11y violations", async () => {

@@ -204,6 +204,43 @@ describe("SettingsPanel — search surfaces every settings section (#3308)", () 
     expect(container.querySelector("[data-testid='schedules-settings']")).not.toBeNull();
   });
 
+  it("says which page each result is on, and goes there (#5860, G-002)", async () => {
+    await render();
+    await searchSettled("default user");
+    const path = container.querySelector(
+      "[data-testid='settings-result-path-connection-defaults']"
+    );
+    expect(path?.textContent).toContain("Connections ▸ Connection defaults");
+    const show = container.querySelector<HTMLElement>(
+      "[data-testid='settings-result-show-connection-defaults']"
+    )!;
+    expect(show.textContent).toBe("Show in Connection defaults");
+    await act(async () => show.click());
+    expect(container.querySelector(".settings-search input")).toHaveProperty("value", "");
+    expect(navItem("connection-defaults")?.getAttribute("aria-selected")).toBe("true");
+    expect(container.querySelector("[data-testid^='settings-result-path-']")).toBeNull();
+  });
+
+  it("opens Plugins with the installed plugins, then browsing, then the gates (G-008)", async () => {
+    await render();
+    await act(async () => navItem("plugins")!.click());
+    const headings = Array.from(
+      container.querySelectorAll(
+        "[data-testid='settings-panel-content'] h3, [data-testid='settings-panel-content'] h2"
+      )
+    ).map((h) => h.textContent?.trim());
+    expect(headings.slice(0, 2)).toEqual(["Installed plugins", "Browse plugins"]);
+  });
+
+  it("ends a search when a page is chosen in the nav (#5860)", async () => {
+    await render();
+    await searchSettled("vault");
+    await act(async () => navItem("backup")!.click());
+    expect(container.querySelector(".settings-search input")).toHaveProperty("value", "");
+    expect(container.querySelector("[data-testid='backup-restore-settings']")).not.toBeNull();
+    expect(container.querySelector("[data-testid='password-backup']")).toBeNull();
+  });
+
   it("lands every old deep link on a page that exists (#5860)", async () => {
     await render();
     for (const category of [

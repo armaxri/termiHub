@@ -36,7 +36,7 @@ from termihub_harness.product_run.security_page import (
 # ── app-free grade tests (per-PR lane) ────────────────────────────────────────
 
 OFF_LINE = (
-    "Credential storage is off — choose OS Keychain or Master password above to use "
+    "Passwords aren't saved — choose OS Keychain or Master password above to use "
     "shared credentials."
 )
 DESCRIPTION = (
@@ -177,7 +177,7 @@ class TestProductRunSecurityPage(
             "one muted line each (#5875)",
             expect="#5875: Settings ▸ Security with 'Don't save passwords' selected; Shared "
             "credentials and Back up saved passwords each show only their heading and the "
-            "line 'Credential storage is off — choose OS Keychain or Master password above …'",
+            "line 'Passwords aren't saved — choose OS Keychain or Master password above …'",
         ):
             status = self.wait(self.credential_store_status, what="the credential store status")
             assert status.get("mode") == "none", f"the fresh profile has a store: {status}"

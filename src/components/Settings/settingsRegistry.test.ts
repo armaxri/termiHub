@@ -256,6 +256,14 @@ describe("settingsRegistry", () => {
       }
     });
 
+    it("finds the master-password store, which its card calls a vault (G-012)", () => {
+      expect(filterSettings("vault").map((s) => s.id)).toContain("credentialStorageMode");
+    });
+
+    it("finds Host monitoring by its old name (G-011)", () => {
+      expect(filterSettings("power monitoring").map((s) => s.id)).toContain("powerMonitoring");
+    });
+
     it("finds the one password backup by its old name and actions", () => {
       for (const query of ["credential vault backup", "export vault", "import vault"]) {
         const ids = filterSettings(query).map((s) => s.id);

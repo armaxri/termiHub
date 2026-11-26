@@ -38,7 +38,7 @@ SECTIONS: tuple[tuple[str, str, str, str], ...] = (
 )
 
 #: How every storage-off line starts (``credentialStorageOffText``).
-OFF_LINE_PREFIX = "Credential storage is off — choose "
+OFF_LINE_PREFIX = "Passwords aren't saved — choose "
 
 #: Touch ID test ids.
 TOUCHID_HINT = "biometric-unlock-hint"

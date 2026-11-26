@@ -310,6 +310,13 @@ describe("BackupRestoreSettings", () => {
     container.remove();
   });
 
+  it("says the backup holds the saved passwords and how they are locked (#5860, G-004)", () => {
+    render("os_keychain");
+    expect(document.querySelector("[data-testid='backup-restore-description']")?.textContent).toBe(
+      "Save your connections, settings and saved passwords to one passphrase-locked file, and restore it on any computer."
+    );
+  });
+
   it("includes keychain credentials behind OS verification when available", async () => {
     vi.mocked(getOsAuthInfo).mockResolvedValue(OS_AUTH_AVAILABLE);
     render("os_keychain");

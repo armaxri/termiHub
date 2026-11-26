@@ -60,7 +60,7 @@ describe("PasswordBackupLink (#5860)", () => {
     expect(query("password-backup-open")).toBeNull();
     expect(section.querySelectorAll("p")).toHaveLength(1);
     expect(query("password-backup-unavailable")?.textContent).toMatch(
-      /^Credential storage is off — choose .* above to back up saved passwords\.$/
+      /^Passwords aren't saved — choose .* above to back up saved passwords\.$/
     );
   });
 });

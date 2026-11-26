@@ -107,6 +107,13 @@ describe("OlderPasswordImport (#5860)", () => {
     );
   });
 
+  it("leads with the old button's name, Export vault (G-006)", () => {
+    render("os_keychain");
+    expect(query("older-password-import")?.textContent).toContain(
+      "Have a file from Export vault in an older termiHub?"
+    );
+  });
+
   it("opens the restore in OS Keychain mode, without the word vault", async () => {
     render("os_keychain");
     await click("older-password-import-btn");

@@ -36,6 +36,41 @@ const THEMES = ["dark", "light"];
 const id = (testId: string) => `[data-testid="${testId}"]`;
 const PANEL = id("settings-panel");
 const KEYCHAIN: VisualScenario = { credentialStore: { mode: "os_keychain", status: "unlocked" } };
+const SECTION = (id: string, label: string, itemCount: number, extra = {}) => ({
+  id,
+  label,
+  description: "",
+  containsSecrets: false,
+  requiresEncryption: false,
+  present: itemCount > 0,
+  itemCount,
+  ...extra,
+});
+/** A master-password store with a backup's sections and an older export to restore. */
+const BACKUP: VisualScenario = {
+  credentialStore: { mode: "master_password", status: "unlocked" },
+  openFile: { path: "/Users/ana/Backups/credential-vault.json", text: "{}" },
+  answers: {
+    list_backup_sections: [
+      SECTION("connections", "Connections", 12),
+      SECTION("settings", "Settings", 1),
+      SECTION("workspaces", "Workspaces", 3),
+      SECTION("macros", "Automations", 5),
+      SECTION("sshKnownHosts", "Trusted SSH host keys", 8, { requiresEncryption: true }),
+      SECTION("sharedCredentials", "Shared credentials", 0),
+    ],
+    preview_credential_vault_import: {
+      createdAt: "2026-10-01T09:30:00Z",
+      targetMode: "master_password",
+      totalCount: 7,
+      newCount: 5,
+      unchangedCount: 1,
+      conflictCount: 1,
+      conflicts: [{ connectionId: "c1", credentialType: "password", ownerName: "Prod DB" }],
+      unknownOwnerCount: 0,
+    },
+  },
+};
 
 /** Every state, and what the user wants to do there. */
 const STATES = {
@@ -55,7 +90,17 @@ const STATES = {
   "security--password-backup-off": "Passwords are not saved: is there anything to back up?",
   "data--backup": "Back up everything, or restore passwords from an older termiHub's export.",
   "data--import": "Bring connections over from another tool once.",
+  "data--backup-dialog":
+    "Back up: see that the saved passwords go into the file, and how they are locked.",
+  "data--older-export-pick":
+    "Restore the passwords of a file an older termiHub's Export vault made: pick it, type its passphrase.",
+  "data--older-export-preview":
+    "See what the old file would restore and what to do about a password that differs.",
+  "advanced--portable": "Find portable mode, folded under Advanced.",
+  "terminal--font-link":
+    "Change the terminal font: it is not on the Terminal page, but where is it?",
   "search--old-name": "Search by the old name 'vault': find where backing up passwords went.",
+  "search--advanced": "Search by the old group name 'advanced': find what used to be folded there.",
   "search--ssh-default": "Search 'default user': find the SSH default where it lives now.",
 } as const;
 type State = keyof typeof STATES;
@@ -200,6 +245,34 @@ for (const viewport of WINDOWS) {
         await shot(page, "data--import");
       });
 
+      test("backup and the older export", async ({ page }) => {
+        await boot(page, theme, "backup", BACKUP);
+        await page.locator(id("backup-export-btn")).click();
+        await page.locator(id("backup-export-sections")).waitFor();
+        await shot(page, "data--backup-dialog", "body");
+        await page.keyboard.press("Escape");
+        await expect(page.locator(id("backup-export-sections"))).toHaveCount(0);
+        await page.locator(id("older-password-import-btn")).click();
+        await page.locator(id("vault-import-choose-file")).click();
+        await expect(page.locator(id("vault-import-file-name"))).toHaveText(
+          "credential-vault.json"
+        );
+        await page.locator(id("vault-import-passphrase")).fill("correct horse battery");
+        await shot(page, "data--older-export-pick", "body");
+        await page.locator(id("vault-import-preview")).click();
+        await page.locator(id("vault-import-preview-panel")).waitFor();
+        await shot(page, "data--older-export-preview", "body");
+      });
+
+      test("portable mode and the terminal font", async ({ page }) => {
+        await boot(page, theme, "portable");
+        await page.locator(id("settings-nav-portable")).scrollIntoViewIfNeeded();
+        await shot(page, "advanced--portable");
+        await open(page, "terminal");
+        await page.locator(id("settings-terminal-font-link")).waitFor();
+        await shot(page, "terminal--font-link");
+      });
+
       test("security, passwords not saved", async ({ page }) => {
         await boot(page, theme, "security");
         const section = page.locator(id("password-backup"));
@@ -214,6 +287,9 @@ for (const viewport of WINDOWS) {
         await search.fill("vault");
         await page.locator(id("password-backup")).waitFor();
         await shot(page, "search--old-name");
+        await search.fill("advanced");
+        await page.locator(id("schedules-settings")).waitFor();
+        await shot(page, "search--advanced");
         await search.fill("default user");
         await page.locator(id("settings-default-user")).waitFor();
         await shot(page, "search--ssh-default");

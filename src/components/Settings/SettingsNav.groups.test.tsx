@@ -71,11 +71,24 @@ describe("SettingsNav groups (#5561)", () => {
     container.remove();
   });
 
+  it("drops the selected pill while a search shows its matches (#5860, G-001)", () => {
+    render("general", vi.fn(), { highlighted: new Set<CatId>(["security"]) });
+    expect(q("settings-nav-general")?.className).not.toContain("settings-nav__item--active");
+    expect(q("settings-nav-general")?.className).toContain("settings-nav__item--dimmed");
+    expect(q("settings-nav-security")?.className).not.toContain("settings-nav__item--dimmed");
+    render("general");
+    expect(q("settings-nav-general")?.className).toContain("settings-nav__item--active");
+  });
+
   it("renders a sentence-case heading per group above its categories", () => {
     render("general");
     expect(q("settings-navgroup-basics")?.textContent).toBe("Basics");
     expect(q("settings-navgroup-security")?.textContent).toBe("Security");
-    expect(q("settings-navgroup-advanced-toggle")?.textContent).toBe("Advanced");
+    // Folded, it names what it holds (#5860, G-007).
+    expect(q("settings-navgroup-advanced-toggle")?.textContent).toBe(
+      "AdvancedPlugins, Portable mode"
+    );
+    expect(q("settings-navgroup-advanced-contents")?.textContent).toBe("Plugins, Portable mode");
     const lists = container.querySelectorAll('[role="tablist"]');
     expect(lists).toHaveLength(3);
     expect(lists[0].getAttribute("aria-labelledby")).toBe("settings-navgroup-basics");

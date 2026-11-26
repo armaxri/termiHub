@@ -54,7 +54,7 @@ describe("MonitoringSettings copy (#5930)", () => {
   it("says behind the '?' that only the monitor stops and sessions stay connected", () => {
     const help = q("settings-power-monitoring-help");
     expect(help).not.toBeNull();
-    expect(help!.getAttribute("aria-label")).toBe("More about power monitoring");
+    expect(help!.getAttribute("aria-label")).toBe("More about host monitoring");
     expect(POWER_MONITORING_HELP).toMatch(/stops the CPU and memory monitor/);
     expect(POWER_MONITORING_HELP).toMatch(/stay connected/);
   });
