@@ -2107,7 +2107,8 @@ step:
   as in a terminal that never stops printing, it asks instead of going on, and while another window or computer controls the terminal it does not go
   on at all. "Continue anyway" counts for the prompt it was said of. The recorder judges each key by
   the answer of its own moment and keeps apart only the keys it cannot tell. A prompt that reaches the
-  app after the decision, the backend's included, cannot be seen.
+  app after the decision, the backend's included, cannot be seen; nor can the recorder tell a password
+  typed ahead before its prompt reached the app (a slow link), as it judges by the screen at the key.
   A recording gets such a step wherever it leaves a password out (`recordingSteps`).
 - **`run-automation`** runs another automation's steps inline on the same target. The chain of
   automation ids is passed down the call stack: a call back into the chain fails with the path
@@ -2146,6 +2147,8 @@ since), and "Cannot run" from `utils/runBlocked.ts`, which the palette and the r
 failed run's toast asks for the editor or the history through window events that
 `AutomationEditorHost` handles, as the stores must not import the views. `runAutomation` asks
 (`RunReplaceDialog`) before a run stops the one in progress, and an On connect trigger never does.
+Runs that type keys and step-by-step runs go on side by side, but never in one terminal: starting one
+where the other kind runs asks too and stops that one there (`runsReplacedBy`, #6042).
 How far a run is has one wording, `utils/runProgress.ts`. What an import left out is
 `Automation.importedInPart`, which the row shows and the editor's Save drops. Closing the last window or
 quitting asks first while an automation runs (`WindowCloseRequest.runs`). The sidebar replaced the

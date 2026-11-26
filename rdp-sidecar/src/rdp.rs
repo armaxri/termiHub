@@ -463,6 +463,14 @@ where
     let upgraded = ironrdp_tokio::mark_as_upgraded(should_upgrade, &mut connector);
     let mut framed = TokioFramed::new_with_leftover(tls_stream, leftover);
 
+    // The host is reached and trusted: the logon starts (#6062).
+    write_message(
+        ipc_out,
+        &SidecarMessage::State(GraphicalState::Authenticating),
+    )
+    .await
+    .context("failed to write state")?;
+
     // 3) CredSSP/NLA + channel join + capability exchange.
     let mut network_client = ReqwestNetworkClient::new();
     let finalized = within(
@@ -993,12 +1001,8 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    write_message(
-        ipc_out,
-        &SidecarMessage::State(GraphicalState::Authenticating),
-    )
-    .await
-    .context("failed to write state")?;
+    // Still dialing: `Authenticating` follows once the host is reached and
+    // trusted, in `connect_session` (#6062).
 
     // One reader for the whole session, across connects and redirect hops, so
     // no buffered host bytes are dropped between them (#4042).

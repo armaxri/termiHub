@@ -1,3 +1,4 @@
+import { cancelDebouncedWrite, debounceWrite } from "@/utils/debouncedWrites";
 import { StateCreator } from "zustand";
 
 import type { AppState } from "../appStore";
@@ -56,7 +57,6 @@ import { errorMessage } from "@/utils/errorMessage";
 import { createLayoutCommit } from "./layoutCommit";
 
 /** Debounce timer for auto-saving the last session on layout changes. */
-let lastSessionPersistTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
  * Layout-persistence slice (ARCH-001/FES-011, appStore god-module split via
@@ -576,11 +576,7 @@ export const createLayoutPersistenceSlice: StateCreator<
       // connecting or in agent-error — over the previously-good session. Skip it
       // until the restored cohort settles (see beginRestoreGuard).
       if (get().restoreInProgress) return;
-      if (lastSessionPersistTimer) clearTimeout(lastSessionPersistTimer);
-      lastSessionPersistTimer = setTimeout(() => {
-        lastSessionPersistTimer = null;
-        void get().saveLastSession();
-      }, LAST_SESSION_SAVE_DEBOUNCE_MS);
+      debounceWrite("last-session", LAST_SESSION_SAVE_DEBOUNCE_MS, () => get().saveLastSession());
     },
 
     restoreLastSession: async (selectedIndices) => {
@@ -689,10 +685,7 @@ export const createLayoutPersistenceSlice: StateCreator<
     },
 
     clearLastSession: async () => {
-      if (lastSessionPersistTimer) {
-        clearTimeout(lastSessionPersistTimer);
-        lastSessionPersistTimer = null;
-      }
+      cancelDebouncedWrite("last-session");
       try {
         await apiClearLastSession();
       } catch (err) {

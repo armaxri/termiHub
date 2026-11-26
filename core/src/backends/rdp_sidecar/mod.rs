@@ -390,6 +390,9 @@ struct SidecarShared {
     /// [`ConnectPhase::Pending`] once the session goes active or ends, which
     /// is what [`GraphicalBackend::wait_until_established`] awaits.
     phase: tokio::sync::watch::Sender<ConnectPhase>,
+    /// The sidecar's last lifecycle state (#6062): `Connecting` while it dials,
+    /// `Authenticating` once it signs in.
+    helper_state: tokio::sync::watch::Sender<GraphicalState>,
 }
 
 /// The connect outcome the host has observed from the sidecar (#4320).
@@ -416,6 +419,7 @@ impl SidecarShared {
             failure: StdMutex::new(None),
             monitor_layout: StdMutex::new(monitor_layout),
             phase: tokio::sync::watch::channel(ConnectPhase::Pending).0,
+            helper_state: tokio::sync::watch::channel(GraphicalState::Connecting).0,
         }
     }
 
@@ -768,6 +772,7 @@ async fn route_messages<R>(
             }
             Ok(SidecarMessage::State(state)) => {
                 debug!(?state, "rdp sidecar state");
+                shared.helper_state.send_replace(state);
                 if state == GraphicalState::Active {
                     shared.mark_established();
                 }
@@ -893,6 +898,10 @@ impl ConnectionType for SidecarRdp {
 
     fn settings_schema(&self) -> SettingsSchema {
         rdp_settings_schema()
+    }
+
+    fn establishes_after_connect(&self) -> bool {
+        true
     }
 
     fn capabilities(&self) -> Capabilities {
@@ -1354,6 +1363,10 @@ impl GraphicalBackend for SidecarRdp {
 
     fn fatal_error(&self) -> Option<SessionError> {
         self.runtime.as_ref()?.shared.fatal_error()
+    }
+
+    fn connect_states(&self) -> Option<tokio::sync::watch::Receiver<GraphicalState>> {
+        Some(self.runtime.as_ref()?.shared.helper_state.subscribe())
     }
 
     async fn wait_until_established(&self) -> Result<(), SessionError> {
@@ -1995,6 +2008,32 @@ mod tests {
         let fatal = shared.fatal_error();
         let _ = reader.await;
         (fatal, closed)
+    }
+
+    #[tokio::test]
+    async fn the_helper_states_are_followed_while_it_connects() {
+        let (mut sidecar_stdout, host_read) = tokio::io::duplex(1024 * 1024);
+        let (frame_tx, _frame_rx) = mpsc::channel(CHANNEL_DEPTH);
+        let (cursor_tx, _cursor_rx) = mpsc::channel(CHANNEL_DEPTH);
+        let (cert_tx, _cert_rx) = mpsc::channel(CHANNEL_DEPTH);
+        let shared = test_shared();
+        let mut states = shared.helper_state.subscribe();
+        assert_eq!(*states.borrow(), GraphicalState::Connecting);
+        let _reader = tokio::spawn(run_reader(
+            host_read,
+            frame_tx,
+            cursor_tx,
+            cert_tx,
+            shared.clone(),
+            CancellationToken::new(),
+        ));
+        for state in [GraphicalState::Authenticating, GraphicalState::Active] {
+            write_message(&mut sidecar_stdout, &SidecarMessage::State(state))
+                .await
+                .unwrap();
+            states.changed().await.unwrap();
+            assert_eq!(*states.borrow_and_update(), state);
+        }
     }
 
     #[tokio::test]

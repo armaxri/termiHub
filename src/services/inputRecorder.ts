@@ -218,10 +218,11 @@ export class InputRecorder {
     // The wait it was typed for is over.
     if (this.open?.kept) this.open = null;
     if (!this.open && before !== null && isPasswordPrompt(before)) this.open = { prompt: before };
-    // Not known whether a password was asked for: kept apart, and the user decides.
+    // Not known whether a password was asked for: kept apart, and the user decides. In a
+    // run of its own, which a prompt that turns out to be none does not take along.
     const unknown = read && before === null;
     this.unknown = unknown ? (this.unknown ?? { prompt: "" }) : null;
-    return this.open ?? this.unknown;
+    return this.unknown ?? this.open;
   }
 
   /** Keys that show up behind the "prompt" were echoed: it was no password. */

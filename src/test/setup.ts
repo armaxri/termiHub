@@ -1,6 +1,7 @@
 // First: must run before anything imports an xterm addon.
 import "./bufferPool";
-import { expect, vi } from "vitest";
+import { afterEach, expect, vi } from "vitest";
+import { cancelDebouncedWrites } from "@/utils/debouncedWrites";
 import { toHaveNoViolations } from "jest-axe";
 import { installConsoleGuard } from "./consoleGuard";
 import { installLazyImportGuard } from "./lazyImportGuard";
@@ -39,6 +40,10 @@ vi.mock("react", async (importOriginal) => {
   return { ...actual, lazy, default: { ...actual.default, lazy } };
 });
 installLazyImportGuard();
+
+// Writes debounced by the store (the layout, the last session) belong to the test
+// that started them: one that fires after it, its mocks gone, fails another (#6094).
+afterEach(() => cancelDebouncedWrites());
 
 declare module "vitest" {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- must mirror Vitest's own `Assertion<T = any>` signature for declaration merging.

@@ -4,8 +4,9 @@ import type { AppState, SidebarView } from "../appStore";
 import { type LayoutConfig, DEFAULT_LAYOUT, LAYOUT_PRESETS } from "@/types/connection";
 import { saveSettings as persistSettings } from "@/services/storage";
 import { currentSettingsView } from "@/store/settingsBridge";
-import { frontendLog } from "@/utils/frontendLog";
+import { debounceWrite } from "@/utils/debouncedWrites";
 import { errorMessage } from "@/utils/errorMessage";
+import { frontendLog } from "@/utils/frontendLog";
 
 /**
  * UI-chrome / layout-config domain slice (ARCH-001/FES-011, appStore god-module
@@ -13,8 +14,8 @@ import { errorMessage } from "@/utils/errorMessage";
  * `sidebarWidth` + setters), the persisted `layoutConfig` (activity-bar
  * visibility, sidebar position, status-bar etc.) with its update / preset /
  * activity-bar-toggle actions, and the runtime-only customize-layout dialog flag.
- * The module-level `layoutPersistTimer` moves here with them: every layout write
- * shares one 300 ms debounce that persists `{ ...currentSettingsView(), layout }`
+ * Every layout write shares one 300 ms debounced write (`debouncedWrites`, flushed
+ * when the window closes) that persists `{ ...currentSettingsView(), layout }`
  * through `save_settings`. Extracted verbatim from the monolithic root store as a
  * behavior-preserving Zustand slice — every action still receives the shared
  * `set`/`get` typed against the full {@link AppState}, so the public store shape
@@ -40,7 +41,14 @@ export interface UiChromeSlice {
   toggleActivityBarView: (view: SidebarView) => void;
 }
 
-let layoutPersistTimer: ReturnType<typeof setTimeout> | null = null;
+/** Write the layout in a moment; a newer one replaces it (#6094). */
+function persistLayout(layout: LayoutConfig, what = "config"): void {
+  debounceWrite("layout", 300, () =>
+    persistSettings({ ...currentSettingsView(), layout }).catch((err) =>
+      frontendLog("app_store", `Failed to persist layout ${what}: ${errorMessage(err)}`)
+    )
+  );
+}
 
 export const createUiChromeSlice: StateCreator<AppState, [], [], UiChromeSlice> = (set, get) => ({
   // Sidebar
@@ -71,24 +79,14 @@ export const createUiChromeSlice: StateCreator<AppState, [], [], UiChromeSlice> 
   updateLayoutConfig: (partial) => {
     const updated = { ...get().layoutConfig, ...partial };
     set({ layoutConfig: updated });
-    if (layoutPersistTimer) clearTimeout(layoutPersistTimer);
-    layoutPersistTimer = setTimeout(() => {
-      persistSettings({ ...currentSettingsView(), layout: updated }).catch((err) =>
-        frontendLog("app_store", `Failed to persist layout config: ${errorMessage(err)}`)
-      );
-    }, 300);
+    persistLayout(updated);
   },
 
   applyLayoutPreset: (preset) => {
     const config = LAYOUT_PRESETS[preset];
     if (!config) return;
     set({ layoutConfig: config });
-    if (layoutPersistTimer) clearTimeout(layoutPersistTimer);
-    layoutPersistTimer = setTimeout(() => {
-      persistSettings({ ...currentSettingsView(), layout: config }).catch((err) =>
-        frontendLog("app_store", `Failed to persist layout preset: ${errorMessage(err)}`)
-      );
-    }, 300);
+    persistLayout(config, "preset");
   },
 
   toggleActivityBarView: (view) => {
@@ -102,11 +100,6 @@ export const createUiChromeSlice: StateCreator<AppState, [], [], UiChromeSlice> 
     // If hiding the currently active view, collapse the sidebar
     const shouldCollapse = !isCurrentlyHidden && sidebarView === view && !sidebarCollapsed;
     set({ layoutConfig: updated, ...(shouldCollapse ? { sidebarCollapsed: true } : {}) });
-    if (layoutPersistTimer) clearTimeout(layoutPersistTimer);
-    layoutPersistTimer = setTimeout(() => {
-      persistSettings({ ...currentSettingsView(), layout: updated }).catch((err) =>
-        frontendLog("app_store", `Failed to persist layout config: ${errorMessage(err)}`)
-      );
-    }, 300);
+    persistLayout(updated);
   },
 });

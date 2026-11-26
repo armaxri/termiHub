@@ -177,13 +177,9 @@ class TestRdpSidecarSession(_ProbeSuite):
             what="the RDP session to become active",
         )
         assert self.driver.exists(self.CANVAS)
-        # The tab counts as active once the sidecar runs, before it has logged on.
-        self.wait(
-            lambda: len(rdp_test_server.client_infos()) > before,
-            timeout=PROBE_TIMEOUT,
-            what="the sidecar's Client Info to reach the server",
-        )
-        assert rdp_test_server.client_infos()[before:] == [USERNAME]
+        # Active only once the server accepted the logon (#6062): its Client Info
+        # is there already, no waiting for it.
+        assert rdp_test_server.client_infos()[before:] == [USERNAME], rdp_test_server.output()
 
     def test_canvas_paints_the_scripted_desktop(self, rdp_test_server: RdpTestServer):
         size, color = rdp_test_server.desktop()

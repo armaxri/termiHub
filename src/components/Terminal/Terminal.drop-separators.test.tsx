@@ -8,6 +8,7 @@
  * separates the old scrollback from the new session.
  */
 
+import { WRITE_SLICE_BYTES } from "@/utils/slicedWrite";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -45,9 +46,10 @@ vi.mock("@xterm/addon-search", () => {
   return { SearchAddon: MockSearchAddon };
 });
 
+const scrollback = vi.hoisted(() => ({ text: "old scrollback\r\n" }));
 vi.mock("@xterm/addon-serialize", () => {
   class MockSerializeAddon {
-    serialize = vi.fn(() => "old scrollback\r\n");
+    serialize = vi.fn(() => scrollback.text);
     dispose = vi.fn();
   }
   return { SerializeAddon: MockSerializeAddon };
@@ -262,6 +264,31 @@ describe("Terminal — reconnected marker (#5660)", () => {
     });
 
     expect(written()).toMatch(new RegExp(`— reconnected ${CLOCK} —`));
+  });
+
+  it("writes a large scrollback into the fresh terminal in slices, before the marker (#6087)", async () => {
+    scrollback.text = "z".repeat(40_000) + "\r\n";
+    try {
+      await mount({ type: "ssh", config: { host: "bastion" } });
+      act(() => {
+        useAppStore.getState().reconnectTerminal("tab-1");
+      });
+      await act(async () => {
+        await wait(50);
+      });
+      const xterm = xtermInstances[xtermInstances.length - 1];
+      const sizes = xterm.write.mock.calls.map((call) => (call[0] as Uint8Array | string).length);
+      expect(Math.max(...sizes)).toBeLessThanOrEqual(WRITE_SLICE_BYTES);
+      const text = xterm.write.mock.calls
+        .map((call) =>
+          typeof call[0] === "string" ? call[0] : decoder.decode(call[0] as Uint8Array)
+        )
+        .join("");
+      expect(text.startsWith(scrollback.text)).toBe(true);
+      expect(written()).toMatch(/z\r\n[^]*reconnected/);
+    } finally {
+      scrollback.text = "old scrollback\r\n";
+    }
   });
 
   it("writes a restarted marker, not reconnected, after a local Restart (#5955)", async () => {
