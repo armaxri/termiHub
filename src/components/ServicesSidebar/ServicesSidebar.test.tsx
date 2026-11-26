@@ -321,8 +321,9 @@ describe("Stop all (#6028, slice 11)", () => {
     await click("services-stop-all");
     expect(stopTunnel).not.toHaveBeenCalled();
     expect(q("confirm-service-lifecycle-dialog")?.textContent).toContain("Stop all services?");
+    // It names the service in use and who it cuts off (#6117, F-002).
     expect(q("confirm-service-lifecycle-dialog")?.textContent).toContain(
-      "2 connections are open now"
+      "Tunnel a (2 connected) is in use. Stopping cuts off who is connected."
     );
     await click("confirm-service-lifecycle-confirm");
     expect(stopTunnel.mock.calls).toEqual([["a"], ["b"]]);

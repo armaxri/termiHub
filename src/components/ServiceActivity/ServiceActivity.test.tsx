@@ -167,7 +167,7 @@ describe("a running tunnel", () => {
     await render("tunnel", "db");
     await click("service-activity-action-restart");
     expect(actions.reconnectTunnel).not.toHaveBeenCalled();
-    expect(document.body.textContent).toContain("2 connections are open now.");
+    expect(document.body.textContent).toContain("2 are connected to it now.");
   });
 
   it("reads the events again when its state changes", async () => {

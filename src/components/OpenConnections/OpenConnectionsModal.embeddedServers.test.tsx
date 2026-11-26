@@ -219,7 +219,8 @@ describe("OpenConnectionsModal — Embedded servers section", () => {
     await renderModal();
     const rows = serverRows();
     expect(rows).toHaveLength(1);
-    expect(rows[0].querySelector(".oc-row__badge")?.textContent).toBe("not reachable");
+    // The state word of the Services list (#6117, F-001).
+    expect(rows[0].querySelector(".oc-row__badge")?.textContent).toBe("Not reachable");
     expect(rows[0].querySelector(".oc-row__kill")).not.toBeNull();
   });
 

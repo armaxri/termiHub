@@ -250,7 +250,7 @@ describe("CommandPalette", () => {
       expect(startTunnel).toHaveBeenCalledWith("db");
       setStore({ commandPaletteOpen: true });
       typeInto("stop service: release");
-      expect(activeLabel()).toBe("Stop service: Release builds (2 open connections)");
+      expect(activeLabel()).toBe("Stop service: Release builds (2 connected)");
       keydown("Enter");
       await act(async () => Promise.resolve());
       expect(stopEmbeddedServer).toHaveBeenCalledWith("web");
