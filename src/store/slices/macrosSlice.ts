@@ -1,6 +1,7 @@
 import { StateCreator } from "zustand";
 
 import { tf } from "@/i18n/catalog";
+import { markAutomationInput } from "@/services/automationTypingMarks";
 import { toast } from "@/components/ui";
 import {
   getTerminalInputInjector,
@@ -83,6 +84,11 @@ export interface PlayMacroOptions {
    * caller (a scheduled run) can reference them.
    */
   onRecorded?: (run: AutomationRun) => void;
+}
+
+/** Which run a playback's marks name (#6021). */
+function typingOf(macro: Pick<Macro, "id" | "name">, opts: PlayMacroOptions | undefined) {
+  return { automationId: macro.id, name: macro.name, origin: opts?.origin ?? "manual" };
 }
 
 /**
@@ -207,8 +213,10 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
     }
     stopActivePlayback(tf("automation.stoppedBy", { name: macro.name }));
 
+    const injector = getTerminalInputInjector();
     const inject = createTargetInjector(
-      getTerminalInputInjector(),
+      // Each line it starts typing is marked in the terminal (#6021).
+      injector && markAutomationInput(injector, typingOf(macro, opts)),
       (tabId) => filterConnectedTerminalTabIds(get(), [tabId]).length > 0
     );
     const firstTab = targets[0];
@@ -379,7 +387,9 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
       // Only one playback at a time — cancel any in-flight run first.
       stopActivePlayback(tf("automation.stoppedBy", { name: macro.name }));
 
-      const injector = getTerminalInputInjector();
+      const raw = getTerminalInputInjector();
+      // Each line it starts typing is marked in the terminal (#6021).
+      const injector = raw && markAutomationInput(raw, typingOf(macro, opts));
       const inject: MacroInjector = (data) => {
         if (!injector) return false;
         return injector(targetTabId, data);

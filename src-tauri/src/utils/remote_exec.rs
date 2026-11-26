@@ -134,6 +134,18 @@ struct ExecOutput {
     exit_status: Option<u32>,
 }
 
+/// [`run_remote_command_with_timeout`] from async code that already holds
+/// the session: its trimmed stdout.
+pub(crate) async fn run_remote_command_timed(
+    session: &SshSession,
+    command: &str,
+    timeout: Duration,
+) -> Result<String, TerminalError> {
+    Ok(run_remote_command_async(session, command, timeout, false)
+        .await?
+        .stdout)
+}
+
 /// Async core of [`run_remote_command_with_timeout`].
 async fn run_remote_command_async(
     session: &SshSession,

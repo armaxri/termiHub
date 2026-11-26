@@ -1,10 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useCallback } from "react";
+import { subscribeAutomationTyping } from "@/services/automationTypingMarks";
+import { showHistoryInSidebar } from "@/components/AutomationSidebar/automationSections";
+import { decorateAutomationTyping } from "./automationMarkDecorations";
 import { sessionInputHidden } from "@/services/api";
 import { beginConnectAttempt } from "@/store/connectProgressBridge";
 import { ABORTED_CONNECT_MESSAGE } from "@/store/reconnectHelpers";
 import { takePreconnectFailure } from "@/utils/preconnect";
 import { connectTimeoutMessage } from "@/utils/connectTimeout";
-import { Terminal as XTerm } from "@xterm/xterm";
+import { Terminal as XTerm, type IDisposable } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { SearchAddon } from "@xterm/addon-search";
@@ -2019,6 +2022,13 @@ export function Terminal({
     const unregisterCommandMarks = registerCommandMarkTracker(tabId, commandMarks);
     commandMarksRef.current = commandMarks;
 
+    // The lines an automation types here are marked, never the user's own (#6021).
+    const automationMarks: IDisposable[] = [];
+    const unsubscribeAutomationTyping = subscribeAutomationTyping(tabId, (typing) => {
+      const mark = decorateAutomationTyping(xterm, typing, showHistoryInSidebar);
+      if (mark) automationMarks.push(mark);
+    });
+
     // Track whether the user has scrolled away from the bottom.
     // Auto-scroll on new output is suppressed while the user is scrolled up.
     const onScrollDisposable = xterm.onScroll(() => {
@@ -2295,6 +2305,8 @@ export function Terminal({
       }
       commandMarks.dispose();
       if (commandMarksRef.current === commandMarks) commandMarksRef.current = null;
+      unsubscribeAutomationTyping();
+      for (const mark of automationMarks.splice(0)) mark.dispose();
       unregister(tabId);
       if (cleanupRef.current) {
         cleanupRef.current();
