@@ -75,7 +75,7 @@ function seedStore(tunnel: TunnelConfig, state?: TunnelState) {
   });
 }
 
-describe("TunnelSidebar — delete confirmation (GAP 7, #1141)", () => {
+describe("Services, tunnels — delete confirmation (GAP 7, #1141)", () => {
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);

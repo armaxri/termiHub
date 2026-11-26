@@ -3,7 +3,7 @@
  *
  * `Sidebar` is a thin multi-store container: it reads `sidebarView` and
  * `sidebarCollapsed` from the app store and switches which panel subcomponent
- * renders. Each panel (ConnectionList, FileBrowser, TunnelSidebar, …) reads
+ * renders. Each panel (ConnectionList, FileBrowser, ServicesSidebar, …) reads
  * many stores of its own, which is why the container had no test — a full
  * mount pulled in every store at once.
  *

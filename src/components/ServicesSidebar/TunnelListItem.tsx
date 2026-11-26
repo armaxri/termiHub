@@ -1,16 +1,10 @@
 import type React from "react";
 import { AlertTriangle, Link2 } from "lucide-react";
-import { useConnectAgent } from "@/hooks/useConnectAgent";
-import { useAppStore } from "@/store/appStore";
+import { useServiceNextStep } from "@/hooks/useServiceNextStep";
 import { ServiceListItem, type ServiceRowAction } from "@/components/ServiceListItem";
 import type { TunnelConfig, TunnelState } from "@/types/tunnel";
 import { useByteRate } from "@/hooks/useByteRate";
-import {
-  tunnelModel,
-  withoutAgent,
-  type ServiceContext,
-  type ServiceNextStep,
-} from "@/utils/serviceModel";
+import { tunnelModel, withoutAgent, type ServiceContext } from "@/utils/serviceModel";
 import {
   resolveTunnelHost,
   isAgentHost,
@@ -37,6 +31,8 @@ interface TunnelListItemProps {
    */
   onReconnect: (tunnelId: string) => void | Promise<void>;
   onEdit: (tunnelId: string) => void;
+  /** Open its editor on Activity (#6028, slice 9). */
+  onActivity?: (tunnelId: string) => void;
   onDuplicate: (tunnelId: string) => void;
   onDelete: (tunnelId: string) => void;
   /** Listen on another port of this computer, and start. */
@@ -79,6 +75,7 @@ export function TunnelListItem({
   onStop,
   onReconnect,
   onEdit,
+  onActivity,
   onDuplicate,
   onDelete,
   onUsePort,
@@ -97,12 +94,11 @@ export function TunnelListItem({
     pairStatus && { role: nested ? "hop" : "parent", status: pairStatus }
   );
   const model = underAgent ? withoutAgent(own) : own;
-  const connectAgent = useConnectAgent();
-  const openConnectionEditorTab = useAppStore((s) => s.openConnectionEditorTab);
-  const checkTunnelsAgain = useAppStore((s) => s.checkTunnelsAgain);
-  const keepTunnelRunning = useAppStore((s) => s.keepTunnelRunning);
-  const retryTunnelNow = useAppStore((s) => s.retryTunnelNow);
-  const setUnlockDialogOpen = useAppStore((s) => s.setUnlockDialogOpen);
+  const onNextStep = useServiceNextStep(model, {
+    edit: onEdit,
+    listenOn: onUsePort,
+    sshConnectionId: tunnel.sshConnectionId,
+  });
   const running = model.state === "running";
   // Live up/down throughput (PROD-038), smoothed from the cumulative counters.
   const sampling = running && !!state?.stats;
@@ -145,33 +141,7 @@ export function TunnelListItem({
       case "delete":
         return onDelete(tunnel.id);
       case "activity":
-        return;
-    }
-  };
-
-  const onNextStep = (step: ServiceNextStep): void | Promise<void> => {
-    switch (step.id) {
-      case "chooseConnection":
-      case "chooseMachine":
-      case "edit":
-        return onEdit(tunnel.id);
-      case "usePort":
-        return step.port === undefined ? undefined : onUsePort(tunnel.id, step.port);
-      case "connectAgent":
-        return model.where.agentId === undefined ? undefined : connectAgent(model.where.agentId);
-      case "checkAgain":
-        return checkTunnelsAgain();
-      case "keepRunning":
-        return keepTunnelRunning(tunnel.id);
-      case "letReach":
-        // A tunnel has no kind that only others can use.
-        return;
-      case "unlock":
-        return setUnlockDialogOpen(true);
-      case "editConnection":
-        return openConnectionEditorTab(tunnel.sshConnectionId);
-      case "retryNow":
-        return retryTunnelNow(tunnel.id);
+        return onActivity?.(tunnel.id);
     }
   };
 

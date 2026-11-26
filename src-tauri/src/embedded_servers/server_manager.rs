@@ -170,12 +170,14 @@ impl<R: Runtime> EmbeddedServerManager<R> {
         let secrets = ServerSecrets::new(credential_store);
         let mut result = load_and_migrate(&storage, &secrets)?;
         forget_temporary(&storage, &secrets, &mut result.data);
+        // Stops agents owed before the app ended are sent again (#6051).
+        let hosted = HostedServices::stored(storage.owed_stops_path());
         Ok(Self {
             configs: Mutex::new(result.data),
             storage,
             secrets,
             services: Mutex::new(HashMap::new()),
-            hosted: HostedServices::default(),
+            hosted,
             refusals: Mutex::new(HashMap::new()),
             deleted: Mutex::new(HashMap::new()),
             // App-owned (ARCH-007, #3105): teardown cancels + awaits the poller.
@@ -599,6 +601,9 @@ impl<R: Runtime> EmbeddedServerManager<R> {
             Err(e) => {
                 let reason = if taken {
                     Reason::new(port_in_use_here(asked.port), Some(ServiceCause::PortInUse))
+                } else if !std::path::Path::new(&asked.root_directory).is_dir() {
+                    // "Choose folder" beside it (#6028, slice 10).
+                    Reason::new(plain_reason(&e), Some(ServiceCause::FolderMissing))
                 } else {
                     plain_reason(&e).into()
                 };
@@ -894,6 +899,8 @@ impl<R: Runtime> EmbeddedServerManager<R> {
                 return;
             }
         };
+        // What still runs on an agent after the app ended is taken over (#6051).
+        self.expect_hosted(&configs);
         for cfg in configs {
             if cfg.auto_start {
                 if let Err(e) = self.start(&cfg.id, StartedBy::Itself) {
@@ -919,6 +926,19 @@ impl<R: Runtime> EmbeddedServerManager<R> {
     /// (#2214). Idempotent; the shared [`AgentStatusPoller`] owns the task
     /// lifecycle and the [`EmbeddedServerPoll`] delegate supplies the
     /// service-specific poll + write-back/emit (DUP-020).
+    /// Ask the agents of `configs` whether they still run them; a stop owed from
+    /// the last run is polled too (#6051).
+    fn expect_hosted(&self, configs: &[EmbeddedServerConfig]) {
+        for cfg in configs {
+            if let HostChoice::Agent(agent_id) = cfg.host.choice() {
+                self.hosted.expect(&cfg.id, agent_id);
+            }
+        }
+        if self.hosted.any() {
+            self.ensure_status_poller();
+        }
+    }
+
     fn ensure_status_poller(&self) {
         self.agent_status_poller.ensure(self.status_poll());
     }

@@ -49,6 +49,7 @@ const STATES = {
   "services--only-errors": "You pressed the errors: what is wrong, and how to see all again?",
   "services--stop-all": "Stop everything before you leave: what is cut off?",
   "services--open-connections": "What runs right now, of everything: stop the services?",
+  "services--open-connections-why": "Some services fail: can you fix them from here?",
   "services--quit": "You quit while someone downloads: what stops?",
   "services--nothing": "You searched for something that is not there.",
   "services--empty": "There is no service yet: what is this for, and make one.",
@@ -62,6 +63,7 @@ const STATES = {
   "tunnels--reconnecting-last": "It has tried nine times: what happens after this one?",
   "tunnels--stopping": "Stop was pressed while the agent is away: is it stopped?",
   "tunnels--error": "A tunnel did not start: why, and what now?",
+  "tunnels--why": "Each tunnel failed for another reason: what does each need?",
   "tunnels--needs-connection": "A connection was deleted: what about its tunnel?",
   "tunnels--not-reachable": "The agent is gone: does the tunnel still run?",
   "tunnels--on-agent": "Tunnels on other machines: where can you use each?",
@@ -91,13 +93,11 @@ const STATES = {
   "servers--narrow": "The narrowest sidebar, long names: read everything.",
   "servers--hover": "Open, change or delete a running server.",
   "servers--menu": "The same, from its menu.",
-  "servers--activity": "Who uses the server right now?",
-  "servers--activity-nobody": "Does anybody use the server?",
-  "servers--activity-unavailable": "The log cannot be read: does the server run, and what now?",
   "servers--mixed": "Fifteen servers: which work right now, which need you?",
   "servers--tooltip": "What exactly does this server share?",
   "servers--stop": "Stop a server while somebody downloads: what happens?",
   "servers--delete": "Delete a running server: what happens?",
+  "servers--why": "Each server failed for another reason: what does each need?",
   "tunnel-editor--local": "Reach a database behind a server.",
   "tunnel-editor--remote": "Let a server reach your web app.",
   "tunnel-editor--dynamic": "Browse as if you were on the server's network.",
@@ -122,6 +122,19 @@ const STATES = {
   "server-editor--kinds": "You took the wrong kind: change it.",
   "server-editor--edit": "Change the port of a running server.",
   "server-editor--unsaved": "You closed the tab with changes in it.",
+  "activity--tunnel": "A tunnel runs: since when, how do you use it, how much went through?",
+  "activity--tunnel-reconnecting": "The connection dropped: what has it tried so far?",
+  "activity--tunnel-error": "It gave up: why, and what now?",
+  "activity--tunnel-stopped": "It is stopped: what happened before?",
+  "activity--server": "Who uses the server right now?",
+  "activity--server-nobody": "Does anybody use the server?",
+  "activity--server-unavailable": "The log cannot be read: does the server run, and what now?",
+  "activity--log-full": "It changed many times: what happened last?",
+  "activity--old-agent": "It runs on an old agent: what can you see?",
+  "activity--path": "The server did not answer: where on the way did it fail?",
+  "connection--tunnels": "Editing Build Box: which tunnels go through it, and do they run?",
+  "connection--tunnels-empty": "Editing Build Box: no tunnel goes through it yet. Make one.",
+  "activity--target-refused": "It runs, but the database refuses: what is wrong?",
 } as const;
 type State = keyof typeof STATES;
 
@@ -313,7 +326,46 @@ const MIXED_SERVERS: Row[] = MIXED_NAMES.map((name, index) => {
   };
 });
 
+/** A tunnel that runs while its target refuses (#6028, slice 10). */
+const REFUSING = {
+  stats: { ...STATS, refused: 3, lastRefusedMs: new Date(2026, 10, 26, 14, 20).getTime() },
+};
+/** Each cause of slice 10 once, as the backend writes it. */
+const WHY_ROWS: Row[] = [
+  {
+    id: "db",
+    name: "Shop database",
+    status: "error",
+    error: "Build Box refused the sign-in.",
+    state: { cause: "signInRefused" },
+  },
+  {
+    id: "silent",
+    name: "Metrics",
+    status: "error",
+    error: "Build Box did not answer in time.",
+    state: { cause: "serverSilent" },
+  },
+  {
+    id: "key",
+    name: "Grafana",
+    status: "error",
+    error: "The host key of Build Box is not trusted. It may have changed.",
+    state: { cause: "hostKeyUntrusted" },
+  },
+  {
+    id: "web",
+    name: "Show my web app",
+    type: "remote",
+    status: "error",
+    error: "Build Box did not allow port 9000.",
+    state: { cause: "remotePortRefused" },
+  },
+  { id: "refusing", name: "Orders database", status: "connected", state: REFUSING },
+];
+
 const TUNNEL_ROWS: Partial<Record<State, Row[]>> = {
+  "tunnels--why": WHY_ROWS,
   "tunnels--stopped": tunnelsIn("disconnected"),
   "tunnels--waiting": [
     ...tunnelsIn("waiting", WHY.agent, { host: ON_EDGE }, AGENT).slice(0, 1),
@@ -433,6 +485,36 @@ const TUNNEL_ROWS: Partial<Record<State, Row[]>> = {
   "tunnels--menu": tunnelsIn("connected"),
 };
 const SERVER_ROWS: Partial<Record<State, Row[]>> = {
+  "servers--why": [
+    {
+      id: "web",
+      name: "Release builds",
+      type: "http",
+      status: "error",
+      error: "The folder /srv/share does not exist.",
+      state: { cause: "folderMissing" },
+    },
+    {
+      id: "boot",
+      name: "Switch firmware",
+      type: "tftp",
+      status: "error",
+      error:
+        "Not started: its agent could not start it: Remote agent error: The folder ~/firmware does not exist.",
+      over: { host: ON_EDGE },
+      state: { cause: "folderMissing" },
+    },
+    {
+      id: "scans",
+      name: "Scanner inbox",
+      type: "ftp",
+      status: "error",
+      error:
+        "Not started: its agent could not start it: Remote agent error: Port 2121 is already in use. Choose another one, or stop what uses it.",
+      over: { host: ON_EDGE },
+      state: { cause: "portInUse" },
+    },
+  ],
   "servers--stopped": serversIn("stopped"),
   "servers--shared": [
     {
@@ -553,9 +635,6 @@ const SERVER_ROWS: Partial<Record<State, Row[]>> = {
   ],
   "servers--hover": serversIn("running"),
   "servers--menu": serversIn("running"),
-  "servers--activity": serversIn("running", undefined, { bindHost: "0.0.0.0" }).slice(0, 1),
-  "servers--activity-nobody": serversIn("running").slice(0, 1),
-  "servers--activity-unavailable": serversIn("running").slice(0, 1),
 };
 
 const request = (seq: number, client: string, path: string, bytes: number, status = "200") => ({
@@ -677,9 +756,101 @@ const BOTH_ROWS: Partial<Record<State, { tunnels: Row[]; servers: Row[] }>> = {
   "services--stop-all": BOTH,
   "services--quit": BOTH,
   "services--open-connections": BOTH,
+  "services--open-connections-why": {
+    tunnels: WHY_ROWS,
+    servers: [
+      {
+        id: "scans",
+        name: "Scanner inbox",
+        type: "ftp",
+        status: "notReachable",
+        error: WHY.away,
+        over: { host: ON_EDGE },
+        state: AGENT,
+      },
+    ],
+  },
   "services--nothing": BOTH,
   "services--palette": BOTH,
   "services--narrow": BOTH,
+};
+
+/** The service whose Activity a state shows, the first row (#6028, slice 9). */
+const ACTIVITY_ROWS: Partial<Record<State, { tunnels: Row[]; servers: Row[] }>> = {
+  "activity--tunnel": { tunnels: tunnelsIn("connected").slice(0, 1), servers: [] },
+  "activity--tunnel-reconnecting": {
+    tunnels: tunnelsIn("reconnecting", WHY.reconnecting).slice(0, 1),
+    servers: [],
+  },
+  "activity--tunnel-error": {
+    tunnels: tunnelsIn("error", WHY.ssh, undefined, SSH).slice(0, 1),
+    servers: [],
+  },
+  "activity--tunnel-stopped": { tunnels: tunnelsIn("disconnected").slice(0, 1), servers: [] },
+  "activity--server": {
+    tunnels: [],
+    servers: serversIn("running", undefined, { bindHost: "0.0.0.0" }).slice(0, 1),
+  },
+  "activity--server-nobody": { tunnels: [], servers: serversIn("running").slice(0, 1) },
+  "activity--server-unavailable": { tunnels: [], servers: serversIn("running").slice(0, 1) },
+  "activity--log-full": { tunnels: tunnelsIn("connected").slice(0, 1), servers: [] },
+  "activity--path": {
+    tunnels: [WHY_ROWS[1], ...tunnelsIn("connected").slice(1, 2)],
+    servers: [],
+  },
+  "activity--target-refused": { tunnels: [WHY_ROWS[4]], servers: [] },
+  "activity--old-agent": {
+    tunnels: [],
+    servers: serversIn("running", undefined, {
+      host: { kind: "agent", agentId: "agent-lab" },
+    }).slice(0, 1),
+  },
+};
+const ACTIVITY_STATES = Object.keys(ACTIVITY_ROWS) as State[];
+
+/** The tunnels of an SSH connection in its editor (#6028, slice 13). */
+const CONNECTION_ROWS: Partial<Record<State, Row[]>> = {
+  "connection--tunnels": [
+    ...tunnelsIn("connected").slice(0, 1),
+    ...tunnelsIn("disconnected").slice(2),
+    WHY_ROWS[1],
+  ],
+  "connection--tunnels-empty": [],
+};
+
+/** At 14:20 today, plus `seconds`. */
+const at = (seconds: number) => new Date(2026, 10, 26, 14, 20, seconds).getTime();
+const event = (seconds: number, status: string, reason?: string) => ({
+  atMs: at(seconds),
+  status,
+  ...(reason ? { reason } : {}),
+});
+const RAN = [event(0, "connecting"), event(2, "connected")];
+const DROPS = [
+  ...RAN,
+  event(40, "reconnecting", "Connection lost. Try 1 of 10 at 14:20:41."),
+  event(41, "reconnecting", "Connection lost. Try 2 of 10 at 14:20:43."),
+  event(43, "reconnecting", WHY.reconnecting),
+];
+/** What happened before each state, as the backend keeps it. */
+const EVENTS: Partial<Record<State, unknown[]>> = {
+  "activity--tunnel": RAN,
+  "activity--tunnel-reconnecting": DROPS,
+  "activity--tunnel-error": [event(0, "connecting"), event(15, "error", WHY.ssh)],
+  "activity--tunnel-stopped": [...RAN, event(50, "disconnected")],
+  "activity--server": [event(0, "starting"), event(1, "running")],
+  "activity--server-nobody": [event(0, "starting"), event(1, "running")],
+  "activity--server-unavailable": [event(0, "starting"), event(1, "running")],
+  // The ring keeps 200: a tunnel on a flaky line.
+  "activity--log-full": Array.from({ length: 200 }, (_, i) =>
+    event(i, i % 2 ? "connected" : "reconnecting", i % 2 ? undefined : WHY.reconnecting)
+  ),
+  "activity--old-agent": [event(0, "starting"), event(1, "running")],
+  "activity--path": [
+    event(0, "connecting"),
+    event(15, "error", "Build Box did not answer in time."),
+  ],
+  "activity--target-refused": RAN,
 };
 
 const EDITOR_STATES = (Object.keys(STATES) as State[]).filter((state) =>
@@ -692,8 +863,9 @@ const TUNNEL_EDITOR_STATES = (Object.keys(STATES) as State[]).filter((state) =>
 /** What else the backend answers in a state. */
 const ANSWERS: Partial<Record<State, Partial<VisualScenario>>> = {
   "servers--open-unknown": { networkInterfaces: [] },
-  "servers--activity": { serverActivity: REQUESTS },
-  "servers--activity-nobody": { serverActivity: NO_REQUESTS },
+  "activity--server": { serverActivity: REQUESTS },
+  "activity--server-nobody": { serverActivity: NO_REQUESTS },
+  "activity--old-agent": { oldAgent: true },
 };
 
 async function settle(page: Page): Promise<void> {
@@ -720,12 +892,18 @@ async function boot(page: Page, theme: string, state: State): Promise<void> {
     {
       populated: true,
       serviceData: data(
-        BOTH_ROWS[state]?.tunnels ??
+        ACTIVITY_ROWS[state]?.tunnels ??
+          CONNECTION_ROWS[state] ??
+          BOTH_ROWS[state]?.tunnels ??
           TUNNEL_ROWS[state] ??
           (state.startsWith("tunnel-editor--") ? tunnelsIn("connected") : []),
-        BOTH_ROWS[state]?.servers ??
+        ACTIVITY_ROWS[state]?.servers ??
+          BOTH_ROWS[state]?.servers ??
           SERVER_ROWS[state] ??
           (state.startsWith("server-editor--") ? serversIn("running") : [])
+      ),
+      serviceEvents: Object.fromEntries(
+        ["db", "web", "silent", "refusing"].map((key) => [key, EVENTS[state] ?? []])
       ),
       ...ANSWERS[state],
     } satisfies VisualScenario
@@ -835,12 +1013,6 @@ for (const viewport of WINDOWS) {
             await page.locator(id(`${kind}-kind-${first}`)).hover();
             await page.locator(id(`${kind}-more-${first}`)).click();
             await page.locator("[role=menu]").waitFor();
-          } else if (state.includes("--activity")) {
-            await page.locator(id(`${kind}-kind-${first}`)).hover();
-            await page.locator(id(`server-activity-toggle-${first}`)).click();
-            await page.locator(id(`server-activity-${first}`)).waitFor();
-            await page.mouse.move(viewport.width - 20, viewport.height / 2);
-            await page.evaluate(() => (document.activeElement as HTMLElement).blur());
           }
           if (state.endsWith("--tooltip")) {
             await page.locator(id(`${kind}-name-${first}`)).hover();
@@ -866,6 +1038,41 @@ for (const viewport of WINDOWS) {
           }
           const over = /--(hover|menu|tooltip|stop|delete)$/.test(state);
           await shot(page, state, id("services-sidebar"), over);
+        });
+      }
+
+      for (const state of ACTIVITY_STATES) {
+        test(state, async ({ page }) => {
+          await boot(page, theme, state);
+          const tunnel = ACTIVITY_ROWS[state]!.tunnels.length > 0;
+          const first = (tunnel ? ACTIVITY_ROWS[state]!.tunnels : ACTIVITY_ROWS[state]!.servers)[0];
+          const kind = tunnel ? "tunnel" : "server";
+          await page.locator(id(`${kind}-kind-${first.id}`)).hover();
+          await page
+            .locator(
+              id(tunnel ? `tunnel-activity-${first.id}` : `server-open-activity-${first.id}`)
+            )
+            .click();
+          await page.locator(id("service-activity")).waitFor();
+          if (!tunnel) await page.locator(id(`server-activity-${first.id}`)).waitFor();
+          await page.mouse.move(viewport.width - 20, viewport.height / 2);
+          await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+          await shot(page, state, id(tunnel ? "tunnel-editor" : "server-editor"));
+        });
+      }
+
+      for (const state of Object.keys(CONNECTION_ROWS) as State[]) {
+        test(state, async ({ page }) => {
+          await boot(page, theme, state);
+          // The editor before saving needs the connection types, which this harness
+          // does not serve: that state is a component test (#6028, slice 13).
+          await page.evaluate(() => {
+            void window.__visual.store.getState().openConnectionEditorTab("Work/Build Box");
+          });
+          const section = page.locator(id("connection-port-forwarding-section"));
+          await section.scrollIntoViewIfNeeded();
+          await page.mouse.move(viewport.width - 20, viewport.height - 20);
+          await shot(page, state, id("connection-port-forwarding-section"));
         });
       }
 
@@ -1060,6 +1267,7 @@ for (const viewport of WINDOWS) {
               over = true;
               break;
             case "services--open-connections":
+            case "services--open-connections-why":
               if (!(await page.locator(id("services-open-connections")).isVisible())) {
                 await page.locator(id("services-more")).click();
               }

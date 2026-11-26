@@ -306,16 +306,14 @@ describe("what the row says", () => {
     expect(q("server-copy-address-s")!.className).toContain("success");
   });
 
-  it("the user's description, the extras and the open activity", () => {
+  it("the user's description and the extras", () => {
     render(tunnelModel({ ...TUNNEL, description: "Reaches the DB" }, undefined, CONTEXT), {
       extras: <i data-testid="extra" />,
-      activity: <i data-testid="activity" />,
     });
     expect(q("tunnel-description-t")?.textContent).toBe("Reaches the DB");
     // In the place of what its type is for, after the state.
     expect(q("tunnel-kind-t")?.textContent).toBe("Stopped · Reaches the DB");
     expect(q("extra")).not.toBeNull();
-    expect(q("activity")).not.toBeNull();
     expect(rowOf(tunnelIn("connected")).getAttribute("aria-description")).toContain("a");
   });
 });
@@ -324,7 +322,7 @@ describe("what the row offers", () => {
   it("the run control at rest, the rest on hover, all in the model's order", () => {
     render(tunnelIn("connected"));
     expect(q("tunnel-primary-t")?.querySelector("button")?.getAttribute("aria-label")).toBe("Stop");
-    expect(onRow()).toEqual(["Edit", "More"]);
+    expect(onRow()).toEqual(["Activity", "Edit", "More"]);
     render(serverIn("running"));
     expect(onRow()).toEqual(["Activity", "Edit", "More"]);
   });

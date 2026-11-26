@@ -46,7 +46,8 @@ pub fn connect_with_registry_cancellable(
     tokio::task::block_in_place(|| {
         tokio::runtime::Handle::current().block_on(core_connect_cancellable(config, Some(cancel)))
     })
-    .map_err(|e| TerminalError::SshError(e.to_string()))
+    // Keep what failed (sign-in, host key, time, refusal) for the tunnel's row.
+    .map_err(TerminalError::from_session_ssh)
 }
 
 /// Connect and authenticate, returning just the session, abortable via a

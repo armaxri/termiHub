@@ -50,6 +50,7 @@ pub(crate) fn build(
         // Owned background-task registry (ARCH-007): app-lifetime spawn sites
         // register here so teardown can cancel + await them deterministically.
         .manage(app_tasks::AppTasks::new())
+        .manage(crate::agent_service::events::ServiceEvents::default())
         .manage(TransferRegistry::new())
         .manage(files::watcher::FileWatchManager::new())
         // Staging dirs for remote drag-out to the OS file manager (#3457).

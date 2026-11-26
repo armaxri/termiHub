@@ -33,7 +33,9 @@ use crate::service::{
     EventChannel, Service, ServiceCapabilities, ServiceError, ServiceEvent, ServiceEventReceiver,
     ServiceStatus,
 };
-use crate::util::service_cause::{port_in_use_reason, tcp_port_in_use, udp_port_in_use};
+use crate::util::service_cause::{
+    folder_missing_reason, port_in_use_reason, tcp_port_in_use, udp_port_in_use,
+};
 
 use super::activity::{ActivitySnapshot, ServerActivity};
 use super::config::{
@@ -327,6 +329,13 @@ impl EmbeddedServerService {
             )));
         }
         self.active = None;
+
+        // A folder that is gone serves nothing: say so instead (#6028, slice 10).
+        if !std::path::Path::new(&config.root_directory).is_dir() {
+            return Err(EmbeddedServerError::new(folder_missing_reason(
+                &config.root_directory,
+            )));
+        }
 
         // Pre-flight bind check so we can return immediately for the common
         // "port already in use" case.
@@ -1034,6 +1043,19 @@ mod tests {
         assert_eq!(stopping.server_id, cfg.id);
         let stopped = recv_state(&mut rx).await;
         assert_eq!(stopped.status, ServerStatus::Stopped);
+    }
+
+    #[tokio::test]
+    async fn start_says_that_the_folder_is_gone() {
+        let mut service = EmbeddedServerService::new(ServerType::Http);
+        let mut cfg = http_config(0);
+        cfg.root_directory = "/no/such/folder/for/termihub".to_string();
+        let err = service.start_with(cfg).unwrap_err();
+        assert_eq!(
+            err.0,
+            "The folder /no/such/folder/for/termihub does not exist."
+        );
+        assert_eq!(service.status(), ServiceStatus::Stopped);
     }
 
     #[tokio::test]

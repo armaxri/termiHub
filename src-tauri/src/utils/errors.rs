@@ -481,7 +481,7 @@ impl TerminalError {
     /// variant prefixes (`Failed to spawn terminal: Spawn failed: …`). The UI
     /// supplies the headline and hint from the code; the `Display` text — what
     /// the log records — keeps the prefixes.
-    fn display_message(&self) -> String {
+    pub(crate) fn display_message(&self) -> String {
         self.connect_failure_detail()
             .unwrap_or_else(|| strip_marker(&self.to_string()))
     }

@@ -253,6 +253,8 @@ where
                 local_addr,
                 e
             );
+            // What it is for refused here (#6028, slice 10).
+            stats.note_refused();
             return;
         }
     };
@@ -366,6 +368,8 @@ mod tests {
         let snap = stats.to_tunnel_stats();
         assert_eq!(snap.bytes_sent, 0);
         assert_eq!(snap.bytes_received, 0);
+        // What it is for refused here (#6028, slice 10).
+        assert_eq!(snap.refused, 1);
     }
 
     /// CORE-028: a forwarder task panicking while it holds the registry lock

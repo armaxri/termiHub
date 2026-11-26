@@ -1,5 +1,5 @@
 /**
- * The connection editor's tunnel Remove, end to end against the real store
+ * The connection editor's tunnel Delete (its row's, as in Services), end to end against the real store
  * (#5216): Remove → confirm → `tunnel.remove`, then the toast's Undo re-creates
  * the tunnel under the same id. Only the projection transport and the toast
  * primitive are mocked.
@@ -71,6 +71,7 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { toast, TooltipProvider } from "@/components/ui";
 import type { TunnelConfig } from "@/types/tunnel";
+import { serviceMenuItem } from "@/test/serviceMenu";
 import { ConnectionPortForwardingSection } from "./ConnectionPortForwardingSection";
 
 const ACCEPTED: IntentAck = { intentId: "intent-test", status: "accepted", produced: [] };
@@ -95,7 +96,8 @@ function byTestId(id: string): HTMLElement | null {
 }
 
 async function click(id: string) {
-  const el = byTestId(id);
+  // Delete is in the row's "…" menu, as in Services (#6028, slice 13).
+  const el = id.startsWith("tunnel-delete-") ? serviceMenuItem(id) : byTestId(id);
   expect(el).not.toBeNull();
   await act(async () => {
     el!.click();
@@ -126,7 +128,7 @@ describe("ConnectionPortForwardingSection — delete with Undo (#5216)", () => {
   });
 
   it("confirm deletes the tunnel and Undo re-creates it under the same id", async () => {
-    await click("port-forward-remove-tun-1");
+    await click("tunnel-delete-tun-1");
     expect(byTestId("confirm-delete-dialog")).not.toBeNull();
     expect(dispatchMock).not.toHaveBeenCalled();
 
@@ -153,9 +155,9 @@ describe("ConnectionPortForwardingSection — delete with Undo (#5216)", () => {
   });
 
   it("cancel dispatches nothing", async () => {
-    await click("port-forward-remove-tun-1");
+    await click("tunnel-delete-tun-1");
     await click("confirm-delete-cancel");
     expect(dispatchMock).not.toHaveBeenCalled();
-    expect(byTestId("port-forward-row-tun-1")).not.toBeNull();
+    expect(byTestId("tunnel-item-tun-1")).not.toBeNull();
   });
 });

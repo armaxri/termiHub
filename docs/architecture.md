@@ -3165,6 +3165,13 @@ remote agent by id. The rule is **the right machine or not at all**:
   the entry. A save without a host keeps the stored one (a list in another window may be out of
   date), and so does restoring a backup that has none.
 - Moving a running service stops it where it ran; it is not started on the new machine by itself.
+- **After an app restart** (#6051) the desktop knows nothing of what runs on agents
+  (`agent_service/hosted.rs`). At launch each service stored to run on an agent is asked about
+  once that agent is connected (`HostedServices::expect`): one that still runs there is taken over
+  and reads Running; one the user stopped, moved or deleted before the answer is stopped there
+  instead. A start that meets a tunnel the agent still runs takes it over. Stops an agent has not
+  confirmed are kept in `embedded_servers_owed_stops.json` and `tunnels_owed_stops.json` beside the
+  configs and sent when the agent is back, also for a service that has no row any more.
 
 A server without a `host` runs on this computer, as it did before the field existed. Older builds
 kept an agent choice in memory only, so it cannot be recovered: the user has to choose it once more.
@@ -3253,6 +3260,20 @@ model is pure, and the rules live there, not in components:
   dealings (`useEditorTab`: unsaved changes, closing) and the file server's form. What the form may save
   and what it warns of is `fileServerForm.ts` (pure). A password leaves neither the form nor, with
   "Move tabs", its window.
+- **What failed** (slice 10): a tunnel's start keeps the typed connect failure
+  (`TerminalError::from_session_ssh`), so `start_reason` names it by its code, not its words: sign-in
+  refused, host key not trusted, no answer in time, refused, or a remote port the server did not
+  allow. The forwarders count refused targets (`TunnelStats.refused`, `lastRefusedMs`); a running
+  tunnel with refusals says so. A file server checks its folder before it binds (core, so on agents
+  too). An agent's refusal carries no cause, so `agent_start_cause` reads its code, or this family's
+  own sentences. The model names the failing part of the path (`ServiceModel.failing`) for Show path
+  and Activity; Open connections offers the same steps (`ServiceRemedies`).
+- **Activity** is the editor's second sub-tab (`src/components/ServiceActivity`): the same model, the
+  four counters, what happened and, for a file server, its access log. What happened is a ring of 200
+  events per service (`src-tauri/src/agent_service/events.rs`), noted when the `tunnels` or `services`
+  region is published and only when the state or its reason changed; it is kept in memory only, and a
+  service on an agent shows what this computer saw. `get_service_events` reads it. The row and
+  Activity take next steps through one hook (`useServiceNextStep`).
 - **Actions** come in one order with one set of words and keys. An action that cannot act is absent.
   "Open in browser" is absent for a server on another machine's localhost.
 

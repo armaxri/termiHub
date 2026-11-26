@@ -41,7 +41,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from http.server import BaseHTTPRequestHandler
 
 import pytest
@@ -346,6 +346,56 @@ class TestSshTunnels(
         assert self.wait(
             lambda: TUNNEL_OK not in _http_get(port), what="the forward to stop serving"
         )
+
+    # ── Errors with a next step (#6028, slice 10) ───────────────────────────────
+
+    def test_a_server_that_refuses_says_so_and_offers_its_connection(self):
+        """Nothing listens on the SSH port: the row says who refused, with its step."""
+        self.target = replace(self.target, ssh_port=self.free_port())
+        tid = self._create_tunnel("tunnel-refused", local_port=18087 + _TUNNEL_OFFSET)["id"]
+        self.driver.click(f"tunnel-start-{tid}")
+        self.wait(lambda: self._tunnel_status(tid) == "error", what="the start to fail")
+        reason = self.driver.get_text(f"tunnel-reason-{tid}")
+        assert "refused the connection. Is its SSH server running?" in reason, reason
+        assert self.driver.exists(f"tunnel-edit-connection-{tid}")
+        # Activity marks the SSH server on the path.
+        self._tunnel_menu(tid, "activity")
+        self.wait(lambda: self.driver.exists("tunnel-diagram-fails"), what="the failing part")
+        assert "SSH server" in self.driver.get_text("tunnel-diagram")
+
+    def test_a_new_tunnel_from_a_connection(self):
+        """The connection's editor lists its tunnels and makes one with it chosen (slice 13)."""
+        first = self._create_tunnel("tunnel-from-connection", local_port=18089 + _TUNNEL_OFFSET)
+        ssh = first["sshConnectionId"]
+        self.driver.click(f"tunnel-start-{first['id']}")
+        self._assert_connected(first["id"])
+        self._stop_tunnel(first["id"])
+        self.switch_to_connections_sidebar()
+        self.open_connection_menu(ssh)
+        self.driver.click("context-connection-edit")
+        section = "connection-port-forwarding-section"
+        self.wait(lambda: self.driver.exists(section), what="the connection's tunnels")
+        assert first["name"] in self.driver.get_text(section)
+        self.driver.click("connection-port-forwarding-add")
+        self.wait(lambda: self.driver.exists("tunnel-editor-name"), what="the tunnel editor")
+        assert self.driver.get_value("tunnel-editor-ssh-connection") == ssh
+
+    def test_a_target_that_refuses_is_counted_while_the_tunnel_runs(self):
+        """The tunnel runs; its target does not answer: the row says so and when."""
+        self.target = replace(self.target, remote_host=HOST, remote_port=self.free_port())
+        port = 18088 + _TUNNEL_OFFSET
+        tid = self._create_tunnel("tunnel-target-refused", local_port=port, start=True)["id"]
+        self._assert_connected(tid)
+        assert _http_get(port) == ""
+        self.wait(
+            lambda: (self._tunnel_stats(tid).get("refused") or 0) >= 1,
+            what="the refusal to be counted",
+        )
+        self.wait(
+            lambda: "refused the connection. Last:" in self.driver.get_text(f"tunnel-reason-{tid}"),
+            what="the row to say so",
+        )
+        assert self._tunnel_status(tid) == "connected"
 
     def test_tunnel_runs_alongside_an_ssh_session(self):
         port = 18084 + _TUNNEL_OFFSET

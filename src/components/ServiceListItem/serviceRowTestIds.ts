@@ -58,6 +58,9 @@ function tunnelTestIds(id: string): ServiceRowTestIds {
       unlock: { "data-testid": `tunnel-unlock-${id}` },
       editConnection: { "data-testid": `tunnel-edit-connection-${id}` },
       retryNow: { "data-testid": `tunnel-retry-now-${id}` },
+      openTerminal: { "data-testid": `tunnel-open-terminal-${id}` },
+      reviewKey: { "data-testid": `tunnel-review-key-${id}` },
+      chooseFolder: { "data-testid": `tunnel-choose-folder-${id}` },
     },
     moreTestId: `tunnel-more-${id}`,
     actionTestIds: {
@@ -128,6 +131,9 @@ function serverTestIds(id: string): ServiceRowTestIds {
       unlock: { "data-testid": `server-unlock-${id}` },
       editConnection: { "data-testid": `server-edit-connection-${id}` },
       retryNow: { "data-testid": `server-retry-now-${id}` },
+      openTerminal: { "data-testid": `server-open-terminal-${id}` },
+      reviewKey: { "data-testid": `server-review-key-${id}` },
+      chooseFolder: { "data-testid": `server-choose-folder-${id}` },
     },
     moreTestId: `server-more-${id}`,
     actionTestIds: {
@@ -137,7 +143,7 @@ function serverTestIds(id: string): ServiceRowTestIds {
       retry: { "data-testid": `server-retry-${id}` },
       copyAddress: { "data-testid": `server-copy-address-${id}` },
       openInBrowser: { "data-testid": `server-open-browser-${id}` },
-      activity: { "data-testid": `server-activity-toggle-${id}` },
+      activity: { "data-testid": `server-open-activity-${id}` },
       edit: { "data-testid": `server-edit-${id}` },
       restart: { "data-testid": `server-restart-${id}` },
       duplicate: { "data-testid": `server-duplicate-${id}` },

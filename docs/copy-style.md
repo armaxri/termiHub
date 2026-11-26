@@ -210,6 +210,10 @@ The row is `ServiceListItem`, its words are in `serviceModel.ts`. Rules for them
   technical name under it. The search finds all of these words.
 - An **offline agent** with several services is said once, with all of them, whatever kind they are.
 - A **group's line says its problems**, also while it is closed; only without any it says how many run.
+- **One set of words in every place a service shows**: Services, Open connections and the SSH
+  connection's editor (its **SSH tunnels** section) use the same row, the same reason with its next
+  step, and "tunnel", never "port forward". A reason names what failed and the step fixes that:
+  "Edit connection" after a refused sign-in, "Review key", "Open a terminal on …", "Choose folder".
 - An **editor is a tab** (`ServiceEditorShell`): titled by what the user wants to do, the fields one came
   for first, Save always on screen with the reason beside it while it cannot save. Who can open it is
   said in words, with the address that comes out of it. A **new file server is for this computer only and

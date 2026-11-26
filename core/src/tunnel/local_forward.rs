@@ -41,6 +41,9 @@ pub struct ForwarderStats {
     bytes_received: AtomicU64,
     active_connections: AtomicU32,
     total_connections: AtomicU64,
+    refused: AtomicU64,
+    /// Milliseconds since 1970 of the last refusal; 0 for none.
+    last_refused_ms: AtomicU64,
 }
 
 impl ForwarderStats {
@@ -50,6 +53,8 @@ impl ForwarderStats {
             bytes_received: AtomicU64::new(0),
             active_connections: AtomicU32::new(0),
             total_connections: AtomicU64::new(0),
+            refused: AtomicU64::new(0),
+            last_refused_ms: AtomicU64::new(0),
         }
     }
 
@@ -59,7 +64,23 @@ impl ForwarderStats {
             bytes_received: self.bytes_received.load(Ordering::Relaxed),
             active_connections: self.active_connections.load(Ordering::Relaxed),
             total_connections: self.total_connections.load(Ordering::Relaxed),
+            refused: self.refused.load(Ordering::Relaxed),
+            last_refused_ms: match self.last_refused_ms.load(Ordering::Relaxed) {
+                0 => None,
+                at => Some(at),
+            },
         }
+    }
+
+    /// Count a connection the target refused, or that could not be opened to it
+    /// (#6028, slice 10).
+    pub fn note_refused(&self) {
+        let at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(1);
+        self.refused.fetch_add(1, Ordering::Relaxed);
+        self.last_refused_ms.store(at.max(1), Ordering::Relaxed);
     }
 
     pub fn add_bytes_sent(&self, n: u64) {
@@ -249,6 +270,7 @@ impl LocalForwarder {
             Ok(ch) => ch,
             Err(e) => {
                 tracing::error!("Failed to open direct-tcpip channel: {}", e);
+                stats.note_refused();
                 return;
             }
         };
@@ -362,6 +384,7 @@ mod tests {
         assert_eq!(stats.bytes_sent, 11, "client->remote byte count");
         assert_eq!(stats.bytes_received, 11, "remote->client byte count");
         assert_eq!(stats.total_connections, 1);
+        assert_eq!((stats.refused, stats.last_refused_ms), (0, None));
 
         // The forwarder opened a channel to the configured remote target.
         let recorded = targets.lock().unwrap().clone();
@@ -408,10 +431,14 @@ mod tests {
         let _ = client.read_to_end(&mut buf).await;
         assert!(buf.is_empty(), "no bytes should be relayed on open failure");
 
-        let stats = wait_for_stats(&forwarder, |s| s.total_connections == 1).await;
+        let stats = wait_for_stats(&forwarder, |s| s.refused == 1).await;
         assert_eq!(stats.total_connections, 1);
         assert_eq!(stats.bytes_sent, 0);
         assert_eq!(stats.bytes_received, 0);
+        // Counted as refused, with when (#6028, slice 10).
+        assert!(stats
+            .last_refused_ms
+            .is_some_and(|at| at > 1_700_000_000_000));
     }
 
     #[tokio::test]

@@ -109,6 +109,19 @@ pub struct TunnelStats {
     /// Total connections made since the tunnel started.
     #[cfg_attr(test, ts(type = "number"))]
     pub total_connections: u64,
+    /// Connections the target refused or the server could not open since the
+    /// tunnel started (#6028, slice 10). The tunnel runs; using it fails.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    #[cfg_attr(test, ts(type = "number", optional))]
+    pub refused: u64,
+    /// When the last of them was refused, in milliseconds since 1970.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(type = "number", optional))]
+    pub last_refused_ms: Option<u64>,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 #[cfg(test)]
