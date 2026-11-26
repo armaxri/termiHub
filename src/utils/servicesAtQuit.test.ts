@@ -51,7 +51,7 @@ describe("what quitting stops (#6028, question 2)", () => {
       serverStates: { s: sState("running", 1), t: sState("error") },
       agents: AGENTS,
     });
-    expect(rows).toEqual([
+    expect(rows).toStrictEqual([
       { key: "a", name: "T a", open: 2 },
       { key: "far", name: "T far", open: 0, agent: "Edge box" },
       { key: "lost", name: "T lost", open: 0, agent: "x" },

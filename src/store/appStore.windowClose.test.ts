@@ -220,6 +220,12 @@ describe("appStore — the last window and the services (#6028)", () => {
     ]);
   });
 
+  it("does not ask on a Mac, where termiHub stays in the Dock", async () => {
+    const agent = vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Macintosh");
+    expect(await useAppStore.getState().prepareWindowClose([])).toBe("proceed");
+    agent.mockRestore();
+  });
+
   it("does not ask while another window stays, nor in a window that does not own them", async () => {
     expect(await useAppStore.getState().prepareWindowClose(OTHERS)).toBe("proceed");
     expect(useAppStore.getState().prepareAppQuit(false)).toBe("ready");
