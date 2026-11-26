@@ -583,7 +583,8 @@ fn installs_agent(end: ShellEnd) -> bool {
     match end {
         ShellEnd::Exited(code) => code == 0 || code == EXIT_SERVICE_FAILED,
         ShellEnd::StillOpen => true,
-        ShellEnd::NoStatus => false,
+        // A POSIX shell always sends its code; without one, as a hang-up.
+        ShellEnd::ExitedWithoutStatus | ShellEnd::NoStatus => false,
     }
 }
 
