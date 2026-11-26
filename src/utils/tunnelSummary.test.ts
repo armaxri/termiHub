@@ -76,8 +76,8 @@ describe("tunnelSummary", () => {
       const stats = { ...busy.stats, activeConnections };
       return tunnelDeleteConfirmMessage(tunnels, { busy: { ...busy, stats } }, "busy");
     };
-    expect(open(1)).toContain("stops it and breaks 1 open connection.");
-    expect(open(3)).toContain("stops it and breaks 3 open connections.");
+    expect(open(1)).toContain("stops it and cuts them off.");
+    expect(open(3)).toContain("3 are connected. Deleting stops it and cuts them all off.");
     expect(says("parent")).toBe(
       'Its part on this computer, "hop", is deleted, too. You can undo it right after.'
     );
