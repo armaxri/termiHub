@@ -98,7 +98,7 @@ async function renderSidebar() {
   await flush();
 }
 
-describe("EmbeddedServerSidebar — save & duplicate feedback (#1342)", () => {
+describe("Services, file servers — save & duplicate feedback (#1342)", () => {
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);

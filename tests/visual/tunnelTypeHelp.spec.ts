@@ -216,7 +216,7 @@ for (const viewport of [
         await expect(tooltip("tun-db")).toHaveCount(0);
       });
 
-      test("the sidebar row's tooltip and the Port Forwarding section", async ({ page }) => {
+      test("the sidebar row's tooltip and the connection editor's tunnels", async ({ page }) => {
         await boot(page, theme);
         await hover(page, page.locator(id("tunnel-name-tun-socks")));
         await expect(page.locator(id("tunnel-tooltip-tun-socks")).first()).toContainText(
@@ -230,7 +230,9 @@ for (const viewport of [
         await page.evaluate(() => {
           void window.__visual.store.getState().openConnectionEditorTab("Work/Build Box");
         });
-        const type = page.locator(id("port-forward-type-tun-db"));
+        // The same row as in Services (#6028, slice 13).
+        const section = page.locator(id("connection-port-forwarding-section"));
+        const type = section.locator(id("tunnel-name-tun-db"));
         await type.scrollIntoViewIfNeeded();
         const issues = await page.evaluate(auditLayout, {
           root: id("connection-port-forwarding-section"),
@@ -238,7 +240,16 @@ for (const viewport of [
         });
         expect.soft(issues).toEqual([]);
         await hover(page, type);
-        await checkHelp(page.locator(id("port-forward-type-help-tun-db")), type);
+        const help = page.locator(id("tunnel-tooltip-tun-db")).first();
+        await expect(help).toContainText("Use something on the SSH server's side");
+        // Beside the row, as in Services, never over it.
+        const row = (await section.locator(id("tunnel-item-tun-db")).boundingBox())!;
+        await expect
+          .poll(async () => {
+            const box = (await help.boundingBox())!;
+            return box.x + box.width <= row.x || box.x >= row.x + row.width;
+          })
+          .toBe(true);
         await shoot(page, "port-forwarding");
       });
     });

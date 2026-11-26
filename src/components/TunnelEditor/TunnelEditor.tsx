@@ -239,7 +239,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
     defaultValues: {
       name: existingTunnel?.name ?? "",
       description: existingTunnel?.description ?? "",
-      // A new tunnel opened from a connection's "Port Forwarding" section
+      // A new tunnel opened from a connection's "SSH tunnels" section
       // (PROD-023) pre-selects that connection when it is a saved SSH one.
       sshConnectionId:
         existingTunnel?.sshConnectionId ??

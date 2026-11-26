@@ -13,7 +13,7 @@ import { useServiceEntries } from "@/components/ServicesSidebar/useServiceEntrie
 import { useTunnelActions } from "@/components/ServicesSidebar/useTunnelActions";
 
 /** The events of `id`, read again whenever `change` does. */
-export function useServiceEvents(id: string, change: string): ServiceEvent[] {
+function useServiceEvents(id: string, change: string): ServiceEvent[] {
   const [events, setEvents] = useState<ServiceEvent[]>([]);
   useEffect(() => {
     let current = true;

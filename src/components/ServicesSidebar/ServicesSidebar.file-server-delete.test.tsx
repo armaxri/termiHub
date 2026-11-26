@@ -133,7 +133,7 @@ async function clickCancel() {
   await flush();
 }
 
-describe("EmbeddedServerSidebar — delete confirmation (#1393)", () => {
+describe("Services, file servers — delete confirmation (#1393)", () => {
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);

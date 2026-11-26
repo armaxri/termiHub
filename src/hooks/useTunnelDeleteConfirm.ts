@@ -29,7 +29,7 @@ export interface TunnelDeleteConfirm {
 
 /**
  * The tunnel delete flow shared by every place that deletes a tunnel (the
- * Tunnels sidebar and the connection editor's Port Forwarding section, #5158 /
+ * Services view and the connection editor's SSH tunnels, #5158 /
  * #5216). An active teardown, a chained-pair cascade or a companion delete
  * always confirms, with no opt-out. A plain idle delete confirms with a "don't
  * ask again" opt-out (the `confirmUndoableDelete` setting). Every delete is

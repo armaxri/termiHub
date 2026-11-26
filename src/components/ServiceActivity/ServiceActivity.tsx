@@ -46,7 +46,7 @@ interface ServiceActivityProps {
  * and since when, what to do, the address and how to use it, four counters, then
  * what happened and, for a file server, its requests.
  */
-export function ServiceActivity({
+function ServiceActivity({
   model,
   events,
   onAction,

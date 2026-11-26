@@ -530,7 +530,7 @@ function localPortOf(config: TunnelConfig, host: HostChoice): number | undefined
  * What a running tunnel says while what it reaches refuses (#6028, slice 10):
  * the tunnel runs, using it fails.
  */
-export function targetRefused(
+function targetRefused(
   config: Pick<TunnelConfig, "tunnelType">,
   stats: Pick<TunnelStats, "refused" | "lastRefusedMs">
 ): string | undefined {
