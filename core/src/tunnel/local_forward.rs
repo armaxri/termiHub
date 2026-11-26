@@ -528,3 +528,7 @@ mod tests {
         assert_eq!(snap.total_connections, 2, "total is monotonic");
     }
 }
+
+#[cfg(test)]
+#[path = "local_forward_refusal_tests.rs"]
+mod refusal_tests;
