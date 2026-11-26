@@ -8,7 +8,7 @@ managed install path. App-free, in the normal lane.
 
 from __future__ import annotations
 
-from termihub_harness.ui.agent import windows_setup_problems
+from termihub_harness.ui.agent import setup_tab_end, windows_setup_problems
 
 MANAGED = "C:/Users/termihub-test/AppData/Local/termiHub/agent/termihub-agent.exe"
 
@@ -42,3 +42,12 @@ def test_the_path_compares_without_case_or_slash_spelling():
         windows_setup_problems("agent-setup-installed", MANAGED.replace("/", "\\"), MANAGED)
         == []
     )
+
+
+def test_the_checking_strip_is_not_an_end():
+    # The strip reads "checking" between the shell's end and the host check's
+    # outcome; the nightly read that as the end and failed every setup.
+    assert setup_tab_end("agent-setup-checking") is None
+    assert setup_tab_end(None) is None
+    for variant in ("agent-setup-installed", "agent-setup-failed", "agent-setup-unknown"):
+        assert setup_tab_end(variant) == variant
