@@ -93,6 +93,8 @@ const STATES = {
   "run--program-refused": "The program was not allowed: what became of the run?",
   "run--stopped": "A run was stopped: how far did it get?",
   "run--replace": "Start one while another one runs: what happens to it?",
+  "run--side-by-side": "Start one in another terminal while one runs: both go on (#6042).",
+  "run--stopped-by": "A run was stopped by another one: see which, in the History (#6042).",
   "run--wait-ended": "Nobody continued a run that waited: what now?",
   "run--no-terminal": "Run one while nothing is open: what can be chosen?",
   "run--quit": "Quit while automations run: know what is stopped.",
@@ -810,6 +812,38 @@ for (const viewport of WINDOWS) {
         await page.locator(id("automation-stop-health")).click();
         await expect(page.locator(id("toast-region"))).toContainText("stopped");
         await shot(page, "run--stopped", SIDEBAR);
+      });
+
+      test("runs side by side, and what stopped one (#6042)", async ({ page }) => {
+        await bootWithTerminals(page, theme, 2, { automationData: running });
+        const tabs = page.locator("[data-testid^='tab-close-']");
+        const first = (await tabs.first().getAttribute("data-testid"))!.replace("tab-close-", "");
+        // In the second terminal, then in the first: no question, both run.
+        await page.locator(id("automation-start-health")).click();
+        await expect(page.locator(id("automation-running-health"))).toBeVisible();
+        await page.locator(id(`tab-${first}`)).click();
+        // Its Run is a Stop while it runs: started as the palette would start it.
+        const startHealth = () =>
+          page.evaluate(() => {
+            const state = window.__visual.store.getState() as unknown as {
+              runAutomation(id: string): Promise<void>;
+            };
+            void state.runAutomation("health");
+          });
+        await startHealth();
+        await expect(page.locator("[data-testid^='tab-automation-badge-']")).toHaveCount(2);
+        await expect(page.locator(id("run-replace-dialog"))).toHaveCount(0);
+        await shot(page, "run--side-by-side", SIDEBAR);
+        // Again in the first: that one is asked about, and stopped.
+        await startHealth();
+        await page.locator(id("run-replace-dialog")).waitFor();
+        await page.locator(id("run-replace-confirm")).click();
+        await page.locator(id("automation-history-toggle")).click();
+        const stopped = page.locator("[data-testid^='automation-run-toggle-']").first();
+        await stopped.click();
+        const why = page.locator("[data-testid^='automation-run-error-']").first();
+        await expect(why).toHaveText("“Health check” was started in this terminal");
+        await shot(page, "run--stopped-by", SIDEBAR);
       });
 
       test("a wait that ended", async ({ page }) => {
