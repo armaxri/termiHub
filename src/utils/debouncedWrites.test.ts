@@ -26,28 +26,43 @@ describe("debounced writes (#6094)", () => {
   });
 
   it("writes every key that waits when flushed, and waits for them", async () => {
-    vi.useFakeTimers();
-    let done = false;
-    debounceWrite(
-      "a",
-      300,
-      () =>
-        new Promise<void>((resolve) =>
-          setTimeout(() => {
-            done = true;
-            resolve();
-          }, 10)
-        )
-    );
+    let finish = () => {};
+    debounceWrite("a", 300, () => new Promise<void>((resolve) => (finish = resolve)));
     const b = vi.fn();
     debounceWrite("b", 300, b);
-    const flushed = flushDebouncedWrites();
+    let flushed = false;
+    const flushing = flushDebouncedWrites().then(() => (flushed = true));
     expect(b).toHaveBeenCalledOnce();
-    await vi.advanceTimersByTimeAsync(10);
-    await flushed;
-    expect(done).toBe(true);
-    vi.advanceTimersByTime(1000);
-    expect(b).toHaveBeenCalledOnce();
+    await Promise.resolve();
+    expect(flushed).toBe(false);
+    finish();
+    await flushing;
+    expect(flushed).toBe(true);
+  });
+
+  it("writes nothing again once a write was made", async () => {
+    vi.useFakeTimers();
+    const a = vi.fn();
+    debounceWrite("a", 300, a);
+    vi.advanceTimersByTime(300);
+    await flushDebouncedWrites();
+    expect(a).toHaveBeenCalledOnce();
+  });
+
+  it("swallows a write that fails later, in its timer and in a flush", async () => {
+    vi.useFakeTimers();
+    const failed = vi.fn();
+    process.on("unhandledRejection", failed);
+    try {
+      debounceWrite("a", 1, () => Promise.reject(new Error("later")));
+      vi.advanceTimersByTime(1);
+      debounceWrite("a", 1, () => Promise.reject(new Error("later")));
+      await flushDebouncedWrites();
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(failed).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", failed);
+    }
   });
 
   it("drops one key, or all of them", () => {
