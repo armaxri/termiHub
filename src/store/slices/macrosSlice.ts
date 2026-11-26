@@ -1,5 +1,6 @@
 import { StateCreator } from "zustand";
 
+import { tf } from "@/i18n/catalog";
 import { toast } from "@/components/ui";
 import {
   getTerminalInputInjector,
@@ -99,10 +100,39 @@ let activePlayback:
 /** Identity of the multi-terminal run that owns the shared playback state. */
 let currentTargetsRun: object | null = null;
 
-/** Stop the in-flight playback, if any, so a fresh one takes over. */
-function stopActivePlayback(): void {
+/** Why a playback was stopped, by handle: for all its terminals, or per terminal (#6042). */
+const stopReasons = new WeakMap<object, { all?: string; tabs: Map<string, string> }>();
+
+/** Note that `handle` is stopped because of `reason` (in `tabId`, or everywhere). */
+function noteStop(handle: object, reason: string | undefined, tabId?: string): void {
+  if (reason === undefined) return;
+  const noted = stopReasons.get(handle) ?? { tabs: new Map<string, string>() };
+  if (tabId === undefined) noted.all ??= reason;
+  else if (!noted.tabs.has(tabId)) noted.tabs.set(tabId, reason);
+  stopReasons.set(handle, noted);
+}
+
+/** What a stopped run's History says stopped it in `tabId`, if another run did. */
+function stopReasonOf(handle: object, tabId: string): string | undefined {
+  const noted = stopReasons.get(handle);
+  return noted?.tabs.get(tabId) ?? noted?.all;
+}
+
+/** Why a run ended badly, for its History record. */
+function endedBecause(
+  status: MacroPlaybackStatus,
+  handle: object,
+  tabId: string
+): string | undefined {
+  if (status === "error") return "The terminal stopped accepting input";
+  return status === "cancelled" ? stopReasonOf(handle, tabId) : undefined;
+}
+
+/** Stop the in-flight playback, if any, so a fresh one takes over; `reason` goes in its History. */
+function stopActivePlayback(reason?: string): void {
   currentTargetsRun = null;
   if (!activePlayback) return;
+  noteStop(activePlayback.handle, reason);
   if (activePlayback.kind === "single") activePlayback.handle.cancel();
   else activePlayback.handle.cancelAll();
   activePlayback = null;
@@ -140,7 +170,7 @@ export interface MacrosSlice {
    * Stop). On a multi-terminal playback the other terminals keep typing. A
    * no-op when nothing plays on `tabId`.
    */
-  cancelMacroPlaybackOnTab: (tabId: string) => void;
+  cancelMacroPlaybackOnTab: (tabId: string, reason?: string) => void;
 }
 
 export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (set, get) => {
@@ -175,7 +205,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
       toast.info(`Automation “${macro.name}” has no steps to run`);
       return null;
     }
-    stopActivePlayback();
+    stopActivePlayback(tf("automation.stoppedBy", { name: macro.name }));
 
     const inject = createTargetInjector(
       getTerminalInputInjector(),
@@ -292,7 +322,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
           stepsPlayed: outcome.stepsPlayed,
           targetLabels: [targetLabels[targets.indexOf(outcome.tabId)]],
           origin: opts?.origin ?? "manual",
-          error: status === "error" ? "The terminal stopped accepting input" : undefined,
+          error: endedBecause(status, handle, outcome.tabId),
         });
         recordMacroRun(set, record);
         opts?.onRecorded?.(record);
@@ -347,7 +377,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
       }
 
       // Only one playback at a time — cancel any in-flight run first.
-      stopActivePlayback();
+      stopActivePlayback(tf("automation.stoppedBy", { name: macro.name }));
 
       const injector = getTerminalInputInjector();
       const inject: MacroInjector = (data) => {
@@ -422,7 +452,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
         stepsPlayed: result.stepsPlayed,
         targetLabels: [targetLabel],
         origin: opts?.origin ?? "manual",
-        error: result.status === "error" ? "The terminal stopped accepting input" : undefined,
+        error: endedBecause(result.status, handle, targetTabId),
       });
       recordMacroRun(set, record);
       opts?.onRecorded?.(record);
@@ -435,10 +465,15 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
       else activePlayback.handle.cancelAll();
     },
 
-    cancelMacroPlaybackOnTab: (tabId) => {
+    cancelMacroPlaybackOnTab: (tabId, reason) => {
       if (!activePlayback) return;
-      if (activePlayback.kind === "targets") activePlayback.handle.cancel(tabId);
-      else if (activePlayback.tabId === tabId) activePlayback.handle.cancel();
+      if (activePlayback.kind === "targets") {
+        noteStop(activePlayback.handle, reason, tabId);
+        activePlayback.handle.cancel(tabId);
+      } else if (activePlayback.tabId === tabId) {
+        noteStop(activePlayback.handle, reason, tabId);
+        activePlayback.handle.cancel();
+      }
     },
   };
 };

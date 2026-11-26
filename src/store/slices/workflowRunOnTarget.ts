@@ -25,14 +25,19 @@ import {
   subscribeLocalProcessOutput,
   type LocalProcessCheck,
 } from "@/services/localProcessApi";
-import { reachesWaitForUser, runAutomation } from "@/services/automationRunner";
+import {
+  reachesWaitForUser,
+  runAutomationOnTargets,
+  type AutomationTargetDeps,
+} from "@/services/automationRunner";
 import { getTerminalInputInjector } from "@/services/macroPlayback";
 import { onTerminalOutput } from "@/services/events";
 import { newId } from "@/services/transport/ids";
 import {
   matchesOutput,
   type WorkflowSendSeam,
-  type WorkflowRunHandle,
+  type WorkflowRunHooks,
+  type WorkflowRunnerDeps,
   type WorkflowRunResult,
   type WorkflowAuthorizeLocalProcessSeam,
   type WorkflowRunLocalProcessSeam,
@@ -76,6 +81,7 @@ import { automationForRun, recordAutomationRun } from "./automationStoreState";
 import { collectNestedRun, nestedRunRecord, workflowToAutomation } from "./automationViews";
 import type { LocalProcessAuthDecision, WorkflowRunOutputLine } from "./workflowsSlice";
 import { stepProgress } from "@/utils/runProgress";
+import { forgetWorkflowRun, holdWorkflowRun } from "./workflowRunRegistry";
 
 /**
  * Default timeout (ms) applied to a `run-local-process` step from the frontend.
@@ -91,37 +97,11 @@ const LOCAL_PROCESS_TIMEOUT_MS = 60_000;
  */
 const WAIT_FOR_OUTPUT_BUFFER_MAX_CHARS = 65_536;
 
-/**
- * Handles of the in-flight runs keyed by run id, held at module scope so
- * {@link AppState.cancelWorkflowRun} can stop them without threading the
- * handles through store state (they are not serializable). Several runs are in
- * flight at once during a concurrent fan-out (#3418); empty when nothing runs.
- */
-const activeWorkflowRuns = new Map<string, WorkflowRunHandle>();
-
-/** Cancel every in-flight run and forget them, so a fresh run takes over. */
-export function replaceActiveWorkflowRun(): void {
-  cancelAllWorkflowRuns();
-  activeWorkflowRuns.clear();
-}
-
-/** Request cancellation of every in-flight run. Idempotent. */
-export function cancelAllWorkflowRuns(): void {
-  for (const handle of activeWorkflowRuns.values()) handle.cancel();
-}
-
-/** Request cancellation of one in-flight run by id (#3418); a no-op when that
- * run is not in flight. Returns whether a run was found. */
-export function cancelWorkflowRunById(runId: string): boolean {
-  const handle = activeWorkflowRuns.get(runId);
-  handle?.cancel();
-  return handle !== undefined;
-}
-
-/** How many runs are in flight (tests / diagnostics). */
-export function activeWorkflowRunCount(): number {
-  return activeWorkflowRuns.size;
-}
+export {
+  activeWorkflowRunCount,
+  cancelAllWorkflowRuns,
+  cancelWorkflowRunById,
+} from "./workflowRunRegistry";
 
 /** What was decided about one program + args (#5994). */
 export type LocalProcessDecision =
@@ -152,8 +132,6 @@ function decisionKey(
  * A fan-out target raises no toasts of its own: it reports to these hooks and
  * the fan-out renders one shared per-target status toast. */
 export interface WorkflowFanoutHooks {
-  /** Called once the target's run is live, with its run id and a cancel. */
-  onStart?: (runId: string, cancel: () => void) => void;
   /** Called on each progress step, or with a retry note while a step retries. */
   onProgress?: (completed: number, retryNote?: string) => void;
   /**
@@ -287,14 +265,45 @@ export function toastRunOutcome(
  * See the module docs; the caller has already validated the target, collected
  * parameters, and cancelled any previous run.
  */
+/**
+ * Run one workflow on one tab: an ordinary run of {@link runAutomationOnTargets} with
+ * one target (#5984), as triggers and schedules start it.
+ */
 export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<WorkflowRunResult> {
+  // Stopped only after it started, so `fan` is there by then.
+  const target = workflowTarget(run, () => fan.cancel(0));
+  const fan = runAutomationOnTargets(target.automation, [run.targetTabId], () => target.start(), {
+    hooksFor: () => target.hooks,
+    paramValues: run.paramValues,
+    settle: (_index, result) => target.settle(result),
+  });
+  const [result] = await fan.done;
+  return result ?? { status: "cancelled", stepsCompleted: 0 };
+}
+
+/** One target of a step-by-step run, in the parts {@link runAutomationOnTargets} takes. */
+export interface WorkflowTarget {
+  /** The automation it runs. */
+  automation: Automation;
+  /** Show it running and make its seams; or say why it does not run (recorded). */
+  start: () => Promise<AutomationTargetDeps>;
+  /** Its progress, retries and nested runs. */
+  hooks: WorkflowRunHooks;
+  /** Record and say how it ended; the result carries its History record's id. */
+  settle: (result: WorkflowRunResult) => Promise<WorkflowRunResult>;
+}
+
+/**
+ * The parts of a run of `run.workflow` on one tab (#5984). `cancel` stops it in its
+ * fan-out, also before its first step.
+ */
+export function workflowTarget(run: WorkflowTargetRun, cancel: () => void): WorkflowTarget {
   const {
     set,
     get,
     workflow,
     targetTabId,
     targetSessionId,
-    paramValues,
     triggeredBy,
     targetLabel,
     fanout,
@@ -302,19 +311,24 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
     sessionless,
   } = run;
   const workflowId = workflow.id;
-  // The one place every run that can spawn a local process goes through: refuse
-  // it whole rather than half-way, whichever entry point started it (#5988).
-  // The entry points check first, before they prompt or connect anything.
-  const refusal = localProcessRefusal(get(), workflow);
-  if (refusal) {
-    frontendLog("workflow", `run of "${workflow.name}" refused: ${refusal}`);
-    return { status: "failed", stepsCompleted: 0, error: refusal };
-  }
-  // Nobody is there to type what it waits for (#6025): not started, rather than
-  // left standing at the prompt an earlier step opened. The History says so.
   const unwatched = unattended === true || sessionless === true;
-  const stored = automationForRun(get(), workflowId) ?? workflowToAutomation(workflow);
-  if (unwatched && reachesWaitForUser(stored, (id) => automationForRun(get(), id))) {
+  // What stopped it, for its History (#6042): another run, or nothing named.
+  let stopReason: string | undefined;
+  const notStarted = (): WorkflowRunResult | null => {
+    // The one place every run that can spawn a local process goes through: refuse
+    // it whole rather than half-way, whichever entry point started it (#5988).
+    // The entry points check first, before they prompt or connect anything.
+    const refusal = localProcessRefusal(get(), workflow);
+    if (refusal) {
+      frontendLog("workflow", `run of "${workflow.name}" refused: ${refusal}`);
+      return { status: "failed", stepsCompleted: 0, error: refusal };
+    }
+    // Nobody is there to type what it waits for (#6025): not started, rather than
+    // left standing at the prompt an earlier step opened. The History says so.
+    const stored = automationForRun(get(), workflowId) ?? workflowToAutomation(workflow);
+    if (!unwatched || !reachesWaitForUser(stored, (id) => automationForRun(get(), id))) {
+      return null;
+    }
     const at = new Date().toISOString();
     const notRun: AutomationRun = {
       id: newId("workflow-run"),
@@ -344,7 +358,7 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
       error: t("automation.wait.unattended"),
       historyRunId: notRun.id,
     };
-  }
+  };
   // This run's key in the workflow-run region (#3418): concurrent targets of a
   // fan-out each get their own entry, progressing and settling independently.
   const runId = newId("wfrun");
@@ -649,167 +663,175 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
     targetLabel || collectLiveTabs(get()).find((x) => x.id === targetTabId)?.title || "Terminal";
   const stepNote = (completed: number): string =>
     `${stepProgress(completed, total)} in ${tabTitle}`;
-  // Captured up front so the persisted history record (PROD-0046) carries the
+  // Captured at the start so the persisted history record (PROD-0046) carries the
   // real run duration; `triggeredBy` defaults to a manual launch.
-  const startedAt = new Date().toISOString();
-  if (!fanout) {
-    claimWorkflowRunToast(toastId);
-    toast.loading(`Running automation “${workflow.name}”…`, {
-      id: toastId,
-      description: stepNote(0),
+  let startedAt = "";
+  const nestedRuns = new Map<string, AutomationRun>();
+  const deps: WorkflowRunnerDeps = {
+    send,
+    resolveAutomation: (id) => automationForRun(get(), id),
+    readScriptFile: localReadFile,
+    // #4310 (FEC2-001): a run-script sourcePath is read only when the user
+    // picked or confirmed it on this machine. The allowlist lives in the
+    // machine-local settings, never in workflow data, so an imported file
+    // cannot vouch for its own path.
+    isScriptSourceTrusted: (path) =>
+      isScriptSourceConfirmed(currentSettingsView().workflowScriptSourceAllowlist, path),
+    authorizeLocalProcess,
+    runLocalProcess,
+    // A sessionless run has no output to wait for: the step fails loudly.
+    waitForOutput: sessionless ? undefined : waitForOutput,
+    // Nobody is there to continue a scheduled run or one without a session.
+    waitForUser: unwatched ? undefined : waitForUser,
+  };
+  const start = async (): Promise<AutomationTargetDeps> => {
+    const notRun = notStarted();
+    if (notRun) return { notRun };
+    startedAt = new Date().toISOString();
+    if (!fanout) {
+      claimWorkflowRunToast(toastId);
+      toast.loading(`Running automation “${workflow.name}”…`, {
+        id: toastId,
+        description: stepNote(0),
+      });
+      // Clear any prior run's frontend-owned streamed content when a fresh run
+      // starts; a new panel is created lazily only if this run spawns a local
+      // process (#1865). The projected panel is reset by `runStarted` below. A
+      // fan-out clears once up front instead, so a concurrent sibling's panel
+      // survives this target's start.
+      clearWorkflowOutputContent();
+    }
+    // The workflow-run region is authoritative (#2206 reducer-removal): the run
+    // progress + output-panel status are driven solely by dispatching the
+    // `workflow.*` intents. Keep the subscription warm so the render hook
+    // receives the resulting diffs.
+    try {
+      // Logged in the bridge too; render simply stays on the last-known view.
+      void ensureWorkflowSubscribed().catch((err: unknown) =>
+        frontendLog("workflow_run", `keep-warm subscribe failed: ${errorMessage(err)}`)
+      );
+    } catch {
+      // Not logged here: a non-Tauri env without a socket throws synchronously
+      // from transport construction, and dispatchWorkflowRunStarted below hits
+      // the same failure and logs it (#4520).
+    }
+    // Stoppable from the moment it shows as running, which is before its first step:
+    // a Stop pressed meanwhile would find no run and be lost. The fan-out stops it
+    // at once when its run starts.
+    holdWorkflowRun(runId, {
+      tabId: targetTabId,
+      stop: (reason) => {
+        stopReason ??= reason;
+        cancel();
+      },
     });
-    // Clear any prior run's frontend-owned streamed content when a fresh run
-    // starts; a new panel is created lazily only if this run spawns a local
-    // process (#1865). The projected panel is reset by `runStarted` below. A
-    // fan-out clears once up front instead, so a concurrent sibling's panel
-    // survives this target's start.
-    clearWorkflowOutputContent();
-  }
-  // The workflow-run region is authoritative (#2206 reducer-removal): the run
-  // progress + output-panel status are driven solely by dispatching the
-  // `workflow.*` intents. Keep the subscription warm so the render hook
-  // receives the resulting diffs.
-  try {
-    // Logged in the bridge too; render simply stays on the last-known view.
-    void ensureWorkflowSubscribed().catch((err: unknown) =>
-      frontendLog("workflow_run", `keep-warm subscribe failed: ${errorMessage(err)}`)
-    );
-  } catch {
-    // Not logged here: a non-Tauri env without a socket throws synchronously
-    // from transport construction, and dispatchWorkflowRunStarted below hits
-    // the same failure and logs it (#4520).
-  }
-  // Stoppable from the moment it shows as running, which is before its first step: a
-  // Stop pressed meanwhile would find no run and be lost.
-  let stoppedEarly = false;
-  activeWorkflowRuns.set(runId, {
-    done: new Promise(() => {}),
-    cancel: () => {
-      stoppedEarly = true;
-    },
-  });
-  await dispatchWorkflowRunStarted({
-    runId,
-    workflowId,
-    workflowName: workflow.name,
-    tabId: targetTabId,
-    total,
-    label: targetLabel,
-    preserveOutput: fanout !== undefined,
-  });
+    await dispatchWorkflowRunStarted({
+      runId,
+      workflowId,
+      workflowName: workflow.name,
+      tabId: targetTabId,
+      total,
+      label: targetLabel,
+      preserveOutput: fanout !== undefined,
+    });
+    return deps;
+  };
 
   const automation = automationForRun(get(), workflowId) ?? workflowToAutomation(workflow);
-  const nestedRuns = new Map<string, AutomationRun>();
-  const handle = runAutomation(
-    automation,
-    {
-      send,
-      resolveAutomation: (id) => automationForRun(get(), id),
-      readScriptFile: localReadFile,
-      // #4310 (FEC2-001): a run-script sourcePath is read only when the user
-      // picked or confirmed it on this machine. The allowlist lives in the
-      // machine-local settings, never in workflow data, so an imported file
-      // cannot vouch for its own path.
-      isScriptSourceTrusted: (path) =>
-        isScriptSourceConfirmed(currentSettingsView().workflowScriptSourceAllowlist, path),
-      authorizeLocalProcess,
-      runLocalProcess,
-      // A sessionless run has no output to wait for: the step fails loudly.
-      waitForOutput: sessionless ? undefined : waitForOutput,
-      // Nobody is there to continue a scheduled run or one without a session.
-      waitForUser: unwatched ? undefined : waitForUser,
+  const hooks: WorkflowRunHooks = {
+    onProgress: (completed) => {
+      // Advance the authoritative run progress (guarded server-side to the
+      // still-current run). Fire-and-forget: the intent is submitted
+      // synchronously, so successive advances apply in order.
+      void dispatchWorkflowStepAdvanced({ runId, workflowId, tabId: targetTabId, completed });
+      if (fanout) {
+        fanout.onProgress?.(completed);
+        return;
+      }
+      toast.loading(`Running automation “${workflow.name}”…`, {
+        id: toastId,
+        description: stepNote(completed),
+      });
     },
-    {
-      onProgress: (completed) => {
-        // Advance the authoritative run progress (guarded server-side to the
-        // still-current run). Fire-and-forget: the intent is submitted
-        // synchronously, so successive advances apply in order.
-        void dispatchWorkflowStepAdvanced({ runId, workflowId, tabId: targetTabId, completed });
-        if (fanout) {
-          fanout.onProgress?.(completed);
-          return;
-        }
-        toast.loading(`Running automation “${workflow.name}”…`, {
-          id: toastId,
-          description: stepNote(completed),
-        });
-      },
-      // Per-step error handling (PROD-045): surface each retry in the progress
-      // toast and the LogViewer, and log every tolerated failure.
-      onStepRetry: (event) => {
-        frontendLog(
-          "workflow",
-          `"${workflow.name}" step ${event.stepIndex + 1} failed ` +
-            `(attempt ${event.failedAttempt}/${event.maxAttempts}): ${event.error}; ` +
-            `retrying in ${event.delayMs} ms`
-        );
-        const retryNote =
-          `Retrying step ${event.stepIndex + 1} ` +
-          `(attempt ${event.failedAttempt + 1} of ${event.maxAttempts})`;
-        if (fanout) {
-          fanout.onProgress?.(event.stepIndex, retryNote);
-          return;
-        }
-        toast.loading(`Running automation “${workflow.name}”…`, {
-          id: toastId,
-          description: retryNote,
-        });
-      },
-      // A `run-automation` step's callee gets its own history record, labeled
-      // "Run by another automation", on the same terminal (#5818, slice 9).
-      onNestedRunFinished: (event) =>
-        collectNestedRun(nestedRuns, nestedRunRecord(event, targetTabId, targetLabel)),
-      onStepContinued: (event) => {
-        frontendLog(
-          "workflow",
-          `"${workflow.name}" step ${event.stepIndex + 1} failed after ` +
-            `${event.attempts} attempt(s); continuing (continue-on-error): ${event.error}`
-        );
-      },
+    // Per-step error handling (PROD-045): surface each retry in the progress
+    // toast and the LogViewer, and log every tolerated failure.
+    onStepRetry: (event) => {
+      frontendLog(
+        "workflow",
+        `"${workflow.name}" step ${event.stepIndex + 1} failed ` +
+          `(attempt ${event.failedAttempt}/${event.maxAttempts}): ${event.error}; ` +
+          `retrying in ${event.delayMs} ms`
+      );
+      const retryNote =
+        `Retrying step ${event.stepIndex + 1} ` +
+        `(attempt ${event.failedAttempt + 1} of ${event.maxAttempts})`;
+      if (fanout) {
+        fanout.onProgress?.(event.stepIndex, retryNote);
+        return;
+      }
+      toast.loading(`Running automation “${workflow.name}”…`, {
+        id: toastId,
+        description: retryNote,
+      });
     },
-    paramValues
-  );
-  if (stoppedEarly) handle.cancel();
-  activeWorkflowRuns.set(runId, handle);
-  fanout?.onStart?.(runId, () => handle.cancel());
-
-  const result = await handle.done;
-
-  // Persist a metadata-only record of this run (PROD-0046). Fire-and-forget:
-  // a history-write failure must NEVER fail or block the run, so it is logged
-  // (never rethrown) and the returned, capped list is mirrored into the store.
-  const runRecord: AutomationRun = {
-    id: newId("workflow-run"),
-    automationId: workflowId,
-    automationName: workflow.name,
-    startedAt,
-    endedAt: new Date().toISOString(),
-    status: result.status,
-    stepsCompleted: result.stepsCompleted,
-    total,
-    failedStepIndex: result.status === "failed" ? result.failedStepIndex : undefined,
-    error: result.status === "failed" ? result.error : undefined,
-    continuedFailures: result.continuedFailures?.length || undefined,
-    tabId: targetTabId,
-    targetLabel: targetLabel || undefined,
-    origin: triggeredBy,
+    // A `run-automation` step's callee gets its own history record, labeled
+    // "Run by another automation", on the same terminal (#5818, slice 9).
+    onNestedRunFinished: (event) =>
+      collectNestedRun(nestedRuns, nestedRunRecord(event, targetTabId, targetLabel)),
+    onStepContinued: (event) => {
+      frontendLog(
+        "workflow",
+        `"${workflow.name}" step ${event.stepIndex + 1} failed after ` +
+          `${event.attempts} attempt(s); continuing (continue-on-error): ${event.error}`
+      );
+    },
   };
-  for (const nested of nestedRuns.values()) recordAutomationRun(set, nested, "workflow");
-  recordAutomationRun(set, runRecord, "workflow");
 
-  // Settle this run's keyed region entry (#3418). Keyed by run id, a run a newer
-  // runWorkflow superseded settles only itself and cannot stamp the newer run's
-  // output panel. The settle removes the projected run and stamps the terminal
-  // status onto the output panel this run owns; the frontend streamed content
-  // (exit code / lines) is kept.
-  if (activeWorkflowRuns.get(runId) === handle) activeWorkflowRuns.delete(runId);
-  await dispatchWorkflowRunSettled(
-    runId,
-    result.status,
-    result.status === "failed" ? result.error : undefined
-  );
+  const settle = async (result: WorkflowRunResult): Promise<WorkflowRunResult> => {
+    // Persist a metadata-only record of this run (PROD-0046). Fire-and-forget:
+    // a history-write failure must NEVER fail or block the run, so it is logged
+    // (never rethrown) and the returned, capped list is mirrored into the store.
+    const runRecord: AutomationRun = {
+      id: newId("workflow-run"),
+      automationId: workflowId,
+      automationName: workflow.name,
+      startedAt,
+      endedAt: new Date().toISOString(),
+      status: result.status,
+      stepsCompleted: result.stepsCompleted,
+      total,
+      failedStepIndex: result.status === "failed" ? result.failedStepIndex : undefined,
+      // A run another one stopped says which (#6042).
+      error:
+        result.status === "failed"
+          ? result.error
+          : result.status === "cancelled"
+            ? stopReason
+            : undefined,
+      continuedFailures: result.continuedFailures?.length || undefined,
+      tabId: targetTabId,
+      targetLabel: targetLabel || undefined,
+      origin: triggeredBy,
+    };
+    for (const nested of nestedRuns.values()) recordAutomationRun(set, nested, "workflow");
+    recordAutomationRun(set, runRecord, "workflow");
 
-  // A fan-out run summarises all targets once at the end instead (PROD-047).
-  if (!fanout) toastRunOutcome(workflow.name, result, total, toastId, automation, tabTitle);
-  return { ...result, historyRunId: runRecord.id };
+    // Settle this run's keyed region entry (#3418). Keyed by run id, a run a newer
+    // runWorkflow superseded settles only itself and cannot stamp the newer run's
+    // output panel. The settle removes the projected run and stamps the terminal
+    // status onto the output panel this run owns; the frontend streamed content
+    // (exit code / lines) is kept.
+    forgetWorkflowRun(runId);
+    await dispatchWorkflowRunSettled(
+      runId,
+      result.status,
+      result.status === "failed" ? result.error : undefined
+    );
+
+    // A fan-out run summarises all targets once at the end instead (PROD-047).
+    if (!fanout) toastRunOutcome(workflow.name, result, total, toastId, automation, tabTitle);
+    return { ...result, historyRunId: runRecord.id };
+  };
+
+  return { automation, start, hooks, settle };
 }

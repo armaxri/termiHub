@@ -2272,14 +2272,34 @@ describe("appStore — on-connect trigger dispatch (#1855)", () => {
     await vi.waitFor(() => expect(injected).toContain("echo wf-a\n"));
   });
 
-  it("never stops a run in progress, and says so (#6042)", async () => {
-    const error = vi.spyOn(toast, "error");
+  it("runs beside a run in another terminal (#6042)", async () => {
     setWorkflowRunViewForTest({
       run: {
         runId: "r",
         workflowId: "other",
         workflowName: "Health check",
         tabId: "t",
+        label: "web-1",
+        total: 2,
+        completed: 0,
+      },
+      output: null,
+    });
+    useAppStore.setState({ workflows: [onConnectWorkflow("wf-a", ["conn-1"])] });
+    seedUnconnectedTab("conn-1");
+    useAppStore.getState().setTabSessionId("tab-oc", "sess-oc-1");
+    await vi.waitFor(() => expect(injected).toContain("echo wf-a\n"));
+    setWorkflowRunViewForTest({ run: null, output: null });
+  });
+
+  it("never stops a run in progress in its terminal, and says so (#6042)", async () => {
+    const error = vi.spyOn(toast, "error");
+    setWorkflowRunViewForTest({
+      run: {
+        runId: "r",
+        workflowId: "other",
+        workflowName: "Health check",
+        tabId: "tab-oc",
         label: "web-1",
         total: 2,
         completed: 0,

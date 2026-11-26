@@ -57,7 +57,9 @@ describe("the runs a new one would stop (#6042)", () => {
       ["Deploy", "a", "r"],
     ]);
     expect(names(true, ["c"])).toEqual([["Login", "b", null]]);
-    expect(names(false, ["b", "c"])).toEqual([
+    // Step by step: the other step-by-step one only in its terminals (#6042).
+    expect(names(false, ["b", "c"])).toEqual([["Login", "b", null]]);
+    expect(names(false, ["a", "b"])).toEqual([
       ["Deploy", "a", "r"],
       ["Login", "b", null],
     ]);

@@ -1229,6 +1229,9 @@ const en = {
   "automation.wait.elsewhere":
     "Another window or computer controls this terminal. Take it back first, then press Continue.",
   "automation.wait.note": "Waiting for you",
+  // Why a run stopped, in its History (#6042).
+  "automation.stoppedBy": "“{name}” was started",
+  "automation.stoppedHere": "“{name}” was started in this terminal",
   "automation.wait.unattended":
     "It stops to let you type in the terminal, and nobody is there when it starts by itself. Nothing was typed.",
   "terminalToolbar.broadcast.stop": "Stop broadcast",

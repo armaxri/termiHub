@@ -272,6 +272,8 @@ export interface AutomationFanoutOptions {
    * another.
    */
   parallel?: boolean;
+  /** At most this many at once (clamped to `1..WORKFLOW_FANOUT_CONCURRENCY`); wins over `parallel`. */
+  concurrency?: number;
   /** Parameter values, asked once and shared by every target. */
   paramValues?: WorkflowParamValues;
   /** Hooks for one target's run; called with the target's index. */
@@ -283,7 +285,15 @@ export interface AutomationFanoutOptions {
    * it ends (not when the slowest target ends).
    */
   onTargetEnd?: (index: number, result: WorkflowRunResult) => void;
+  /**
+   * Settle one target's result (record it, say it) before its end is reported;
+   * what it returns is that target's result (#5984).
+   */
+  settle?: (index: number, result: WorkflowRunResult) => Promise<WorkflowRunResult>;
 }
+
+/** What a target runs with: its seams, or why it does not run at all. */
+export type AutomationTargetDeps = WorkflowRunnerDeps | { notRun: WorkflowRunResult };
 
 /** A run of one automation on several targets. */
 export interface AutomationFanoutHandle {
@@ -293,7 +303,7 @@ export interface AutomationFanoutHandle {
    * `undefined`.
    */
   done: Promise<(WorkflowRunResult | undefined)[]>;
-  /** Cancel one target's run; a no-op when it has not started or has ended. */
+  /** Cancel one target's run; a queued one never starts (#5984). A no-op once it ended. */
   cancel: (index: number) => void;
   /** Cancel every running target and start no queued one ("Stop all"). */
   cancelAll: () => void;
@@ -308,39 +318,46 @@ export interface AutomationFanoutHandle {
 export function runAutomationOnTargets<T>(
   automation: Automation,
   targets: readonly T[],
-  depsFor: (target: T, index: number) => WorkflowRunnerDeps,
+  depsFor: (target: T, index: number) => AutomationTargetDeps | Promise<AutomationTargetDeps>,
   options: AutomationFanoutOptions = {}
 ): AutomationFanoutHandle {
   const handles = new Map<number, WorkflowRunHandle>();
+  const cancelled = new Set<number>();
   let stopped = false;
-  const limit = options.parallel === false ? 1 : clampFanoutConcurrency(undefined);
+  const limit =
+    options.concurrency !== undefined
+      ? clampFanoutConcurrency(options.concurrency)
+      : options.parallel === false
+        ? 1
+        : clampFanoutConcurrency(undefined);
 
-  const done = runWithConcurrency(
-    targets,
-    limit,
-    async (target, index) => {
-      const handle = runAutomation(
-        automation,
-        depsFor(target, index),
-        options.hooksFor?.(index),
-        options.paramValues
-      );
-      handles.set(index, handle);
-      options.onTargetStart?.(index);
-      try {
-        const result = await handle.done;
-        options.onTargetEnd?.(index, result);
-        return result;
-      } finally {
-        handles.delete(index);
-      }
-    },
-    () => stopped
-  );
+  const runTarget = async (target: T, index: number): Promise<WorkflowRunResult | undefined> => {
+    // Stopped while it waited for its turn: it never starts.
+    if (cancelled.has(index)) return undefined;
+    const deps = await depsFor(target, index);
+    if ("notRun" in deps) return deps.notRun;
+    const handle = runAutomation(automation, deps, options.hooksFor?.(index), options.paramValues);
+    handles.set(index, handle);
+    // Stopped while its seams were made: it ends before its first step.
+    if (cancelled.has(index) || stopped) handle.cancel();
+    options.onTargetStart?.(index);
+    try {
+      const ended = await handle.done;
+      const result = options.settle ? await options.settle(index, ended) : ended;
+      options.onTargetEnd?.(index, result);
+      return result;
+    } finally {
+      handles.delete(index);
+    }
+  };
+  const done = runWithConcurrency(targets, limit, runTarget, () => stopped);
 
   return {
     done,
-    cancel: (index) => handles.get(index)?.cancel(),
+    cancel: (index) => {
+      cancelled.add(index);
+      handles.get(index)?.cancel();
+    },
     cancelAll: () => {
       stopped = true;
       for (const handle of handles.values()) handle.cancel();
