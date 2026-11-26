@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { readFileSync } from "node:fs";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -17,6 +18,8 @@ vi.mock("@/utils/frontendLog", () => ({
 }));
 
 const mockedInvoke = vi.mocked(invoke);
+
+setupSettingsRegion();
 
 let container: HTMLDivElement;
 let root: Root;
@@ -56,6 +59,15 @@ describe("ExternalFilesSettings", () => {
     });
     container.remove();
     vi.clearAllMocks();
+  });
+
+  it("offers Reload only when there is a file to reload (#5860, G-011)", () => {
+    seedSettings({ externalConnectionFiles: [] });
+    render();
+    expect(buttonByText("Reload")?.disabled).toBe(true);
+    seedSettings({ externalConnectionFiles: [{ path: "/shared/team.json", enabled: true }] });
+    render();
+    expect(buttonByText("Reload")?.disabled).toBe(false);
   });
 
   it("renders the migrated action buttons using the shared primitive", () => {

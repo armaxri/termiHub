@@ -89,7 +89,7 @@ describe("first-use storage chooser copy (#5187)", () => {
 describe("storage-off copy in Settings ▸ Security (#5685)", () => {
   it("names the storing options by their exact card labels, in chooser order", () => {
     expect(credentialStorageOffText("use shared credentials")).toBe(
-      "Credential storage is off — choose OS Keychain or Master password above to use shared credentials."
+      "Passwords aren't saved — choose OS Keychain or Master password above to use shared credentials."
     );
     const labels = CREDENTIAL_STORAGE_CHOICES.filter((c) => c.mode !== "none").map((c) => c.label);
     const text = credentialStorageOffText("x");

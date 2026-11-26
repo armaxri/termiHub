@@ -50,7 +50,7 @@ export interface MonitoringEnabledInput {
   connectionType: string | null;
   /** The tab's connection config; its `enableMonitoring` override wins. */
   config: ConnectionConfig | undefined;
-  /** The global "Power monitoring" default for remote sessions. */
+  /** The global "Host monitoring" default for remote sessions. */
   globalEnabled: boolean;
   /** The "Monitor local shells" setting; unset means off (#5754). */
   monitorLocalShells: boolean | undefined;

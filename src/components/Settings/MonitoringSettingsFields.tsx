@@ -31,7 +31,7 @@ export function MonitoringSettingsFields() {
       <SettingsField
         label="Monitor local shells"
         hint="Show CPU, memory, disk and network for this computer in local shell tabs."
-        help="Remote sessions are monitored with Power monitoring."
+        help="Remote sessions are monitored with Host monitoring."
         hintTestId="settings-monitor-local-shells-hint"
         helpTestId="settings-monitor-local-shells-help"
       >

@@ -2,6 +2,7 @@ import { EXPERIMENTAL_SETTING_HINT, EXPERIMENTAL_SETTING_LABEL } from "@/utils/e
 
 export type SettingsCategory =
   | "general"
+  | "connection-defaults"
   | "appearance"
   | "terminal"
   | "serial"
@@ -53,28 +54,45 @@ export interface CategoryGroupDefinition {
   collapsible?: boolean;
 }
 
-/** Navigation groups, in display order. Every category belongs to exactly one. */
+/**
+ * Navigation groups, in display order. Every category belongs to exactly one.
+ *
+ * Grouped by the object a setting is about (#5860, decision A): what a
+ * connection starts with and shows sits under Connections, schedules under
+ * Automation, data that leaves the app under Security and data; only the X
+ * server and portable mode are Advanced. Category ids never change, so every
+ * deep link (`openSettingsTab({ category })`) still lands.
+ */
 export const CATEGORY_GROUPS: CategoryGroupDefinition[] = [
   {
     id: "general",
     label: "General",
-    categories: ["general", "appearance", "accessibility", "keyboard", "updates"],
+    categories: [
+      "general",
+      "appearance",
+      "accessibility",
+      "keyboard",
+      "shell-integration",
+      "plugins",
+      "updates",
+    ],
   },
+  { id: "terminal", label: "Terminal", categories: ["terminal", "sessions", "editor"] },
   {
-    id: "terminal",
-    label: "Terminal",
-    categories: ["terminal", "shell-integration", "sessions", "monitoring", "editor"],
+    id: "connections",
+    label: "Connections",
+    categories: ["connection-defaults", "serial", "monitoring", "external-files"],
   },
-  { id: "connections", label: "Connections", categories: ["serial", "external-files"] },
+  { id: "automation", label: "Automation", categories: ["schedules"] },
   {
     id: "security",
     label: "Security and data",
-    categories: ["security", "safety-prompts", "backup"],
+    categories: ["security", "safety-prompts", "backup", "import"],
   },
   {
     id: "advanced",
     label: "Advanced",
-    categories: ["plugins", "import", "schedules", "portable", "x-server"],
+    categories: ["x-server", "portable"],
     collapsible: true,
   },
 ];
@@ -90,22 +108,23 @@ export const CATEGORIES: CategoryDefinition[] = [
   { id: "appearance", label: "Appearance" },
   { id: "accessibility", label: "Accessibility" },
   { id: "keyboard", label: "Keyboard" },
+  { id: "shell-integration", label: "Open in termiHub" },
+  { id: "plugins", label: "Plugins" },
   { id: "updates", label: "Updates" },
   { id: "terminal", label: "Terminal" },
-  { id: "shell-integration", label: "Open in termiHub" },
   { id: "sessions", label: "Sessions" },
-  { id: "monitoring", label: "Monitoring" },
   { id: "editor", label: "Editor" },
+  { id: "connection-defaults", label: "Connection defaults" },
   { id: "serial", label: "Serial" },
+  { id: "monitoring", label: "Monitoring" },
   { id: "external-files", label: "External files" },
+  { id: "schedules", label: "Schedules" },
   { id: "security", label: "Security" },
   { id: "safety-prompts", label: "Safety prompts" },
   { id: "backup", label: "Backup & restore" },
-  { id: "plugins", label: "Plugins" },
   { id: "import", label: "Import & migration" },
-  { id: "schedules", label: "Schedules" },
-  { id: "portable", label: "Portable mode" },
   { id: "x-server", label: "X server" },
+  { id: "portable", label: "Portable mode" },
 ];
 
 /**
@@ -121,15 +140,35 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     id: "defaultUser",
     label: "Default user",
     description: "Default username for new SSH connections",
-    category: "general",
-    keywords: ["username", "ssh", "login"],
+    category: "connection-defaults",
+    keywords: [
+      // Under General until #5860.
+      "general",
+      "connections",
+      "connection defaults",
+      "new connection",
+      "username",
+      "ssh",
+      "login",
+    ],
   },
   {
     id: "defaultSshKeyPath",
     label: "Default SSH key path",
     description: "Default private key path for SSH key authentication",
-    category: "general",
-    keywords: ["key", "ssh", "identity", "private key", "authentication"],
+    category: "connection-defaults",
+    keywords: [
+      // Under General until #5860.
+      "general",
+      "connections",
+      "connection defaults",
+      "new connection",
+      "key",
+      "ssh",
+      "identity",
+      "private key",
+      "authentication",
+    ],
   },
   {
     id: "defaultShell",
@@ -142,8 +181,14 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     id: "defaultX11Forwarding",
     label: "X11 forwarding by default",
     description: "Pre-enable X11 forwarding for new SSH connections",
-    category: "general",
+    category: "connection-defaults",
     keywords: [
+      // Under General until #5860.
+      "general",
+      "connections",
+      "connection defaults",
+      "new connection",
+
       "ssh",
       "defaults",
       "x11",
@@ -158,9 +203,15 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     id: "fileBrowser",
     label: "File browser",
     description: "Show the file browser for SSH connections",
-    category: "general",
+    category: "connection-defaults",
     // "advanced" / "external" keep the pre-#5786 home (External files ▸ Advanced) findable.
     keywords: [
+      // Under General until #5860.
+      "general",
+      "connections",
+      "connection defaults",
+      "new connection",
+
       "file browser",
       "sftp",
       "files",
@@ -445,7 +496,16 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     label: "Credential storage mode",
     description: "How connection passwords and keys are stored",
     category: "security",
-    keywords: ["credential", "keychain", "master password", "security", "encryption", "password"],
+    keywords: [
+      "credential",
+      "keychain",
+      "master password",
+      "security",
+      "encryption",
+      "password",
+      // The Master password card calls its store a vault (#5860, G-012).
+      "vault",
+    ],
   },
   {
     id: "credentialAutoLockMinutes",
@@ -484,11 +544,14 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "credentialVaultBackup",
-    label: "Credential vault backup",
-    description:
-      "Export or import your saved credentials as an encrypted, passphrase-protected file",
+    label: "Back up saved passwords",
+    description: "Saved passwords are backed up with your other data in Backup & restore",
     category: "security",
     keywords: [
+      // Its name and actions until #5860 (one backup flow, R-052).
+      "credential vault backup",
+      "export vault",
+      "import vault",
       "credential",
       "vault",
       "export",
@@ -826,6 +889,9 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
       "Experimental: run plugin-provided JavaScript (protocol parsers, status-bar widgets) in the app. Off by default — these plugins run with full access and weak isolation.",
     category: "plugins",
     keywords: [
+      // In the folded Advanced group until #5860.
+      "advanced",
+
       "plugin",
       "frontend",
       "javascript",
@@ -954,14 +1020,14 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     label: "Provide X server automatically",
     description: "Start a local X server automatically for X11 forwarding",
     category: "x-server",
-    keywords: ["x server", "x11", "xserver", "display", "vcxsrv", "forwarding", "gui"],
+    keywords: ["advanced", "x server", "x11", "xserver", "display", "vcxsrv", "forwarding", "gui"],
   },
   {
     id: "stopXServerWhenIdle",
     label: "Stop X server when idle",
     description: "Shut down the auto-provided X server when no connection uses it",
     category: "x-server",
-    keywords: ["x server", "x11", "idle", "stop", "shutdown", "display"],
+    keywords: ["advanced", "x server", "x11", "idle", "stop", "shutdown", "display"],
   },
   {
     id: "pluginSettings",
@@ -969,6 +1035,9 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     description: "Configure settings for installed plugins that declare them",
     category: "plugins",
     keywords: [
+      // In the folded Advanced group until #5860.
+      "advanced",
+
       "plugin",
       "plugins",
       "extension",
@@ -984,7 +1053,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     id: "backupRestore",
     label: "Backup & restore",
     description:
-      "Save your connections, settings and other data to one file, and restore it here or on another computer",
+      "Save your connections, settings and saved passwords to one passphrase-locked file, and restore it on any computer",
     category: "backup",
     keywords: [
       "backup",
@@ -997,6 +1066,11 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
       "transfer",
       "credentials",
       "vault",
+      "passwords",
+      "credential vault backup",
+      "export vault",
+      "import vault",
+      "older export",
       "plugins",
       "host keys",
       "known hosts",
@@ -1026,7 +1100,17 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     label: "Import from ~/.ssh/config",
     description: "Create saved SSH connections from the hosts in your OpenSSH client config",
     category: "import",
-    keywords: ["ssh", "ssh config", "openssh", "hosts", "import", "bulk", "onboard"],
+    keywords: [
+      // In the folded Advanced group until #5860.
+      "advanced",
+      "ssh",
+      "ssh config",
+      "openssh",
+      "hosts",
+      "import",
+      "bulk",
+      "onboard",
+    ],
   },
   {
     id: "importInventory",
@@ -1055,6 +1139,8 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     description: "Run termiHub from a USB drive or any directory without system installation",
     category: "portable",
     keywords: [
+      "advanced",
+
       "portable",
       "usb",
       "travel",
@@ -1069,14 +1155,20 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     label: "Config migration",
     description: "Export or import configuration between installed and portable mode",
     category: "portable",
-    keywords: ["export", "import", "migrate", "copy", "transfer", "backup", "portable"],
+    keywords: ["advanced", "export", "import", "migrate", "copy", "transfer", "backup", "portable"],
   },
   {
     id: "schedules",
     label: "Schedules",
-    description: "View, pause, resume and delete scheduled automation runs",
+    description:
+      "Scheduled automation runs: listed, edited, paused and deleted in the Automations sidebar",
     category: "schedules",
     keywords: [
+      // In the folded Advanced group until #5860.
+      "advanced",
+      "automation",
+      "automations",
+
       "schedule",
       "scheduled",
       "cron",
@@ -1107,12 +1199,23 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "powerMonitoring",
-    label: "Power monitoring",
+    label: "Host monitoring",
     description: "Monitor CPU, memory and power events for SSH connections",
     category: "monitoring",
     // "advanced" / "external" keep the pre-#5775 home (External files ▸ Advanced) findable;
     // "agent" keeps the pre-#5930 hint ("via SSH agent connections") findable.
-    keywords: ["power", "monitoring", "cpu", "memory", "agent", "ssh", "advanced", "external"],
+    keywords: [
+      // Its name until #5860 (G-011).
+      "power monitoring",
+      "power",
+      "monitoring",
+      "cpu",
+      "memory",
+      "agent",
+      "ssh",
+      "advanced",
+      "external",
+    ],
   },
   {
     id: "monitorLocalShells",

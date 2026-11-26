@@ -10,7 +10,7 @@ import { BackupRestoreSettings, restoredOffText } from "./BackupRestoreSettings"
 import { credentialsExportBlockedReason, validateBackupExport } from "./BackupExportDialog";
 import { buildRestoreRequest, defaultChoices } from "./BackupRestoreDialog";
 import { sectionSummary } from "./BackupSectionRow";
-import { KEYCHAIN_EXPORT_UNAVAILABLE_REASON } from "./CredentialVaultBackup";
+import { KEYCHAIN_EXPORT_UNAVAILABLE_REASON } from "./keychainExport";
 import { OS_AUTH_AVAILABLE, OS_AUTH_UNAVAILABLE } from "@/test/osAuthFixtures";
 
 vi.mock("@/services/api", async () => {
@@ -308,6 +308,13 @@ describe("BackupRestoreSettings", () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+  });
+
+  it("says the backup holds the saved passwords and how they are locked (#5860, G-004)", () => {
+    render("os_keychain");
+    expect(document.querySelector("[data-testid='backup-restore-description']")?.textContent).toBe(
+      "Save your connections, settings and saved passwords to one passphrase-locked file, and restore it on any computer."
+    );
   });
 
   it("includes keychain credentials behind OS verification when available", async () => {

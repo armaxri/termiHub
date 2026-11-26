@@ -71,11 +71,24 @@ describe("SettingsNav groups (#5561)", () => {
     container.remove();
   });
 
+  it("drops the selected pill while a search shows its matches (#5860, G-001)", () => {
+    render("general", vi.fn(), { highlighted: new Set<CatId>(["security"]) });
+    expect(q("settings-nav-general")?.className).not.toContain("settings-nav__item--active");
+    expect(q("settings-nav-general")?.className).toContain("settings-nav__item--dimmed");
+    expect(q("settings-nav-security")?.className).not.toContain("settings-nav__item--dimmed");
+    render("general");
+    expect(q("settings-nav-general")?.className).toContain("settings-nav__item--active");
+  });
+
   it("renders a sentence-case heading per group above its categories", () => {
     render("general");
     expect(q("settings-navgroup-basics")?.textContent).toBe("Basics");
     expect(q("settings-navgroup-security")?.textContent).toBe("Security");
-    expect(q("settings-navgroup-advanced-toggle")?.textContent).toBe("Advanced");
+    // Folded, it names what it holds (#5860, G-007).
+    expect(q("settings-navgroup-advanced-toggle")?.textContent).toBe(
+      "AdvancedPlugins, Portable mode"
+    );
+    expect(q("settings-navgroup-advanced-contents")?.textContent).toBe("Plugins, Portable mode");
     const lists = container.querySelectorAll('[role="tablist"]');
     expect(lists).toHaveLength(3);
     expect(lists[0].getAttribute("aria-labelledby")).toBe("settings-navgroup-basics");
@@ -211,20 +224,34 @@ describe("CATEGORY_GROUPS (#5561)", () => {
     expect(CATEGORIES.map((c) => c.id)).toEqual(grouped);
   });
 
-  // 15 since Monitoring (#5775); settingsPolish.spec.ts proves the nav still fits 1280x800.
-  it("keeps at most five headings and at most 15 always-visible categories", () => {
-    expect(CATEGORY_GROUPS.length).toBeLessThanOrEqual(5);
+  // Six groups by object and 19 open categories since #5860; settingsPolish.spec.ts
+  // proves the nav still fits 1280x800 with no scrolling.
+  it("keeps at most six headings and at most 19 always-visible categories", () => {
+    expect(CATEGORY_GROUPS.length).toBeLessThanOrEqual(6);
     const visible = CATEGORY_GROUPS.filter((g) => !g.collapsible).flatMap((g) => g.categories);
-    expect(visible.length).toBeLessThanOrEqual(15);
+    expect(visible.length).toBeLessThanOrEqual(19);
     expect(visible).toContain("general");
     expect(visible).toContain("security");
   });
 
-  it("files the rare pages under the folded Advanced group", () => {
+  it("folds only the X server and portable mode under Advanced (#5860)", () => {
     const advanced = CATEGORY_GROUPS.find((g) => g.id === "advanced")!;
     expect(advanced.collapsible).toBe(true);
-    expect(advanced.categories).toEqual(
-      expect.arrayContaining(["portable", "x-server", "schedules"])
-    );
+    expect(advanced.categories).toEqual(["x-server", "portable"]);
+  });
+
+  it("groups the settings by the object they are about (#5860)", () => {
+    const groupOf = (category: string) =>
+      CATEGORY_GROUPS.find((g) => g.categories.includes(category as never))?.id;
+    for (const category of ["connection-defaults", "serial", "monitoring", "external-files"]) {
+      expect(groupOf(category), category).toBe("connections");
+    }
+    expect(groupOf("schedules")).toBe("automation");
+    expect(groupOf("shell-integration")).toBe("general");
+    // Found by browsing, not folded away.
+    for (const category of ["plugins", "import", "schedules", "backup"]) {
+      const group = CATEGORY_GROUPS.find((g) => g.id === groupOf(category))!;
+      expect(group.collapsible, category).toBeFalsy();
+    }
   });
 });

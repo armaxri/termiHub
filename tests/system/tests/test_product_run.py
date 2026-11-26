@@ -109,12 +109,12 @@ CATEGORY_LABELS = {
 }
 #: Every category, for the generic sentence-case rule.
 ALL_CATEGORIES = (
-    "general appearance terminal serial accessibility shell-integration keyboard sessions "
-    "safety-prompts x-server security external-files monitoring editor plugins backup import "
-    "schedules portable updates"
+    "general connection-defaults appearance terminal serial accessibility shell-integration "
+    "keyboard sessions safety-prompts x-server security external-files monitoring editor plugins "
+    "backup import schedules portable updates"
 ).split()
 #: Always-open Settings nav headings (``settingsRegistry.ts`` CATEGORY_GROUPS, #5561).
-SETTINGS_NAV_GROUPS = ("general", "terminal", "connections", "security")
+SETTINGS_NAV_GROUPS = ("general", "terminal", "connections", "automation", "security")
 #: Keyboard shortcut groups (``KeyboardSettings.tsx`` CATEGORY_ORDER).
 KEYBOARD_GROUPS = ("general", "clipboard", "terminal", "navigation", "tab-groups", "remote-desktop")
 

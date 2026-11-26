@@ -27,13 +27,13 @@ CARD_LABELS = {
     "storage-mode-os-keychain": "OS Keychain",
     "storage-mode-master-password": "Master password",
 }
-#: The two storage-off lines that replace the vault-dependent actions.
-OFF_LINES = ("shared-credentials-unavailable", "credential-vault-unavailable")
+#: The two storage-off lines that replace the store-dependent actions (the vault
+#: backup became Back up saved passwords, a pointer to Backup & restore, in #5860).
+OFF_LINES = ("shared-credentials-unavailable", "password-backup-unavailable")
 #: Actions that cannot work without a store and must not be offered.
 VAULT_ACTIONS = (
     "shared-credentials-create",
-    "credential-vault-export-btn",
-    "credential-vault-import-btn",
+    "password-backup-open",
 )
 
 
@@ -53,8 +53,8 @@ class TestProductRunCredentialNoneState(
             "With no storage, Security names the options as their cards do and offers no "
             "vault action (#5685)",
             expect="#5685: Settings ▸ Security with 'Don't save passwords' selected; Shared "
-            "credentials and Credential vault backup each show one line 'choose OS Keychain "
-            "or Master password above …' and no New shared credential / Export / Import button",
+            "credentials and Back up saved passwords each show one line 'choose OS Keychain "
+            "or Master password above …' and no New shared credential / Open backup button",
         ):
             status = self.wait(self.credential_store_status, what="the credential store status")
             assert status.get("mode") == "none", f"the fresh profile has a store: {status}"

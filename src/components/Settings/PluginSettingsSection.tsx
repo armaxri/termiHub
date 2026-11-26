@@ -117,7 +117,7 @@ export function PluginSettingsSection({ focusPluginId }: PluginSettingsSectionPr
   if (configurable.length === 0) {
     return (
       <div className="settings-panel__category" data-testid="plugin-settings-section">
-        <SettingsSectionHeading>Plugins</SettingsSectionHeading>
+        <SettingsSectionHeading>Installed plugins</SettingsSectionHeading>
         <EmptyState
           variant="panel"
           title="No installed plugin has configurable settings."
@@ -129,7 +129,7 @@ export function PluginSettingsSection({ focusPluginId }: PluginSettingsSectionPr
 
   return (
     <div className="settings-panel__category" data-testid="plugin-settings-section">
-      <SettingsSectionHeading>Plugins</SettingsSectionHeading>
+      <SettingsSectionHeading>Installed plugins</SettingsSectionHeading>
       <p className="settings-panel__description">
         Configure settings for installed plugins that declare them. Changes are saved automatically.
       </p>

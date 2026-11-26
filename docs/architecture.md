@@ -1592,6 +1592,25 @@ flowchart LR
 
 The theme engine writes CSS custom properties directly to `:root` via JavaScript — no separate CSS files per theme. When "System" is selected, a `matchMedia` listener auto-switches between Dark and Light when the OS preference changes. The activity bar stays dark in Dark, Light and Solarized Dark (VS Code convention); Solarized Light paints it base2 with dark icons so it matches the cream sidebar and editor (#5853).
 
+### Settings navigation (#5561, #5860)
+
+The Settings tab lists its categories in groups by the object a setting is about
+(`CATEGORY_GROUPS` in `src/components/Settings/settingsRegistry.ts`):
+
+| Group             | Categories                                                                                    |
+| ----------------- | --------------------------------------------------------------------------------------------- |
+| General           | General, Appearance, Accessibility, Keyboard, Open in termiHub, Plugins, Updates              |
+| Terminal          | Terminal, Sessions, Editor                                                                    |
+| Connections       | Connection defaults (SSH user and key, X11, file browser), Serial, Monitoring, External files |
+| Automation        | Schedules (opens the one list, in the Automations sidebar)                                    |
+| Security and data | Security, Safety prompts, Backup & restore, Import & migration                                |
+| Advanced (folded) | X server, Portable mode                                                                       |
+
+A category id never changes when it moves between groups, so a deep link
+(`openSettingsTab({ category })`) keeps landing. Search reads `SETTINGS_REGISTRY` only; a setting
+that moved keeps its old home's word as a keyword (`general`, `advanced`, its old name), so it is
+found by its old and its new words. No setting key changed with the regrouping.
+
 ### Per-Workspace Settings (PROD-052)
 
 A saved workspace may override a curated subset of the global settings while it is
@@ -1735,8 +1754,14 @@ empty keychain count still asks before a switch to Don't save passwords.
 
 #### Credential vault export / import
 
-Settings → Security → **Credential vault backup** exports every saved credential to an encrypted
-file and imports such a file into the **current** store (PROD-063, `src-tauri/src/credential/vault/`).
+Settings → Security → **Credential vault backup** exported every saved credential to an encrypted
+file and imported such a file into the **current** store (PROD-063, `src-tauri/src/credential/vault/`).
+Since #5860 there is one backup flow: passwords are backed up with everything else in Backup &
+restore, Security ▸ **Back up saved passwords** points there, and the export action is gone from the
+UI and the IPC surface (`export_credential_vault` is removed). A file an older termiHub
+exported still restores: Backup & restore ▸ **Restore passwords from an older export…**
+(`OlderPasswordImport.tsx`), whose dialog speaks of the chosen store, not of a vault.
+`tests/fixtures/credentials/older-export.json` is such a file; the vault tests open it.
 
 - **Export** requires re-authentication (in master-password mode the store must be unlocked and the
   master password re-entered) and an **export passphrase** entered twice (minimum 12 characters,
