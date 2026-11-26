@@ -291,6 +291,11 @@ describe("state, reason and next step", () => {
     ["waiting", "storeLocked", ["Unlock"]],
     ["error", "storeLocked", ["Unlock"]],
     ["error", "connection", ["Edit connection"]],
+    // What failed on the way (#6028, slice 10).
+    ["error", "signInRefused", ["Edit connection"]],
+    ["error", "serverSilent", ["Open a terminal on shop-web"]],
+    ["error", "hostKeyUntrusted", ["Review key"]],
+    ["error", "remotePortRefused", ["Edit"]],
     ["reconnecting", undefined, ["Retry now"]],
     ["error", "other", []],
     ["error", undefined, []],
@@ -548,6 +553,61 @@ describe("state, reason and next step", () => {
     expect(fileServerModel(server(), serverIn("running"), CONTEXT).counters).toEqual(counters);
     expect(tunnelModel(tunnel(), tunnelIn("notReachable"), CONTEXT).counters).toBeUndefined();
     expect(fileServerModel(server(), serverIn("error"), CONTEXT).counters).toBeUndefined();
+  });
+});
+
+describe("which part of the path fails (#6028, slice 10)", () => {
+  const steps = (model: ServiceModel) => model.nextSteps.map((step) => step.label);
+
+  it.each<[TunnelStatus, ServiceCause | undefined, string | undefined]>([
+    ["error", "portInUse", "listener"],
+    ["error", "agentOffline", "listener"],
+    ["error", "connection", "server"],
+    ["error", "signInRefused", "server"],
+    ["error", "serverSilent", "server"],
+    ["error", "hostKeyUntrusted", "server"],
+    ["error", "remotePortRefused", "server"],
+    ["error", "storeLocked", undefined],
+    ["error", undefined, undefined],
+    // Without a reason nothing is said to fail.
+    ["disconnected", "connection", undefined],
+  ])("%s because of %s: %s", (status, cause, part) => {
+    expect(tunnelModel(tunnel(), tunnelIn(status, { cause }), CONTEXT).failing).toBe(part);
+  });
+
+  it("a folder that is gone offers Choose folder", () => {
+    const model = fileServerModel(
+      server(),
+      { ...serverIn("error"), cause: "folderMissing" },
+      CONTEXT
+    );
+    expect(steps(model)).toEqual(["Choose folder"]);
+    expect(model.failing).toBeUndefined();
+  });
+
+  it("a running tunnel whose target refuses says so, with when and how often", () => {
+    const at = new Date(2026, 10, 26, 14, 20).getTime();
+    const refused = (count: number, tunnelType: TunnelType = LOCAL) =>
+      tunnelModel(
+        tunnel({ tunnelType }),
+        tunnelIn("connected", {
+          error: undefined,
+          stats: { ...STATS, refused: count, lastRefusedMs: at },
+        }),
+        CONTEXT
+      );
+    const three = refused(3);
+    expect(three.reason).toBe("db:5432 refused the connection. Last: 14:20, 3 times.");
+    expect(steps(three)).toEqual(["Edit"]);
+    expect(three.failing).toBe("target");
+    expect(three.state).toBe("running");
+    expect(refused(1).reason).toBe("db:5432 refused the connection. Last: 14:20, once.");
+    expect(refused(2, remote("shop")).reason).toBe(
+      "localhost:3000 refused the connection. Last: 14:20, 2 times."
+    );
+    expect(refused(2, DYNAMIC).reason).toBe("A site refused the connection. Last: 14:20, 2 times.");
+    const none = refused(0);
+    expect([none.reason, none.failing, steps(none)]).toEqual([undefined, undefined, []]);
   });
 });
 

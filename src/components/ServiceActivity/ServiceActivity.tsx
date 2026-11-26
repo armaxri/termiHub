@@ -9,6 +9,8 @@ import { useAppStore } from "@/store/appStore";
 import type { ServiceEvent } from "@/types/generated/ServiceEvent";
 import { fireAndForget } from "@/utils/frontendLog";
 import { hostChoice } from "@/utils/hostChoice";
+import { isAgentHost } from "@/utils/runLocation";
+import { TunnelDiagram } from "@/components/TunnelEditor/TunnelDiagram";
 import type {
   ServiceAction,
   ServiceActionId,
@@ -33,6 +35,8 @@ interface ServiceActivityProps {
   events: readonly ServiceEvent[];
   onAction: (id: ServiceActionId) => void | Promise<void>;
   onNextStep: (step: ServiceNextStep) => void | Promise<void>;
+  /** A tunnel's path with the part that fails (#6028, slice 10). */
+  path?: ReactNode;
   /** The access log of a file server. */
   children?: ReactNode;
 }
@@ -47,6 +51,7 @@ export function ServiceActivity({
   events,
   onAction,
   onNextStep,
+  path,
   children,
 }: ServiceActivityProps) {
   const { address } = model;
@@ -104,18 +109,21 @@ export function ServiceActivity({
         <p className="service-activity__reason" role="status" data-testid="service-activity-reason">
           {model.reason}
           {model.nextSteps.map((step) => (
-            <Button
+            <button
               key={step.id}
-              variant="ghost"
-              size="xs"
-              onClick={() => onNextStep(step)}
+              type="button"
+              className="service-activity__next"
+              onClick={() =>
+                fireAndForget(Promise.resolve(onNextStep(step)), `${step.id} ${model.id}`)
+              }
               data-testid={`service-activity-next-${step.id}`}
             >
               {step.label}
-            </Button>
+            </button>
           ))}
         </p>
       )}
+      {model.failing && path}
       {address?.copy && (
         <div className="service-activity__address">
           <code className="service-activity__url" data-testid="service-activity-address">
@@ -192,11 +200,33 @@ export function ServiceActivityView({
   const server = useAppStore((s) =>
     kind === "fileServer" ? s.embeddedServers.find((item) => item.id === id) : undefined
   );
+  const tunnel = useAppStore((s) =>
+    kind === "tunnel" ? s.tunnels.find((item) => item.id === id) : undefined
+  );
   const { remoteAgents } = useProjectedAgents();
   if (!model) return null;
+  const tunnelHost = tunnel ? hostChoice(tunnel.host) : undefined;
+  const agentName =
+    tunnelHost && isAgentHost(tunnelHost)
+      ? (remoteAgents.find((a) => a.id === tunnelHost.agentId)?.name ?? tunnelHost.agentId)
+      : undefined;
   return (
     <>
-      <ServiceActivity model={model} events={events} onAction={onAction} onNextStep={onNextStep}>
+      <ServiceActivity
+        model={model}
+        events={events}
+        onAction={onAction}
+        onNextStep={onNextStep}
+        path={
+          tunnel && (
+            <TunnelDiagram
+              tunnelType={tunnel.tunnelType}
+              agentName={agentName}
+              failing={model.failing}
+            />
+          )
+        }
+      >
         {server && (
           <ServerAccessLog
             serverId={id}

@@ -1426,7 +1426,7 @@ impl<R: Runtime> TunnelManager<R> {
                 let (session, registry, guards) =
                     self.acquire_dedicated(&ssh_config, cancel, jumped)?;
                 let f = RemoteForwarder::start(remote_config, session, registry).map_err(|e| {
-                    TerminalError::TunnelError(format!("Failed to start remote forwarder: {}", e))
+                    TerminalError::TunnelError(format!("{REMOTE_FORWARD_FAILED}{e}"))
                 })?;
                 Ok((ActiveForwarder::Remote(f), guards, None))
             }
@@ -1471,7 +1471,8 @@ impl<R: Runtime> TunnelManager<R> {
                                 liveness,
                             })
                         })
-                        .map_err(|e| TerminalError::SshError(e.to_string()))
+                        // What failed stays known for the row (#6028, slice 10).
+                        .map_err(TerminalError::from_session_ssh)
                 },
             ))?;
             // Each supervisor gets its own watch receiver clone, so one shared
@@ -1497,8 +1498,7 @@ impl<R: Runtime> TunnelManager<R> {
                 self.connect_through_gateway(ssh_config, cancel)?;
             Ok((session, registry, PooledSessionGuards::gateway(gateway)))
         } else {
-            let (session, registry) = connect_with_registry_cancellable(ssh_config, cancel)
-                .map_err(|e| TerminalError::SshError(e.to_string()))?;
+            let (session, registry) = connect_with_registry_cancellable(ssh_config, cancel)?;
             Ok((session, registry, PooledSessionGuards::default()))
         }
     }
@@ -1517,7 +1517,7 @@ impl<R: Runtime> TunnelManager<R> {
                     Err(TerminalError::TunnelError("SSH connect cancelled".to_string()))
                 }
                 res = connect_target_through_pooled_gateway_with_liveness(ssh_config, Some(&cancel)) => {
-                    res.map_err(|e| TerminalError::SshError(e.to_string()))
+                    res.map_err(TerminalError::from_session_ssh)
                 }
             }
         })
@@ -2224,29 +2224,63 @@ fn reconnecting_reason(attempt: u32, at: DateTime<Local>) -> String {
     format!("Connection lost. Try {attempt} of {RECONNECT_MAX_ATTEMPTS} at {at}{then}.")
 }
 
-/// Why a tunnel did not start on this computer: what is taken or who refused, in
-/// words for its row. Pure but for the look at the port.
+/// What a remote forwarder that the server turned down says first.
+const REMOTE_FORWARD_FAILED: &str = "Failed to start remote forwarder: ";
+
+/// Why a tunnel did not start on this computer: what is taken, who refused, or
+/// which part of the path failed, in words for its row and with the cause that
+/// picks its remedy (#6063; #6028, slice 10). Pure but for the look at the port.
 fn start_reason(tunnel: &TunnelType, server: &str, direct: bool, error: &TerminalError) -> Reason {
+    use crate::utils::errors::IpcErrorCode as C;
     let listens_on = match tunnel {
         TunnelType::Local(c) => Some((&c.local_host, c.local_port)),
         TunnelType::Dynamic(c) => Some((&c.local_host, c.local_port)),
         TunnelType::Remote(_) => None,
     };
-    match error {
-        TerminalError::SshError(what) if direct && is_refused(what) => Reason::new(
+    let detail = error.display_message();
+    let said = |text: String, cause| Reason::new(text, Some(cause));
+    match error.code() {
+        C::AuthFailed | C::AgentAuthFailed | C::InteractionRequired => said(
+            format!("{server} refused the sign-in."),
+            ServiceCause::SignInRefused,
+        ),
+        C::HostKeyUntrusted => said(
+            format!("The host key of {server} is not trusted. It may have changed."),
+            ServiceCause::HostKeyUntrusted,
+        ),
+        C::Timeout => said(
+            format!("{server} did not answer in time."),
+            ServiceCause::ServerSilent,
+        ),
+        C::Refused if direct => said(
             format!("{server} refused the connection. Is its SSH server running?"),
-            Some(ServiceCause::Connection),
+            ServiceCause::Connection,
         ),
-        TerminalError::SshError(what) => Reason::new(
-            format!(
-                "Could not connect to {server}: {}",
-                what.strip_prefix("Connection failed: ").unwrap_or(what)
-            ),
-            Some(ServiceCause::Connection),
-        ),
-        error => match listens_on {
-            Some((host, port)) if tcp_port_in_use(host, port) => {
-                Reason::new(port_in_use_here(port), Some(ServiceCause::PortInUse))
+        C::Refused | C::Unreachable | C::Dns | C::ConnectionFailed | C::SshError => {
+            if direct && is_refused(&detail) {
+                return said(
+                    format!("{server} refused the connection. Is its SSH server running?"),
+                    ServiceCause::Connection,
+                );
+            }
+            let what = detail.strip_prefix("SSH error: ").unwrap_or(&detail);
+            let what = what.strip_prefix("Connection failed: ").unwrap_or(what);
+            said(
+                format!("Could not connect to {server}: {what}"),
+                ServiceCause::Connection,
+            )
+        }
+        _ => match (tunnel, listens_on, error) {
+            (TunnelType::Remote(c), _, TerminalError::TunnelError(what))
+                if what.starts_with(REMOTE_FORWARD_FAILED) =>
+            {
+                said(
+                    format!("{server} did not allow port {}.", c.remote_port),
+                    ServiceCause::RemotePortRefused,
+                )
+            }
+            (_, Some((host, port)), _) if tcp_port_in_use(host, port) => {
+                said(port_in_use_here(port), ServiceCause::PortInUse)
             }
             _ => plain_reason(error).into(),
         },
@@ -3143,6 +3177,92 @@ mod tests {
         assert_eq!(
             start_reason(&local_on(port), "Build Box", true, &bind),
             "Failed to start local forwarder: x".into()
+        );
+    }
+
+    /// Which part of the path failed picks the remedy (#6028, slice 10).
+    #[test]
+    fn a_failed_start_says_which_part_failed() {
+        use termihub_core::errors::{ConnectFailureKind, SessionError};
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let kind = |kind, message: &str| {
+            TerminalError::from_session_ssh(SessionError::Classified {
+                kind,
+                message: message.into(),
+            })
+        };
+        let cases = [
+            (
+                TerminalError::from_session_ssh(SessionError::AuthFailed),
+                "Build Box refused the sign-in.",
+                ServiceCause::SignInRefused,
+            ),
+            (
+                kind(ConnectFailureKind::InteractionRequired, "asks for a code"),
+                "Build Box refused the sign-in.",
+                ServiceCause::SignInRefused,
+            ),
+            (
+                kind(ConnectFailureKind::HostKeyUntrusted, "not trusted"),
+                "The host key of Build Box is not trusted. It may have changed.",
+                ServiceCause::HostKeyUntrusted,
+            ),
+            (
+                kind(ConnectFailureKind::Timeout, "after 15 s"),
+                "Build Box did not answer in time.",
+                ServiceCause::ServerSilent,
+            ),
+            (
+                kind(ConnectFailureKind::Refused, "Connection refused"),
+                "Build Box refused the connection. Is its SSH server running?",
+                ServiceCause::Connection,
+            ),
+            (
+                TerminalError::from_session_ssh(SessionError::ConnectionFailed(
+                    "no route to host".into(),
+                )),
+                "Could not connect to Build Box: no route to host",
+                ServiceCause::Connection,
+            ),
+            (
+                kind(ConnectFailureKind::Dns, "no such host"),
+                "Could not connect to Build Box: no such host",
+                ServiceCause::Connection,
+            ),
+        ];
+        for (error, text, cause) in cases {
+            assert_eq!(
+                start_reason(&local_on(port), "Build Box", true, &error),
+                Reason::new(text, Some(cause)),
+                "{error:?}"
+            );
+        }
+        let remote = TunnelType::Remote(RemoteForwardConfig {
+            remote_host: "localhost".into(),
+            remote_port: 9000,
+            local_host: "localhost".into(),
+            local_port: 3000,
+        });
+        let turned_down =
+            TerminalError::TunnelError(format!("{}denied", super::REMOTE_FORWARD_FAILED));
+        assert_eq!(
+            start_reason(&remote, "shop-web", true, &turned_down),
+            Reason::new(
+                "shop-web did not allow port 9000.",
+                Some(ServiceCause::RemotePortRefused)
+            )
+        );
+        // Another failure of a remote one is not about its port.
+        let other = TerminalError::TunnelError("Lock error: poisoned".into());
+        assert_eq!(start_reason(&remote, "shop-web", true, &other).cause, None);
+        // A local one has no remote port to blame.
+        assert_eq!(
+            start_reason(&local_on(port), "shop-web", true, &turned_down).cause,
+            None
         );
     }
 

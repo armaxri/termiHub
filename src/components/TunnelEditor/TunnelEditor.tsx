@@ -588,6 +588,10 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
     { tunnelId: "", status: "connected", stats: NO_TRAFFIC },
     context
   ).address;
+  // The part of the saved one's path that fails, marked under Show path (slice 10).
+  const failing = existingTunnel
+    ? tunnelModel(existingTunnel, tunnelStates[existingTunnel.id], context).failing
+    : undefined;
   // Asked only when the New menu did not (U-008).
   const [choosing, setChoosing] = useState(!existingTunnel && !meta.tunnelType);
   const [showsPath, setShowsPath] = useState(false);
@@ -946,7 +950,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
         </button>
         {showsPath && (
           <>
-            <TunnelDiagram tunnelType={tunnelType} agentName={hostAgentName} />
+            <TunnelDiagram tunnelType={tunnelType} agentName={hostAgentName} failing={failing} />
             <div className="tunnel-editor__endpoints" data-testid="tunnel-editor-endpoints">
               <div className="tunnel-editor__endpoints-host">
                 {isAgentHost(host) ? <Server size={13} /> : <Monitor size={13} />}

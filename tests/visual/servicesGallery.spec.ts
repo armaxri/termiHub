@@ -49,6 +49,7 @@ const STATES = {
   "services--only-errors": "You pressed the errors: what is wrong, and how to see all again?",
   "services--stop-all": "Stop everything before you leave: what is cut off?",
   "services--open-connections": "What runs right now, of everything: stop the services?",
+  "services--open-connections-why": "Some services fail: can you fix them from here?",
   "services--quit": "You quit while someone downloads: what stops?",
   "services--nothing": "You searched for something that is not there.",
   "services--empty": "There is no service yet: what is this for, and make one.",
@@ -62,6 +63,7 @@ const STATES = {
   "tunnels--reconnecting-last": "It has tried nine times: what happens after this one?",
   "tunnels--stopping": "Stop was pressed while the agent is away: is it stopped?",
   "tunnels--error": "A tunnel did not start: why, and what now?",
+  "tunnels--why": "Each tunnel failed for another reason: what does each need?",
   "tunnels--needs-connection": "A connection was deleted: what about its tunnel?",
   "tunnels--not-reachable": "The agent is gone: does the tunnel still run?",
   "tunnels--on-agent": "Tunnels on other machines: where can you use each?",
@@ -95,6 +97,7 @@ const STATES = {
   "servers--tooltip": "What exactly does this server share?",
   "servers--stop": "Stop a server while somebody downloads: what happens?",
   "servers--delete": "Delete a running server: what happens?",
+  "servers--why": "Each server failed for another reason: what does each need?",
   "tunnel-editor--local": "Reach a database behind a server.",
   "tunnel-editor--remote": "Let a server reach your web app.",
   "tunnel-editor--dynamic": "Browse as if you were on the server's network.",
@@ -128,6 +131,8 @@ const STATES = {
   "activity--server-unavailable": "The log cannot be read: does the server run, and what now?",
   "activity--log-full": "It changed many times: what happened last?",
   "activity--old-agent": "It runs on an old agent: what can you see?",
+  "activity--path": "The server did not answer: where on the way did it fail?",
+  "activity--target-refused": "It runs, but the database refuses: what is wrong?",
 } as const;
 type State = keyof typeof STATES;
 
@@ -319,7 +324,46 @@ const MIXED_SERVERS: Row[] = MIXED_NAMES.map((name, index) => {
   };
 });
 
+/** A tunnel that runs while its target refuses (#6028, slice 10). */
+const REFUSING = {
+  stats: { ...STATS, refused: 3, lastRefusedMs: new Date(2026, 10, 26, 14, 20).getTime() },
+};
+/** Each cause of slice 10 once, as the backend writes it. */
+const WHY_ROWS: Row[] = [
+  {
+    id: "db",
+    name: "Shop database",
+    status: "error",
+    error: "Build Box refused the sign-in.",
+    state: { cause: "signInRefused" },
+  },
+  {
+    id: "silent",
+    name: "Metrics",
+    status: "error",
+    error: "Build Box did not answer in time.",
+    state: { cause: "serverSilent" },
+  },
+  {
+    id: "key",
+    name: "Grafana",
+    status: "error",
+    error: "The host key of Build Box is not trusted. It may have changed.",
+    state: { cause: "hostKeyUntrusted" },
+  },
+  {
+    id: "web",
+    name: "Show my web app",
+    type: "remote",
+    status: "error",
+    error: "Build Box did not allow port 9000.",
+    state: { cause: "remotePortRefused" },
+  },
+  { id: "refusing", name: "Orders database", status: "connected", state: REFUSING },
+];
+
 const TUNNEL_ROWS: Partial<Record<State, Row[]>> = {
+  "tunnels--why": WHY_ROWS,
   "tunnels--stopped": tunnelsIn("disconnected"),
   "tunnels--waiting": [
     ...tunnelsIn("waiting", WHY.agent, { host: ON_EDGE }, AGENT).slice(0, 1),
@@ -439,6 +483,36 @@ const TUNNEL_ROWS: Partial<Record<State, Row[]>> = {
   "tunnels--menu": tunnelsIn("connected"),
 };
 const SERVER_ROWS: Partial<Record<State, Row[]>> = {
+  "servers--why": [
+    {
+      id: "web",
+      name: "Release builds",
+      type: "http",
+      status: "error",
+      error: "The folder /srv/share does not exist.",
+      state: { cause: "folderMissing" },
+    },
+    {
+      id: "boot",
+      name: "Switch firmware",
+      type: "tftp",
+      status: "error",
+      error:
+        "Not started: its agent could not start it: Remote agent error: The folder ~/firmware does not exist.",
+      over: { host: ON_EDGE },
+      state: { cause: "folderMissing" },
+    },
+    {
+      id: "scans",
+      name: "Scanner inbox",
+      type: "ftp",
+      status: "error",
+      error:
+        "Not started: its agent could not start it: Remote agent error: Port 2121 is already in use. Choose another one, or stop what uses it.",
+      over: { host: ON_EDGE },
+      state: { cause: "portInUse" },
+    },
+  ],
   "servers--stopped": serversIn("stopped"),
   "servers--shared": [
     {
@@ -680,6 +754,20 @@ const BOTH_ROWS: Partial<Record<State, { tunnels: Row[]; servers: Row[] }>> = {
   "services--stop-all": BOTH,
   "services--quit": BOTH,
   "services--open-connections": BOTH,
+  "services--open-connections-why": {
+    tunnels: WHY_ROWS,
+    servers: [
+      {
+        id: "scans",
+        name: "Scanner inbox",
+        type: "ftp",
+        status: "notReachable",
+        error: WHY.away,
+        over: { host: ON_EDGE },
+        state: AGENT,
+      },
+    ],
+  },
   "services--nothing": BOTH,
   "services--palette": BOTH,
   "services--narrow": BOTH,
@@ -704,6 +792,11 @@ const ACTIVITY_ROWS: Partial<Record<State, { tunnels: Row[]; servers: Row[] }>> 
   "activity--server-nobody": { tunnels: [], servers: serversIn("running").slice(0, 1) },
   "activity--server-unavailable": { tunnels: [], servers: serversIn("running").slice(0, 1) },
   "activity--log-full": { tunnels: tunnelsIn("connected").slice(0, 1), servers: [] },
+  "activity--path": {
+    tunnels: [WHY_ROWS[1], ...tunnelsIn("connected").slice(1, 2)],
+    servers: [],
+  },
+  "activity--target-refused": { tunnels: [WHY_ROWS[4]], servers: [] },
   "activity--old-agent": {
     tunnels: [],
     servers: serversIn("running", undefined, {
@@ -741,6 +834,11 @@ const EVENTS: Partial<Record<State, unknown[]>> = {
     event(i, i % 2 ? "connected" : "reconnecting", i % 2 ? undefined : WHY.reconnecting)
   ),
   "activity--old-agent": [event(0, "starting"), event(1, "running")],
+  "activity--path": [
+    event(0, "connecting"),
+    event(15, "error", "Build Box did not answer in time."),
+  ],
+  "activity--target-refused": RAN,
 };
 
 const EDITOR_STATES = (Object.keys(STATES) as State[]).filter((state) =>
@@ -791,7 +889,9 @@ async function boot(page: Page, theme: string, state: State): Promise<void> {
           SERVER_ROWS[state] ??
           (state.startsWith("server-editor--") ? serversIn("running") : [])
       ),
-      serviceEvents: { db: EVENTS[state] ?? [], web: EVENTS[state] ?? [] },
+      serviceEvents: Object.fromEntries(
+        ["db", "web", "silent", "refusing"].map((key) => [key, EVENTS[state] ?? []])
+      ),
       ...ANSWERS[state],
     } satisfies VisualScenario
   );
@@ -1139,6 +1239,7 @@ for (const viewport of WINDOWS) {
               over = true;
               break;
             case "services--open-connections":
+            case "services--open-connections-why":
               if (!(await page.locator(id("services-open-connections")).isVisible())) {
                 await page.locator(id("services-more")).click();
               }

@@ -113,3 +113,23 @@
 .service-activity__event-word {
   font-weight: var(--font-weight-medium);
 }
+
+/* A next step reads as a link, as on the row (#6028, slice 10). */
+.service-activity__next {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-link);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.service-activity__next:hover {
+  color: var(--text-primary);
+}
+
+.service-activity__next:focus-visible {
+  outline: 2px solid var(--focus-border);
+  outline-offset: 2px;
+}

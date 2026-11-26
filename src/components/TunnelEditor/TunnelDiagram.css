@@ -64,3 +64,15 @@
   color: var(--text-secondary);
   white-space: nowrap;
 }
+
+/* The part of the path that failed (#6028, slice 10). */
+.tunnel-diagram__box--failing {
+  border-color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 8%, var(--bg-secondary));
+}
+
+.tunnel-diagram__fails {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-error);
+}

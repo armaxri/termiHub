@@ -15,7 +15,8 @@ import {
   type ServerType,
 } from "@/types/embeddedServer";
 import type { ServiceCause } from "@/types/generated/ServiceCause";
-import type { TunnelConfig, TunnelState } from "@/types/tunnel";
+import type { TunnelConfig, TunnelState, TunnelStats } from "@/types/tunnel";
+import { formatTimeOfDay } from "@/utils/formatters";
 import { hostChoice, type HostChoice } from "@/utils/hostChoice";
 import {
   serviceAddress,
@@ -71,7 +72,10 @@ export type ServiceNextStepId =
   | "chooseMachine"
   | "unlock"
   | "editConnection"
-  | "retryNow";
+  | "retryNow"
+  | "openTerminal"
+  | "reviewKey"
+  | "chooseFolder";
 
 /** The remedy for the reason beside it. */
 export interface ServiceNextStep {
@@ -137,7 +141,24 @@ export interface ServiceModel {
   counters?: ServiceCounters;
   /** What it offers now, always in this order. */
   actions: ServiceAction[];
+  /** A tunnel's part of the path that fails, when one does. */
+  failing?: TunnelPart;
 }
+
+/** A part of a tunnel's path: where it listens, the SSH server, what it reaches. */
+export type TunnelPart = "listener" | "server" | "target";
+
+/** The part of the path each cause is about (#6028, slice 10). */
+const FAILING_PART: Partial<Record<ServiceCause, TunnelPart>> = {
+  portInUse: "listener",
+  agentOffline: "listener",
+  agentSilent: "listener",
+  connection: "server",
+  serverSilent: "server",
+  signInRefused: "server",
+  hostKeyUntrusted: "server",
+  remotePortRefused: "server",
+};
 
 /** What a model needs besides the service itself. */
 export interface ServiceContext {
@@ -243,13 +264,17 @@ function nextFreePort(port: number, context: ServiceContext): number | undefined
   return undefined;
 }
 
-/** What helps with `cause` in `state`; `port` is the one it listens on here. */
+/**
+ * What helps with `cause` in `state`; `port` is the one it listens on here, `via`
+ * the name of a tunnel's SSH connection.
+ */
 function nextStepsFor(
   state: ServiceState,
   cause: ServiceCause | undefined,
   where: ServiceWhere,
   port: number | undefined,
-  context: ServiceContext
+  context: ServiceContext,
+  via?: string
 ): ServiceNextStep[] {
   if (state === "needsConnection") {
     return [{ id: "chooseConnection", label: t("service.next.chooseConnection") }];
@@ -287,7 +312,17 @@ function nextStepsFor(
     case "storeLocked":
       return [{ id: "unlock", label: t("service.next.unlock") }];
     case "connection":
+    case "signInRefused":
       return [{ id: "editConnection", label: t("service.next.editConnection") }];
+    // What failed on the way, each with its own remedy (#6028, slice 10).
+    case "serverSilent":
+      return via ? [{ id: "openTerminal", label: tf("service.next.openTerminal", { via }) }] : [];
+    case "hostKeyUntrusted":
+      return [{ id: "reviewKey", label: t("service.next.reviewKey") }];
+    case "remotePortRefused":
+      return [{ id: "edit", label: t("service.next.edit") }];
+    case "folderMissing":
+      return [{ id: "chooseFolder", label: t("service.next.chooseFolder") }];
     default:
       return [];
   }
@@ -299,7 +334,8 @@ function stateParts(
   reported: { error?: string; cause?: ServiceCause } | undefined,
   where: ServiceWhere,
   port: number | undefined,
-  context: ServiceContext
+  context: ServiceContext,
+  via?: string
 ): Pick<ServiceModel, "state" | "stateLabel" | "dot" | "health" | "reason" | "nextSteps"> {
   // Nobody can say that it runs on a machine termiHub no longer talks to.
   const lost = where.removed && reportedState === "running";
@@ -325,7 +361,7 @@ function stateParts(
     dot: { ...dot, label: stateLabel, title: stateLabel, pulse: dot.pulse && !pending },
     health: pending ? "notKnown" : HEALTH[state],
     reason,
-    nextSteps: reason ? nextStepsFor(state, reported?.cause, where, port, context) : [],
+    nextSteps: reason ? nextStepsFor(state, reported?.cause, where, port, context, via) : [],
   };
 }
 
@@ -490,6 +526,31 @@ function localPortOf(config: TunnelConfig, host: HostChoice): number | undefined
   return typeof localPort === "number" ? localPort : undefined;
 }
 
+/**
+ * What a running tunnel says while what it reaches refuses (#6028, slice 10):
+ * the tunnel runs, using it fails.
+ */
+export function targetRefused(
+  config: Pick<TunnelConfig, "tunnelType">,
+  stats: Pick<TunnelStats, "refused" | "lastRefusedMs">
+): string | undefined {
+  const count = stats.refused ?? 0;
+  if (count === 0) return undefined;
+  const { tunnelType } = config;
+  const target =
+    tunnelType.type === "local"
+      ? `${tunnelType.config.remoteHost}:${tunnelType.config.remotePort}`
+      : tunnelType.type === "remote"
+        ? `${tunnelType.config.localHost}:${tunnelType.config.localPort}`
+        : undefined;
+  const last = stats.lastRefusedMs === undefined ? "" : formatTimeOfDay(stats.lastRefusedMs);
+  const times =
+    count === 1 ? t("service.refused.once") : tf("service.refused.times", { count: String(count) });
+  return target
+    ? tf("service.reason.targetRefused", { target, last, times })
+    : tf("service.reason.siteRefused", { last, times });
+}
+
 /** The model of a tunnel; `chain` when it is one half of a chained pair. */
 export function tunnelModel(
   config: TunnelConfig,
@@ -500,12 +561,14 @@ export function tunnelModel(
   const host = hostChoice(config.host);
   const where = whereOf(host, context);
   const type = config.tunnelType.type;
+  const via = context.connections.find((c) => c.id === config.sshConnectionId)?.name;
   const parts = stateParts(
     tunnelServiceState(state?.status),
     state,
     where,
     localPortOf(config, host),
-    context
+    context,
+    via
   );
   const running = parts.state === "running";
   const address = running ? tunnelAddress(config, state, host, context) : undefined;
@@ -515,8 +578,17 @@ export function tunnelModel(
   const offered = offeredIn(parts.state, address);
   // Pasted here, it would reach whatever listens on that port of this computer.
   if (halfWay) offered.delete("copyAddress");
+  const refused = stats && targetRefused(config, stats);
   return {
     ...parts,
+    ...(refused
+      ? {
+          reason: refused,
+          nextSteps: [{ id: "edit", label: t("service.next.edit") }],
+          failing: "target" as const,
+        }
+      : {}),
+    ...(!refused && parts.reason && state?.cause ? { failing: FAILING_PART[state.cause] } : {}),
     ...(halfWay
       ? { dot: { ...parts.dot, tone: "warning" }, reason: t("service.chain.notHere") }
       : {}),

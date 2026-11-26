@@ -1,6 +1,8 @@
 import { useCallback } from "react";
 import { toast } from "@/components/ui";
 import { useConnectAgent } from "@/hooks/useConnectAgent";
+import { useConnectSavedConnection } from "@/hooks/useConnectSavedConnection";
+import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { checkEmbeddedServers, keepEmbeddedServerRunning } from "@/services/embeddedServerApi";
 import { useAppStore } from "@/store/appStore";
 import { errorMessage } from "@/utils/errorMessage";
@@ -40,6 +42,9 @@ export function useServiceNextStep(
   const keepTunnelRunning = useAppStore((s) => s.keepTunnelRunning);
   const retryTunnelNow = useAppStore((s) => s.retryTunnelNow);
   const setUnlockDialogOpen = useAppStore((s) => s.setUnlockDialogOpen);
+  const startTunnel = useAppStore((s) => s.startTunnel);
+  const { connect } = useConnectSavedConnection();
+  const { connections } = useProjectedConnections();
   const { id, kind, name, where } = model;
   const agentId = where.agentId;
 
@@ -63,7 +68,15 @@ export function useServiceNextStep(
         case "edit":
         case "chooseMachine":
         case "chooseConnection":
+        case "chooseFolder":
           return edit(id);
+        // A start asks about the host key again, with the key to compare.
+        case "reviewKey":
+          return server ? undefined : startTunnel(id);
+        case "openTerminal": {
+          const connection = connections.find((c) => c.id === sshConnectionId);
+          return connection ? connect(connection) : undefined;
+        }
         case "letReach":
           // Only a file server for devices is there for others alone.
           return server ? edit(id) : undefined;
@@ -89,6 +102,9 @@ export function useServiceNextStep(
       keepTunnelRunning,
       retryTunnelNow,
       openConnectionEditorTab,
+      startTunnel,
+      connect,
+      connections,
     ]
   );
 }
