@@ -261,13 +261,9 @@ export function toastRunOutcome(
 }
 
 /**
- * Run `workflow` against one connected terminal tab and resolve its result.
- * See the module docs; the caller has already validated the target, collected
- * parameters, and cancelled any previous run.
- */
-/**
- * Run one workflow on one tab: an ordinary run of {@link runAutomationOnTargets} with
- * one target (#5984), as triggers and schedules start it.
+ * Run `workflow` against one connected terminal tab and resolve its result: a run
+ * of {@link runAutomationOnTargets} with one target (#5984). The caller has already
+ * validated the target, collected parameters, and stopped the runs in its terminal.
  */
 export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<WorkflowRunResult> {
   // Stopped only after it started, so `fan` is there by then.
