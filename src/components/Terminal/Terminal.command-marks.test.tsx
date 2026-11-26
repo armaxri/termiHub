@@ -236,8 +236,9 @@ describe("Terminal marks what an automation types (#6021)", () => {
       registerDecoration?: ReturnType<typeof vi.fn>;
     };
     const marker = { line: 0, isDisposed: false, dispose: vi.fn(), onDispose: vi.fn() };
+    const disposed = vi.fn();
     const decoration = () => ({
-      dispose: vi.fn(),
+      dispose: disposed,
       onRender: vi.fn(() => ({ dispose: vi.fn() })),
     });
     xterm.registerMarker = vi.fn(() => marker);
@@ -250,7 +251,11 @@ describe("Terminal marks what an automation types (#6021)", () => {
     expect(xterm.registerMarker).toHaveBeenCalledTimes(1);
     expect(xterm.registerDecoration).toHaveBeenCalledTimes(2);
 
+    expect(disposed).not.toHaveBeenCalled();
     unmountOnce();
+    // Its marks go with the terminal, and no new ones come.
+    expect(disposed).toHaveBeenCalledTimes(2);
+    expect(marker.dispose).toHaveBeenCalled();
     await markAutomationInput(() => true, run)("tab-1", "pwd\r");
     expect(xterm.registerMarker).toHaveBeenCalledTimes(1);
   });

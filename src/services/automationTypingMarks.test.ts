@@ -29,6 +29,15 @@ describe("markAutomationInput", () => {
     expect(inject).toHaveBeenNthCalledWith(1, "tab-1", "l");
   });
 
+  it("takes a newline as the end of a line too, as a workflow's command ends", async () => {
+    const seen = vi.fn();
+    subscribeAutomationTyping("tab-1", seen);
+    const send = markAutomationInput(() => true, RUN);
+    await send("tab-1", "make\n");
+    await send("tab-1", "make install\n");
+    expect(seen).toHaveBeenCalledTimes(2);
+  });
+
   it("marks only the terminal it types into, each from its own first line", async () => {
     const one = vi.fn();
     const two = vi.fn();
