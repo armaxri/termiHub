@@ -516,16 +516,19 @@ fn run_probe(cfg: &ProbeConfig, bridge: &PluginHostBridge, output: &PluginOutput
             let line = match bridge.open_connection(&cfg.probe_host, cfg.probe_port) {
                 Ok(mut stream) => {
                     let mut echoed = [0u8; 4];
-                    match stream
-                        .write_all(b"ping")
-                        .and_then(|()| stream.read_exact(&mut echoed))
-                    {
-                        Ok(()) => {
-                            let mut line = b"NETECHO:".to_vec();
-                            line.extend_from_slice(&echoed);
-                            line
-                        }
-                        Err(_) => b"NETECHO_IO".to_vec(),
+                    // On a failure, say which step failed and how (#6122):
+                    // the write, or the read after how many bytes; an end of
+                    // stream reads as such, not as an error.
+                    match stream.write_all(b"ping") {
+                        Err(e) => format!("NETECHO_IO write: {e}").into_bytes(),
+                        Ok(()) => match read_up_to(&mut stream, &mut echoed) {
+                            Ok(()) => {
+                                let mut line = b"NETECHO:".to_vec();
+                                line.extend_from_slice(&echoed);
+                                line
+                            }
+                            Err((got, e)) => format!("NETECHO_IO read {got}/4: {e}").into_bytes(),
+                        },
                     }
                 }
                 Err(PluginError::PermissionDenied) => b"NETWORK_DENIED".to_vec(),
@@ -762,3 +765,17 @@ fn session_services(_config: *const PluginSessionConfig) -> Option<PluginHostSer
 /// Process-wide cleanup before unload. Nothing to do for the echo fixture.
 #[no_mangle]
 pub extern "C" fn termihub_plugin_shutdown() {}
+
+/// Fill `buf` from `stream`; on a failure, how many bytes arrived and why
+/// (`end of stream` when the peer closed it).
+fn read_up_to(stream: &mut impl Read, buf: &mut [u8]) -> Result<(), (usize, String)> {
+    let mut got = 0;
+    while got < buf.len() {
+        match stream.read(&mut buf[got..]) {
+            Ok(0) => return Err((got, "end of stream".to_owned())),
+            Ok(n) => got += n,
+            Err(e) => return Err((got, e.to_string())),
+        }
+    }
+    Ok(())
+}
