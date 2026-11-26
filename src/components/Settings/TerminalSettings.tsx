@@ -1,7 +1,8 @@
 import { AppSettings } from "@/types/connection";
 import { LineEnding } from "@/types/terminal";
 import { DEFAULT_LINE_ENDING, LINE_ENDING_OPTIONS } from "@/utils/lineEndings";
-import { Select, Toggle } from "@/components/ui";
+import { Button, Select, Toggle } from "@/components/ui";
+import { useAppStore } from "@/store/appStore";
 import { DEFAULT_SCROLLBACK } from "@/components/Terminal/terminalDefaults";
 import { DefaultNumberInput, formatSettingNumber, isAtDefault } from "./DefaultNumberInput";
 import { SettingDefaultMarker } from "./SettingDefaultMarker";
@@ -38,12 +39,30 @@ interface TerminalSettingsProps {
 }
 
 export function TerminalSettings({ settings, onChange, visibleFields }: TerminalSettingsProps) {
+  const openSettingsTab = useAppStore((s) => s.openSettingsTab);
   const show = (field: string) => !visibleFields || visibleFields.has(field);
 
   return (
     <>
       <div className="settings-panel__category">
         <SettingsSectionHeading>Terminal</SettingsSectionHeading>
+        {/* Looked for here first; it lives with the theme (#5860, G-010). */}
+        {!visibleFields && (
+          <p
+            className="settings-panel__description settings-panel__link-line"
+            data-testid="settings-terminal-font-link-line"
+          >
+            The terminal&apos;s font and colors are set under Appearance.
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => openSettingsTab({ category: "appearance" })}
+              data-testid="settings-terminal-font-link"
+            >
+              Open appearance
+            </Button>
+          </p>
+        )}
         {show("defaultHorizontalScrolling") && (
           <SettingsField
             label="Default horizontal scrolling"

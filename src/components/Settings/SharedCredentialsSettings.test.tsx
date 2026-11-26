@@ -107,7 +107,7 @@ describe("SharedCredentialsSettings (#3557)", () => {
     mockedList.mockResolvedValue([]);
     await render("none");
     expect(query("shared-credentials-unavailable")?.textContent).toBe(
-      "Credential storage is off — choose OS Keychain or Master password above to use shared credentials."
+      "Passwords aren't saved — choose OS Keychain or Master password above to use shared credentials."
     );
     expect(query("shared-credentials-create")).toBeNull();
   });

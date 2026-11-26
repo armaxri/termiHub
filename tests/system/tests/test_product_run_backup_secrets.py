@@ -321,9 +321,10 @@ def test_the_empty_kinds_line_must_be_one_short_line():
 
 
 def test_the_settings_page_must_say_back_up_with_one_line():
+    # Since #5860 (G-004) it says the passwords are in it and how they are locked.
     one_line = (
-        "Save your connections, settings and other data to one file, and restore it here or "
-        "on another computer."
+        "Save your connections, settings and saved passwords to one passphrase-locked file, "
+        "and restore it on any computer."
     )
     assert settings_page_problems("Back up…", one_line) == []
     old = (

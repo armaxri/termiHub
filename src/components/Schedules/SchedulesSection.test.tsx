@@ -337,6 +337,24 @@ describe("SchedulesSection (PROD-043)", () => {
     });
   });
 
+  it("marks itself and takes the focus when opened from elsewhere, for a moment (#5860)", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      await render([view()], false, { expanded: true, onChange: vi.fn() });
+      const section = query("schedules-section")!;
+      expect(section.dataset.revealed).toBeUndefined();
+      act(() =>
+        useAutomationSections.setState((s) => ({ schedulesRevealed: s.schedulesRevealed + 1 }))
+      );
+      expect(section.dataset.revealed).toBe("true");
+      expect(document.activeElement).toBe(section);
+      act(() => vi.advanceTimersByTime(3001));
+      expect(section.dataset.revealed).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("shows the user's description muted under the name, only when set (#5757)", async () => {
     await render([
       view({ id: "a", description: "Checks the web hosts" }),

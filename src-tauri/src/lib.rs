@@ -993,7 +993,6 @@ pub fn run() -> anyhow::Result<()> {
             commands::os_auth::enable_biometric_unlock,
             commands::os_auth::disable_biometric_unlock,
             commands::os_auth::unlock_credential_store_biometric,
-            commands::credential_vault::export_credential_vault,
             commands::credential_vault::preview_credential_vault_import,
             commands::credential_vault::import_credential_vault,
             // Unified backup and restore (PROD-068)

@@ -20,11 +20,12 @@ portable config export (MT-PORT-04), and adding an external connection file
 (MT-CONN-23). The import half of MT-PORT-04 (#3691) picks a source directory and
 asserts the imported connection after a restart.
 
-Covered (#4011): the encrypted credential-vault export + import round-trip
-(PROD-063, #3432) and Export Diagnostics (OBS-010, #3571) with the zip's
-contents verified automatically. The vault test also walks the overwrite path
-(#4076, MT-CRED-10): a saved secret is changed after the export and the
-import's Replace restores it.
+Covered (#4011): restoring a credential-vault export (PROD-063, #3432) and
+Export Diagnostics (OBS-010, #3571) with the zip's contents verified
+automatically. Since #5860 there is one backup flow: the passwords-only export
+is gone and Backup & restore restores a file an older termiHub exported (the
+overwrite path of #4076 is unit-tested in ``OlderPasswordImport.test.tsx`` and
+``src-tauri/src/credential/vault/tests.rs``).
 
 Covered (#4122): a cancelled save writes nothing and leaves the export dialog
 usable.
@@ -70,10 +71,12 @@ _MASTER_PASSWORD = "harness-master-pw-1004"
 _STORED_SSH_PASSWORD = "harness-ssh-secret-1004"
 #: Password protecting the encrypted export blob.
 _EXPORT_PASSWORD = "harness-export-pw-1004"
-#: The shared credential in the vault round-trip: its secret at export time, and
-#: the value it is changed to before the file is imported back with Replace.
-_SHARED_SECRET = "harness-shared-secret-4076"
-_SHARED_SECRET_CHANGED = "harness-shared-secret-4076-changed"
+#: A password file the removed Settings ▸ Security ▸ Export vault made (#5860), and
+#: its passphrase (``src-tauri/src/credential/vault/tests.rs`` opens it too).
+_OLDER_EXPORT_FIXTURE = (
+    Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "credentials" / "older-export.json"
+)
+_OLDER_EXPORT_PASSPHRASE = "older export passphrase 5860"
 
 
 class TestNativeDialogs(
@@ -98,7 +101,6 @@ class TestNativeDialogs(
         self.dismiss_modals(
             "export-dialog-title",
             "import-submit",
-            "vault-export-submit",
             "vault-import-title",
             "shared-credential-dialog-title",
             "open-saved-file-cancel",
@@ -639,84 +641,22 @@ class TestNativeDialogs(
             what=f"the external connection {conn_name!r}",
         )
 
-    # ── Credential vault export + import (PROD-063, #3432) ────────────────────
-    def _create_shared_credential(self, name: str, secret: str) -> str:
-        """Create a shared password credential in Settings → Security; its id.
-
-        The Security settings must be open. The id (``nc-<uuid>``) is read from
-        ``named_credentials.json`` in the config dir, since the row's test ids
-        carry it.
-        """
-        self.wait(
-            lambda: self.driver.exists("shared-credentials-create"),
-            what="the New shared credential button",
-        )
-        self.driver.click("shared-credentials-create")
-        self.wait(
-            lambda: self.driver.exists("shared-credential-name"),
-            what="the shared credential dialog",
-        )
-        self.driver.type("shared-credential-name", name)
-        self.driver.type("shared-credential-secret", secret)
-        self.driver.type("shared-credential-confirm", secret)
-        self.driver.click("shared-credential-submit")
-        self.wait(
-            lambda: not self.driver.exists("shared-credential-name"),
-            what="the shared credential to be created",
-        )
-
-        def saved_id() -> str | None:
-            try:
-                doc = json.loads(
-                    (self.config_dir / "named_credentials.json").read_text(encoding="utf-8")
-                )
-            except (OSError, ValueError):
-                return None
-            for cred in doc.get("credentials", []):
-                if cred.get("name") == name:
-                    return cred.get("id")
-            return None
-
-        cred_id = self.wait(saved_id, what=f"the shared credential {name!r} on disk")
-        self.wait(
-            lambda: self.driver.exists(f"shared-credential-{cred_id}"),
-            what="the shared credential row",
-        )
-        return cred_id
-
-    def _rotate_shared_credential(self, cred_id: str, secret: str) -> None:
-        """Change a shared credential's secret through its Change secret dialog."""
-        self.driver.click(f"shared-credential-rotate-{cred_id}")
-        self.wait(
-            lambda: self.driver.exists("shared-credential-secret"),
-            what="the Change secret dialog",
-        )
-        self.driver.type("shared-credential-secret", secret)
-        self.driver.type("shared-credential-confirm", secret)
-        self.driver.click("shared-credential-submit")
-        self.wait(
-            lambda: not self.driver.exists("shared-credential-secret"),
-            what="the shared credential secret to be changed",
-        )
-
-    def _pick_vault_and_preview(self, target: Path) -> None:
-        """Open Import vault, pick ``target`` (a stubbed Open dialog), and preview it."""
-        self.driver.click("credential-vault-import-btn")
+    # ── Restore passwords from an older export (PROD-063, #3432; #5860) ──────
+    def _pick_older_export(self, target: Path, passphrase: str) -> None:
+        """Open the older-export restore, pick ``target`` (a stubbed Open dialog), preview."""
+        self.driver.click("older-password-import-btn")
         self.wait(
             lambda: self.driver.exists("vault-import-choose-file"),
-            what="the vault import dialog",
+            what="the older-export restore dialog",
         )
         self.driver.stub_native_dialog("open", target)
         self.driver.click("vault-import-choose-file")
         self.wait(
             lambda: self.driver.get_text("vault-import-file-name") == target.name,
-            what="the picked vault file to be loaded",
+            what="the picked export file to be loaded",
         )
-        self.driver.type("vault-import-passphrase", _EXPORT_PASSWORD)
+        self.driver.type("vault-import-passphrase", passphrase)
         self.driver.click("vault-import-preview")
-        self.wait(
-            lambda: self.driver.exists("vault-import-preview-panel"), what="the import preview"
-        )
 
     def _preview_counts(self) -> tuple[str, str, str]:
         """The preview's total / new / differing counts (leading number of each)."""
@@ -725,133 +665,64 @@ class TestNativeDialogs(
 
         return count("total"), count("new"), count("conflicts")
 
-    def _apply_vault_import(self) -> None:
-        self.driver.click("vault-import-submit")
-        self.wait(
-            lambda: not self.driver.exists("vault-import-title"),
-            what="the import to apply and the dialog to close",
-        )
-        assert not self.driver.exists("vault-import-error")
+    def test_an_older_password_export_restores_in_backup_and_restore(self):
+        """A password file an older termiHub exported restores where backups live.
 
-    def test_credential_vault_export_import_round_trip(self):
-        """The encrypted vault survives a native-dialog export and import.
-
-        The harness sets up a master-password store with one saved SSH password
-        and one shared credential, opens Settings → Security → Export vault,
-        re-authenticates with the master password and types the export
-        passphrase twice; the Save dialog is stubbed. The harness checks the
-        file is sealed (no saved secret nor the passphrase appears in it), then
-        opens Import vault with the file stubbed as the Open pick. The harness
-        proves a wrong passphrase is refused, previews with the right one (both
-        credentials — plus any an earlier test in the class saved into the shared
-        store — are in the file and match the store) and applies the import.
-
-        Then the overwrite path (#4076, MT-CRED-10): the harness changes the
-        shared credential's secret, and the same file is picked again. The
-        preview flags exactly that credential as differing; the harness chooses
-        Replace and imports. A third pick previews the file once more: nothing
-        differs any more, so the store holds the exported secret again. (The
-        shared credential is the secret that changes because it can be changed
-        in the UI; an SSH connection's saved password is only replaced after a
-        real server rejects it.)
+        Settings ▸ Security ▸ Export vault is gone since #5860 (one backup flow):
+        passwords are backed up with everything else in Backup & restore. That
+        page keeps a way to restore a file the old export made: the harness sets
+        up a master-password store, opens Settings ▸ Backup & restore ▸ Restore
+        passwords from an older export…, and picks the committed fixture
+        (``tests/fixtures/credentials/older-export.json``, one password) through a
+        stubbed Open dialog. A wrong passphrase is refused with no preview; the
+        right one previews the one password, which is restored. Picked again, the
+        file matches the store: nothing new, nothing differs.
         """
         self.close_all_tabs()
-        self._store_one_ssh_password("vault")
-        shared_name = unique_name("vault-shared")
-        self.open_settings_category("security")
-        shared_id = self._create_shared_credential(shared_name, _SHARED_SECRET)
-
-        # Export: everything up to the native Save dialog.
-        target = self._scratch("vault-export", "credential-vault.json")
+        self._store_one_ssh_password("older-export")
+        target = self._scratch("older-export", "credential-vault.json")
+        target.write_bytes(_OLDER_EXPORT_FIXTURE.read_bytes())
+        self.open_settings_category("backup")
         self.wait(
-            lambda: self.driver.exists("credential-vault-export-btn"),
-            what="the Export vault button",
-        )
-        self.driver.click("credential-vault-export-btn")
-        self.wait(
-            lambda: self.driver.exists("vault-export-passphrase"), what="the vault export dialog"
-        )
-        self.driver.type("vault-export-master-password", _MASTER_PASSWORD)
-        self.driver.type("vault-export-passphrase", _EXPORT_PASSWORD)
-        self.driver.type("vault-export-confirm", _EXPORT_PASSWORD)
-        self.driver.stub_native_dialog("save", target)
-        self.driver.click("vault-export-submit")
-        blob = self.wait(
-            lambda: target.exists() and target.read_text(encoding="utf-8"),
-            what="the vault export file to be written",
-        )
-        json.loads(blob)  # a well-formed JSON envelope
-        for secret in (_STORED_SSH_PASSWORD, _SHARED_SECRET, _EXPORT_PASSWORD, _MASTER_PASSWORD):
-            assert secret not in blob, "a secret reached the vault export file in plaintext"
-        self.wait(
-            lambda: not self.driver.exists("vault-export-passphrase"),
-            what="the vault export dialog to close after saving",
-        )
-
-        # Import: the native Open pick is stubbed.
-        self.driver.click("credential-vault-import-btn")
-        self.wait(
-            lambda: self.driver.exists("vault-import-choose-file"),
-            what="the vault import dialog",
-        )
-        self.driver.stub_native_dialog("open", target)
-        self.driver.click("vault-import-choose-file")
-        self.wait(
-            lambda: self.driver.get_text("vault-import-file-name") == target.name,
-            what="the picked vault file to be loaded",
+            lambda: self.driver.exists("older-password-import-btn"),
+            what="the Restore passwords from an older export button",
         )
 
         # A wrong passphrase is refused with an error, and no preview opens.
-        self.driver.type("vault-import-passphrase", "not-the-export-passphrase")
-        self.driver.click("vault-import-preview")
+        self._pick_older_export(target, "not-the-export-passphrase")
         self.wait(lambda: self.driver.exists("vault-import-error"), what="the wrong-passphrase error")
         assert not self.driver.exists("vault-import-preview-panel")
 
-        # The right passphrase decrypts it: two credentials, identical to the store.
-        self.driver.type("vault-import-passphrase", _EXPORT_PASSWORD)
+        # The right passphrase decrypts it: one password (new unless a rerun restored it).
+        self.driver.type("vault-import-passphrase", _OLDER_EXPORT_PASSPHRASE)
         self.driver.click("vault-import-preview")
         self.wait(
-            lambda: self.driver.exists("vault-import-preview-panel"), what="the import preview"
+            lambda: self.driver.exists("vault-import-preview-panel"), what="the restore preview"
         )
-        # The vault holds every credential in the store, and the store is shared
-        # by the whole class (an earlier test's saved SSH password is in it too),
-        # so the total is "ours plus whatever was already there" — at least the
-        # two this test saved, all matching the store.
         total, new_count, conflicts = self._preview_counts()
-        assert int(total) >= 2 and (new_count, conflicts) == ("0", "0"), (
-            "expected the SSH password and the shared credential (plus any credential "
-            f"saved earlier in the class), all unchanged; preview: {self._preview_counts()}"
+        assert (total, conflicts) == ("1", "0") and new_count in ("0", "1"), (
+            f"expected the fixture's one password; preview: {self._preview_counts()}"
         )
-        self._apply_vault_import()
-
-        # Overwrite: change the shared secret, then import the file with Replace.
-        self._rotate_shared_credential(shared_id, _SHARED_SECRET_CHANGED)
-        self._pick_vault_and_preview(target)
-        assert self._preview_counts() == (total, "0", "1"), (
-            f"expected only the changed shared credential to differ; preview: "
-            f"{self._preview_counts()}"
-        )
-        conflicts = self.driver.get_text("vault-import-conflicts")
-        assert shared_name in conflicts, f"the differing entry is not {shared_name!r}: {conflicts!r}"
-        self.driver.click("vault-import-strategy-overwrite")
+        self.driver.click("vault-import-submit")
         self.wait(
-            lambda: self.driver.exists("vault-import-overwrite-warning"),
-            what="the Replace warning",
+            lambda: not self.driver.exists("vault-import-title"),
+            what="the restore to apply and the dialog to close",
         )
-        self._apply_vault_import()
+        assert not self.driver.exists("vault-import-error")
 
-        # The exported secret is back: the same file now matches the store.
-        self._pick_vault_and_preview(target)
-        assert self._preview_counts() == (total, "0", "0"), (
-            "Replace did not restore the exported secret — the file still differs from the "
-            f"store; preview: {self._preview_counts()}"
+        # Restored: the same file now matches the store.
+        self._pick_older_export(target, _OLDER_EXPORT_PASSPHRASE)
+        self.wait(
+            lambda: self.driver.exists("vault-import-preview-panel"), what="the restore preview"
         )
-        # Close without importing. The passphrase field only exists on the pick
-        # step — the preview step replaces it — so press Escape inside the preview.
+        assert self._preview_counts() == ("1", "0", "0"), (
+            f"the restored password differs from the file; preview: {self._preview_counts()}"
+        )
+        # The passphrase field only exists on the pick step, so press Escape in the preview.
         self.driver.press_key("Escape", "vault-import-preview-panel")
         self.wait(
             lambda: not self.driver.exists("vault-import-title"),
-            what="the vault import dialog to close",
+            what="the restore dialog to close",
         )
 
     # ── Export Diagnostics (OBS-010, #3571) ───────────────────────────────────

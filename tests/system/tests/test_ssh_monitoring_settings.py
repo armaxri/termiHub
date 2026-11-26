@@ -2,7 +2,7 @@
 "Optional monitoring and file browser settings" group).
 
 Drives the Settings toggles (`toggle-power-monitoring` under Monitoring since #5775,
-`toggle-file-browser` under General since #5786) and asserts they gate monitoring and the SFTP
+`toggle-file-browser` under Connection defaults since #5860) and asserts they gate monitoring and the SFTP
 browser.
 
 The per-connection override tests from the original are intentionally not ported:
@@ -39,8 +39,9 @@ pytestmark = pytest.mark.integration
 POWER = ("toggle-power-monitoring", "powerMonitoringEnabled")
 FILES = ("toggle-file-browser", "fileBrowserEnabled")
 #: The settings category that holds each toggle (Power monitoring moved, #5775;
-#: File browser moved to General ▸ New connection defaults, #5786).
-CATEGORY = {POWER[0]: "monitoring", FILES[0]: "general"}
+#: File browser moved to General ▸ New connection defaults, #5786, then to
+#: Connections ▸ Connection defaults, #5860).
+CATEGORY = {POWER[0]: "monitoring", FILES[0]: "connection-defaults"}
 
 
 @pytest.mark.usefixtures("ssh_fixtures")

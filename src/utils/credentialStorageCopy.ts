@@ -173,7 +173,7 @@ export const CREDENTIAL_STORAGE_CHOICES: CredentialStorageChoiceCopy[] = [
     label: "Master password",
     description:
       "An encrypted termiHub vault, locked with a master password you set. " +
-      "Portable — you can export it to another machine.",
+      "Backup & restore moves it to another computer.",
   },
   {
     mode: "none",
@@ -195,11 +195,12 @@ function storingOptionLabels(): string {
 
 /**
  * Settings ▸ Security line shown in place of a vault-dependent action while no
- * credential storage is chosen (#5685), e.g. "Credential storage is off —
+ * credential storage is chosen (#5685), e.g. "Passwords aren't saved —
  * choose OS Keychain or Master password above to use shared credentials."
  */
 export function credentialStorageOffText(purpose: string): string {
-  return `Credential storage is off — choose ${storingOptionLabels()} above to ${purpose}.`;
+  // In the words of the option the user picked, "Don't save passwords" (#5860, G-011).
+  return `Passwords aren't saved — choose ${storingOptionLabels()} above to ${purpose}.`;
 }
 
 /**

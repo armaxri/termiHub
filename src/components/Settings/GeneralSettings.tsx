@@ -7,7 +7,7 @@ import { useAppStore } from "@/store/appStore";
 import { isWindows, getPlatform } from "@/utils/platform";
 import { shouldOfferGitBashSetup } from "@/utils/gitBashSetup";
 import { EXPERIMENTAL_SETTING_HINT, EXPERIMENTAL_SETTING_LABEL } from "@/utils/experimentalSetting";
-import { Button, Input, Select, SelectItem, Toggle, toast } from "@/components/ui";
+import { Button, Select, SelectItem, Toggle, toast } from "@/components/ui";
 import { ClipboardCopy } from "lucide-react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { GitBashSetupDialog } from "@/components/OpenConnections/GitBashSetupDialog";
@@ -15,7 +15,6 @@ import { setFileLogLevel, getLogFilePath, getCredentialStoreStatus } from "@/ser
 import { useAppInfo } from "@/hooks/useAppInfo";
 import { buildDebugInfo } from "@/utils/debugInfo";
 import { frontendError, frontendLog } from "@/utils/frontendLog";
-import { KeyPathInput } from "./KeyPathInput";
 import { CrashDiagnosticsFields } from "./CrashDiagnosticsFields";
 import { SettingsField } from "./SettingsField";
 import { errorMessage } from "@/utils/errorMessage";
@@ -36,17 +35,6 @@ const GIT_BASH_SETUP = "__git_bash_setup__";
  * back-to-back before a re-render don't clobber each other (#2680).
  */
 export type SettingsUpdate = AppSettings | ((prev: AppSettings) => AppSettings);
-
-/** The File browser default in plain words (#5846): ordinary SSH, not "agent sessions". */
-const FILE_BROWSER_HINT =
-  "Show the file browser for SSH connections. Each connection can override it.";
-
-/**
- * What turning it off really does (#5846): the browser of open sessions that use
- * the default closes; their terminals stay connected, so no confirmation is needed.
- */
-const FILE_BROWSER_HELP =
-  "Also applies to the other connections that can browse files, such as sessions on a remote agent. Turning it off closes the file browser of open sessions that use this default; their terminals stay connected.";
 
 interface GeneralSettingsProps {
   settings: AppSettings;
@@ -145,38 +133,6 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
       <div className="settings-panel__category">
         <SettingsSectionHeading>General</SettingsSectionHeading>
 
-        {show("defaultUser") && (
-          <SettingsField
-            label="Default user"
-            hint="Default username pre-filled for new SSH connections."
-          >
-            <Input
-              value={settings.defaultUser ?? ""}
-              onChange={(e) =>
-                onChange((prev) => ({ ...prev, defaultUser: e.target.value || undefined }))
-              }
-              placeholder="e.g. admin"
-              data-testid="settings-default-user"
-            />
-          </SettingsField>
-        )}
-
-        {show("defaultSshKeyPath") && (
-          <SettingsField
-            label="Default SSH key path"
-            hint="Default private key path for SSH key authentication."
-          >
-            <KeyPathInput
-              value={settings.defaultSshKeyPath ?? ""}
-              onChange={(value) =>
-                onChange((prev) => ({ ...prev, defaultSshKeyPath: value || undefined }))
-              }
-              placeholder="~/.ssh/id_ed25519"
-              testIdPrefix="general-settings"
-            />
-          </SettingsField>
-        )}
-
         {show("defaultShell") && (
           <SettingsField
             label="Default shell"
@@ -234,49 +190,6 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
           </SettingsField>
         )}
       </div>
-
-      {(show("defaultX11Forwarding") || show("fileBrowser")) && (
-        <div className="settings-panel__category">
-          <SettingsSectionHeading>New connection defaults</SettingsSectionHeading>
-
-          {show("defaultX11Forwarding") && (
-            <SettingsField
-              label="X11 forwarding by default"
-              hint="Only for trusted hosts: they can read what you type into their windows."
-              help="Pre-enables X11 forwarding for new SSH connections. Off by default: it lets the remote host open windows on your local X server and read what you type into them."
-              hintTestId="settings-default-x11-forwarding-hint"
-              helpTestId="settings-default-x11-forwarding-help"
-            >
-              <Toggle
-                checked={settings.defaultX11Forwarding ?? false}
-                onCheckedChange={(checked) =>
-                  onChange((prev) => ({ ...prev, defaultX11Forwarding: checked }))
-                }
-                data-testid="settings-default-x11-forwarding"
-              />
-            </SettingsField>
-          )}
-
-          {/* Lived under External files ▸ Advanced until #5786; the key is unchanged. */}
-          {show("fileBrowser") && (
-            <SettingsField
-              label="File browser"
-              hint={FILE_BROWSER_HINT}
-              help={FILE_BROWSER_HELP}
-              hintTestId="settings-file-browser-hint"
-              helpTestId="settings-file-browser-help"
-            >
-              <Toggle
-                checked={settings.fileBrowserEnabled}
-                onCheckedChange={(checked) =>
-                  onChange((prev) => ({ ...prev, fileBrowserEnabled: checked }))
-                }
-                data-testid="toggle-file-browser"
-              />
-            </SettingsField>
-          )}
-        </div>
-      )}
 
       {(show("fileLogLevel") || show("showCrashReportNotice")) && (
         <div className="settings-panel__category">
