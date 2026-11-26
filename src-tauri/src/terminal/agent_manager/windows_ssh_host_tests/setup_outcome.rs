@@ -215,6 +215,22 @@ async fn setup_outcome(want: WindowsDeployShell) {
     );
     assert_host_runs(&fixture, &newer, "recovered agent").await;
 
+    // ── 5b. Killed between the two renames with the desktop gone: a plain
+    // connect puts the agent back and starts it (#6002).
+    let away_again = powershell_encoded_command(&format!(
+        "Set-Location (Join-Path $env:LOCALAPPDATA {}); \
+         Move-Item -ErrorAction Stop termihub-agent.exe termihub-agent.previous.exe",
+        powershell_single_quote(r"termiHub\agent")
+    ));
+    over_ssh(&fixture, move |session| {
+        run_checked(session, &away_again, "renaming the agent away");
+    })
+    .await;
+    let mut request_id = 0u64;
+    let connected = establish(&fixture.agent_config(&path), &mut request_id).await;
+    drop(connected);
+    assert_host_runs(&fixture, &newer, "agent a connect recovered").await;
+
     // ── 6. The shell ended without running the script.
     let exit = ["exit\r".to_string()];
     let outcome = run_setup(&fixture, &exit, None, &old).await;
