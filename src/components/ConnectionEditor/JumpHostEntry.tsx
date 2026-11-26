@@ -9,6 +9,8 @@ import {
 } from "@/components/DynamicForm/storedSecrets";
 import { hopIdentity } from "@/utils/fieldSecrets";
 import { Field, RadioGroup, Select, SelectItem } from "@/components/ui";
+import { choiceHelp } from "@/utils/choiceHelp";
+import { t } from "@/i18n/catalog";
 
 interface JumpHostEntryProps {
   /** The hop being edited. */
@@ -148,11 +150,27 @@ export function JumpHostEntry({
     );
   };
 
+  // What each source means (#6036).
+  const savedHelp = choiceHelp("jumpHostSource", "saved")!;
+  const inlineHelp = choiceHelp("jumpHostSource", "inline")!;
+
   return (
     <>
-      <Field variant="settings" label="Source">
+      <Field
+        variant="settings"
+        label="Source"
+        // What the chosen source means for this connection (#6036).
+        hint={t(
+          mode === "saved"
+            ? "choice.jumpHostSource.saved.chosen"
+            : "choice.jumpHostSource.inline.chosen"
+        )}
+        hintTestId={`jump-host-source-chosen-${index}`}
+      >
         <RadioGroup
           variant="cards"
+          // Below the cards: the other card stays in view while comparing.
+          helpSide="bottom"
           orientation="horizontal"
           value={mode}
           onValueChange={(v) => (v === "saved" ? selectSaved() : selectInline())}
@@ -161,13 +179,18 @@ export function JumpHostEntry({
             {
               value: "saved",
               label: "Saved connection",
+              description: savedHelp.summary,
               disabled: noSavedAvailable && mode !== "saved",
+              // The reason it is unavailable is its tooltip then; two would open.
               title: noSavedAvailable ? "No saved SSH connections to reference" : undefined,
+              help: noSavedAvailable ? undefined : savedHelp.lines,
               "data-testid": `jump-host-source-saved-${index}`,
             },
             {
               value: "inline",
               label: "Inline configuration",
+              description: inlineHelp.summary,
+              help: inlineHelp.lines,
               "data-testid": `jump-host-source-inline-${index}`,
             },
           ]}

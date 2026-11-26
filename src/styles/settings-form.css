@@ -267,6 +267,28 @@
 
 /* Help icon Button next to boolean field labels: skin comes from the ghost
    Button primitive; only the inline spacing/alignment is bespoke here. */
+/* What the chosen option of a bare-word select means (#6036): its summary,
+   then a help button whose tooltip says more. */
+.settings-form__choice {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  margin-top: var(--spacing-xs);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.settings-form__choice-more {
+  display: block;
+  margin-top: var(--spacing-xs);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.settings-form__choice .settings-form__help {
+  margin-left: 0;
+}
+
 .settings-form__help,
 .ui-btn.settings-form__help {
   margin-left: var(--spacing-xs);
