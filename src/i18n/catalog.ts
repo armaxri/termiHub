@@ -984,7 +984,8 @@ const en = {
   "service.activity.total": "Connections in all",
   "service.activity.sent": "Sent",
   "service.activity.received": "Received",
-  "service.activity.on": "It opens on {machine}. ",
+  "service.activity.reach": "Who reaches it: {reach}.",
+  "service.activity.reachOn": "It opens on {machine}. Who reaches it: {reach}.",
   "service.activity.events": "What happened",
   "service.activity.events.none": "Nothing happened to it since termiHub started.",
   "service.activity.events.note":

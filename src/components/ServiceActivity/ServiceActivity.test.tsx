@@ -127,6 +127,7 @@ describe("a running tunnel", () => {
     expect(q("service-activity-since")!.textContent).toBe(`Since ${formatClockTime(2000)}`);
     expect(q("service-activity-address")!.textContent).toBe("localhost:15432");
     expect(q("service-activity-use")!.textContent).toContain("Point your program");
+    expect(q("service-activity-reach")!.textContent).toBe("Who reaches it: only this computer.");
     expect(q("service-activity-counter-total")!.textContent).toBe("3");
     expect(q("service-activity-counter-sent")!.textContent).toBe("2.0 KB");
     const events = q("service-activity-events")!.querySelectorAll("li");

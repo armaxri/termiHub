@@ -123,8 +123,9 @@ export function ServiceActivity({
           </code>
           {offered.filter(({ id }) => id === "copyAddress" || id === "openInBrowser").map(button)}
           <p className="service-activity__muted" data-testid="service-activity-reach">
-            {address.on ? tf("service.activity.on", { machine: address.on }) : ""}
-            {address.reach}
+            {address.on
+              ? tf("service.activity.reachOn", { machine: address.on, reach: address.reach })
+              : tf("service.activity.reach", { reach: address.reach })}
           </p>
           {use && (
             <p className="service-activity__use" data-testid="service-activity-use">
@@ -149,8 +150,12 @@ export function ServiceActivity({
         </p>
       ) : (
         <ol className="service-activity__events" data-testid="service-activity-events">
-          {lines.map((line) => (
-            <li key={line.key} className="service-activity__event">
+          {lines.map((line, index) => (
+            <li
+              key={line.key}
+              className="service-activity__event"
+              data-testid={`service-activity-event-${index}`}
+            >
               <span className="service-activity__time">{line.time}</span>
               <StatusDot {...line.dot} pulse={false} size="sm" />
               <span className="service-activity__event-word">{line.label}</span>

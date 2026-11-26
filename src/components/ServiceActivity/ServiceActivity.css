@@ -67,7 +67,7 @@
 
 .service-activity__counters {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--spacing-sm);
   margin: 0;
 }

@@ -91,9 +91,6 @@ const STATES = {
   "servers--narrow": "The narrowest sidebar, long names: read everything.",
   "servers--hover": "Open, change or delete a running server.",
   "servers--menu": "The same, from its menu.",
-  "servers--activity": "Who uses the server right now?",
-  "servers--activity-nobody": "Does anybody use the server?",
-  "servers--activity-unavailable": "The log cannot be read: does the server run, and what now?",
   "servers--mixed": "Fifteen servers: which work right now, which need you?",
   "servers--tooltip": "What exactly does this server share?",
   "servers--stop": "Stop a server while somebody downloads: what happens?",
@@ -122,6 +119,15 @@ const STATES = {
   "server-editor--kinds": "You took the wrong kind: change it.",
   "server-editor--edit": "Change the port of a running server.",
   "server-editor--unsaved": "You closed the tab with changes in it.",
+  "activity--tunnel": "A tunnel runs: since when, how do you use it, how much went through?",
+  "activity--tunnel-reconnecting": "The connection dropped: what has it tried so far?",
+  "activity--tunnel-error": "It gave up: why, and what now?",
+  "activity--tunnel-stopped": "It is stopped: what happened before?",
+  "activity--server": "Who uses the server right now?",
+  "activity--server-nobody": "Does anybody use the server?",
+  "activity--server-unavailable": "The log cannot be read: does the server run, and what now?",
+  "activity--log-full": "It changed many times: what happened last?",
+  "activity--old-agent": "It runs on an old agent: what can you see?",
 } as const;
 type State = keyof typeof STATES;
 
@@ -553,9 +559,6 @@ const SERVER_ROWS: Partial<Record<State, Row[]>> = {
   ],
   "servers--hover": serversIn("running"),
   "servers--menu": serversIn("running"),
-  "servers--activity": serversIn("running", undefined, { bindHost: "0.0.0.0" }).slice(0, 1),
-  "servers--activity-nobody": serversIn("running").slice(0, 1),
-  "servers--activity-unavailable": serversIn("running").slice(0, 1),
 };
 
 const request = (seq: number, client: string, path: string, bytes: number, status = "200") => ({
@@ -682,6 +685,64 @@ const BOTH_ROWS: Partial<Record<State, { tunnels: Row[]; servers: Row[] }>> = {
   "services--narrow": BOTH,
 };
 
+/** The service whose Activity a state shows, the first row (#6028, slice 9). */
+const ACTIVITY_ROWS: Partial<Record<State, { tunnels: Row[]; servers: Row[] }>> = {
+  "activity--tunnel": { tunnels: tunnelsIn("connected").slice(0, 1), servers: [] },
+  "activity--tunnel-reconnecting": {
+    tunnels: tunnelsIn("reconnecting", WHY.reconnecting).slice(0, 1),
+    servers: [],
+  },
+  "activity--tunnel-error": {
+    tunnels: tunnelsIn("error", WHY.ssh, undefined, SSH).slice(0, 1),
+    servers: [],
+  },
+  "activity--tunnel-stopped": { tunnels: tunnelsIn("disconnected").slice(0, 1), servers: [] },
+  "activity--server": {
+    tunnels: [],
+    servers: serversIn("running", undefined, { bindHost: "0.0.0.0" }).slice(0, 1),
+  },
+  "activity--server-nobody": { tunnels: [], servers: serversIn("running").slice(0, 1) },
+  "activity--server-unavailable": { tunnels: [], servers: serversIn("running").slice(0, 1) },
+  "activity--log-full": { tunnels: tunnelsIn("connected").slice(0, 1), servers: [] },
+  "activity--old-agent": {
+    tunnels: [],
+    servers: serversIn("running", undefined, {
+      host: { kind: "agent", agentId: "agent-lab" },
+    }).slice(0, 1),
+  },
+};
+const ACTIVITY_STATES = Object.keys(ACTIVITY_ROWS) as State[];
+
+/** At 14:20 today, plus `seconds`. */
+const at = (seconds: number) => new Date(2026, 10, 26, 14, 20, seconds).getTime();
+const event = (seconds: number, status: string, reason?: string) => ({
+  atMs: at(seconds),
+  status,
+  ...(reason ? { reason } : {}),
+});
+const RAN = [event(0, "connecting"), event(2, "connected")];
+const DROPS = [
+  ...RAN,
+  event(40, "reconnecting", "Connection lost. Try 1 of 10 at 14:20:41."),
+  event(41, "reconnecting", "Connection lost. Try 2 of 10 at 14:20:43."),
+  event(43, "reconnecting", WHY.reconnecting),
+];
+/** What happened before each state, as the backend keeps it. */
+const EVENTS: Partial<Record<State, unknown[]>> = {
+  "activity--tunnel": RAN,
+  "activity--tunnel-reconnecting": DROPS,
+  "activity--tunnel-error": [event(0, "connecting"), event(15, "error", WHY.ssh)],
+  "activity--tunnel-stopped": [...RAN, event(50, "disconnected")],
+  "activity--server": [event(0, "starting"), event(1, "running")],
+  "activity--server-nobody": [event(0, "starting"), event(1, "running")],
+  "activity--server-unavailable": [event(0, "starting"), event(1, "running")],
+  // The ring keeps 200: a tunnel on a flaky line.
+  "activity--log-full": Array.from({ length: 200 }, (_, i) =>
+    event(i, i % 2 ? "connected" : "reconnecting", i % 2 ? undefined : WHY.reconnecting)
+  ),
+  "activity--old-agent": [event(0, "starting"), event(1, "running")],
+};
+
 const EDITOR_STATES = (Object.keys(STATES) as State[]).filter((state) =>
   state.startsWith("server-editor--")
 );
@@ -692,8 +753,9 @@ const TUNNEL_EDITOR_STATES = (Object.keys(STATES) as State[]).filter((state) =>
 /** What else the backend answers in a state. */
 const ANSWERS: Partial<Record<State, Partial<VisualScenario>>> = {
   "servers--open-unknown": { networkInterfaces: [] },
-  "servers--activity": { serverActivity: REQUESTS },
-  "servers--activity-nobody": { serverActivity: NO_REQUESTS },
+  "activity--server": { serverActivity: REQUESTS },
+  "activity--server-nobody": { serverActivity: NO_REQUESTS },
+  "activity--old-agent": { oldAgent: true },
 };
 
 async function settle(page: Page): Promise<void> {
@@ -720,13 +782,16 @@ async function boot(page: Page, theme: string, state: State): Promise<void> {
     {
       populated: true,
       serviceData: data(
-        BOTH_ROWS[state]?.tunnels ??
+        ACTIVITY_ROWS[state]?.tunnels ??
+          BOTH_ROWS[state]?.tunnels ??
           TUNNEL_ROWS[state] ??
           (state.startsWith("tunnel-editor--") ? tunnelsIn("connected") : []),
-        BOTH_ROWS[state]?.servers ??
+        ACTIVITY_ROWS[state]?.servers ??
+          BOTH_ROWS[state]?.servers ??
           SERVER_ROWS[state] ??
           (state.startsWith("server-editor--") ? serversIn("running") : [])
       ),
+      serviceEvents: { db: EVENTS[state] ?? [], web: EVENTS[state] ?? [] },
       ...ANSWERS[state],
     } satisfies VisualScenario
   );
@@ -835,12 +900,6 @@ for (const viewport of WINDOWS) {
             await page.locator(id(`${kind}-kind-${first}`)).hover();
             await page.locator(id(`${kind}-more-${first}`)).click();
             await page.locator("[role=menu]").waitFor();
-          } else if (state.includes("--activity")) {
-            await page.locator(id(`${kind}-kind-${first}`)).hover();
-            await page.locator(id(`server-activity-toggle-${first}`)).click();
-            await page.locator(id(`server-activity-${first}`)).waitFor();
-            await page.mouse.move(viewport.width - 20, viewport.height / 2);
-            await page.evaluate(() => (document.activeElement as HTMLElement).blur());
           }
           if (state.endsWith("--tooltip")) {
             await page.locator(id(`${kind}-name-${first}`)).hover();
@@ -866,6 +925,26 @@ for (const viewport of WINDOWS) {
           }
           const over = /--(hover|menu|tooltip|stop|delete)$/.test(state);
           await shot(page, state, id("services-sidebar"), over);
+        });
+      }
+
+      for (const state of ACTIVITY_STATES) {
+        test(state, async ({ page }) => {
+          await boot(page, theme, state);
+          const tunnel = ACTIVITY_ROWS[state]!.tunnels.length > 0;
+          const first = (tunnel ? ACTIVITY_ROWS[state]!.tunnels : ACTIVITY_ROWS[state]!.servers)[0];
+          const kind = tunnel ? "tunnel" : "server";
+          await page.locator(id(`${kind}-kind-${first.id}`)).hover();
+          await page
+            .locator(
+              id(tunnel ? `tunnel-activity-${first.id}` : `server-open-activity-${first.id}`)
+            )
+            .click();
+          await page.locator(id("service-activity")).waitFor();
+          if (!tunnel) await page.locator(id(`server-activity-${first.id}`)).waitFor();
+          await page.mouse.move(viewport.width - 20, viewport.height / 2);
+          await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+          await shot(page, state, id(tunnel ? "tunnel-editor" : "server-editor"));
         });
       }
 
