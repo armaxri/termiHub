@@ -42,6 +42,17 @@ def _same_windows_path(a: str, b: str) -> bool:
     return a.replace("\\", "/").lower() == b.replace("\\", "/").lower()
 
 
+def setup_tab_end(variant: Optional[str]) -> Optional[str]:
+    """The setup tab's end strip ``variant``, or ``None`` while it has no outcome.
+
+    A Windows setup's strip reads ``agent-setup-checking`` from the end of its
+    shell until the check on the host decides (#5992): that is not an end.
+    """
+    if variant is None or variant == "agent-setup-checking":
+        return None
+    return variant
+
+
 def windows_setup_problems(
     variant: Optional[str], saved_path: Optional[str], expected_path: str
 ) -> list[str]:
@@ -245,7 +256,9 @@ class AgentUi(HarnessMixin):
                 return None
             if not self.driver.exists("agent-setup-tab-strip"):
                 return None
-            return self.driver.get_attribute("terminal-disconnect-overlay", "data-variant")
+            return setup_tab_end(
+                self.driver.get_attribute("terminal-disconnect-overlay", "data-variant")
+            )
 
         variant = self.wait(
             ended, timeout=SETUP_DEADLINE, interval=2.0, what="the agent setup tab to end"

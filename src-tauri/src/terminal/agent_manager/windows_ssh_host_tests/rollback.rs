@@ -144,12 +144,13 @@ pub(super) fn reset(session: &SshSession, shell: WindowsShell, plan: &InstallPla
     );
     let mut left = Vec::new();
     for attempt in 1..=ATTEMPTS {
-        let out = run(
-            session,
-            &reset_command(shell, plan),
-            "resetting the install",
+        let command = reset_command(shell, plan);
+        let out = run(session, &command, "resetting the install");
+        assert!(
+            out.contains("RESET"),
+            "reset did not finish: {out:?}\n  => {}",
+            exec_detailed(session, &command)
         );
-        assert!(out.contains("RESET"), "reset did not finish: {out:?}");
         left = [&plan.install_path, &plan.backup_path]
             .into_iter()
             .filter(|path| {
@@ -429,6 +430,68 @@ fn reset_removes_install_backup_and_upload() {
         );
         assert!(cmd.contains(&plan.discard_backup_command), "{cmd}");
         assert!(cmd.contains(&windows_cleanup_stale_command(shell)), "{cmd}");
+    }
+}
+
+/// The first `&`-chained step of a `cmd` line that is a bare `if`, which
+/// takes every later step of the line as its own body: they then run only
+/// when its condition holds.
+fn cmd_bare_if_step(line: &str) -> Option<String> {
+    let (mut depth, mut quoted, mut step) = (0i32, false, String::new());
+    let mut steps = Vec::new();
+    for c in line.chars() {
+        match c {
+            '"' => quoted = !quoted,
+            '(' if !quoted => depth += 1,
+            ')' if !quoted => depth -= 1,
+            // `2>&1` redirects; it does not chain.
+            '&' if !quoted && depth == 0 && !step.ends_with(['>', '<']) => {
+                steps.push(std::mem::take(&mut step));
+                continue;
+            }
+            _ => {}
+        }
+        step.push(c);
+    }
+    steps
+        .into_iter()
+        .find(|s| s.trim_start().to_ascii_lowercase().starts_with("if "))
+}
+
+#[test]
+fn cmd_bare_if_step_finds_an_if_that_swallows_the_rest() {
+    assert_eq!(
+        cmd_bare_if_step(r#"if exist "a" del "a" & echo DONE"#).as_deref(),
+        Some(r#"if exist "a" del "a" "#)
+    );
+    assert_eq!(
+        cmd_bare_if_step(r#"if exist "a" del "a" >nul 2>&1 & echo DONE"#).as_deref(),
+        Some(r#"if exist "a" del "a" >nul 2>&1 "#)
+    );
+    assert_eq!(
+        cmd_bare_if_step(r#"(if exist "a" del "a") & echo DONE"#),
+        None
+    );
+    assert_eq!(cmd_bare_if_step(r#"echo "if x & y" & echo DONE"#), None);
+}
+
+/// The reset's `echo RESET` ran only when a stale image was there to
+/// delete, because the cleanup before it was a bare `if`.
+#[test]
+fn every_cmd_chain_runs_each_step() {
+    let plan = windows_install_plan(WindowsShell::Cmd);
+    for line in [
+        reset_command(WindowsShell::Cmd, &plan),
+        plan.install_command.clone(),
+        plan.backup_command.clone(),
+        plan.discard_backup_command.clone(),
+        windows_cleanup_stale_command(WindowsShell::Cmd),
+        format!(
+            "{} & echo NEXT",
+            windows_cleanup_stale_command(WindowsShell::Cmd)
+        ),
+    ] {
+        assert_eq!(cmd_bare_if_step(&line), None, "{line}");
     }
 }
 

@@ -346,7 +346,9 @@ pub fn windows_cleanup_stale_command(shell: WindowsShell) -> String {
     match shell {
         WindowsShell::Cmd => {
             let pattern = format!("{}*.exe", windows_stale_prefix(shell));
-            format!(r#"if exist "{pattern}" del /F /Q "{pattern}" >nul 2>&1"#)
+            // In parentheses: a bare `if` would take every step chained after
+            // it with `&` as its own body.
+            format!(r#"(if exist "{pattern}" del /F /Q "{pattern}" >nul 2>&1)"#)
         }
         WindowsShell::PowerShell => format!(
             r#"Get-ChildItem -Path "$env:LOCALAPPDATA\{WINDOWS_INSTALL_SUBDIR}" -Filter "{WINDOWS_STALE_PREFIX}*.exe" -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue"#
@@ -1190,7 +1192,7 @@ mod tests {
     fn windows_cleanup_only_matches_stale_images() {
         assert_eq!(
             windows_cleanup_stale_command(WindowsShell::Cmd),
-            r#"if exist "%LOCALAPPDATA%\termiHub\agent\termihub-agent.stale-*.exe" del /F /Q "%LOCALAPPDATA%\termiHub\agent\termihub-agent.stale-*.exe" >nul 2>&1"#
+            r#"(if exist "%LOCALAPPDATA%\termiHub\agent\termihub-agent.stale-*.exe" del /F /Q "%LOCALAPPDATA%\termiHub\agent\termihub-agent.stale-*.exe" >nul 2>&1)"#
         );
         assert_eq!(
             windows_cleanup_stale_command(WindowsShell::PowerShell),
