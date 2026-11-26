@@ -51,7 +51,7 @@ import {
   restoreDraftSecrets,
 } from "@/utils/formDraftSecrets";
 import { mergeMovedDraft } from "@/utils/mergeFormDraft";
-import { toast } from "@/components/ui";
+import { Button, toast } from "@/components/ui";
 import { applyEffectiveTheme } from "@/services/workspaceSettings";
 import { AppSettings } from "@/types/connection";
 import { SettingsCategory, CATEGORIES, CATEGORY_GROUPS } from "./settingsRegistry";
@@ -283,8 +283,10 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
     return () => observer.disconnect();
   }, []);
 
+  // Choosing a page ends a search: the page is what was asked for (#5860, G-002).
   const handleCategoryChange = useCallback((category: SettingsCategory) => {
     setActiveCategory(category);
+    setSearchQuery("");
   }, []);
 
   // Consume a one-shot deep-link target set by openSettingsTab (#2000): switch to
@@ -517,12 +519,13 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
         <EditorSettingsSection visibleFields={fields} />
       </Suspense>
     ),
+    // What is installed and what can be installed first, then the gates (#5860, G-008).
     plugins: () => (
       <>
-        <FrontendPluginGateSettings />
-        <NativePluginGateSettings />
         <PluginSettingsSection focusPluginId={focusPluginId} />
         <PluginCatalogSettings />
+        <FrontendPluginGateSettings />
+        <NativePluginGateSettings />
         <PluginUpdateCheckSettings />
         <TrustedPublishersSettings />
       </>
@@ -545,7 +548,26 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
     return (
       <>
         {matched.map((c) => (
-          <Fragment key={c.id}>{sections[c.id](visibleFields)}</Fragment>
+          <Fragment key={c.id}>
+            {/* Where the result lives, and the way there (#5860, G-002). */}
+            <div
+              className="settings-panel__result-path"
+              data-testid={`settings-result-path-${c.id}`}
+            >
+              <span>
+                {CATEGORY_GROUPS.find((g) => g.categories.includes(c.id))?.label} ▸ {c.label}
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => handleCategoryChange(c.id)}
+                data-testid={`settings-result-show-${c.id}`}
+              >
+                Show in {c.label}
+              </Button>
+            </div>
+            {sections[c.id](visibleFields)}
+          </Fragment>
         ))}
       </>
     );

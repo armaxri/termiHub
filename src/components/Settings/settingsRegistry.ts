@@ -496,7 +496,16 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     label: "Credential storage mode",
     description: "How connection passwords and keys are stored",
     category: "security",
-    keywords: ["credential", "keychain", "master password", "security", "encryption", "password"],
+    keywords: [
+      "credential",
+      "keychain",
+      "master password",
+      "security",
+      "encryption",
+      "password",
+      // The Master password card calls its store a vault (#5860, G-012).
+      "vault",
+    ],
   },
   {
     id: "credentialAutoLockMinutes",
@@ -1044,7 +1053,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     id: "backupRestore",
     label: "Backup & restore",
     description:
-      "Save your connections, settings and other data to one file, and restore it here or on another computer",
+      "Save your connections, settings and saved passwords to one passphrase-locked file, and restore it on any computer",
     category: "backup",
     keywords: [
       "backup",
@@ -1190,12 +1199,23 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "powerMonitoring",
-    label: "Power monitoring",
+    label: "Host monitoring",
     description: "Monitor CPU, memory and power events for SSH connections",
     category: "monitoring",
     // "advanced" / "external" keep the pre-#5775 home (External files ▸ Advanced) findable;
     // "agent" keeps the pre-#5930 hint ("via SSH agent connections") findable.
-    keywords: ["power", "monitoring", "cpu", "memory", "agent", "ssh", "advanced", "external"],
+    keywords: [
+      // Its name until #5860 (G-011).
+      "power monitoring",
+      "power",
+      "monitoring",
+      "cpu",
+      "memory",
+      "agent",
+      "ssh",
+      "advanced",
+      "external",
+    ],
   },
   {
     id: "monitorLocalShells",

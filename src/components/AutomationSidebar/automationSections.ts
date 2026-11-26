@@ -23,6 +23,11 @@ export interface AutomationSectionsState {
   saved: { id: string; seq: number } | null;
   /** The schedule saved last, marked and scrolled to the same way (#6024). */
   savedSchedule: { id: string; seq: number } | null;
+  /**
+   * Counts the times the Schedules section was opened from elsewhere (Settings,
+   * the status bar), so it marks itself as what changed (#5860, G-009).
+   */
+  schedulesRevealed: number;
   /** Mark a schedule's row as just saved. */
   markScheduleSaved: (scheduleId: string) => void;
   /** Mark an automation's row as just saved. */
@@ -45,6 +50,7 @@ export const useAutomationSections = create<AutomationSectionsState>((set) => ({
   saved: null,
   markSaved: (id) => set((s) => ({ saved: { id, seq: (s.saved?.seq ?? 0) + 1 } })),
   savedSchedule: null,
+  schedulesRevealed: 0,
   markScheduleSaved: (id) =>
     set((s) => ({ savedSchedule: { id, seq: (s.savedSchedule?.seq ?? 0) + 1 } })),
   // One at a time: the open one needs the room (B-034).
@@ -60,6 +66,7 @@ export const useAutomationSections = create<AutomationSectionsState>((set) => ({
 /** Show the Automations view with its Schedules section open. */
 export function showSchedulesInSidebar(): void {
   useAutomationSections.getState().setSchedulesOpen(true);
+  useAutomationSections.setState((s) => ({ schedulesRevealed: s.schedulesRevealed + 1 }));
   showAutomationsView();
 }
 

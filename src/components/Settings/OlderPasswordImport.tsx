@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { Upload } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import type { CredentialStorageMode } from "@/types/credential";
 import { Button } from "@/components/ui";
@@ -44,8 +44,7 @@ export function OlderPasswordImport() {
   return (
     <div className="backup-restore__older" data-testid="older-password-import">
       <p className="settings-panel__description">
-        Have a password file from an older termiHub (its Export vault)? Restore the passwords in it
-        here.
+        Have a file from Export vault in an older termiHub? Restore the passwords in it here.
       </p>
       {reason ? (
         <p className="settings-panel__description" data-testid="older-password-import-unavailable">
@@ -56,7 +55,7 @@ export function OlderPasswordImport() {
           <Button
             variant="secondary"
             size="sm"
-            icon={<Upload size={14} />}
+            icon={<KeyRound size={14} />}
             onClick={() => void openImport()}
             data-testid="older-password-import-btn"
           >

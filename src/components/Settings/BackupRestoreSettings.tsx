@@ -34,8 +34,8 @@ export function BackupRestoreSettings() {
     <div className="settings-panel__section" data-testid="backup-restore-settings">
       <SettingsSectionHeading>Backup &amp; restore</SettingsSectionHeading>
       <p className="settings-panel__description" data-testid="backup-restore-description">
-        Save your connections, settings and other data to one file, and restore it here or on
-        another computer.
+        Save your connections, settings and saved passwords to one passphrase-locked file, and
+        restore it on any computer.
       </p>
       <div className="credential-vault__actions">
         <Button

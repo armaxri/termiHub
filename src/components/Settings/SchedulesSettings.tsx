@@ -2,6 +2,7 @@ import { CalendarClock } from "lucide-react";
 import { Button } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { showSchedulesInSidebar } from "@/components/AutomationSidebar/automationSections";
+import { useScheduleTrouble } from "@/components/Schedules/useScheduleTrouble";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 /** "3 schedules, 2 on", "1 schedule, off", "No schedules yet". */
@@ -12,17 +13,23 @@ export function schedulesSummary(total: number, on: number, paused: boolean): st
   return `${count}, ${total === 1 ? (on === 1 ? "on" : "off") : state}${paused ? "; all paused" : ""}.`;
 }
 
+/** What needs fixing, as the status bar says it: "1 will not run · 1 failed", or "". */
+export function schedulesTroubleText(blocked: number, concern: string): string {
+  return [blocked > 0 ? `${blocked} will not run` : "", concern].filter(Boolean).join(" · ");
+}
+
 /**
  * Settings ▸ Automation ▸ Schedules (#5860, R-018). Schedules have one list, in
  * the Automations sidebar next to the automations they run, where they are
  * created, edited, paused and deleted. This page says so, shows how many there
- * are, and opens that list, also when the Automations view is hidden from the
- * activity bar.
+ * are and what needs fixing (as the status bar does, G-003), and opens that list,
+ * also when the Automations view is hidden from the activity bar.
  */
 export function SchedulesSettings() {
   const schedules = useAppStore((s) => s.schedules);
   const paused = useAppStore((s) => s.schedulesPaused);
-  const on = schedules.filter((s) => s.enabled).length;
+  const { on, blocked, concern } = useScheduleTrouble();
+  const trouble = schedulesTroubleText(blocked, concern);
 
   return (
     <div className="settings-panel__section" data-testid="schedules-settings">
@@ -33,17 +40,22 @@ export function SchedulesSettings() {
         create, edit, turn off or delete one there, or pause them all.
       </p>
       <p className="settings-panel__description" data-testid="schedules-settings-summary">
-        {schedulesSummary(schedules.length, on, paused)}
+        {schedulesSummary(schedules.length, on.length, paused)}
       </p>
+      {trouble && (
+        <p className="schedules-settings__trouble" data-testid="schedules-settings-trouble">
+          {trouble}.
+        </p>
+      )}
       <div>
         <Button
-          variant="secondary"
+          variant={trouble ? "primary" : "secondary"}
           size="sm"
           icon={<CalendarClock size={14} />}
           onClick={showSchedulesInSidebar}
           data-testid="schedules-settings-open"
         >
-          Open schedules
+          {trouble ? "Fix in automations" : "Open schedules"}
         </Button>
       </div>
     </div>

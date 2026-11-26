@@ -159,12 +159,13 @@ export function KeyPathInput({
           aria-invalid={ariaInvalid || undefined}
           data-testid={`${prefix}key-path-input`}
         />
-        <Tooltip content="Browse">
+        {/* Says what it picks, not just "Browse" (#5860, G-011). */}
+        <Tooltip content="Choose key file…">
           <button
             type="button"
             className="key-path-input__browse"
             onClick={handleBrowse}
-            aria-label="Browse"
+            aria-label="Choose key file…"
             data-testid={`${prefix}key-path-browse`}
           >
             …

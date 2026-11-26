@@ -1,5 +1,6 @@
 import { AppSettings } from "@/types/connection";
-import { Input, Toggle } from "@/components/ui";
+import { Button, Input, Toggle } from "@/components/ui";
+import { useAppStore } from "@/store/appStore";
 import { KeyPathInput } from "./KeyPathInput";
 import { SettingsField } from "./SettingsField";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
@@ -33,6 +34,7 @@ export function ConnectionDefaultsSettings({
   visibleFields,
 }: ConnectionDefaultsSettingsProps) {
   const show = (field: string) => !visibleFields || visibleFields.has(field);
+  const openSettingsTab = useAppStore((s) => s.openSettingsTab);
 
   return (
     <div data-testid="connection-defaults-settings">
@@ -88,6 +90,20 @@ export function ConnectionDefaultsSettings({
                 data-testid="settings-default-x11-forwarding"
               />
             </SettingsField>
+          )}
+          {/* The X server is folded under Advanced; its sibling setting points there (G-007). */}
+          {show("defaultX11Forwarding") && (
+            <p className="settings-panel__description settings-panel__link-line">
+              termiHub can start an X server for these windows.
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => openSettingsTab({ category: "x-server" })}
+                data-testid="settings-default-x11-xserver-link"
+              >
+                X server settings
+              </Button>
+            </p>
           )}
         </div>
       )}

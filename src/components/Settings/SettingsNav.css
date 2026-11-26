@@ -117,6 +117,19 @@
   color: var(--text-secondary);
 }
 
+.settings-nav__group-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* What a folded group holds (#5860, G-007). */
+.settings-nav__group-contents {
+  font-weight: var(--font-weight-normal);
+  color: var(--text-secondary);
+  white-space: normal;
+}
+
 .settings-nav__group-chevron {
   flex-shrink: 0;
   transition: transform var(--transition-fast);
