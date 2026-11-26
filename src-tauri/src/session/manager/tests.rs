@@ -3913,6 +3913,9 @@ mod agent_end_cause;
 /// Live output and scrollback snapshots share one stream position (#5990).
 mod reattach_output;
 
+/// Two attaches of one persistent session at the same time (#6033).
+mod concurrent_attach;
+
 /// A direct SSH tab reports the remote shell's exit status (#5801).
 mod ssh_exit_status;
 mod ssh_input_after_resize;

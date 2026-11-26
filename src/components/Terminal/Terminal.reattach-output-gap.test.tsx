@@ -755,4 +755,27 @@ describe("Terminal — a window that regains a session keeps the repaint's outpu
     expect(shown()).toMatch(/kept [^]*connection lost/i);
     expect(shown()).not.toContain("stale");
   });
+
+  it("is not ended by the exit of the stream before the one it attached to (#6032)", async () => {
+    // The session was created again: the tab repaints the new stream.
+    epoch = 2;
+    mockGetAgentSessionBuffer.mockResolvedValue(snapshot("$ ", 0));
+    await mountPersistent();
+    releaseLineEnding();
+    await settle();
+    act(() => {
+      handlers.get("terminal-exit")?.({ payload: { session_id: SID, exit_code: null, epoch: 1 } });
+    });
+    await settle();
+    expect(shown()).not.toMatch(/connection lost/i);
+    emitOutput("still here");
+    await settle();
+    expect(shown()).toContain("still here");
+
+    act(() => {
+      handlers.get("terminal-exit")?.({ payload: { session_id: SID, exit_code: null, epoch: 2 } });
+    });
+    await settle();
+    expect(shown()).toMatch(/still here[^]*connection lost/i);
+  });
 });
