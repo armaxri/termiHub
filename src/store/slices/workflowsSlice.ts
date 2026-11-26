@@ -424,12 +424,24 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
         onTargetEnd: (index, result) => settled(index, result.status),
       }
     );
+    // What stopped a target before its turn, for its History (#6133).
+    const notRunReasons = new Map<number, string>();
     const forget = holdWorkflowFanout(
       targets.map((x) => x.id),
-      fan
+      {
+        cancel: (index, reason) => {
+          if (reason !== undefined && !notRunReasons.has(index)) notRunReasons.set(index, reason);
+          fan.cancel(index);
+        },
+        cancelAll: () => fan.cancelAll(),
+      }
     );
     const results = await fan.done;
     forget();
+    // A target stopped before its turn never started: it says so in the History.
+    results.forEach((result, index) => {
+      if (result === undefined) results[index] = parts[index].notRun(notRunReasons.get(index));
+    });
     const outcomes: FanoutOutcome[] = [];
     results.forEach((result, index) => {
       if (result) outcomes.push({ title: targets[index].title, result });

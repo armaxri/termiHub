@@ -72,6 +72,8 @@ export interface MacroTargetOutcome {
   startedAt?: Date;
   /** When this target's own run ended. */
   endedAt?: Date;
+  /** It was stopped while it waited for its turn, and never typed (#6133). */
+  queued?: boolean;
 }
 
 /** Hooks of {@link playAutomationKeysOnTargets}. */
@@ -158,6 +160,7 @@ export function playAutomationKeysOnTargets(
         stepsPlayed: played[index],
         startedAt: startedAt[index],
         endedAt: endedAt[index],
+        queued: result === undefined || stopped.has(index),
       }))
     ),
     cancel: (tabId) => {
