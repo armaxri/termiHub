@@ -59,8 +59,13 @@ async fn run_in_setup_tab(fixture: &Fixture, lines: &[String]) -> (ShellEnd, Str
     })
     .await
     .is_ok();
-    let end = match ssh.exit_code() {
-        Some(code) if ended => ShellEnd::Exited(code),
+    // As the setup's end watch reads the session's end (#6123: a Win32-OpenSSH
+    // PTY shell ends as `shell_exited` with no code).
+    let end = match (ssh.exit_code(), ssh.end_cause()) {
+        (Some(code), _) if ended => ShellEnd::Exited(code),
+        (None, Some(termihub_core::connection::SessionEndCause::ShellExited)) if ended => {
+            ShellEnd::ExitedWithoutStatus
+        }
         _ if ended => ShellEnd::NoStatus,
         _ => ShellEnd::StillOpen,
     };
@@ -104,7 +109,7 @@ async fn run_setup(
     .await;
     let (end, text) = run_in_setup_tab(fixture, lines).await;
     assert!(
-        matches!(end, ShellEnd::Exited(_)),
+        matches!(end, ShellEnd::Exited(_) | ShellEnd::ExitedWithoutStatus),
         "the setup did not end its shell ({end:?}): {text:?}"
     );
     let sha = sha256_hex(meant);

@@ -76,6 +76,10 @@ pub(super) enum ShellEnd {
     /// The server reported that the shell exited, with this code. Only the
     /// *end* is reliable on Windows, not a code of 0.
     Exited(i32),
+    /// The shell exited on its own, but its server sent no status that is the
+    /// shell's: a Win32-OpenSSH PTY shell (`shell_exited`, #6123). The end is
+    /// as sure as [`Exited`](Self::Exited); there is no code.
+    ExitedWithoutStatus,
     /// The session ended without one: a lost link, or the tab was closed.
     NoStatus,
     /// The shell was still open when the wait ran out.
@@ -216,7 +220,7 @@ pub(super) fn windows_setup_outcome(
     end: ShellEnd,
     check: &Result<HostCheck, TerminalError>,
 ) -> SetupOutcome {
-    let ended = matches!(end, ShellEnd::Exited(_));
+    let ended = matches!(end, ShellEnd::Exited(_) | ShellEnd::ExitedWithoutStatus);
     let not_installed = |reason: &str| {
         if ended {
             SetupOutcome::Failed(reason.to_string())
@@ -260,7 +264,7 @@ pub(super) fn windows_setup_outcome(
 pub(super) struct SessionEndWatch<R: Runtime> {
     app: AppHandle<R>,
     listener: EventId,
-    ended: Receiver<Option<i32>>,
+    ended: Receiver<ShellEnd>,
 }
 
 impl<R: Runtime> SessionEndWatch<R> {
@@ -276,7 +280,14 @@ impl<R: Runtime> SessionEndWatch<R> {
                 let code = payload["exit_code"]
                     .as_i64()
                     .and_then(|c| i32::try_from(c).ok());
-                let _ = tx.send(code);
+                let end = match code {
+                    Some(code) => ShellEnd::Exited(code),
+                    None if payload["end_cause"].as_str() == Some("shell_exited") => {
+                        ShellEnd::ExitedWithoutStatus
+                    }
+                    None => ShellEnd::NoStatus,
+                };
+                let _ = tx.send(end);
             }
         });
         Self {
@@ -296,9 +307,9 @@ impl<R: Runtime> SessionEndWatch<R> {
             END_ANNOUNCED_WITHIN.min(ceiling)
         };
         match self.ended.recv_timeout(limit) {
-            Ok(Some(code)) => ShellEnd::Exited(code),
+            Ok(end) => end,
             Err(RecvTimeoutError::Timeout) if open => ShellEnd::StillOpen,
-            Ok(None) | Err(_) => ShellEnd::NoStatus,
+            Err(_) => ShellEnd::NoStatus,
         }
     }
 }
