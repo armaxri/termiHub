@@ -28,6 +28,10 @@ import { useAppStore } from "@/store/appStore";
 import { EMPTY_AGENTS_VIEW, setAgentsViewForTest } from "@/store/agentsBridge";
 import type { AgentCapabilities, RemoteAgentDefinition, SavedConnection } from "@/types/connection";
 import { connectSavedConnection } from "./connectSavedConnection";
+import { __trustAllSavedConnectionsForTest } from "@/services/savedConnectionTrust";
+
+// The connect flow under test, not the check of changed connections (#6065).
+__trustAllSavedConnectionsForTest(true);
 
 const mockedCreateTerminal = vi.mocked(createTerminal);
 const mockedResolveCredential = vi.mocked(resolveCredential);

@@ -1,5 +1,6 @@
 import { StateCreator } from "zustand";
 
+import { confirmSavedConnection } from "@/services/savedConnectionTrust";
 import type { AddTabOptions, AppState } from "../appStore";
 import { bestEffortOwnership } from "../windowHelpers";
 import {
@@ -359,6 +360,17 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
     confirmImportedTabConnection: async (tabId) => {
       const tab = get().tabContent[tabId];
       if (!tab?.pendingImportedConnection) return;
+      if (tab.pendingConnectionChanged) {
+        // A saved connection: what it runs is confirmed, for every way it opens.
+        await confirmSavedConnection(tab.config);
+        set((raw) => ({
+          tabContent: patchTabContentEntry(raw.tabContent, tabId, {
+            pendingImportedConnection: undefined,
+            pendingConnectionChanged: undefined,
+          }),
+        }));
+        return;
+      }
       const settings = currentSettingsView();
       await get().updateSettings({
         ...settings,
@@ -523,6 +535,7 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
         initialCommand,
         besideSibling,
         numberTitle,
+        heldUntilConfirmed,
       } = options ?? {};
       const prev = get();
       const tabTitle = numberTitle
@@ -556,7 +569,13 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
           spawned,
           initialCommand
         );
-        const newTab: TerminalTab = connectionId ? { ...baseTab, connectionId } : baseTab;
+        const newTab: TerminalTab = {
+          ...baseTab,
+          ...(connectionId ? { connectionId } : {}),
+          ...(heldUntilConfirmed
+            ? { pendingImportedConnection: true, pendingConnectionChanged: true }
+            : {}),
+        };
         createdTabId = newTab.id;
         addedPanelId = targetPanelId;
         addedContentType = newTab.contentType;

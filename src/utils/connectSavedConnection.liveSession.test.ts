@@ -27,6 +27,10 @@ import { createTerminal } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
 import type { SavedConnection } from "@/types/connection";
 import { connectSavedConnection } from "./connectSavedConnection";
+import { __trustAllSavedConnectionsForTest } from "@/services/savedConnectionTrust";
+
+// The connect flow under test, not the check of changed connections (#6065).
+__trustAllSavedConnectionsForTest(true);
 
 function sshPassword(): SavedConnection {
   return {

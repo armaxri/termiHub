@@ -345,6 +345,7 @@ describe("tabGroupsSlice — branch coverage (#2979)", () => {
           config: { type: "local", config: {} },
           pendingImportedCommand: "curl x | sh",
           pendingImportedConnection: true,
+          pendingConnectionChanged: true,
         },
       };
       useAppStore.getState().hydrateHandoffTab(record);
@@ -352,6 +353,7 @@ describe("tabGroupsSlice — branch coverage (#2979)", () => {
       expect(tab).toMatchObject({
         pendingImportedCommand: "curl x | sh",
         pendingImportedConnection: true,
+        pendingConnectionChanged: true,
       });
       expect(tab).not.toHaveProperty("initialCommand");
     });
