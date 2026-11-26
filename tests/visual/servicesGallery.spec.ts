@@ -132,6 +132,8 @@ const STATES = {
   "activity--log-full": "It changed many times: what happened last?",
   "activity--old-agent": "It runs on an old agent: what can you see?",
   "activity--path": "The server did not answer: where on the way did it fail?",
+  "connection--tunnels": "Editing Build Box: which tunnels go through it, and do they run?",
+  "connection--tunnels-empty": "Editing Build Box: no tunnel goes through it yet. Make one.",
   "activity--target-refused": "It runs, but the database refuses: what is wrong?",
 } as const;
 type State = keyof typeof STATES;
@@ -806,6 +808,16 @@ const ACTIVITY_ROWS: Partial<Record<State, { tunnels: Row[]; servers: Row[] }>> 
 };
 const ACTIVITY_STATES = Object.keys(ACTIVITY_ROWS) as State[];
 
+/** The tunnels of an SSH connection in its editor (#6028, slice 13). */
+const CONNECTION_ROWS: Partial<Record<State, Row[]>> = {
+  "connection--tunnels": [
+    ...tunnelsIn("connected").slice(0, 1),
+    ...tunnelsIn("disconnected").slice(2),
+    WHY_ROWS[1],
+  ],
+  "connection--tunnels-empty": [],
+};
+
 /** At 14:20 today, plus `seconds`. */
 const at = (seconds: number) => new Date(2026, 10, 26, 14, 20, seconds).getTime();
 const event = (seconds: number, status: string, reason?: string) => ({
@@ -881,6 +893,7 @@ async function boot(page: Page, theme: string, state: State): Promise<void> {
       populated: true,
       serviceData: data(
         ACTIVITY_ROWS[state]?.tunnels ??
+          CONNECTION_ROWS[state] ??
           BOTH_ROWS[state]?.tunnels ??
           TUNNEL_ROWS[state] ??
           (state.startsWith("tunnel-editor--") ? tunnelsIn("connected") : []),
@@ -1045,6 +1058,21 @@ for (const viewport of WINDOWS) {
           await page.mouse.move(viewport.width - 20, viewport.height / 2);
           await page.evaluate(() => (document.activeElement as HTMLElement).blur());
           await shot(page, state, id(tunnel ? "tunnel-editor" : "server-editor"));
+        });
+      }
+
+      for (const state of Object.keys(CONNECTION_ROWS) as State[]) {
+        test(state, async ({ page }) => {
+          await boot(page, theme, state);
+          // The editor before saving needs the connection types, which this harness
+          // does not serve: that state is a component test (#6028, slice 13).
+          await page.evaluate(() => {
+            void window.__visual.store.getState().openConnectionEditorTab("Work/Build Box");
+          });
+          const section = page.locator(id("connection-port-forwarding-section"));
+          await section.scrollIntoViewIfNeeded();
+          await page.mouse.move(viewport.width - 20, viewport.height - 20);
+          await shot(page, state, id("connection-port-forwarding-section"));
         });
       }
 

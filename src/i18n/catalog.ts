@@ -987,6 +987,16 @@ const en = {
   "service.new.ftp.technical": "FTP server",
   "service.new.tftp": "Give files to a device",
   "service.new.tftp.technical": "TFTP server, firmware and network boot",
+  // The tunnels of an SSH connection, in its editor (#6028, slice 13).
+  "connection.tunnels.hint":
+    "The tunnels through this connection. They are the same as in Services; changes apply at once.",
+  "connection.tunnels.showServices": "Show in Services",
+  "connection.tunnels.none": "No tunnels go through this connection yet.",
+  "connection.tunnels.new": "New tunnel",
+  "connection.tunnels.unsaved": "Save this connection first, then add tunnels through it:",
+  "connection.tunnels.followsParent": "Follows its chained parent",
+  "connection.tunnels.startWithShort": "Start when a session opens",
+  "connection.tunnels.startWith": "Start {name} when a session to this connection opens",
   // The Activity of a service, both kinds (#6028, slice 9).
   "service.activity.label": "Activity of {name}",
   "service.activity.since": "Since {time}",

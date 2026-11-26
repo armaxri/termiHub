@@ -363,6 +363,23 @@ class TestSshTunnels(
         self.wait(lambda: self.driver.exists("tunnel-diagram-fails"), what="the failing part")
         assert "SSH server" in self.driver.get_text("tunnel-diagram")
 
+    def test_a_new_tunnel_from_a_connection(self):
+        """The connection's editor lists its tunnels and makes one with it chosen (slice 13)."""
+        first = self._create_tunnel("tunnel-from-connection", local_port=18089 + _TUNNEL_OFFSET)
+        ssh = first["sshConnectionId"]
+        self.driver.click(f"tunnel-start-{first['id']}")
+        self._assert_connected(first["id"])
+        self._stop_tunnel(first["id"])
+        self.switch_to_connections_sidebar()
+        self.open_connection_menu(ssh)
+        self.driver.click("context-connection-edit")
+        section = "connection-port-forwarding-section"
+        self.wait(lambda: self.driver.exists(section), what="the connection's tunnels")
+        assert first["name"] in self.driver.get_text(section)
+        self.driver.click("connection-port-forwarding-add")
+        self.wait(lambda: self.driver.exists("tunnel-editor-name"), what="the tunnel editor")
+        assert self.driver.get_value("tunnel-editor-ssh-connection") == ssh
+
     def test_a_target_that_refuses_is_counted_while_the_tunnel_runs(self):
         """The tunnel runs; its target does not answer: the row says so and when."""
         self.target = replace(self.target, remote_host=HOST, remote_port=self.free_port())

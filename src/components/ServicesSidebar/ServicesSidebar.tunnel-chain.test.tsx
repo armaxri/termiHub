@@ -97,7 +97,7 @@ async function renderSidebar() {
   await flush();
 }
 
-describe("TunnelSidebar — chained pair (#2597)", () => {
+describe("Services, tunnels — chained pair (#2597)", () => {
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);

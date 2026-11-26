@@ -102,7 +102,7 @@ async function clickDuplicate() {
   await flush();
 }
 
-describe("TunnelSidebar — duplicate feedback (#1342)", () => {
+describe("Services, tunnels — duplicate feedback (#1342)", () => {
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);

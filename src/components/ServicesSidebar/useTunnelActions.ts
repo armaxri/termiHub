@@ -41,7 +41,7 @@ export function useTunnelActions(
   const reconnectTunnel = useAppStore((s) => s.reconnectTunnel);
   const saveTunnel = useAppStore((s) => s.saveTunnel);
   const openTunnelEditorTab = useAppStore((s) => s.openTunnelEditorTab);
-  // Confirm + Undo, shared with the connection editor's Port Forwarding section
+  // Confirm + Undo, shared with the connection editor's SSH tunnels
   // (#5158, #5216).
   const { requestDelete, dialogProps: deleteDialogProps } = useTunnelDeleteConfirm();
 

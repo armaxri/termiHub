@@ -1,6 +1,6 @@
 /**
  * TunnelEditor + per-connection port forwards (PROD-023): a new tunnel opened
- * from a connection's "Port Forwarding" section is pre-bound to that SSH
+ * from a connection's "SSH tunnels" section is pre-bound to that SSH
  * connection with "start with connection" on, the flag round-trips on save, and
  * an existing tunnel keeps (and can clear) its saved flag.
  */
