@@ -101,7 +101,16 @@ describe("what it reaches", () => {
     [type("local"), { host: THIS_COMPUTER }, "It reaches localhost:80 through the SSH server."],
     [type("remote"), HERE, "It reaches localhost:3000 from this computer."],
     [type("remote"), THERE, "It reaches localhost:3000 from agent Edge box."],
-    [type("dynamic"), HERE, "Programs set to use it browse through Build Box."],
+    [
+      type("dynamic"),
+      HERE,
+      "Set your browser's or system's proxy to SOCKS5, host localhost, port 1080. It then browses through Build Box.",
+    ],
+    [
+      type("dynamic", "10.0.0.5"),
+      HERE,
+      "Set your browser's or system's proxy to SOCKS5, host 10.0.0.5, port 1080. It then browses through Build Box.",
+    ],
   ])("%j", (tunnelType, machines, text) => {
     expect(reachSentence(tunnelType, machines)).toBe(text);
   });
@@ -109,7 +118,15 @@ describe("what it reaches", () => {
   it("says what is not known yet", () => {
     const made = type("local");
     const open = { ...made, config: { ...made.config, remoteHost: " ", remotePort: "" } };
-    expect(reachSentence(open as TunnelType, HERE)).toBe("It reaches ?:? through Build Box.");
+    expect(reachSentence(open as TunnelType, HERE)).toBe(
+      "It reaches what you enter above, through Build Box."
+    );
+    const noPort = { ...made, config: { ...made.config, remoteHost: "db", remotePort: "" } };
+    expect(reachSentence(noPort as TunnelType, HERE)).toBe(
+      "It reaches what you enter above, through Build Box."
+    );
+    const dynamic = { type: "dynamic", config: { localHost: "", localPort: "" } } as TunnelType;
+    expect(reachSentence(dynamic, HERE)).toContain("host ?, port ?");
   });
 
   it.each([
@@ -118,12 +135,33 @@ describe("what it reaches", () => {
     ["localhost", undefined],
     ["127.0.0.1", undefined],
     ["", undefined],
-  ])("%j names a local tunnel %j", (remoteHost, name) => {
+  ])("%j names a local tunnel %j (V-008)", (remoteHost, name) => {
     const made = type("local");
     const reaches = { ...made, config: { ...made.config, remoteHost } } as TunnelType;
-    expect(targetName(reaches)).toBe(name);
-    expect(targetName(type("remote", remoteHost))).toBeUndefined();
+    expect(targetName(reaches, HERE)).toBe(name);
   });
+});
+
+it("names the other kinds by what they are for (V-008)", () => {
+  expect(targetName(type("remote"), HERE)).toBe("Port 3000 for Build Box");
+  expect(targetName(type("dynamic"), HERE)).toBe("Browse through Build Box");
+  expect(targetName(type("dynamic"), {})).toBeUndefined();
+  const made = type("remote");
+  const open = { ...made, config: { ...made.config, localPort: "" } } as TunnelType;
+  expect(targetName(open, HERE)).toBeUndefined();
+});
+
+it("presets ports nobody is set to (V-002)", () => {
+  const taken = new Set([8080, 8081, 1080]);
+  const free = (port: number) => {
+    let next = port;
+    while (taken.has(next)) next += 1;
+    return next;
+  };
+  expect(newTunnelType("local", free).config).toMatchObject({ localPort: 8082 });
+  expect(newTunnelType("dynamic", free).config).toMatchObject({ localPort: 1081 });
+  // The server's port is its own.
+  expect(newTunnelType("remote", free).config).toMatchObject({ remotePort: 8080 });
 });
 
 describe("what Save still needs", () => {

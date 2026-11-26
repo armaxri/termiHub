@@ -48,12 +48,15 @@ function signInOf(config: EmbeddedServerConfig): { username: string } | undefine
 export const presetBind = (type: ServerType): string => (type === "tftp" ? "" : "127.0.0.1");
 
 /** A new server, with the safer defaults: nobody else, and download only (#6028). */
-export function newForm(type: ServerType): FileServerForm {
+export function newForm(
+  type: ServerType,
+  free: (port: number) => number = (port) => port
+): FileServerForm {
   return {
     serverType: type,
     rootDirectory: "",
     bindHost: presetBind(type),
-    port: DEFAULT_PORTS[type],
+    port: free(DEFAULT_PORTS[type]),
     readOnly: true,
     directoryListing: true,
     signIn: false,
@@ -162,11 +165,14 @@ export function missingText(errors: Readonly<Record<string, string | undefined>>
 export function withType(
   form: FileServerForm,
   type: ServerType,
-  preset: boolean
+  preset: boolean,
+  free: (port: number) => number = (port) => port
 ): Partial<FileServerForm> {
   return {
     serverType: type,
-    ...(form.port === DEFAULT_PORTS[form.serverType] ? { port: DEFAULT_PORTS[type] } : {}),
+    ...(form.port === free(DEFAULT_PORTS[form.serverType])
+      ? { port: free(DEFAULT_PORTS[type]) }
+      : {}),
     ...(preset && form.bindHost === presetBind(form.serverType)
       ? { bindHost: presetBind(type) }
       : {}),

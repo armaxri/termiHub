@@ -107,6 +107,7 @@ const STATES = {
   "server-editor--http": "Make a folder open in a browser.",
   "server-editor--ftp": "Share a folder to upload and download files.",
   "server-editor--tftp": "Make a server that gives firmware to a switch.",
+  "server-editor--port-taken": "The port you typed is one of your other servers'.",
   "server-editor--missing": "Saving did nothing: what is missing?",
   "server-editor--warning": "Others may upload without a password: do you see what that means?",
   "server-editor--sign-in": "Only people with the password may open it.",
@@ -128,7 +129,8 @@ const WHY = {
   store: "Starts when you unlock the credential store, until 14:32. After that, start it yourself.",
   stopping:
     "Its agent is offline. It may still run there; it will be stopped when the agent is back.",
-  expired: "Not started: its agent was not connected within 30 minutes. Connect it, then retry.",
+  expired:
+    "Not started: its agent was not connected within 30 minutes. Connect it, then start it again.",
   port: (port: number) => `Port ${port} is already in use on this computer.`,
   ssh: "Build Box refused the connection. Is its SSH server running?",
   away: "Its agent is offline. It may still run there; termiHub cannot tell.",
@@ -924,6 +926,10 @@ for (const viewport of WINDOWS) {
             case "server-editor--ftp":
             case "server-editor--tftp":
               await open(state.slice("server-editor--".length));
+              break;
+            case "server-editor--port-taken":
+              await open("http");
+              await field("port").fill("8080");
               break;
             case "server-editor--missing":
               await open("tftp");

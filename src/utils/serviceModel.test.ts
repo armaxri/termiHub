@@ -524,7 +524,9 @@ describe("state, reason and next step", () => {
       CONTEXT
     );
     const short = withoutAgent(pending);
-    expect(short.reason).toBe("Will be stopped when the agent is back.");
+    // Its state and the agent's line say it (V-004).
+    expect(short.reason).toBeUndefined();
+    expect(short.stateLabel).toBe("Stop pending");
     expect(steps(short)).toEqual(["Keep running"]);
   });
 

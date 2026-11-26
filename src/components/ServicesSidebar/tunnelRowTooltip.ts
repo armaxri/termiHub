@@ -1,5 +1,6 @@
 import { t, tf } from "@/i18n/catalog";
 import { THIS_COMPUTER, type TunnelConfig, type TunnelStats } from "@/types/tunnel";
+import { isPrivateBind } from "@/utils/serviceAddress";
 import { localhostIn, serviceTrafficLine } from "@/utils/serviceTraffic";
 import { UNREADABLE_HOST } from "@/utils/hostChoice";
 import { tunnelPortMapping } from "@/utils/tunnelSummary";
@@ -51,6 +52,12 @@ export function tunnelRowTooltip(tunnel: TunnelConfig, input: TunnelRowTooltipIn
         ? tf("tunnel.tooltip.hostAgent", { agent: input.host.label })
         : t("tunnel.tooltip.hostLocal"),
   ];
+  // What a browser needs to use a proxy (V-005).
+  if (tunnel.tunnelType.type === "dynamic" && !input.host.onAgent) {
+    const { localHost, localPort } = tunnel.tunnelType.config;
+    const host = isPrivateBind(localHost) ? "localhost" : localHost.trim();
+    out.push(tf("tunnel.tooltip.socks", { host, port: String(localPort) }));
+  }
   if (input.stats) {
     out.push(serviceTrafficLine(input.stats, input.upRate, input.downRate));
   }

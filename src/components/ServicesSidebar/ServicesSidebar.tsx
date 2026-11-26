@@ -4,7 +4,7 @@ import { ChevronDown, ChevronRight, HardDrive, Plus } from "lucide-react";
 import { MiddleEllipsis, ServiceCounts } from "@/components/ServiceListItem";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
-import { Button, ConfirmDialog, EmptyState, SearchInput, Tooltip } from "@/components/ui";
+import { Button, ConfirmDialog, EmptyState, SearchInput, toast, Tooltip } from "@/components/ui";
 import type { ToolbarMenuEntry } from "@/components/ui";
 import { useConnectAgent } from "@/hooks/useConnectAgent";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
@@ -34,6 +34,8 @@ import { findCompanion, isCompanionRedundant } from "@/utils/tunnelChain";
 import { EmbeddedServerItem } from "./EmbeddedServerItem";
 import { newServiceGroups, type NewServiceEntry } from "./newServiceEntries";
 import { GROUP_LABEL, pairStatusOf, useServiceEntries } from "./useServiceEntries";
+import { keepEmbeddedServerRunning } from "@/services/embeddedServerApi";
+import { errorMessage } from "@/utils/errorMessage";
 import { useServicesView } from "./servicesView";
 import { TunnelListItem } from "./TunnelListItem";
 import { useFileServerActions } from "./useFileServerActions";
@@ -105,6 +107,21 @@ export function ServicesSidebar() {
 
   const noConnection = !context.connections.some(({ config }) => config.type === "ssh");
   const groups = useMemo(() => newServiceGroups(), []);
+  const keepTunnelRunning = useAppStore((s) => s.keepTunnelRunning);
+  /** Take back every stop that an offline agent has not got (V-004). */
+  const keepAll = useCallback(
+    (models: readonly ServiceModel[]) =>
+      Promise.all(
+        models.map(({ kind, id }) =>
+          kind === "tunnel" ? keepTunnelRunning(id) : keepEmbeddedServerRunning(id)
+        )
+      ).then(
+        () => undefined,
+        (err: unknown) =>
+          void toast.error(t("service.agent.keepFailed"), { description: errorMessage(err) })
+      ),
+    [keepTunnelRunning]
+  );
   const menu = groups.flatMap(({ id, label, entries: items }): ToolbarMenuEntry[] => [
     { type: "label", id: `label-${id}`, label },
     ...items.map((entry) => ({
@@ -281,6 +298,7 @@ export function ServicesSidebar() {
                         key={key}
                         row={row}
                         onConnect={() => connectAgent(row.agentId)}
+                        onKeepAll={keepAll}
                         rowRef={ref}
                         rowProps={item}
                       />
@@ -461,10 +479,15 @@ function servicesText(models: readonly ServiceModel[]): string {
 interface AgentHeaderProps extends RowProps {
   row: AgentRow;
   onConnect: () => void | Promise<void>;
+  onKeepAll: (models: readonly ServiceModel[]) => void | Promise<void>;
 }
 
 /** The line of an offline agent: what its services share, said once. */
-function AgentHeader({ row, onConnect, rowRef, rowProps }: AgentHeaderProps) {
+function AgentHeader({ row, onConnect, onKeepAll, rowRef, rowProps }: AgentHeaderProps) {
+  // Not the part of a chained tunnel that runs here.
+  const own = row.models.filter((model) => offlineAgentOf(model) === row.agentId);
+  // Said once, for all of them (V-004).
+  const pending = own.every((model) => model.state === "stopping");
   return (
     <div
       ref={rowRef}
@@ -477,11 +500,8 @@ function AgentHeader({ row, onConnect, rowRef, rowProps }: AgentHeaderProps) {
         <MiddleEllipsis text={row.name} />
       </span>
       <span className="services-sidebar__agent-text">
-        {tf("service.agent.offline", {
-          // Not the part of a chained tunnel that runs here.
-          services: servicesText(
-            row.models.filter((model) => offlineAgentOf(model) === row.agentId)
-          ),
+        {tf(pending ? "service.agent.stopping" : "service.agent.offline", {
+          services: servicesText(own),
         })}{" "}
         <button
           type="button"
@@ -498,6 +518,25 @@ function AgentHeader({ row, onConnect, rowRef, rowProps }: AgentHeaderProps) {
         >
           {t("service.next.connectAgent")}
         </button>
+        {pending && (
+          <>
+            {" · "}
+            <button
+              type="button"
+              className="service-row__next"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                void onKeepAll(own);
+              }}
+              data-testid={`service-agent-keep-${row.agentId}`}
+            >
+              {t("service.agent.keepAll")}
+            </button>
+          </>
+        )}
       </span>
     </div>
   );

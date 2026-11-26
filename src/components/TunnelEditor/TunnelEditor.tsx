@@ -32,6 +32,7 @@ import {
 } from "@/components/ServiceEditor/ServiceEditorShell";
 import { useEditorTab } from "@/components/ServiceEditor/useEditorTab";
 import { WhoCanOpen } from "@/components/ServiceEditor/WhoCanOpen";
+import { freePort, portTaken, PortTakenNote } from "@/components/ServiceEditor/PortNote";
 import { isWideBind } from "@/utils/serviceAddress";
 import { tunnelModel } from "@/utils/serviceModel";
 import { frontendLog } from "@/utils/frontendLog";
@@ -73,6 +74,13 @@ interface TunnelEditorProps {
   meta: TunnelEditorMeta;
   isVisible: boolean;
 }
+
+/** What a name of each kind could be. */
+const NAME_PLACEHOLDER = {
+  local: "tunnel.editor.name.placeholder",
+  remote: "tunnel.editor.name.placeholder.remote",
+  dynamic: "tunnel.editor.name.placeholder.dynamic",
+} as const;
 
 /** The test ids of the hosts and ports. */
 const FIELD_TEST_IDS = {
@@ -215,6 +223,10 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   // The shared RHF + zod scaffold (UISF2-003): `form` is a complete, stable
   // snapshot of the values (it reflects `setValue` at once), and `formErrors` /
   // `canSave` update on the same render as the edit.
+  // The ports the services of this computer are set to (V-002).
+  const { usedPorts } = useServiceContext(false);
+  const free = (port: number) => freePort(port, { usedPorts });
+
   const {
     form: { getValues, setValue, reset },
     draft: form,
@@ -234,7 +246,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
           : undefined) ??
         pickableSshConnections[0]?.id ??
         "",
-      tunnelType: existingTunnel?.tunnelType ?? newTunnelType(meta.tunnelType ?? "local"),
+      tunnelType: existingTunnel?.tunnelType ?? newTunnelType(meta.tunnelType ?? "local", free),
       // Which machine hosts this tunnel (S3, #2155). New tunnels default to This
       // computer — agent hosting is opt-in.
       host: hostChoice(existingTunnel?.host),
@@ -243,7 +255,8 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
       // sessions is the point, so default the flag on (PROD-023).
       startWithConnection:
         existingTunnel?.startWithConnection ?? (!existingTunnel && !!meta.sshConnectionId),
-      reconnectOnDisconnect: existingTunnel?.reconnectOnDisconnect ?? false,
+      // As connections do (maintainer decision 2026-09-26, V-007).
+      reconnectOnDisconnect: existingTunnel?.reconnectOnDisconnect ?? true,
     },
   });
 
@@ -314,7 +327,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
 
   const handleTypeChange = (type: "local" | "remote" | "dynamic") => {
     if (getValues("tunnelType").type !== type) {
-      setValue("tunnelType", newTunnelType(type));
+      setValue("tunnelType", newTunnelType(type, free));
     }
   };
 
@@ -563,6 +576,11 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   const bind = bindField(tunnelType);
   const warning = openWarning(tunnelType, machines);
   const context = useServiceContext(isWideBind(bindOf(tunnelType)));
+  // A port of this computer that another service is set to (V-002).
+  const taken =
+    tunnelType.type !== "remote" && host.kind === "thisComputer"
+      ? portTaken(tunnelType.config.localPort, existingTunnel?.id, context)
+      : undefined;
   const preview = tunnelModel(
     { ...buildConfig(form), id: "" },
     { tunnelId: "", status: "connected", stats: NO_TRAFFIC },
@@ -574,7 +592,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
 
   /** A tunnel without a name is called like what it reaches, once that is known. */
   const nameAfterTarget = () => {
-    const name = targetName(getValues("tunnelType"));
+    const name = targetName(getValues("tunnelType"), { server: sshLabel });
     if (name && getValues("name").trim() === "") setValue("name", name);
   };
   const portInput = (
@@ -593,6 +611,10 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
         id={`tunnel-${field}-${tabId}`}
         value={value}
         onValueChange={(v) => updateConfig(field, v)}
+        onBlur={nameAfterTarget}
+        placeholder={
+          field === "remotePort" ? t("tunnel.editor.target.port.placeholder") : undefined
+        }
         error={!!errors[field]}
         {...FIELD_TEST_IDS[field]}
       />
@@ -775,6 +797,13 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
       <div className={tunnelType.type === "dynamic" ? "service-editor__first" : undefined}>
         {openedPort}
       </div>
+      {taken && (
+        <PortTakenNote
+          testId="tunnel-editor"
+          taken={taken}
+          onUse={(port) => updateConfig("localPort", port)}
+        />
+      )}
 
       <WhoCanOpen
         testId="tunnel-editor"
@@ -855,7 +884,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
           value={form.name}
           error={!!formErrors.name}
           onChange={(e) => setValue("name", e.target.value)}
-          placeholder={t("tunnel.editor.name.placeholder")}
+          placeholder={t(NAME_PLACEHOLDER[tunnelType.type])}
           data-testid="tunnel-editor-name"
         />
       </Field>

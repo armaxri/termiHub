@@ -150,6 +150,8 @@ export interface ServiceContext {
   networkAddress?: string;
   /** The ports that services of this computer use. */
   usedPorts?: ReadonlySet<number>;
+  /** Which service of this computer is set to a port, running or not. */
+  portUsers?: ReadonlyMap<number, { id: string; name: string }>;
   /** Which service of this computer has a port open now. */
   portHolders?: ReadonlyMap<number, { id: string; name: string }>;
 }
@@ -362,8 +364,9 @@ export function withoutAgent(model: ServiceModel): ServiceModel {
     reason:
       model.state === "notReachable"
         ? undefined
-        : model.state === "stopping"
-          ? t("service.reason.stopPending.short")
+        : // Its state, Stop pending, and the agent's line say it.
+          model.state === "stopping"
+          ? undefined
           : model.reason,
     nextSteps: model.nextSteps.filter((step) => step.id !== "connectAgent"),
   };

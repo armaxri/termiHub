@@ -179,7 +179,11 @@ describe("who can open it", () => {
   it.each([
     ["local", "localhost:8080 · only this computer", "localhost:80 through Build Box"],
     ["remote", "localhost:8080 · only on Build Box", "localhost:3000 from this computer"],
-    ["dynamic", "socks5://localhost:1080 · only this computer", "browse through Build Box"],
+    [
+      "dynamic",
+      "socks5://localhost:1080 · only this computer",
+      "proxy to SOCKS5, host localhost, port 1080. It then browses through Build Box.",
+    ],
   ] as const)("is nobody else for a new %s tunnel (U-007)", async (kind, address, reaches) => {
     await render({ tunnelType: kind });
     expect(field("bind-here").getAttribute("aria-checked")).toBe("true");
@@ -236,6 +240,67 @@ describe("who can open it", () => {
   });
 });
 
+describe("its port (V-002)", () => {
+  it("is one that no service of this computer is set to", async () => {
+    seed(DB);
+    useAppStore.setState({ embeddedServers: [{ id: "s", name: "Docs", port: 8080 } as never] });
+    await render({ tunnelType: "local" });
+    expect(field("local-port").value).toBe("8081");
+    type("local-port", "15432");
+    expect(text("port-taken")).toBe('Port 15432 is used by "Shop database". Use 15433');
+    await press("use-port");
+    expect(field("local-port").value).toBe("15433");
+  });
+
+  it("of the tunnel itself is not taken, nor the server's of a remote one", async () => {
+    seed(DB);
+    await render({ tunnelId: "db" });
+    expect(byTestId("tunnel-editor-port-taken")).toBeNull();
+  });
+
+  it("of a remote tunnel is the server's", async () => {
+    seed(DB);
+    await render({ tunnelType: "remote" });
+    type("local-port", "15432");
+    type("remote-port", "15432");
+    expect(byTestId("tunnel-editor-port-taken")).toBeNull();
+  });
+
+  it("is free again for another kind", async () => {
+    seed({
+      ...DB,
+      tunnelType: { type: "dynamic", config: { localHost: "127.0.0.1", localPort: 1080 } },
+    });
+    await render();
+    await act(async () => byTestId("tunnel-type-dynamic")!.click());
+    expect(field("local-port").value).toBe("1081");
+  });
+
+  it("on another machine is not this computer's", async () => {
+    seed(DB);
+    await render({ tunnelType: "local" });
+    type("local-port", "15432");
+    expect(byTestId("tunnel-editor-port-taken")).not.toBeNull();
+    act(() => field("host").focus());
+    act(() =>
+      field("host").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }))
+    );
+    const agent = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find((o) =>
+      o.textContent?.includes("Edge box")
+    )!;
+    act(() => agent.focus());
+    act(() => agent.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    expect(byTestId("tunnel-editor-port-taken")).toBeNull();
+  });
+
+  it("names a remote and a dynamic tunnel by what they are for (V-008)", async () => {
+    await render({ tunnelType: "dynamic" });
+    leaveField(field("local-port"));
+    expect(field("name").value).toBe("Browse through Build Box");
+    expect(field("name").placeholder).toBe("e.g. Office network");
+  });
+});
+
 describe("a running tunnel", () => {
   it("says when changes apply, and can be restarted with them", async () => {
     seed(DB, "connected");
@@ -265,14 +330,21 @@ it("starts as chosen", async () => {
   await render({ tunnelType: "dynamic" });
   type("name", "Proxy");
   expect(text("form")).toContain("Start when a session to Build Box opens");
+  // A new one reconnects, as connections do (V-007).
+  expect(field("reconnect").getAttribute("aria-checked")).toBe("true");
   await press("auto-start");
-  await press("reconnect");
   await press("save");
   expect(actions.saveTunnel.mock.calls[0][0]).toMatchObject({
     autoStart: true,
     startWithConnection: false,
     reconnectOnDisconnect: true,
   });
+});
+
+it("a saved tunnel keeps how it reconnects", async () => {
+  seed(DB);
+  await render({ tunnelId: "db" });
+  expect(field("reconnect").getAttribute("aria-checked")).toBe("false");
 });
 
 it("has no accessibility violations, with the kinds, a warning, an error and the path", async () => {

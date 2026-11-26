@@ -5,8 +5,12 @@ import { createRoot, Root } from "react-dom/client";
 
 const { connectAgent } = vi.hoisted(() => ({ connectAgent: vi.fn(() => Promise.resolve(true)) }));
 vi.mock("@/utils/connectAgent", () => ({ connectAgentWithCredentials: connectAgent }));
+const { keepEmbeddedServerRunning } = vi.hoisted(() => ({
+  keepEmbeddedServerRunning: vi.fn(() => Promise.resolve()),
+}));
 vi.mock("@/services/embeddedServerApi", () => ({
   listNetworkInterfaces: vi.fn(() => Promise.resolve([])),
+  keepEmbeddedServerRunning,
 }));
 
 import { useAppStore } from "@/store/appStore";
@@ -343,6 +347,37 @@ describe("an offline agent", () => {
     );
     expect(q("service-group-tunnels")?.textContent).toContain("1 of 1 running");
     expect(q("tunnel-item-hop")?.getAttribute("aria-level")).toBe("3");
+  });
+
+  it("says once what a stop that waits for it will do, and takes them all back (V-004)", async () => {
+    const pending = { ...AWAY, status: "stopping" };
+    seed(
+      [
+        [tunnel("a", { host: EDGE }), "stopping", AWAY],
+        [tunnel("b", { host: EDGE }), "stopping", AWAY],
+      ],
+      [[server("s", { host: EDGE }), "stopping", pending]]
+    );
+    const keepTunnelRunning = vi.fn(() => Promise.resolve());
+    useAppStore.setState({ keepTunnelRunning });
+    await render();
+    expect(q("service-agent-edge")?.textContent).toContain(
+      "Offline. 2 tunnels and 1 file server will be stopped when it is back. Connect agent · Keep all running"
+    );
+    expect(q("tunnel-reason-a")?.textContent).toBe("Keep running");
+    await click("service-agent-keep-edge");
+    expect(keepTunnelRunning.mock.calls).toEqual([["a"], ["b"]]);
+    expect(keepEmbeddedServerRunning).toHaveBeenCalledWith("s");
+  });
+
+  it("does not offer to keep all running while one is not stopping", async () => {
+    seed([
+      [tunnel("a", { host: EDGE }), "stopping", AWAY],
+      [tunnel("b", { host: EDGE }), "notReachable", AWAY],
+    ]);
+    await render();
+    expect(q("service-agent-keep-edge")).toBeNull();
+    expect(q("service-agent-edge")?.textContent).toContain("run there or may");
   });
 
   it("with one service here is said on its row", async () => {

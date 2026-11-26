@@ -8,15 +8,21 @@ import type { PortValue, TunnelType } from "@/types/tunnel";
 import type { HostChoice } from "@/utils/hostChoice";
 import { isLoopbackBind, tunnelHostMachine } from "@/utils/tunnelHost";
 
-/** A new tunnel of `kind`. Whatever its kind, nobody else can open it (U-007). */
-export function newTunnelType(kind: TunnelType["type"]): TunnelType {
+/**
+ * A new tunnel of `kind`. Whatever its kind, nobody else can open it (U-007); `free`
+ * moves a port this computer opens off one that a service is set to (V-002).
+ */
+export function newTunnelType(
+  kind: TunnelType["type"],
+  free: (port: number) => number = (port) => port
+): TunnelType {
   switch (kind) {
     case "local":
       return {
         type: "local",
         config: {
           localHost: "127.0.0.1",
-          localPort: 8080,
+          localPort: free(8080),
           remoteHost: "localhost",
           remotePort: 80,
         },
@@ -32,7 +38,7 @@ export function newTunnelType(kind: TunnelType["type"]): TunnelType {
         },
       };
     case "dynamic":
-      return { type: "dynamic", config: { localHost: "127.0.0.1", localPort: 1080 } };
+      return { type: "dynamic", config: { localHost: "127.0.0.1", localPort: free(1080) } };
   }
 }
 
@@ -82,11 +88,29 @@ export function whoLabels(tunnelType: TunnelType, machines: TunnelMachines): Rec
 
 const at = (host: string, port: PortValue) => `${host.trim() || "?"}:${port === "" ? "?" : port}`;
 
-/** What a tunnel without a name is called: the machine it reaches, when that says something. */
-export function targetName(tunnelType: TunnelType): string | undefined {
-  if (tunnelType.type !== "local") return undefined;
-  const host = tunnelType.config.remoteHost.trim();
-  return host === "" || isLoopbackBind(host) ? undefined : host;
+/**
+ * What a tunnel without a name is called (V-008): the machine it reaches, when that
+ * says something, else what it is for.
+ */
+export function targetName(
+  tunnelType: TunnelType,
+  machines: Pick<TunnelMachines, "server">
+): string | undefined {
+  const { server } = machines;
+  switch (tunnelType.type) {
+    case "local": {
+      const host = tunnelType.config.remoteHost.trim();
+      return host === "" || isLoopbackBind(host) ? undefined : host;
+    }
+    case "remote": {
+      const { localPort } = tunnelType.config;
+      return server && localPort !== ""
+        ? tf("tunnel.name.remote", { port: String(localPort), server })
+        : undefined;
+    }
+    case "dynamic":
+      return server ? tf("tunnel.name.dynamic", { server }) : undefined;
+  }
 }
 
 /** What others reach, when they can open it; nothing while they cannot. */
@@ -126,6 +150,9 @@ export function reachSentence(tunnelType: TunnelType, machines: TunnelMachines):
   switch (tunnelType.type) {
     case "local": {
       const { remoteHost, remotePort } = tunnelType.config;
+      if (remoteHost.trim() === "" || remotePort === "") {
+        return tf("tunnel.sentence.local.open", { server });
+      }
       return tf("tunnel.sentence.local", { target: at(remoteHost, remotePort), server });
     }
     case "remote": {
@@ -133,8 +160,13 @@ export function reachSentence(tunnelType: TunnelType, machines: TunnelMachines):
       const machine = tunnelHostMachine(machines.host, machines.agentName);
       return tf("tunnel.sentence.remote", { target: at(localHost, localPort), machine });
     }
-    case "dynamic":
-      return tf("tunnel.sentence.dynamic", { server });
+    case "dynamic": {
+      // What a browser's proxy setting needs, as it can be typed here (V-005).
+      const { localHost, localPort } = tunnelType.config;
+      const host = whoOf(localHost) === "here" ? "localhost" : localHost.trim();
+      const port = localPort === "" ? "?" : String(localPort);
+      return tf("tunnel.sentence.dynamic", { server, host: host || "?", port });
+    }
   }
 }
 

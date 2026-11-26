@@ -93,8 +93,12 @@ export function serviceAddress(
   }
   const known = listener.on === "here" ? listener.network : listener.host;
   const host = isWideBind(bind) ? known : bind.trim();
+  // Bound to one address: who reaches that address (V-010).
+  const reach = isWideBind(bind)
+    ? reachOf(listener, true)
+    : tf("service.reach.anyoneOn", { machine: host ?? "" });
   return host
-    ? { copy: at(host), open: true, reach: reachOf(listener, true) }
+    ? { copy: at(host), open: true, reach }
     : { open: true, reach: unknownReach(listener, port) };
 }
 
