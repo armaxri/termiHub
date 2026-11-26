@@ -85,6 +85,12 @@ vi.mock("./workflowRunBridge", async (importOriginal) => ({
 }));
 
 import { dispatchWorkflowRunStarted } from "./workflowRunBridge";
+
+/** The id of the run that was shown as started last. */
+const startedRunId = (): string => {
+  const calls = vi.mocked(dispatchWorkflowRunStarted).mock.calls;
+  return calls[calls.length - 1][0].runId;
+};
 import { useAppStore, type AppState } from "./appStore";
 import type { Macro } from "@/types/macro";
 import type { Workflow, WorkflowStep } from "@/types/workflow";
@@ -224,10 +230,10 @@ describe("runWorkflowOnTarget — wait-for-output (PROD-044)", () => {
   });
 
   it("ends the wait as cancelled when the run is cancelled", async () => {
-    let runId = "";
-    const fanout: WorkflowFanoutHooks = { onStart: (id) => (runId = id) };
+    const fanout: WorkflowFanoutHooks = {};
     const done = run(workflow([{ kind: "wait-for-output", pattern: "never" }]), { fanout });
     await listenerAttached();
+    const runId = startedRunId();
 
     expect(cancelWorkflowRunById(runId)).toBe(true);
 
@@ -241,12 +247,12 @@ describe("runWorkflowOnTarget — wait-for-output (PROD-044)", () => {
   it("ends the wait on the cancel event itself, without a polling timer (#4381)", async () => {
     vi.useFakeTimers();
     try {
-      let runId = "";
-      const fanout: WorkflowFanoutHooks = { onStart: (id) => (runId = id) };
+      const fanout: WorkflowFanoutHooks = {};
       let settled = false;
       const done = run(workflow([{ kind: "wait-for-output", pattern: "never" }]), { fanout });
       void done.then(() => (settled = true));
       await listenerAttached();
+      const runId = startedRunId();
       // Only the step's own timeout is pending — no cancel-poll interval.
       expect(vi.getTimerCount()).toBe(1);
 

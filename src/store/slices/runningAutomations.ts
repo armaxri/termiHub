@@ -1,7 +1,7 @@
 /**
  * Which automations run in this window, for the questions asked before one is
- * stopped (#6042). Step-by-step runs replace each other, and so do runs that type
- * keys; the two kinds run side by side, but never in one terminal.
+ * stopped (#6042). Runs that type keys replace each other; step-by-step runs replace
+ * each other only in the same terminal; two runs never type into one terminal.
  */
 import { currentWorkflowRunView } from "../workflowRunBridge";
 import { stepProgress, typedProgress } from "@/utils/runProgress";
@@ -52,17 +52,18 @@ function stepRuns(state: AppState): RunningAutomation[] {
 }
 
 /**
- * The runs a new one of this kind on `targets` would stop: every one of its own kind,
- * and those of the other kind in the same terminals, which would otherwise type into
- * them at the same time (#6042).
+ * The runs a new one of this kind on `targets` would stop (#6042): every one that
+ * types keys when it types keys (one playback at a time), and every other run in
+ * the same terminals, which would otherwise type into them at the same time.
+ * Step-by-step runs on other terminals go on side by side.
  */
 export function runsReplacedBy(
   state: AppState,
   typesKeys: boolean,
   targets: readonly string[]
 ): RunningAutomation[] {
-  const [own, other] = typesKeys
-    ? [typingRuns(state), stepRuns(state)]
-    : [stepRuns(state), typingRuns(state)];
-  return [...own, ...other.filter((run) => targets.includes(run.tabId))];
+  const here = (run: RunningAutomation) => targets.includes(run.tabId);
+  return typesKeys
+    ? [...typingRuns(state), ...stepRuns(state).filter(here)]
+    : [...stepRuns(state).filter(here), ...typingRuns(state).filter(here)];
 }

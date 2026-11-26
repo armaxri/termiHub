@@ -48,6 +48,7 @@ vi.mock("@/services/automationApi", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { recordAutomationRun } from "@/services/automationApi";
 import { layoutState, seedLayoutState } from "@/test/layoutState";
 import { registerTerminalInputInjector } from "@/services/macroPlayback";
 import { toast } from "@/components/ui";
@@ -299,5 +300,70 @@ describe("appStore — macro playback slice (#1675)", () => {
     expect(injected).toContain("m2-a");
     expect(injected).not.toContain("m1-b");
     expect(useAppStore.getState().macroPlayback).toBeNull();
+  });
+
+  it("says in the History what stopped it (#6042)", async () => {
+    seedConnectedTerminal();
+    const recorded = vi.mocked(recordAutomationRun);
+    recorded.mockClear();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let firstStarted!: () => void;
+    const started = new Promise<void>((r) => (firstStarted = r));
+    registerTerminalInputInjector(async (_tabId, data) => {
+      injected.push(data);
+      if (data === "m1-a") {
+        firstStarted();
+        await gate;
+      }
+      return true;
+    });
+    useAppStore.setState({
+      macros: [
+        macro("m1", [
+          { data: "m1-a", delayMs: 0 },
+          { data: "m1-b", delayMs: 0 },
+        ]),
+        macro("m2", [{ data: "m2-a", delayMs: 0 }]),
+      ],
+    });
+    const done1 = layoutState().playMacro("m1");
+    await started;
+    const done2 = layoutState().playMacro("m2");
+    release();
+    await Promise.all([done1, done2]);
+    const runs = recorded.mock.calls.map(([run]) => [run.automationId, run.status, run.error]);
+    expect(runs).toContainEqual(["m1", "cancelled", "“Macro m2” was started"]);
+
+    // Stopped in its terminal for a step-by-step run, it says that run's name.
+    recorded.mockClear();
+    let again!: () => void;
+    const held = new Promise<void>((r) => (again = r));
+    let heldNow!: () => void;
+    const holding = new Promise<void>((r) => (heldNow = r));
+    registerTerminalInputInjector(async (_tabId, data) => {
+      if (data === "m1-a") {
+        heldNow();
+        await held;
+      }
+      return true;
+    });
+    const done3 = layoutState().playMacro("m1");
+    await holding;
+    useAppStore
+      .getState()
+      .cancelMacroPlaybackOnTab("tab-active", "“Deploy” was started in this terminal");
+    again();
+    await done3;
+    expect(recorded.mock.calls.map(([run]) => run.error)).toEqual([
+      "“Deploy” was started in this terminal",
+    ]);
+
+    // Stopped by the user: nothing is named.
+    recorded.mockClear();
+    const done4 = layoutState().playMacro("m1");
+    useAppStore.getState().cancelMacroPlayback();
+    await done4;
+    expect(recorded.mock.calls.map(([run]) => run.error)).toEqual([undefined]);
   });
 });

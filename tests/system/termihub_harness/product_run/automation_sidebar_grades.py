@@ -153,6 +153,35 @@ def migrated_layout_problems(before: Sequence[str], after: Sequence[str]) -> lis
     return [] if list(after) == want else [f"hidden views {list(after)}, want {want}"]
 
 
+def side_by_side_problems(
+    *,
+    running: Sequence[str],
+    asked: bool,
+    stopped: Optional[Mapping[str, Any]],
+    stopped_by: str,
+) -> list[str]:
+    """Step-by-step runs in two terminals, then a third in one of them (#6042).
+
+    ``running`` names the automations that ran at once in the two terminals,
+    ``asked`` whether starting the second was put to the user, ``stopped`` the
+    History record of the run the third one replaced, ``stopped_by`` its name.
+    """
+    problems: list[str] = []
+    if len(running) != 2:
+        problems.append(f"{len(running)} run(s) at once in two terminals, not 2: {list(running)}")
+    if asked:
+        problems.append("starting a run in another terminal asked to stop the first")
+    if stopped is None:
+        problems.append("no History record of the replaced run")
+        return problems
+    if stopped.get("status") != "cancelled":
+        problems.append(f"the replaced run ended {stopped.get('status')!r}")
+    want = f"“{stopped_by}” was started in this terminal"
+    if stopped.get("error") != want:
+        problems.append(f"its History says {stopped.get('error')!r}, not {want!r}")
+    return problems
+
+
 #: Slack for the split, in CSS pixels: the list's padding and rounding.
 SPLIT_SLACK = 24.0
 

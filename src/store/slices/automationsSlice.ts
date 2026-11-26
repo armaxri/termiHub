@@ -1,5 +1,6 @@
 import { StateCreator } from "zustand";
 
+import { tf } from "@/i18n/catalog";
 import {
   clearAutomationRunHistory as apiClearAutomationRunHistory,
   deleteAutomation as apiDeleteAutomation,
@@ -204,10 +205,12 @@ export const createAutomationsSlice: StateCreator<AppState, [], [], AutomationsS
           set({ runReplacePrompt: { name: automation.name, running, resolve } })
         );
         if (!stop) return;
-        // Its own kind is replaced when it starts; the other kind stops in those terminals.
+        // Its own kind is replaced when it starts; the other kind stops in those
+        // terminals, and its History says what stopped it.
+        const reason = tf("automation.stoppedHere", { name: automation.name });
         for (const run of running.filter((r) => r.typesKeys !== typesKeys)) {
-          if (run.runId) get().cancelWorkflowRun(run.runId);
-          else get().cancelMacroPlaybackOnTab(run.tabId);
+          if (run.runId) get().cancelWorkflowRun(run.runId, reason);
+          else get().cancelMacroPlaybackOnTab(run.tabId, reason);
         }
       }
       if (isMacroShaped(automation)) {

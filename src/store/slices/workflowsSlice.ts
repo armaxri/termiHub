@@ -18,18 +18,24 @@ import {
   clampFanoutConcurrency,
   describeFanoutProgress,
   resolveConnectedTargets,
-  runWithConcurrency,
   toastFanoutSummary,
   type FanoutOutcome,
   type FanoutTargetStatus,
 } from "./workflowFanout";
 import {
-  cancelAllWorkflowRuns,
-  cancelWorkflowRunById,
-  replaceActiveWorkflowRun,
   runWorkflowOnTarget,
+  workflowTarget,
   type LocalProcessDecision,
 } from "./workflowRunOnTarget";
+import {
+  cancelAllWorkflowRuns,
+  activeWorkflowRunCount,
+  cancelWorkflowRunById,
+  holdWorkflowFanout,
+  stopWorkflowRunsOn,
+} from "./workflowRunRegistry";
+import { runAutomationOnTargets } from "@/services/automationRunner";
+import { tf } from "@/i18n/catalog";
 
 /** UI-facing metadata describing an in-flight workflow run (#1852). */
 export interface WorkflowRunState {
@@ -171,15 +177,6 @@ export interface LocalProcessPromptState {
   resolve: (decision: LocalProcessAuthDecision) => void;
 }
 
-/** Cancellation flag of the in-flight multi-target run (PROD-047). */
-interface FanoutState {
-  /** Set when the fan-out was cancelled or superseded; no queued target starts. */
-  cancelled: boolean;
-}
-
-/** The in-flight multi-target run, or `null` when none is running. */
-let activeFanout: FanoutState | null = null;
-
 /** A workflow the local library does not hold yet (made in another window). */
 async function fetchWorkflow(
   get: () => AppState,
@@ -226,9 +223,9 @@ export interface WorkflowsSlice {
    * Cancel in-flight workflow runs. With no `runId`, cancels everything — every
    * running target of a fan-out, and no queued target starts (#3418). With a
    * `runId`, cancels just that one target's run; its siblings keep going.
-   * Idempotent.
+   * `reason` is what its History says stopped it (#6042). Idempotent.
    */
-  cancelWorkflowRun: (runId?: string) => void;
+  cancelWorkflowRun: (runId?: string, reason?: string) => void;
   /** Dismiss the inline run-output surface (clears the projected panel + streamed
    * content). The panel's live state is projected — see {@link
    * import("@/store/useProjectedWorkflowRun").useProjectedWorkflowRun}. */
@@ -345,9 +342,12 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
       paramValues = collected;
     }
 
-    // A fresh run supersedes any in-flight run (and fan-out): cancel them first.
-    if (activeFanout) activeFanout.cancelled = true;
-    replaceActiveWorkflowRun();
+    // A fresh run stops the ones in its terminals, and the History says so; runs on
+    // other terminals go on side by side (#6042).
+    stopWorkflowRunsOn(
+      targets.map((x) => x.id),
+      tf("automation.stoppedHere", { name: workflow.name })
+    );
 
     const triggeredBy: AutomationRunOrigin = opts?.triggeredBy ?? "manual";
     const base = { set, get, workflow, paramValues, triggeredBy };
@@ -363,14 +363,12 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
       return;
     }
 
-    // Fan-out (PROD-047, #3418): run the targets concurrently — at most
-    // `concurrency` at a time, the rest queued — under one shared per-target
-    // status toast. Each target is an ordinary run (own run id, own history
-    // record); a failure on one target never stops the others. Cancel-all stops
-    // every running target and starts no queued one; a single target can be
-    // cancelled on its own.
-    const fanout: FanoutState = { cancelled: false };
-    activeFanout = fanout;
+    // Fan-out (PROD-047, #3418), on the one path runs on several terminals take
+    // (#5984): the targets run concurrently — at most `concurrency` at a time, the
+    // rest queued — under one shared per-target status toast. Each target is an
+    // ordinary run (own run id, own history record); a failure on one target never
+    // stops the others. Cancel-all stops every running target and starts no queued
+    // one; a single target, running or queued, can be stopped on its own.
     const toastId = `workflow-run-${workflowId}-fanout`;
     const statuses: FanoutTargetStatus[] = targets.map(() => "queued");
     const authDecisions = new Map<string, Promise<LocalProcessDecision>>();
@@ -379,53 +377,71 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
       const line = describeFanoutProgress(statuses);
       toast.loading(title, { id: toastId, description: note ? `${line} — ${note}` : line });
     };
-    // One clean output panel for the whole fan-out; targets then preserve it.
-    clearWorkflowOutputContent();
-    void dispatchWorkflowDismissOutput();
+    // One clean output panel for the whole fan-out; targets then preserve it. A run
+    // beside it in another terminal keeps its panel (#6042).
+    if (activeWorkflowRunCount() === 0) {
+      clearWorkflowOutputContent();
+      void dispatchWorkflowDismissOutput();
+    }
     claimWorkflowRunToast(toastId);
     renderProgress();
 
-    const results = await runWithConcurrency(
-      targets,
-      clampFanoutConcurrency(opts?.concurrency),
-      async (target, index) => {
-        statuses[index] = "running";
-        renderProgress();
-        const result = await runWorkflowOnTarget({
+    // A target is stopped only after the fan-out started, so `fan` is there by then.
+    const parts = targets.map((target, index) =>
+      workflowTarget(
+        {
           ...base,
           targetTabId: target.id,
           targetSessionId: target.sessionId,
           targetLabel: target.title,
           fanout: {
             authDecisions,
-            // A target whose run went live after cancel-all is stopped at once.
-            onStart: (_runId, cancel) => {
-              if (fanout.cancelled) cancel();
-            },
             onProgress: (_completed, retryNote) =>
               renderProgress(retryNote ? `${target.title}: ${retryNote}` : undefined),
           },
-        });
-        statuses[index] = result.status;
-        renderProgress();
-        return result;
-      },
-      () => fanout.cancelled
+        },
+        () => fan.cancel(index)
+      )
     );
+    const settled = (index: number, status: FanoutTargetStatus) => {
+      statuses[index] = status;
+      renderProgress();
+    };
+    const fan = runAutomationOnTargets(
+      parts[0].automation,
+      targets,
+      async (_target, index) => {
+        settled(index, "running");
+        const deps = await parts[index].start();
+        if ("notRun" in deps) settled(index, deps.notRun.status);
+        return deps;
+      },
+      {
+        concurrency: clampFanoutConcurrency(opts?.concurrency),
+        paramValues,
+        hooksFor: (index) => parts[index].hooks,
+        settle: (index, result) => parts[index].settle(result),
+        onTargetEnd: (index, result) => settled(index, result.status),
+      }
+    );
+    const forget = holdWorkflowFanout(
+      targets.map((x) => x.id),
+      fan
+    );
+    const results = await fan.done;
+    forget();
     const outcomes: FanoutOutcome[] = [];
     results.forEach((result, index) => {
       if (result) outcomes.push({ title: targets[index].title, result });
     });
-    if (activeFanout === fanout) activeFanout = null;
     toastFanoutSummary(workflow.name, outcomes, targets.length, skipped, toastId);
   },
 
-  cancelWorkflowRun: (runId) => {
+  cancelWorkflowRun: (runId, reason) => {
     if (runId !== undefined) {
-      cancelWorkflowRunById(runId);
+      cancelWorkflowRunById(runId, reason);
       return;
     }
-    if (activeFanout) activeFanout.cancelled = true;
     cancelAllWorkflowRuns();
   },
 

@@ -79,6 +79,7 @@ describe("a run never stops another one unasked (#6042)", () => {
   it("names the one it would stop, and starts nothing before the answer", async () => {
     const cancelWorkflowRun = vi.fn();
     useAppStore.setState({ cancelWorkflowRun });
+    act(() => seedActive("t"));
     await start("steps");
     expect(q("run-replace-dialog")?.textContent).toContain("Run “Deploy”?");
     expect(q("run-replace-dialog")?.textContent).toContain(
@@ -91,7 +92,15 @@ describe("a run never stops another one unasked (#6042)", () => {
     expect(cancelWorkflowRun).not.toHaveBeenCalled();
   });
 
+  it("does not ask for a step-by-step run on another terminal: they run side by side", async () => {
+    act(() => seedActive("u"));
+    await start("steps");
+    expect(q("run-replace-dialog")).toBeNull();
+    expect(runWorkflow).toHaveBeenCalledTimes(1);
+  });
+
   it("starts nothing when it is refused", async () => {
+    act(() => seedActive("t"));
     await start("steps");
     await act(async () => q("run-replace-cancel")!.click());
     expect(runWorkflow).not.toHaveBeenCalled();
@@ -99,6 +108,7 @@ describe("a run never stops another one unasked (#6042)", () => {
   });
 
   it("asks once, not again for a second start", async () => {
+    act(() => seedActive("t"));
     await start("steps");
     const asked = useAppStore.getState().runReplacePrompt;
     await start("steps");
@@ -128,7 +138,8 @@ describe("a run never stops another one unasked (#6042)", () => {
     expect(q("run-replace-dialog")?.textContent).toContain("“Health check” is running in web-1");
     expect(playMacro).not.toHaveBeenCalled();
     await act(async () => q("run-replace-confirm")!.click());
-    expect(cancelWorkflowRun).toHaveBeenCalledWith("r1");
+    // Its History says what stopped it.
+    expect(cancelWorkflowRun).toHaveBeenCalledWith("r1", "“Login” was started in this terminal");
     expect(playMacro).toHaveBeenCalledTimes(1);
   });
 
@@ -152,7 +163,9 @@ describe("a run never stops another one unasked (#6042)", () => {
     await start("steps");
     expect(q("run-replace-dialog")?.textContent).toContain("“Login” is running");
     await act(async () => q("run-replace-confirm")!.click());
-    expect(cancelMacroPlaybackOnTab.mock.calls).toEqual([["t"]]);
+    expect(cancelMacroPlaybackOnTab.mock.calls).toEqual([
+      ["t", "“Deploy” was started in this terminal"],
+    ]);
     expect(runWorkflow).toHaveBeenCalledTimes(2);
   });
 

@@ -45,6 +45,7 @@ from termihub_harness.product_run.automation_sidebar_grades import (
     row_layout_problems,
     row_text_problems,
     section_split_problems,
+    side_by_side_problems,
 )
 from termihub_harness.product_run.automation_steps import AutomationPhaseUi
 from termihub_harness.product_run.ssh_steps import SshPhaseUi
@@ -102,6 +103,19 @@ def test_grade_row_text():
         "settings text on the row: 'On connect · prod'"
     ]
     assert any("starts with" in p for p in row_text_problems("3 steps Deploy", "Deploy"))
+
+
+def test_grade_side_by_side():
+    good = {"status": "cancelled", "error": "“Third” was started in this terminal"}
+    assert (
+        side_by_side_problems(running=["A", "B"], asked=False, stopped=good, stopped_by="Third")
+        == []
+    )
+    # The shape before #6042: the second stopped the first, and nothing said why.
+    bad = side_by_side_problems(
+        running=["B"], asked=True, stopped={"status": "cancelled"}, stopped_by="Third"
+    )
+    assert len(bad) == 3, bad
 
 
 def _split(list_height: float, content: float, section_height: float, row_end: float):
@@ -407,6 +421,63 @@ class TestProductRunAutomationSidebar(
                 lambda: next(iter(self.automation_runs(aid)), None), what="the stopped run's record"
             )
             assert run.get("status") == "cancelled", run
+
+    def test_35_side_by_side(self):
+        t = self.tag
+        with self.step(
+            "automation-sidebar.side-by-side",
+            "Step-by-step runs in two terminals go on side by side; a third in one of them "
+            "asks, and the History says what stopped the run there (#6042)",
+            expect="two rows Running, one per terminal, without a question; then the "
+            "'Run …?' question naming 'Beside …'; its History record reads 'Third … was "
+            "started in this terminal'",
+        ):
+            self.require("automation-sidebar.run")
+            name = f"pr-sidebar-2-{t}"
+            self.switch_to_connections_sidebar()
+            self.create_local_connection(name)
+            self.connect_connection(name)
+            second = self.tab_id_of(name)
+            self.wait_connected(second)
+            waiting = ("wait", {"step-delay": WAIT_MS / 1000})
+            for label in ("Beside", "Third"):
+                self.author_workflow(
+                    f"{label} {t}",
+                    [("send-command", {"step-command": f"echo PR_{label.upper()}_{t}"}), waiting],
+                )
+                self.save_workflow()
+            beside, third = self.workflow_id(f"Beside {t}"), self.workflow_id(f"Third {t}")
+            answer = self.ids["triggered"]
+            self.switch_to_tab(self.ids["tab"])
+            self.run_automation(answer)
+            self.switch_to_tab(second)
+            self.run_automation(beside)
+            asked = self.driver.exists("run-replace-dialog")
+            self.wait(
+                lambda: all(
+                    self.driver.exists(f"automation-running-{a}") for a in (answer, beside)
+                ),
+                what="both runs running",
+            )
+            running = [a for a in (answer, beside) if self.driver.exists(f"automation-running-{a}")]
+            self.shot(label="side-by-side")
+            # In the same terminal: asked, and the one there is stopped.
+            self.run_automation(third)
+            self.wait(lambda: self.driver.exists("run-replace-dialog"), what="the question")
+            self.shot(label="asked")
+            self.driver.click("run-replace-confirm")
+            stopped = self.wait(
+                lambda: next(iter(self.automation_runs(beside)), None),
+                what="the replaced run's record",
+            )
+            self.evidence(f"running {running}, asked {asked}, stopped {stopped}")
+            for aid in (answer, third):
+                if self.driver.exists(f"automation-stop-{aid}"):
+                    self.driver.click(f"automation-stop-{aid}")
+            problems = side_by_side_problems(
+                running=running, asked=asked, stopped=stopped, stopped_by=f"Third {t}"
+            )
+            assert not problems, problems
 
     def test_40_search(self):
         with self.step(
