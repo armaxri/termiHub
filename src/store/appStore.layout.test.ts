@@ -57,6 +57,7 @@ vi.mock("@/services/api", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { cancelDebouncedWrites, flushDebouncedWrites } from "@/utils/debouncedWrites";
 import { layoutState } from "@/test/layoutState";
 
 describe("appStore — layout state", () => {
@@ -383,5 +384,40 @@ describe("toggleActivityBarView", () => {
     useAppStore.setState({ sidebarView: "connections", sidebarCollapsed: false });
     useAppStore.getState().toggleActivityBarView("services");
     expect(useAppStore.getState().sidebarCollapsed).toBe(false);
+  });
+});
+
+describe("the debounced layout write (#6094)", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("is written at once when the window closes, and not again later", async () => {
+    vi.useFakeTimers();
+    mockSaveSettings.mockClear();
+    useAppStore.getState().updateLayoutConfig({ activityBarPosition: "right" });
+    await flushDebouncedWrites();
+    expect(mockSaveSettings).toHaveBeenCalledTimes(1);
+    expect(mockSaveSettings.mock.calls[0][0]).toMatchObject({
+      layout: expect.objectContaining({ activityBarPosition: "right" }),
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(mockSaveSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not throw out of its timer when the write fails at once", async () => {
+    vi.useFakeTimers();
+    mockSaveSettings.mockImplementationOnce(() => {
+      throw new TypeError("saveSettings is not a function");
+    });
+    useAppStore.getState().updateLayoutConfig({ activityBarPosition: "left" });
+    await expect(vi.advanceTimersByTimeAsync(1000)).resolves.not.toThrow();
+  });
+
+  it("is dropped by the teardown of a test", async () => {
+    vi.useFakeTimers();
+    mockSaveSettings.mockClear();
+    useAppStore.getState().applyLayoutPreset("focus");
+    cancelDebouncedWrites();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(mockSaveSettings).not.toHaveBeenCalled();
   });
 });
