@@ -125,6 +125,23 @@ describe("writeSliced", () => {
     xterm.dispose();
   });
 
+  it("says once that a text scrollback is parsed, and writes it whole while hidden (#6087)", () => {
+    const calls: [string, boolean][] = [];
+    const target = {
+      write: (data: Uint8Array | string, done?: () => void) =>
+        void calls.push([data as string, done !== undefined]),
+    };
+    writeAllSliced(target, "x".repeat(WRITE_SLICE_BYTES + 1), () => {});
+    expect(calls.map(([data, done]) => [data.length, done])).toEqual([
+      [WRITE_SLICE_BYTES, false],
+      [1, true],
+    ]);
+    vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    calls.length = 0;
+    writeAllSliced(target, "x".repeat(3 * WRITE_SLICE_BYTES), () => {});
+    expect(calls).toHaveLength(1);
+  });
+
   it("throws what the terminal refused a scrollback with, as one write did (#6087)", () => {
     expect(() => writeAllSliced(target(1), bytes(2 * WRITE_SLICE_BYTES), () => {})).toThrow("full");
   });
