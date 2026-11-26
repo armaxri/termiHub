@@ -130,7 +130,13 @@ pub fn verdict(text: &str, marker: &str) -> Verdict {
         }
         // The typed line as the shell echoed it: the word before the marker
         // is what arrived of `echo`.
-        let word = before.rsplit(char::is_whitespace).next().unwrap_or(before);
+        // Only its letters: a prompt drawn right before it (`$` and a cursor
+        // move, which leave `$echo` once the move is stripped) is not typed.
+        let tail = before.rsplit(char::is_whitespace).next().unwrap_or(before);
+        let word = tail
+            .rsplit(|c: char| !c.is_ascii_alphanumeric())
+            .next()
+            .unwrap_or(tail);
         if word != "echo" && lost.is_none() {
             lost = Some(word.to_owned());
         }
@@ -375,6 +381,18 @@ mod tests {
         assert_eq!(verdict(text, "r0x1"), Verdict::Lost { word: "cho".into() });
         // This round's line not repainted yet: no answer so far.
         assert_eq!(verdict(text, "r0x3"), Verdict::Silent);
+    }
+
+    /// The Windows lane's second run (#6078): the MSYS2 prompt's `$` comes
+    /// right before the echoed line with only a cursor move between, which
+    /// read as `$echo` and counted as lost.
+    #[test]
+    fn a_prompt_glued_to_the_echoed_line_is_not_a_lost_byte() {
+        let text = "\x1b[32m\r\nuser@host \x1b[35mUCRT64\x1b[m\r\n$\x1b[1Gecho QXr0x3\x1b[K\r\n\
+                    QXr0x3\x1b[K\r\n";
+        assert_eq!(verdict(text, "r0x3"), Verdict::Ran);
+        let lost = "$\x1b[1Gcho QXr0x4\x1b[K\r\nbash: cho: command not found\r\n";
+        assert_eq!(verdict(lost, "r0x4"), Verdict::Lost { word: "cho".into() });
     }
 
     #[test]

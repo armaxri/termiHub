@@ -42,7 +42,9 @@ type State = keyof typeof STATES;
 
 const LAB = { kind: "agent", agentId: "agent-lab" };
 const EDGE = { kind: "agent", agentId: "agent-edge" };
-const AT = Date.parse("2026-11-26T14:20:00Z");
+// Checked just now: a fixed date makes every monitor "Overdue" once it is
+// more than two intervals in the past, and the rows lose their "Running".
+const AT = Date.now();
 
 const config = (monitorId: string, url: string, host?: object) => ({
   id: monitorId,
