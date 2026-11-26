@@ -1528,171 +1528,191 @@ impl<R: Runtime> AgentConnectionManager<R> {
             // leaving it in `connecting` forever. A Cancel still aborts it at
             // once through the enclosing `run_connect_cancellable`.
             let request_id: u64 = 1;
-            let handshake = tokio::time::timeout(handshake_timeout, async {
-                // 2. Open exec channel and launch agent
-                let mut channel = session.channel_open_session().await.map_err(|e| {
-                    emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
-                    TerminalError::RemoteError(format!("Channel open failed: {}", e))
-                })?;
-                let exec_cmd = config_clone.agent_exec_command();
-                channel.exec(false, exec_cmd.as_str()).await.map_err(|e| {
-                    emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
-                    TerminalError::agent_missing(format!("Exec failed: {}", e))
-                })?;
-
-                // 3. Blocking handshake: initialize
-                let enabled_external_files: Vec<&str> = config_clone
-                    .external_connection_files
-                    .iter()
-                    .filter(|f| f.enabled)
-                    .map(|f| f.path.as_str())
-                    .collect();
-
-                let init_params = build_initialize_params(&settings_clone, &enabled_external_files);
-                let req_line = serialize_request(
-                    request_id,
-                    termihub_core::protocol::methods::INITIALIZE,
-                    init_params,
-                )
-                .map_err(|e| {
+            // A setup killed between its two renames may have left the
+            // agent aside: put it back once and start it again (#6002).
+            let mut recovered = false;
+            let handshake = loop {
+                let attempt = tokio::time::timeout(handshake_timeout, async {
+                    // 2. Open exec channel and launch agent
+                    let mut channel = session.channel_open_session().await.map_err(|e| {
                         emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
-                        TerminalError::RemoteError(format!("Serialize initialize failed: {}", e))
+                        TerminalError::RemoteError(format!("Channel open failed: {}", e))
+                    })?;
+                    let exec_cmd = config_clone.agent_exec_command();
+                    channel.exec(false, exec_cmd.as_str()).await.map_err(|e| {
+                        emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
+                        TerminalError::agent_missing(format!("Exec failed: {}", e))
                     })?;
 
-                // Diagnostic for #2480: bookend the handshake at INFO so a full-app
-                // display run can see whether the stall is before the `initialize`
-                // write, or while awaiting the response line from the agent. Pairs
-                // with the "initialize response received" log after the loop below.
-                info!(
-                    "Agent {}: exec launched, sending initialize over the SSH channel",
-                    agent_id_str
-                );
-                channel.data(req_line.as_bytes()).await.map_err(|e| {
-                    emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
-                    TerminalError::agent_missing(format!("Write initialize failed: {}", e))
-                })?;
-                info!(
-                    "Agent {}: initialize written, awaiting response line from agent",
-                    agent_id_str
-                );
+                    // 3. Blocking handshake: initialize
+                    let enabled_external_files: Vec<&str> = config_clone
+                        .external_connection_files
+                        .iter()
+                        .filter(|f| f.enabled)
+                        .map(|f| f.path.as_str())
+                        .collect();
 
-                // Read the initialize response from the channel. The agent may emit
-                // notifications before it answers (e.g. output from a session it
-                // recovered on startup, or a staged `agent.update_available` notice
-                // sent on attach). We loop until we see the message whose id matches
-                // our initialize request; otherwise a pre-initialize notification
-                // would be misread as the response ("Unexpected response to
-                // initialize"). Those notifications are buffered here and replayed
-                // once init completes (#1660) rather than dropped, so an on-attach
-                // notification is delivered to the desktop handlers. A generous cap
-                // guards against a runaway agent that never sends the response.
-                const MAX_PRE_INIT_MESSAGES: u32 = 1000;
-                let mut skipped: u32 = 0;
-                let mut pending_notifications: Vec<(String, Value)> = Vec::new();
-                let mut line_buf = LineSplitter::new();
-                let (capabilities, agent_version, protocol_version, client_id, update_auth_token_path) = loop {
-                    let resp_line =
-                        match read_handshake_line(&mut channel, &agent_id_str, &mut line_buf).await {
-                            Ok(line) => line,
-                            Err(e) => {
-                                emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
-                                return Err(stdout_reader::handshake_read_error(e));
-                            }
-                        };
-
-                    let msg = jsonrpc::parse_message(&resp_line).map_err(|e| {
-                        emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
-                        TerminalError::RemoteError(format!("Parse initialize response: {}", e))
-                    })?;
-
-                    match jsonrpc::classify_handshake_message(msg, request_id) {
-                        jsonrpc::HandshakeOutcome::Response(result) => {
-                            // Parse into the shared `InitializeResult` DTO (DUP-001,
-                            // #3226), with the desktop's own capabilities type so
-                            // `connectionTypes` stays pass-through JSON for the
-                            // frontend. Missing versions read as "unknown" and a
-                            // missing `client_id` (pre-0.3.0 agent) as empty.
-                            let init = parse_initialize_result(result).map_err(|e| {
-                                emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
-                                TerminalError::RemoteError(e)
-                            })?;
-                            // AGT-003 (#3213): where this instance's update auth token
-                            // lives (protocol 0.13.0+; absent on older agents).
-                            let update_auth_token_path = token_path_from_initialize(&init);
-                            let InitializeResult {
-                                protocol_version,
-                                agent_version,
-                                client_id,
-                                mut capabilities,
-                                ..
-                            } = init;
-                            // Copy agent_version into capabilities so the UI can read it.
-                            capabilities.agent_version = agent_version.clone();
-                            // Diagnostic for #2480: the handshake completed — the
-                            // agent's initialize response reached the desktop. If a
-                            // display run reaches this line the transport round-trip
-                            // is healthy and any remaining stall is downstream.
-                            info!(
-                                "Agent {}: initialize response received (agent v{}, protocol {}); marking connected",
-                                agent_id_str, agent_version, protocol_version
-                            );
-                            break (
-                                capabilities,
-                                agent_version,
-                                protocol_version,
-                                client_id,
-                                update_auth_token_path,
-                            );
-                        }
-                        jsonrpc::HandshakeOutcome::Rejected(message) => {
+                    let init_params = build_initialize_params(&settings_clone, &enabled_external_files);
+                    let req_line = serialize_request(
+                        request_id,
+                        termihub_core::protocol::methods::INITIALIZE,
+                        init_params,
+                    )
+                    .map_err(|e| {
                             emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
-                            return Err(TerminalError::agent_outdated(format!(
-                                "Initialize rejected: {}",
-                                message
-                            )));
-                        }
-                        jsonrpc::HandshakeOutcome::Buffer { method, params } => {
-                            skipped += 1;
-                            if skipped > MAX_PRE_INIT_MESSAGES {
-                                emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
-                                return Err(TerminalError::RemoteError(
-                                    "Agent sent too many messages before the initialize response"
-                                        .into(),
-                                ));
+                            TerminalError::RemoteError(format!("Serialize initialize failed: {}", e))
+                        })?;
+
+                    // Diagnostic for #2480: bookend the handshake at INFO so a full-app
+                    // display run can see whether the stall is before the `initialize`
+                    // write, or while awaiting the response line from the agent. Pairs
+                    // with the "initialize response received" log after the loop below.
+                    info!(
+                        "Agent {}: exec launched, sending initialize over the SSH channel",
+                        agent_id_str
+                    );
+                    channel.data(req_line.as_bytes()).await.map_err(|e| {
+                        emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
+                        TerminalError::agent_missing(format!("Write initialize failed: {}", e))
+                    })?;
+                    info!(
+                        "Agent {}: initialize written, awaiting response line from agent",
+                        agent_id_str
+                    );
+
+                    // Read the initialize response from the channel. The agent may emit
+                    // notifications before it answers (e.g. output from a session it
+                    // recovered on startup, or a staged `agent.update_available` notice
+                    // sent on attach). We loop until we see the message whose id matches
+                    // our initialize request; otherwise a pre-initialize notification
+                    // would be misread as the response ("Unexpected response to
+                    // initialize"). Those notifications are buffered here and replayed
+                    // once init completes (#1660) rather than dropped, so an on-attach
+                    // notification is delivered to the desktop handlers. A generous cap
+                    // guards against a runaway agent that never sends the response.
+                    const MAX_PRE_INIT_MESSAGES: u32 = 1000;
+                    let mut skipped: u32 = 0;
+                    let mut pending_notifications: Vec<(String, Value)> = Vec::new();
+                    let mut line_buf = LineSplitter::new();
+                    let (capabilities, agent_version, protocol_version, client_id, update_auth_token_path) = loop {
+                        let resp_line =
+                            match read_handshake_line(&mut channel, &agent_id_str, &mut line_buf).await {
+                                Ok(line) => line,
+                                Err(e) => {
+                                    emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
+                                    return Err(stdout_reader::handshake_read_error(e));
+                                }
+                            };
+
+                        let msg = jsonrpc::parse_message(&resp_line).map_err(|e| {
+                            emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
+                            TerminalError::RemoteError(format!("Parse initialize response: {}", e))
+                        })?;
+
+                        match jsonrpc::classify_handshake_message(msg, request_id) {
+                            jsonrpc::HandshakeOutcome::Response(result) => {
+                                // Parse into the shared `InitializeResult` DTO (DUP-001,
+                                // #3226), with the desktop's own capabilities type so
+                                // `connectionTypes` stays pass-through JSON for the
+                                // frontend. Missing versions read as "unknown" and a
+                                // missing `client_id` (pre-0.3.0 agent) as empty.
+                                let init = parse_initialize_result(result).map_err(|e| {
+                                    emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
+                                    TerminalError::RemoteError(e)
+                                })?;
+                                // AGT-003 (#3213): where this instance's update auth token
+                                // lives (protocol 0.13.0+; absent on older agents).
+                                let update_auth_token_path = token_path_from_initialize(&init);
+                                let InitializeResult {
+                                    protocol_version,
+                                    agent_version,
+                                    client_id,
+                                    mut capabilities,
+                                    ..
+                                } = init;
+                                // Copy agent_version into capabilities so the UI can read it.
+                                capabilities.agent_version = agent_version.clone();
+                                // Diagnostic for #2480: the handshake completed — the
+                                // agent's initialize response reached the desktop. If a
+                                // display run reaches this line the transport round-trip
+                                // is healthy and any remaining stall is downstream.
+                                info!(
+                                    "Agent {}: initialize response received (agent v{}, protocol {}); marking connected",
+                                    agent_id_str, agent_version, protocol_version
+                                );
+                                break (
+                                    capabilities,
+                                    agent_version,
+                                    protocol_version,
+                                    client_id,
+                                    update_auth_token_path,
+                                );
                             }
-                            // Retain the notification and replay it after init so an
-                            // on-attach notice is not dropped (#1660).
-                            pending_notifications.push((method, params));
-                            continue;
-                        }
-                        jsonrpc::HandshakeOutcome::Skip => {
-                            skipped += 1;
-                            if skipped > MAX_PRE_INIT_MESSAGES {
+                            jsonrpc::HandshakeOutcome::Rejected(message) => {
                                 emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
-                                return Err(TerminalError::RemoteError(
-                                    "Agent sent too many messages before the initialize response"
-                                        .into(),
-                                ));
+                                return Err(TerminalError::agent_outdated(format!(
+                                    "Initialize rejected: {}",
+                                    message
+                                )));
                             }
-                            warn!(
-                                "Agent {}: skipping pre-initialize message during handshake",
-                                agent_id_str
-                            );
-                            continue;
+                            jsonrpc::HandshakeOutcome::Buffer { method, params } => {
+                                skipped += 1;
+                                if skipped > MAX_PRE_INIT_MESSAGES {
+                                    emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
+                                    return Err(TerminalError::RemoteError(
+                                        "Agent sent too many messages before the initialize response"
+                                            .into(),
+                                    ));
+                                }
+                                // Retain the notification and replay it after init so an
+                                // on-attach notice is not dropped (#1660).
+                                pending_notifications.push((method, params));
+                                continue;
+                            }
+                            jsonrpc::HandshakeOutcome::Skip => {
+                                skipped += 1;
+                                if skipped > MAX_PRE_INIT_MESSAGES {
+                                    emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
+                                    return Err(TerminalError::RemoteError(
+                                        "Agent sent too many messages before the initialize response"
+                                            .into(),
+                                    ));
+                                }
+                                warn!(
+                                    "Agent {}: skipping pre-initialize message during handshake",
+                                    agent_id_str
+                                );
+                                continue;
+                            }
                         }
+                    };
+                    Ok::<_, TerminalError>((
+                        channel,
+                        capabilities,
+                        agent_version,
+                        protocol_version,
+                        client_id,
+                        update_auth_token_path,
+                        pending_notifications,
+                    ))
+                })
+                .await;
+                match attempt {
+                    Ok(Err(e))
+                        if !recovered
+                            && crate::terminal::agent_setup_windows::recovers_windows_setup(
+                                config_clone.agent_path(),
+                                &e,
+                            ) =>
+                    {
+                        recovered = true;
+                        crate::terminal::agent_setup_windows::recover_windows_setup(&session)
+                            .await;
+                        emit_agent_state(&app_handle_clone, &agent_id_str, "connecting");
                     }
-                };
-                Ok::<_, TerminalError>((
-                    channel,
-                    capabilities,
-                    agent_version,
-                    protocol_version,
-                    client_id,
-                    update_auth_token_path,
-                    pending_notifications,
-                ))
-            })
-            .await;
+                    other => break other,
+                }
+            };
             let (
                 channel,
                 capabilities,

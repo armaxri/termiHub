@@ -49,9 +49,13 @@ fn connect_recovers_only_the_agent_the_setup_manages() {
         &managed.replace('\\', "/"),
         &missing
     ));
-    // Another error is not a missing agent.
-    let refused = TerminalError::RemoteError("initialize refused".into());
-    assert!(!recovers_windows_setup(managed, &refused));
+    // A Windows shell reports a missing program with its own status (cmd.exe
+    // 9009, PowerShell 1), not 127: any start that did not answer counts.
+    let exited = TerminalError::RemoteError("Initialize read failed: exited 9009".into());
+    assert!(recovers_windows_setup(managed, &exited));
+    // A host that did not answer at all is not a missing agent.
+    let slow = TerminalError::Timeout("agent handshake".into());
+    assert!(!recovers_windows_setup(managed, &slow));
     // A path the setup does not manage, and every POSIX host.
     assert!(!recovers_windows_setup(
         r"D:\tools\termihub-agent.exe",
