@@ -582,22 +582,86 @@ fn home_dir() -> String {
 }
 
 /// A local TCP echo server for the bridge's positive control.
-fn echo_server() -> u16 {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    std::thread::spawn(move || {
-        for mut sock in listener.incoming().flatten() {
-            std::thread::spawn(move || {
-                let mut buf = [0u8; 64];
-                while let Ok(n) = sock.read(&mut buf) {
-                    if n == 0 || sock.write_all(&buf[..n]).is_err() {
-                        break;
+/// A TCP echo server on `127.0.0.1` for the network positive control, with a
+/// log of what it saw (#6122): which peers it accepted, what it read and wrote,
+/// and how each connection ended. A failed control prints it, so the failure
+/// says on which side the bytes were lost.
+struct EchoServer {
+    port: u16,
+    log: Arc<Mutex<Vec<String>>>,
+}
+
+impl EchoServer {
+    /// Bound and listening before it returns; [`Self::ready`] proves it.
+    fn start() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let accept_log = Arc::clone(&log);
+        std::thread::spawn(move || {
+            for accepted in listener.incoming() {
+                let mut sock = match accepted {
+                    Ok(sock) => sock,
+                    Err(e) => {
+                        note(
+                            &accept_log,
+                            format!("accept failed: {e} ({:?})", e.raw_os_error()),
+                        );
+                        continue;
                     }
-                }
-            });
-        }
-    });
-    port
+                };
+                let peer = sock.peer_addr().map(|a| a.to_string()).unwrap_or_default();
+                note(&accept_log, format!("{peer}: accepted"));
+                let log = Arc::clone(&accept_log);
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 64];
+                    let end = loop {
+                        match sock.read(&mut buf) {
+                            Ok(0) => break "closed by the peer".to_owned(),
+                            Ok(n) => {
+                                let read = String::from_utf8_lossy(&buf[..n]).into_owned();
+                                match sock.write_all(&buf[..n]) {
+                                    Ok(()) => note(&log, format!("{peer}: echoed {read:?}")),
+                                    Err(e) => {
+                                        break format!(
+                                            "echo of {read:?} failed: {e} ({:?})",
+                                            e.raw_os_error()
+                                        )
+                                    }
+                                }
+                            }
+                            Err(e) => break format!("read failed: {e} ({:?})", e.raw_os_error()),
+                        }
+                    };
+                    note(&log, format!("{peer}: {end}"));
+                });
+            }
+        });
+        Self { port, log }
+    }
+
+    /// Prove the server answers before the plugin uses it: a round trip from
+    /// this process, so a failed control is never a server that was not up.
+    fn ready(&self) {
+        let mut sock = std::net::TcpStream::connect(("127.0.0.1", self.port))
+            .unwrap_or_else(|e| panic!("the echo server on {} is not up: {e}", self.port));
+        sock.set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        sock.write_all(b"ready").unwrap();
+        let mut echoed = [0u8; 5];
+        sock.read_exact(&mut echoed)
+            .unwrap_or_else(|e| panic!("the echo server on {} does not echo: {e}", self.port));
+        assert_eq!(&echoed, b"ready");
+    }
+
+    /// What the server saw so far.
+    fn seen(&self) -> Vec<String> {
+        self.log.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+}
+
+fn note(log: &Mutex<Vec<String>>, line: String) {
+    log.lock().unwrap_or_else(|e| e.into_inner()).push(line);
 }
 
 /// The probe plugin, installed under `<work>/plugins` and loaded out of
@@ -862,13 +926,25 @@ async fn escape_attempts_fail_and_positive_controls_work() {
     // --- The capability bridge still reaches the network: the host opens the
     // connection and passes the socket into the confined runner (on Windows
     // duplicated into the LPAC and driven without Winsock, #4219). ---
-    let port = echo_server();
+    let echo = EchoServer::start();
+    echo.ready();
     let (mut bridged, mut rx) = probe_plugin
         .session(serde_json::json!({
-            "probe": "netecho", "probeHost": "127.0.0.1", "probePort": port
+            "probe": "netecho", "probeHost": "127.0.0.1", "probePort": echo.port
         }))
         .await;
-    assert_eq!(read_line(&mut rx).await, "NETECHO:ping");
+    let line = read_line(&mut rx).await;
+    // A failed control says where (#6122): what the plugin got, what the echo
+    // server saw of it, and whether the socket was passed in.
+    assert_eq!(
+        line,
+        "NETECHO:ping",
+        "the network positive control failed: the plugin said {line:?}; the echo server on \
+         127.0.0.1:{} saw {:#?}; sockets passed into the runner: {}",
+        echo.port,
+        echo.seen(),
+        probe_plugin.handles_passed(),
+    );
     assert_eq!(
         probe_plugin.handles_passed(),
         1,

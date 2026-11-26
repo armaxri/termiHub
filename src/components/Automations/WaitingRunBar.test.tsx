@@ -203,6 +203,24 @@ describe("Continue", () => {
     expect(wait.result).toBe("continued");
   });
 
+  it("is held back while a local program reads with echo off, whatever its words (#6014)", async () => {
+    takeBack.forEach((fn) => fn());
+    takeBack = [
+      registerTerminalPrompt("a", {
+        read: (then) => then("Enter code: ", true),
+        arrived: () => 0,
+        pin,
+      }),
+    ];
+    const wait = startWait();
+    click("automation-wait-continue-a");
+    await flushAsync();
+    expect(wait.result).toBeUndefined();
+    expect(query("automation-wait-message-a")?.textContent).toContain("still asks for a password");
+    act(() => store().recheckWaitingPrompts());
+    expect(query("automation-wait-message-a")?.textContent).toContain("still asks for a password");
+  });
+
   it("says nothing of a password where none was asked for", () => {
     prompt = "$ ";
     startWait();

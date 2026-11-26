@@ -26,8 +26,7 @@
 
 use crate::terminal::agent_install::{
     powershell_encoded_command, WindowsDeployShell, WindowsShell, WINDOWS_AGENT_EXE,
-    WINDOWS_BACKUP_EXE, WINDOWS_INSTALL_SUBDIR, WINDOWS_POWERSHELL_EXE, WINDOWS_STALE_PREFIX,
-    WINDOWS_UPLOAD_NAME,
+    WINDOWS_BACKUP_EXE, WINDOWS_INSTALL_SUBDIR, WINDOWS_STALE_PREFIX, WINDOWS_UPLOAD_NAME,
 };
 
 /// File name of the uploaded setup script, in the user profile like the agent.
@@ -182,26 +181,36 @@ pub(super) fn windows_recover_command() -> String {
     powershell_encoded_command(&recover_script())
 }
 
+/// What the typed line runs (#6001): the uploaded script's text as a script
+/// block, not the script file. An execution policy of AllSigned from group
+/// policy wins over `-ExecutionPolicy Bypass` and refuses an unsigned script
+/// *file*; text run as a command is not a script file, so no policy refuses
+/// it. Its `exit` ends this PowerShell with the script's status.
+fn setup_launcher() -> String {
+    fill(
+        "& ([scriptblock]::Create([IO.File]::ReadAllText((Join-Path $env:USERPROFILE '__SCRIPT__'))))",
+    )
+}
+
 /// The line a Windows setup types into its tab for `shell`: run the uploaded
 /// script, then end the shell. The end starts the check on the host
 /// (`agent_setup_outcome`, #5992); Win32-OpenSSH reports the PTY's console
 /// host, not this status, so a 0 says nothing.
 ///
-/// Every shell runs `powershell.exe`, so one script serves all of them; only
-/// the spelling of the profile path and of "then exit" differs. A login shell
-/// that is neither `cmd.exe` nor PowerShell is a POSIX one (Git Bash, MSYS2,
-/// Cygwin), which keeps `USERPROFILE` as a Windows path.
+/// Every shell runs `powershell.exe` with the same encoded command
+/// ([`setup_launcher`]), which only uses letters, digits, `+`, `/` and `=`,
+/// so no shell reads anything into it; only the spelling of "then exit"
+/// differs. A login shell that is neither `cmd.exe` nor PowerShell is a POSIX
+/// one (Git Bash, MSYS2, Cygwin).
 pub(super) fn windows_setup_lines(shell: WindowsDeployShell) -> Vec<String> {
-    let (profile, exit) = match shell {
-        WindowsDeployShell::Native(WindowsShell::Cmd) => ("%USERPROFILE%", " & exit"),
-        WindowsDeployShell::Native(WindowsShell::PowerShell) => {
-            ("$env:USERPROFILE", "; exit $LASTEXITCODE")
-        }
-        WindowsDeployShell::EncodedPowerShell => ("$USERPROFILE", "; exit $?"),
+    let exit = match shell {
+        WindowsDeployShell::Native(WindowsShell::Cmd) => " & exit",
+        WindowsDeployShell::Native(WindowsShell::PowerShell) => "; exit $LASTEXITCODE",
+        WindowsDeployShell::EncodedPowerShell => "; exit $?",
     };
     vec![format!(
-        "{WINDOWS_POWERSHELL_EXE} -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass \
-         -File \"{profile}\\{WINDOWS_SETUP_SCRIPT_NAME}\"{exit}"
+        "{}{exit}",
+        powershell_encoded_command(&setup_launcher())
     )]
 }
 

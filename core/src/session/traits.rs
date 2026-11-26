@@ -131,6 +131,11 @@ pub struct SpawnedShell {
     /// only once this reports `true`, so the setup is never echoed by the
     /// kernel ahead of the shell's own startup output.
     pub line_editor_reading: Option<Box<dyn Fn() -> bool + Send + Sync>>,
+    /// Whether a program now reads a line with its echo off, a password or a
+    /// code (#6014), or `None` where the terminal's settings cannot be read
+    /// (Windows ConPTY has no echo flag to ask, test doubles). Read on demand
+    /// only: nothing polls it.
+    pub hidden_input: Option<Box<dyn Fn() -> bool + Send + Sync>>,
     /// Reads the shell's current working directory from the operating
     /// system (#5009), or `None` where that is not possible (test doubles).
     /// The local backend reports it as OSC 7, so the file browser follows the
