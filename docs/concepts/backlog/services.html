@@ -592,7 +592,7 @@
       <header class="concept-header">
         <h1>Services: one view for SSH tunnels and file servers</h1>
         <div class="concept-meta">
-          <span class="concept-status">Backlog · slices 1 to 9, 11 and 12 of 14 implemented</span
+          <span class="concept-status">Backlog · slices 1 to 12 of 14 implemented</span
           ><span
             >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/6028">#6028</a></span
           ><span><code>docs/concepts/backlog/services.html</code></span>
@@ -4479,7 +4479,15 @@ flowchart LR
           per service in memory, noted from the views every window gets, so an agent-hosted service
           shows what this computer saw) and, for a file server, its access log, which left the row.
           "Started by" and "stopped by whom" are not recorded yet: the events carry the state and
-          its reason. Slices 10, 13 and 14 are not started. Step 0 of
+          its reason. Slice 10 (errors with a next step) is implemented: a tunnel's failed start
+          names what failed (sign-in refused, host key not trusted, no answer in time, remote port
+          not allowed, refused) with its remedy (Edit connection, Review key, Open a terminal on the
+          server, Edit); the forwarders count refused targets, and a running tunnel says
+          "db.internal:5432 refused the connection. Last: 14:20, 3 times." with Edit; a file
+          server's gone folder says so with Choose folder, here and on an agent; an agent's refusal
+          to start is read for its cause; Show path and Activity mark the failing part; Open
+          connections offers the same steps and Activity. "Review key" starts again, which shows the
+          host key prompt with the key to compare. Slices 13 and 14 are not started. Step 0 of
           <a href="https://github.com/armaxri/termiHub/issues/6028">#6028</a>.
         </p>
         <p>

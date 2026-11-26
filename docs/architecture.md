@@ -3211,6 +3211,14 @@ model is pure, and the rules live there, not in components:
   dealings (`useEditorTab`: unsaved changes, closing) and the file server's form. What the form may save
   and what it warns of is `fileServerForm.ts` (pure). A password leaves neither the form nor, with
   "Move tabs", its window.
+- **What failed** (slice 10): a tunnel's start keeps the typed connect failure
+  (`TerminalError::from_session_ssh`), so `start_reason` names it by its code, not its words: sign-in
+  refused, host key not trusted, no answer in time, refused, or a remote port the server did not
+  allow. The forwarders count refused targets (`TunnelStats.refused`, `lastRefusedMs`); a running
+  tunnel with refusals says so. A file server checks its folder before it binds (core, so on agents
+  too). An agent's refusal carries no cause, so `agent_start_cause` reads its code, or this family's
+  own sentences. The model names the failing part of the path (`ServiceModel.failing`) for Show path
+  and Activity; Open connections offers the same steps (`ServiceRemedies`).
 - **Activity** is the editor's second sub-tab (`src/components/ServiceActivity`): the same model, the
   four counters, what happened and, for a file server, its access log. What happened is a ring of 200
   events per service (`src-tauri/src/agent_service/events.rs`), noted when the `tunnels` or `services`
