@@ -114,32 +114,42 @@ pub enum Verdict {
 /// What the shell did with `echo QX<marker>`, from its output `text`.
 pub fn verdict(text: &str, marker: &str) -> Verdict {
     let printed = format!("QX{marker}");
-    // The shell names what arrived when it does not know the command.
+    // Only this round's line counts: a console repaints the screen after a
+    // resize, so earlier rounds' lines (and their errors) come back too.
+    let mut lost = None;
     for line in text.split(['\r', '\n']) {
         let line = strip_csi(line);
         let line = line.trim_end();
-        // bash: `bash: cho: command not found`.
-        if let Some(head) = line.strip_suffix(": command not found") {
-            let word = head.rsplit(": ").next().unwrap_or(head).to_owned();
-            return Verdict::Lost { word };
+        let Some(at) = find_marker(line, &printed) else {
+            continue;
+        };
+        let before = line[..at].trim_end();
+        if before.is_empty() {
+            // Its output, on a line of its own: the line ran whole.
+            return Verdict::Ran;
         }
-        // zsh: `zsh: command not found: cho`.
-        if let Some((_, word)) = line.split_once("command not found: ") {
-            return Verdict::Lost {
-                word: word.to_owned(),
-            };
+        // The typed line as the shell echoed it: the word before the marker
+        // is what arrived of `echo`.
+        let word = before.rsplit(char::is_whitespace).next().unwrap_or(before);
+        if word != "echo" && lost.is_none() {
+            lost = Some(word.to_owned());
         }
     }
-    // The typed line echoed, then its output on a line of its own.
-    let ran = text.split(['\r', '\n']).any(|line| {
-        let line = strip_csi(line);
-        line.trim_end() == printed
-    });
-    if ran {
-        Verdict::Ran
-    } else {
-        Verdict::Silent
+    match lost {
+        Some(word) => Verdict::Lost { word },
+        None => Verdict::Silent,
     }
+}
+
+/// Where `printed` stands in `line` as a whole word (`QXr0x1`, not the start
+/// of `QXr0x10`).
+fn find_marker(line: &str, printed: &str) -> Option<usize> {
+    line.match_indices(printed).map(|(at, _)| at).find(|&at| {
+        !line[at + printed.len()..]
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric())
+    })
 }
 
 /// `line` without ANSI CSI sequences (a prompt's colours, a redraw).
@@ -352,6 +362,19 @@ mod tests {
             verdict(text, "c100x3"),
             Verdict::Lost { word: "eho".into() }
         );
+    }
+
+    /// The Windows lane's first run (#6078): ConPTY repaints the screen after
+    /// a resize, so the output after this round's input also holds earlier
+    /// rounds' lines, a lost one among them. Only this round's line counts.
+    #[test]
+    fn a_repainted_earlier_round_is_not_this_rounds_verdict() {
+        let text = "\x1b[?25l\x1b[H$ cho QXr0x1\x1b[K\r\nbash: cho: command not found\x1b[K\r\n\
+                    $ echo QXr0x2\x1b[K\r\nQXr0x2\x1b[K\r\n$\x1b[K\r\n";
+        assert_eq!(verdict(text, "r0x2"), Verdict::Ran);
+        assert_eq!(verdict(text, "r0x1"), Verdict::Lost { word: "cho".into() });
+        // This round's line not repainted yet: no answer so far.
+        assert_eq!(verdict(text, "r0x3"), Verdict::Silent);
     }
 
     #[test]
