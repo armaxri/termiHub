@@ -92,7 +92,7 @@ const fieldsOf = ({ model, texts }: ServiceEntry): (string | undefined)[] => [
 ];
 
 /** Whether the user is needed, or cannot tell whether: these come first. */
-function needsLook({ health, nextSteps }: ServiceModel): boolean {
+export function needsLook({ health, nextSteps }: ServiceModel): boolean {
   return (
     health === "error" || health === "notKnown" || (health === "waiting" && nextSteps.length > 0)
   );

@@ -279,6 +279,28 @@ describe("both kinds in one list", () => {
   });
 });
 
+describe("around it (#6028, slice 6)", () => {
+  it("opens Open connections from its toolbar", async () => {
+    seed([[tunnel("a"), "connected"]]);
+    await render();
+    await click("services-open-connections");
+    expect(useServicesView.getState().openConnections).toBe(true);
+    useServicesView.getState().setOpenConnections(false);
+  });
+
+  it("takes up a Stop all asked for elsewhere, once", async () => {
+    const stopTunnel = vi.fn(() => Promise.resolve());
+    useAppStore.setState({ stopTunnel });
+    seed([[tunnel("a"), "connected"]]);
+    useServicesView.getState().requestStopAll();
+    await render();
+    expect(stopTunnel).toHaveBeenCalledWith("a");
+    expect(useServicesView.getState().stopAllRequested).toBe(false);
+    await render();
+    expect(stopTunnel).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("Stop all (#6028, slice 11)", () => {
   const stopTunnel = vi.fn(() => Promise.resolve());
   const stopEmbeddedServer = vi.fn(() => Promise.resolve());

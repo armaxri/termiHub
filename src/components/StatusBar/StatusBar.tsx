@@ -20,6 +20,8 @@ import {
 } from "lucide-react";
 import { useServiceEntries } from "@/components/ServicesSidebar/useServiceEntries";
 import { serviceCountLabel } from "@/utils/serviceModel";
+import { needsLook } from "@/utils/serviceRows";
+import { t, tf } from "@/i18n/catalog";
 import { showServicesView } from "@/components/ServicesSidebar/servicesView";
 import { useAppStore, getActiveTab, monitorKeyForTab } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
@@ -417,9 +419,16 @@ function ServicesIndicator() {
   // Counted as the sidebar counts them (#6076).
   const models = entries.map((entry) => entry.model);
   const running = models.filter((model) => model.health === "running");
-  const errors = models.some((model) => model.health === "error")
-    ? serviceCountLabel("error", models)
-    : undefined;
+  // What needs the user (#6028, slice 6): errors by that word, else in one.
+  const attention = models.filter(needsLook);
+  const errors =
+    attention.length === 0
+      ? undefined
+      : attention.every((model) => model.health === "error")
+        ? serviceCountLabel("error", models)
+        : attention.length === 1
+          ? t("service.counts.attention.one")
+          : tf("service.counts.attention", { count: String(attention.length) });
   if (running.length === 0 && !errors) return null;
 
   const tunnels = running.filter((model) => model.kind === "tunnel").length;

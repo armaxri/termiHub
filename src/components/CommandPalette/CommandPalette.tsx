@@ -6,8 +6,11 @@ import { useActivePanelId, useLayoutRenderTree } from "@/store/layoutSelectors";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
 import { newServiceGroups } from "@/components/ServicesSidebar/newServiceEntries";
-import { showServicesView } from "@/components/ServicesSidebar/servicesView";
-import { t, tf } from "@/i18n/catalog";
+import { useServiceEntries } from "@/components/ServicesSidebar/useServiceEntries";
+import type { ServiceModel } from "@/utils/serviceModel";
+import { toast } from "@/components/ui";
+import { tf } from "@/i18n/catalog";
+import { errorMessage } from "@/utils/errorMessage";
 import { buildCommands } from "@/services/commands";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import { isMacroShaped } from "@/store/slices/automationViews";
@@ -130,6 +133,8 @@ const SERVICE_WORDS = [
 ];
 
 const COMMAND_ALIASES: Record<string, string[]> = {
+  "show-services": SERVICE_WORDS,
+  "stop-all-services": ["Stop all tunnels", "Stop all file servers"],
   "toggle-macro-recording": ["Record macro"],
   "play-macro": ["Play macro", "Run macro", "Run workflow"],
 };
@@ -202,6 +207,25 @@ function isDisabled(entry: PaletteEntry): boolean {
  * automation runs on the group's connected terminals. Every run goes through
  * `runAutomation`. Backspace on an empty picker query returns to the root list.
  */
+/** Start a service from the palette. A failure is said, and stays on its row. */
+function startService({ kind, id, name }: ServiceModel): Promise<void> {
+  const store = useAppStore.getState();
+  const start = kind === "tunnel" ? store.startTunnel(id) : store.startEmbeddedServer(id);
+  return start.catch(
+    (err: unknown) =>
+      void toast.error(`Failed to start ${name}`, { description: errorMessage(err) })
+  );
+}
+
+/** Stop a service from the palette, whose entry names what is open. */
+function stopService({ kind, id, name }: ServiceModel): Promise<void> {
+  const store = useAppStore.getState();
+  const stop = kind === "tunnel" ? store.stopTunnel(id) : store.stopEmbeddedServer(id);
+  return stop.catch(
+    (err: unknown) => void toast.error(`Failed to stop ${name}`, { description: errorMessage(err) })
+  );
+}
+
 export function CommandPalette(): React.ReactElement {
   const open = useAppStore((s) => s.commandPaletteOpen);
   const setOpen = useAppStore((s) => s.setCommandPaletteOpen);
@@ -222,6 +246,8 @@ export function CommandPalette(): React.ReactElement {
   const workspaces = useAppStore((s) => s.workspaces);
   const requestLaunchWorkspace = useAppStore((s) => s.requestLaunchWorkspace);
   const getBroadcastTargetTabIds = useAppStore((s) => s.getBroadcastTargetTabIds);
+  const { entries: serviceList } = useServiceEntries(false);
+  const serviceModels = useMemo(() => serviceList.map((entry) => entry.model), [serviceList]);
   // Subscribed so the broadcast entry appears/disappears as broadcasting toggles.
   const broadcast = useProjectedBroadcast();
   // Context-bound command availability depends on live panel/terminal state;
@@ -261,15 +287,37 @@ export function CommandPalette(): React.ReactElement {
       run: cmd.run,
     }));
     const serviceEntries: PaletteEntry[] = [
-      {
-        kind: "command",
-        key: "command:show-services",
-        label: t("service.palette.show"),
-        accelerator: null,
-        available: true,
-        aliases: SERVICE_WORDS,
-        run: showServicesView,
-      },
+      // Start and stop each service from here (#6028, slice 6).
+      ...serviceModels.flatMap((model): PaletteEntry[] => {
+        const can = (id: string) => model.actions.some((action) => action.id === id);
+        const entry = (verb: "start" | "stop", label: string, run: () => void): PaletteEntry => ({
+          kind: "command",
+          key: `command:${verb}-service-${model.id}`,
+          label,
+          accelerator: null,
+          available: true,
+          aliases: [label, model.technical, model.what],
+          run,
+        });
+        const open = model.counters?.active ?? 0;
+        if (can("start") || can("retry")) {
+          return [
+            entry(
+              "start",
+              tf("service.palette.start", { name: model.name }),
+              () => void startService(model)
+            ),
+          ];
+        }
+        if (can("stop") || can("stopWaiting")) {
+          const label =
+            open > 0
+              ? tf("service.palette.stop.open", { name: model.name, count: String(open) })
+              : tf("service.palette.stop", { name: model.name });
+          return [entry("stop", label, () => void stopService(model))];
+        }
+        return [];
+      }),
       ...newServiceGroups().flatMap((group) =>
         group.entries.map((entry): PaletteEntry => {
           const label = tf("service.palette.new", {
@@ -356,6 +404,7 @@ export function CommandPalette(): React.ReactElement {
     rootPanel,
     activePanelId,
     recordLabel,
+    serviceModels,
   ]);
 
   // Ranked results. An empty query returns every entry in declaration order.

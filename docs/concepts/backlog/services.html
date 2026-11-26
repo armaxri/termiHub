@@ -592,8 +592,7 @@
       <header class="concept-header">
         <h1>Services: one view for SSH tunnels and file servers</h1>
         <div class="concept-meta">
-          <span class="concept-status"
-            >Backlog · slices 1 to 5, 7, 8, 11 and 12 of 14 implemented</span
+          <span class="concept-status">Backlog · slices 1 to 8, 11 and 12 of 14 implemented</span
           ><span
             >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/6028">#6028</a></span
           ><span><code>docs/concepts/backlog/services.html</code></span>
@@ -4469,7 +4468,11 @@ flowchart LR
           is implemented: the file browser's "Share this folder…" entries open the file server tab
           with the folder, the safer defaults and the same warning, for this session only ("Until
           termiHub closes", forgotten with its password at the next start); unticking it keeps it.
-          The share's failure is the editor's. Slices 6, 9, 10, 13 and 14 are not started. Step 0 of
+          The share's failure is the editor's. Slice 6 (around it) is implemented: the status bar
+          says what needs attention (errors by that word), Open connections has one "Services"
+          section, the palette starts and stops each service and has "Show services" and "Stop all
+          services" as actions that ship unbound, and the sidebar's "…" holds Stop all services and
+          Open connections. Slices 9, 10, 13 and 14 are not started. Step 0 of
           <a href="https://github.com/armaxri/termiHub/issues/6028">#6028</a>.
         </p>
         <p>
