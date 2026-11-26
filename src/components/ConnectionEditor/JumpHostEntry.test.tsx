@@ -98,6 +98,12 @@ describe("JumpHostEntry", () => {
     const saved = query("jump-host-source-saved-0")!;
     expect(saved.getAttribute("title")).toBe("No saved SSH connections to reference");
     expect(saved.textContent).toContain("An SSH connection you saved");
+    // Its reason is its tooltip; the help would open a second one.
+    const said = (saved.getAttribute("aria-describedby") ?? "")
+      .split(" ")
+      .map((ref) => document.getElementById(ref)?.textContent)
+      .join(" ");
+    expect(said).not.toContain("every connection going through it follows");
   });
 
   it("disables the Saved-connection option when no SSH connections exist", () => {
