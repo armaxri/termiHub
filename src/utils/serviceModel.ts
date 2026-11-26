@@ -226,7 +226,8 @@ const HEALTH: Record<ServiceState, ServiceHealth> = {
 
 /** What every kind offers in `state`. */
 function offeredIn(state: ServiceState, address: ServiceAddress | undefined): Set<ServiceActionId> {
-  const offered = new Set<ServiceActionId>(["edit", "duplicate", "delete"]);
+  // Both kinds have an Activity (#6028, slice 9).
+  const offered = new Set<ServiceActionId>(["activity", "edit", "duplicate", "delete"]);
   const run = serviceRunAction(state);
   if (run) offered.add(run);
   if (address?.copy) offered.add("copyAddress");
@@ -575,7 +576,6 @@ export function fileServerModel(
   const running = parts.state === "running";
   const address = running ? serverAddress(config, host, context) : undefined;
   const offered = offeredIn(parts.state, address);
-  offered.add("activity");
   // Not for one that opens elsewhere: the browser here would find another localhost.
   if (address?.copy && !address.on && config.serverType === "http") offered.add("openInBrowser");
   const stats = running ? state?.stats : undefined;

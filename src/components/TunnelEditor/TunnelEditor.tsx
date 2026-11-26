@@ -1,4 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import { ServiceActivityView } from "@/components/ServiceActivity";
+import { useEditorView, useEditorViews } from "@/components/ServiceEditor/editorView";
 import { ITEM_DESCRIPTION_MAX_LENGTH, normalizeItemDescription } from "@/utils/itemDescription";
 import { z } from "zod";
 import { useZodEditorForm } from "@/hooks/useZodEditorForm";
@@ -689,10 +691,25 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
     </label>
   );
 
+  // Settings or Activity (#6028, slice 9).
+  const view = useEditorView(existingTunnel?.id);
+  const showIn = useEditorViews((s) => s.show);
+
   return (
     <ServiceEditorShell
       testId="tunnel-editor"
       isVisible={isVisible}
+      activity={
+        existingTunnel ? (
+          <ServiceActivityView
+            kind="tunnel"
+            id={existingTunnel.id}
+            onEdit={() => showIn(existingTunnel.id, "settings")}
+          />
+        ) : undefined
+      }
+      view={view}
+      onView={(next) => existingTunnel && showIn(existingTunnel.id, next)}
       title={existingTunnel ? existingTunnel.name : t(`service.new.${tunnelType.type}`)}
       subtitle={editorSubtitle(!existingTunnel, t(`service.new.${tunnelType.type}.technical`))}
       onChangeType={choosing ? undefined : () => setChoosing(true)}

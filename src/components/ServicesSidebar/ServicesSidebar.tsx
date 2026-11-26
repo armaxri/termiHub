@@ -187,6 +187,7 @@ export function ServicesSidebar() {
         onStop={tunnelActions.stop}
         onReconnect={tunnelActions.restart}
         onEdit={tunnelActions.edit}
+        onActivity={tunnelActions.activity}
         onDuplicate={tunnelActions.duplicate}
         onDelete={tunnelActions.remove}
         onUsePort={tunnelActions.usePort}
@@ -215,6 +216,7 @@ export function ServicesSidebar() {
         onStop={serverActions.stop}
         onRestart={serverActions.restart}
         onEdit={serverActions.edit}
+        onActivity={serverActions.activity}
         onDuplicate={serverActions.duplicate}
         onDelete={serverActions.remove}
         onUsePort={serverActions.usePort}

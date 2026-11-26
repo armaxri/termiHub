@@ -2,6 +2,8 @@ import type { KeyboardEventHandler, ReactNode, RefObject, FocusEvent } from "rea
 import { AlertTriangle } from "lucide-react";
 import { TOAST_AVOID_FORM_PROPS, TOAST_AVOID_PROPS } from "@/components/ui";
 import { t, tf } from "@/i18n/catalog";
+import { focusRovingTab, rovingTabIndexFromKey } from "@/utils/rovingTablist";
+import type { EditorView } from "./editorView";
 import "./ServiceEditor.css";
 
 interface ServiceEditorShellProps {
@@ -21,7 +23,21 @@ interface ServiceEditorShellProps {
   /** Cancel, Save and Save and start, in this order. */
   actions: ReactNode;
   children: ReactNode;
+  /** A saved one's Activity, the second sub-tab (#6028, slice 9). */
+  activity?: ReactNode;
+  view?: EditorView;
+  onView?: (view: EditorView) => void;
 }
+
+const VIEWS: readonly EditorView[] = ["settings", "activity"];
+const VIEW_LABEL = {
+  settings: "service.editor.settings",
+  activity: "service.action.activity",
+} as const;
+const VIEW_TEST_IDS = {
+  settings: { "data-testid": "service-editor-view-settings" },
+  activity: { "data-testid": "service-editor-view-activity" },
+} as const;
 
 /**
  * The one style of the service editors (#6028, slices 7 and 8): what it is for on
@@ -39,7 +55,11 @@ export function ServiceEditorShell({
   note,
   actions,
   children,
+  activity,
+  view = "settings",
+  onView,
 }: ServiceEditorShellProps) {
+  const showsActivity = activity !== undefined && view === "activity";
   return (
     <div
       className={`service-editor ${isVisible ? "" : "service-editor--hidden"}`}
@@ -66,8 +86,44 @@ export function ServiceEditorShell({
             </>
           )}
         </p>
+        {activity !== undefined && (
+          <div
+            className="service-editor__views"
+            role="tablist"
+            aria-label={t("service.editor.views")}
+            onKeyDown={(e) => {
+              const current = rovingTabIndexFromKey(e);
+              if (current !== -1) focusRovingTab(e, current);
+            }}
+          >
+            {VIEWS.map((item) => (
+              <button
+                key={item}
+                type="button"
+                role="tab"
+                aria-selected={view === item}
+                tabIndex={view === item ? 0 : -1}
+                className={`service-editor__view ${view === item ? "service-editor__view--active" : ""}`}
+                onClick={() => onView?.(item)}
+                {...VIEW_TEST_IDS[item]}
+              >
+                {t(VIEW_LABEL[item])}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
+      {showsActivity && (
+        <div
+          className="service-editor__activity"
+          role="tabpanel"
+          data-testid={`${testId}-activity`}
+        >
+          {activity}
+        </div>
+      )}
       <div
+        hidden={showsActivity}
         className="service-editor__form"
         data-testid={`${testId}-form`}
         {...rootProps}
@@ -75,7 +131,7 @@ export function ServiceEditorShell({
       >
         <div className="service-editor__fields">{children}</div>
       </div>
-      <div className="service-editor__footer">
+      <div className="service-editor__footer" hidden={showsActivity}>
         <div
           className="service-editor__actions"
           data-testid={`${testId}-actions`}

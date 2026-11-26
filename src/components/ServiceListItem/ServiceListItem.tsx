@@ -59,8 +59,6 @@ export interface ServiceListItemProps {
   onNextStep?: (step: ServiceNextStep) => void | Promise<void>;
   /** Lines of one kind only, under the shared ones. */
   extras?: React.ReactNode;
-  /** The open Activity, when it is open. */
-  activity?: React.ReactNode;
   /** Beside the name, e.g. the mark of a chained hop. */
   nameMark?: React.ReactNode;
   className?: string;
@@ -88,7 +86,7 @@ const ICONS: Record<ServiceActionId, LucideIcon> = {
 const SOLID: ReadonlySet<LucideIcon> = new Set([Play, Square]);
 
 /** The icon of `action`. */
-function ActionIcon({ id, size }: { id: ServiceActionId; size: number }) {
+export function ActionIcon({ id, size }: { id: ServiceActionId; size: number }) {
   const Icon = ICONS[id];
   return <Icon size={size} fill={SOLID.has(Icon) ? "currentColor" : "none"} />;
 }
@@ -117,7 +115,6 @@ export function ServiceListItem({
   onAction,
   onNextStep,
   extras,
-  activity,
   nameMark,
   className,
   rowRef,
@@ -180,7 +177,6 @@ export function ServiceListItem({
           size="xs"
           iconOnly={!gives}
           aria-label={action.label}
-          aria-pressed={action.id === "activity" ? activity !== undefined : undefined}
           {...ids.actionTestIds[action.id]}
           icon={gives ? undefined : <ActionIcon id={action.id} size={12} />}
           // Whoever acts shows its own failure.
@@ -348,7 +344,6 @@ export function ServiceListItem({
         </span>
       )}
       {extras}
-      {activity}
     </>
   );
 
