@@ -8,7 +8,7 @@
  *
  * The real dispatcher, output flow, sandbox host and xterm parser run here.
  */
-import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi, type Mock } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { Terminal as RealTerminal } from "@xterm/xterm";
@@ -625,6 +625,12 @@ describe("Continue sees a prompt that has arrived (#6070)", () => {
     const thrown = vi.fn(() => {
       throw new Error("a reader that fails");
     });
+    // What the reader throws stays in the guard: it escapes nowhere, also not after
+    // the PTY was asked whether input is hidden (#6014).
+    const escaped: unknown[] = [];
+    const onEscape = (reason: unknown) => escaped.push(reason);
+    process.on("unhandledRejection", onEscape);
+    onTestFinished(() => void process.off("unhandledRejection", onEscape));
     behind();
     arrive("one ");
     act(() => promptOfTerminal(tabId)!.read(thrown));
@@ -638,6 +644,8 @@ describe("Continue sees a prompt that has arrived (#6070)", () => {
     await settle();
     expect(thrown).toHaveBeenCalled();
     expect(line()).toBe("one two three");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(escaped).toEqual([]);
   });
 
   it("asks when it cannot tell in time, and an insisting press goes on", async () => {
