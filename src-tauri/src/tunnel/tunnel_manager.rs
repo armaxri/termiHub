@@ -1686,7 +1686,10 @@ impl<R: Runtime> TunnelManager<R> {
 
         // A tunnel on an agent (S3, #2185) or on its way there: its stop is owed
         // until the agent confirms it, however long it is away (#6028).
-        match self.hosted.stop(tunnel_id) {
+        let plan = self.hosted.stop(tunnel_id);
+        tracing::info!("Tunnel {tunnel_id} stop requested ({plan:?})");
+        let start_will_stop = matches!(plan, StopPlan::StartWillStop);
+        match plan {
             StopPlan::StopThere(agent_id) => {
                 self.settle_stop(&agent_id, tunnel_id);
                 return Ok(());
@@ -1741,6 +1744,10 @@ impl<R: Runtime> TunnelManager<R> {
         if self.connecting.request_cancel(tunnel_id) {
             self.emit_status(tunnel_id, TunnelStatus::Disconnected);
             tracing::info!("Tunnel {} stop requested while connecting", tunnel_id);
+        } else if !start_will_stop {
+            // Nothing ran: the stop still dismissed a recorded failure, which
+            // the UI must be sent (#6139).
+            self.emit_status(tunnel_id, self.resting_status_of(tunnel_id));
         }
 
         Ok(())
