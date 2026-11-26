@@ -46,8 +46,9 @@ vi.mock("@/services/api", () => ({
 }));
 
 const destroy = vi.fn(() => Promise.resolve());
+const windowLabel = { value: "main" };
 vi.mock("@tauri-apps/api/window", () => ({
-  getCurrentWindow: () => ({ destroy, label: "main" }),
+  getCurrentWindow: () => ({ destroy, label: windowLabel.value }),
 }));
 
 import { listen } from "@tauri-apps/api/event";
@@ -102,6 +103,32 @@ describe("app quit request (#4296)", () => {
     expect(quitWindowReady).toHaveBeenCalledTimes(1);
     expect(quitWindowPrompting).not.toHaveBeenCalled();
     expect(useAppStore.getState().pendingWindowClose).toBeNull();
+  });
+
+  it("asks about services with open connections, in the main window only (#6028)", async () => {
+    const stats = { bytesSent: 0, bytesReceived: 0, activeConnections: 1, totalConnections: 1 };
+    useAppStore.setState({
+      embeddedServers: [{ id: "s", name: "Docs" } as never],
+      embeddedServerStates: { s: { serverId: "s", status: "running", stats } },
+    });
+    windowLabel.value = "win-2";
+    await handleAppQuitRequested();
+    expect(quitWindowReady).toHaveBeenCalledTimes(1);
+    windowLabel.value = "main";
+    await handleAppQuitRequested();
+    expect(quitWindowPrompting).toHaveBeenCalledTimes(1);
+    expect(useAppStore.getState().pendingWindowClose?.services).toEqual([
+      { key: "s", name: "Docs", open: 1 },
+    ]);
+    // Nothing open: it quits without asking.
+    useAppStore.setState({
+      pendingWindowClose: null,
+      embeddedServerStates: {
+        s: { serverId: "s", status: "running", stats: { ...stats, activeConnections: 0 } },
+      },
+    });
+    await handleAppQuitRequested();
+    expect(quitWindowReady).toHaveBeenCalledTimes(2);
   });
 
   it("confirms without detaching when every session is persistent", async () => {

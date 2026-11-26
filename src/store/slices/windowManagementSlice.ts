@@ -40,6 +40,9 @@ import { resolveWindowEviction } from "@/utils/tabOwnership";
 import { captureAllTabGroups } from "@/utils/workspaceLayout";
 import { currentWorkflowRunView } from "@/store/workflowRunBridge";
 import { macroTargetLabel } from "./macroRunHistory";
+import { currentAgentsView } from "@/store/agentsBridge";
+import { servicesAtQuit } from "@/utils/servicesAtQuit";
+import { isMac } from "@/utils/platform";
 import { currentConnectionsView } from "@/store/connectionsBridge";
 import { toast } from "@/components/ui";
 import { errorMessage } from "@/utils/errorMessage";
@@ -197,10 +200,13 @@ export interface WindowManagementSlice {
    * - `"prompt"` — a non-persistent session or an unsaved editor would be lost,
    *   so the decision dialog is raised in quit mode ({@link pendingWindowClose}).
    *
+   * `ownsServices`: this window asks about the services that have connections open
+   * (#6028), so that a quit asks once, not in every window.
+   *
    * Unlike a window close, nothing is detached or ended here: another window
    * may still cancel the quit, and the app exit itself ends the sessions.
    */
-  prepareAppQuit: () => "ready" | "prompt";
+  prepareAppQuit: (ownsServices?: boolean) => "ready" | "prompt";
   /**
    * End this window's connections that are still starting (#5112), for a
    * window that is about to close: from now on a create that resolves is closed
@@ -322,6 +328,21 @@ function runsField(state: AppState): Pick<WindowCloseRequest, "runs"> {
     ),
   ];
   return runs.length > 0 ? { runs } : {};
+}
+
+/**
+ * `services` for a {@link WindowCloseRequest} (#6028, question 2): what stops with
+ * the app, when one of them has connections open now.
+ */
+function servicesField(state: AppState): Pick<WindowCloseRequest, "services"> {
+  const services = servicesAtQuit({
+    tunnels: state.tunnels,
+    tunnelStates: state.tunnelStates,
+    servers: state.embeddedServers,
+    serverStates: state.embeddedServerStates,
+    agents: currentAgentsView().remoteAgents,
+  });
+  return services.length > 0 ? { services } : {};
 }
 
 /** `otherTabs` for a {@link WindowCloseRequest}, omitted when there are none. */
@@ -510,7 +531,9 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
     const recording = recordingField(get());
     // So does a run: it types from this window and stops with it (#6026).
     const runs = runsField(get());
-    if (dirtyEditors.length > 0 || recording.recording || runs.runs) {
+    // On Windows and Linux the last window ends the app, and its services (#6028).
+    const services = otherWindows.length === 0 && !isMac() ? servicesField(get()) : {};
+    if (dirtyEditors.length > 0 || recording.recording || runs.runs || services.services) {
       set({
         pendingWindowClose: {
           sessions,
@@ -519,6 +542,7 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
           ...otherTabs,
           ...recording,
           ...runs,
+          ...services,
         },
       });
       return "prompt";
@@ -544,8 +568,10 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
     return "prompt";
   },
 
-  prepareAppQuit: () => {
+  prepareAppQuit: (ownsServices = true) => {
     const tabs = collectWindowTabs(get());
+    // Asked about once, in the window that owns them (#6028).
+    const services = ownsServices ? servicesField(get()) : {};
     const sessions = classifyWindowCloseSessions(tabs, startingTabIds(get()));
     const dirtyEditors = dirtyEditorRows(tabs, get().editorDirtyTabs);
     const recording = recordingField(get());
@@ -554,6 +580,7 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
       dirtyEditors.length === 0 &&
       !recording.recording &&
       !runs.runs &&
+      !services.services &&
       !windowCloseWouldLoseData(sessions)
     ) {
       return "ready";
@@ -566,6 +593,7 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
         ...(dirtyEditors.length > 0 ? { dirtyEditors } : {}),
         ...recording,
         ...runs,
+        ...services,
       },
     });
     return "prompt";

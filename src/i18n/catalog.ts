@@ -909,6 +909,9 @@ const en = {
   // Stop, restart and delete, for both kinds (#6068).
   "service.confirm.stop.title": 'Stop "{name}"?',
   "service.confirm.restart.title": 'Restart "{name}"?',
+  "service.confirm.stopAll.title": "Stop all services?",
+  "service.stopAll": "Stop all services",
+  "service.stopAll.failed": "Not every service could be stopped",
   "service.confirm.drops.one": "1 connection is open now. It will be dropped.",
   "service.confirm.drops": "{count} connections are open now. They will be dropped.",
   "service.delete.title": 'Delete "{name}"?',

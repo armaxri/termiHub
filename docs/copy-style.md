@@ -222,7 +222,8 @@ The row is `ServiceListItem`, its words are in `serviceModel.ts`. Rules for them
   breaks ("1 open connection") and, of a file server, that the folder and its files stay.
 - A **list says in numbers** what its rows say: running, error, not known, reconnecting, waiting.
   Pressing a number shows only its rows, and says so ("Only errors.") with Show all. "Not known" is what may run: it is never counted as off.
-- **Stop and Restart ask only when someone is connected** right now, and say how many.
+- **Stop and Restart ask only when someone is connected** right now, and say how many. So do Stop all
+  and quitting, which names each service that stops and its agent.
 - An **empty list** says what its things are for and what they need.
 
 Everything else is configuration or history and goes in the row's **tooltip**, the editor or a

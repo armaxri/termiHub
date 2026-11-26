@@ -71,6 +71,30 @@ describe("CloseWindowDecisionDialog (#1903)", () => {
     expect(q("close-window-decision-dialog")).toBeNull();
   });
 
+  it("names the services that stop, with what is open on each (#6028)", () => {
+    render();
+    const services = [
+      { key: "db", name: "Shop database", open: 2 },
+      { key: "web", name: "Release builds", open: 0, agent: "Edge box" },
+    ];
+    act(() =>
+      useAppStore
+        .getState()
+        .setPendingWindowClose(request({ sessions: [], mode: "quit", services }))
+    );
+    expect(q("close-window-decision-services").textContent).toBe(
+      " 2 services stop, 2 connections are open."
+    );
+    expect(q("close-window-decision-service-db").textContent).toContain(
+      "“Shop database” · 2 open connections"
+    );
+    expect(q("close-window-decision-service-web").textContent).toContain(
+      "“Release builds” on agent Edge box"
+    );
+    expect(q("close-window-decision-service-web").textContent).not.toContain("open connection");
+    expect(q("close-window-decision-end").textContent).toContain("Quit & stop services");
+  });
+
   it("lists per-session outcomes (detach vs terminate)", () => {
     render();
     act(() => useAppStore.getState().setPendingWindowClose(request()));

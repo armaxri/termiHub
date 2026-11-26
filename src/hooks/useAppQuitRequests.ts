@@ -1,6 +1,8 @@
 import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useAppStore } from "@/store/appStore";
+import { MAIN_WINDOW_LABEL } from "@/types/window";
 import { quitWindowListening, quitWindowPrompting, quitWindowReady } from "@/services/api";
 import { errorMessage } from "@/utils/errorMessage";
 import { flushPendingDeletes } from "@/utils/undoableDelete";
@@ -11,6 +13,19 @@ import { subscribeGuarded, useTauriListener } from "./useTauriListener";
 export const APP_QUIT_REQUESTED_EVENT = "app-quit-requested";
 /** Backend event: a pending app quit was cancelled in some window. */
 export const APP_QUIT_CANCELLED_EVENT = "app-quit-cancelled";
+
+/**
+ * Whether this window asks about the services at quit (#6028): the main window,
+ * or a window whose label is not known (outside Tauri). A quit after the main
+ * window was closed does not ask about them.
+ */
+function ownsServices(): boolean {
+  try {
+    return getCurrentWindow().label === MAIN_WINDOW_LABEL;
+  } catch {
+    return true;
+  }
+}
 
 /**
  * Answer an app quit request for this window (#4296). A window with nothing to
@@ -28,7 +43,7 @@ export async function handleAppQuitRequested(): Promise<void> {
       await quitWindowPrompting();
       return;
     }
-    if (store.prepareAppQuit() === "ready") {
+    if (store.prepareAppQuit(ownsServices()) === "ready") {
       await quitWindowReady();
     } else {
       await quitWindowPrompting();
