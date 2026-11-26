@@ -97,62 +97,6 @@ pub(crate) fn keys_for_owners(owner_ids: &[String]) -> Vec<CredentialKey> {
         .collect()
 }
 
-/// Export every saved credential as an encrypted vault file.
-///
-/// Requires re-authentication: in master-password mode the store must be
-/// unlocked and `master_password` must verify. In OS-keychain mode the OS must
-/// verify the user (Touch ID / Windows Hello) for this export (#3433) —
-/// refused as `reauthFailed` when cancelled or failed and `reauthUnavailable`
-/// where OS verification does not exist. `export_passphrase` (entered twice in
-/// the UI) seals the file and must differ from the master password.
-/// Returns the file's JSON text.
-///
-/// This is async because Argon2id key derivation is CPU-intensive.
-#[tauri::command]
-pub async fn export_credential_vault(
-    master_password: Option<String>,
-    export_passphrase: String,
-    manager: State<'_, Arc<CredentialManager>>,
-    connection_manager: State<'_, ConnectionManager>,
-    app_handle: AppHandle,
-) -> Result<String, VaultError> {
-    let master_password = master_password.map(Zeroizing::new);
-    let export_passphrase = Zeroizing::new(export_passphrase);
-    let mode = manager.get_mode();
-    info!(mode = mode.to_settings_str(), "Exporting credential vault");
-
-    // Validate the passphrase first so a weak one is rejected before the
-    // user is asked for Touch ID / Windows Hello.
-    vault::validate_export_passphrase(
-        &export_passphrase,
-        master_password.as_deref().map(String::as_str),
-    )?;
-    vault::authorize_export(&manager, master_password.as_deref().map(String::as_str))?;
-
-    // Probe every derivable owner on top of the store's own listing (the OS
-    // keychain lists from its key index, #3434).
-    let owner_ids =
-        derivable_owner_ids(&connection_manager, &app_handle).map_err(|e| VaultError::Other {
-            message: format!("Could not read the saved connections: {e}"),
-        })?;
-
-    let entries = vault::collect_entries(&**manager, &owner_ids)?;
-    let file = vault::seal(
-        &entries,
-        &export_passphrase,
-        chrono::Utc::now().to_rfc3339(),
-    )?;
-    let json = vault::to_json(&file)?;
-
-    // Counts only — never keys' values.
-    info!(
-        count = entries.len(),
-        mode = mode.to_settings_str(),
-        "credential vault exported"
-    );
-    Ok(json)
-}
-
 /// Decrypt a vault file and preview what importing it would do. Writes nothing.
 ///
 /// This is async because Argon2id key derivation is CPU-intensive.

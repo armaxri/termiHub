@@ -1753,7 +1753,7 @@ Settings → Security → **Credential vault backup** exported every saved crede
 file and imported such a file into the **current** store (PROD-063, `src-tauri/src/credential/vault/`).
 Since #5860 there is one backup flow: passwords are backed up with everything else in Backup &
 restore, Security ▸ **Back up saved passwords** points there, and the export action is gone from the
-UI (the `export_credential_vault` command stays, for the backend tests). A file an older termiHub
+UI and the IPC surface (`export_credential_vault` is removed). A file an older termiHub
 exported still restores: Backup & restore ▸ **Restore passwords from an older export…**
 (`OlderPasswordImport.tsx`), whose dialog speaks of the chosen store, not of a vault.
 `tests/fixtures/credentials/older-export.json` is such a file; the vault tests open it.

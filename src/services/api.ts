@@ -3112,22 +3112,6 @@ export function isVaultError(err: unknown): err is VaultError {
   return typeof kind === "string" && VAULT_ERROR_KINDS.has(kind);
 }
 
-/**
- * Export every saved credential as an encrypted vault file and return its text.
- *
- * `masterPassword` re-authenticates a master-password store. In OS-keychain
- * mode the backend asks the OS to verify the user (Touch ID / Windows Hello)
- * for this export (#3433): cancelled/failed → `reauthFailed`, unavailable →
- * `reauthUnavailable`. `exportPassphrase` seals the file. Rejects with a
- * {@link VaultError}.
- */
-export async function exportCredentialVault(
-  masterPassword: string | null,
-  exportPassphrase: string
-): Promise<string> {
-  return await invoke<string>("export_credential_vault", { masterPassword, exportPassphrase });
-}
-
 /** Decrypt a vault file and preview the import without writing anything. */
 export async function previewCredentialVaultImport(
   json: string,
