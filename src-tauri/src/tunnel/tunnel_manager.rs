@@ -1424,7 +1424,41 @@ impl<R: Runtime> TunnelManager<R> {
         let ssh_config = self.resolve_ssh_config(&config.ssh_connection_id)?;
         let conn_id = &config.ssh_connection_id;
         let jumped = !ssh_config.proxy_jump.is_empty();
+        // Where a start waits, for a start that does not end (#6139).
+        tracing::info!(
+            tunnel = %config.id,
+            host = %ssh_config.host,
+            port = ssh_config.port,
+            jumped,
+            timeout_secs = ssh_config.connect_timeout().as_secs(),
+            "Tunnel start: connecting"
+        );
+        let connecting_since = Instant::now();
+        let built = self.build_forwarder_over(config, conn_id, &ssh_config, cancel, jumped);
+        match &built {
+            Ok(_) => tracing::info!(
+                tunnel = %config.id,
+                elapsed_ms = connecting_since.elapsed().as_millis() as u64,
+                "Tunnel start: forwarder up"
+            ),
+            Err(e) => tracing::info!(
+                tunnel = %config.id,
+                elapsed_ms = connecting_since.elapsed().as_millis() as u64,
+                "Tunnel start: ended without a forwarder: {e}"
+            ),
+        }
+        built
+    }
 
+    /// The forwarder of `config` over the SSH session of `ssh_config`.
+    fn build_forwarder_over(
+        &self,
+        config: &TunnelConfig,
+        conn_id: &str,
+        ssh_config: &SshConfig,
+        cancel: CancellationToken,
+        jumped: bool,
+    ) -> Result<(ActiveForwarder, PooledSessionGuards, Option<LivenessWatch>), TerminalError> {
         // The returned [`LivenessWatch`] is the native, event-driven session-death
         // signal the supervisor selects over so a dead SSH session surfaces as
         // `Error` even while the local listener keeps accepting (#1243/#1297, GAP 1).
@@ -1433,7 +1467,7 @@ impl<R: Runtime> TunnelManager<R> {
         match &config.tunnel_type {
             TunnelType::Local(local_config) => {
                 let (session, guards, liveness) =
-                    self.acquire_endpoint(conn_id, &ssh_config, cancel, jumped)?;
+                    self.acquire_endpoint(conn_id, ssh_config, cancel, jumped)?;
                 let f = LocalForwarder::start(local_config, session).map_err(|e| {
                     TerminalError::TunnelError(format!("Failed to start local forwarder: {}", e))
                 })?;
@@ -1441,7 +1475,7 @@ impl<R: Runtime> TunnelManager<R> {
             }
             TunnelType::Dynamic(dynamic_config) => {
                 let (session, guards, liveness) =
-                    self.acquire_endpoint(conn_id, &ssh_config, cancel, jumped)?;
+                    self.acquire_endpoint(conn_id, ssh_config, cancel, jumped)?;
                 let f = DynamicForwarder::start(dynamic_config, session).map_err(|e| {
                     TerminalError::TunnelError(format!("Failed to start dynamic forwarder: {}", e))
                 })?;
@@ -1451,7 +1485,7 @@ impl<R: Runtime> TunnelManager<R> {
                 // Remote forwarding needs tcpip_forward (&mut SshSession), so it always gets
                 // a dedicated connection rather than a pooled shared Arc<SshSession>.
                 let (session, registry, guards) =
-                    self.acquire_dedicated(&ssh_config, cancel, jumped)?;
+                    self.acquire_dedicated(ssh_config, cancel, jumped)?;
                 let f = RemoteForwarder::start(remote_config, session, registry).map_err(|e| {
                     TerminalError::TunnelError(format!("{REMOTE_FORWARD_FAILED}{e}"))
                 })?;
