@@ -3,8 +3,9 @@
 Hand-triggered only (``scripts/internal/product-run.sh``; deselected without
 ``--product-run``). Power monitoring, Monitor local shells and Status bar
 metrics used to sit under Settings ▸ External files ▸ Advanced, where nobody
-looked for them. Since #5775 they have their own Monitoring category in the
-Terminal nav group; the setting keys did not change. (The File browser toggle
+looked for them. Since #5775 they have their own Monitoring category, in the
+Terminal nav group until #5860 and in the Connections group since (monitoring
+is about hosts, R-125); the setting keys did not change. (The File browser toggle
 moved to General in #5786; ``test_product_run_file_browser_setting.py`` grades
 that.)
 
@@ -28,7 +29,7 @@ MONITORING_FIELDS = (
     "settings-status-bar-metrics",
 )
 #: The Settings nav group the Monitoring category sits in (``CATEGORY_GROUPS``).
-MONITORING_GROUP = "terminal"
+MONITORING_GROUP = "connections"
 
 
 def placement_problems(
@@ -67,7 +68,8 @@ class TestProductRunMonitoringCategory(ProductRunUi, SettingsUi, SystemTest):
     def test_01_monitoring_has_its_own_category(self):
         with self.step(
             "settings.monitoring.category",
-            "Host monitoring settings have their own Monitoring category (#5775)",
+            "Host monitoring settings have their own Monitoring category, under Connections "
+            "(#5775, #5860)",
             expect="Settings ▸ Monitoring with Power monitoring, Monitor local shells and "
             "Status bar metrics",
         ):
@@ -84,18 +86,19 @@ class TestProductRunMonitoringCategory(ProductRunUi, SettingsUi, SystemTest):
 
 # ── Per-PR grade checks (no app) ─────────────────────────────────────────────
 def test_the_new_placement_passes():
-    assert placement_problems("terminal", MONITORING_FIELDS, ()) == []
+    assert placement_problems("connections", MONITORING_FIELDS, ()) == []
 
 
 def test_the_old_placement_is_named():
-    problems = placement_problems("connections", (), MONITORING_FIELDS)
-    assert problems[0] == "Monitoring sits in nav group 'connections', want 'terminal'"
+    # Before #5860 it sat in the Terminal group (R-125).
+    problems = placement_problems("terminal", (), MONITORING_FIELDS)
+    assert problems[0] == "Monitoring sits in nav group 'terminal', want 'connections'"
     assert "'toggle-power-monitoring' missing from Monitoring" in problems
     assert "'settings-status-bar-metrics' still under External files" in problems
 
 
 def test_a_missing_field_is_named():
     shown = ("toggle-power-monitoring", "settings-status-bar-metrics")
-    assert placement_problems("terminal", shown, ()) == [
+    assert placement_problems("connections", shown, ()) == [
         "'toggle-monitor-local-shells' missing from Monitoring"
     ]
