@@ -550,8 +550,6 @@ export function Terminal({
         // Where the scrollback this tab repainted ends in the session's output
         // stream (#5990): live output before it is on screen already.
         let replayEnd = NO_REPLAY;
-        /** The newest output stream of the session this tab got output of (#6032). */
-        let outputEpoch = 0;
         // Set by a resumed session's repaint, see `ResumedRepaint`.
         let takeTyped: () => string[] = () => [];
         let beforeFirstOutput: (() => void) | null = null;
@@ -1240,8 +1238,6 @@ export function Terminal({
           });
         };
         const receiveOutput = (data: Uint8Array, position: OutputPosition) => {
-          // An emitter older than #5990 says no position.
-          outputEpoch = Math.max(outputEpoch, position?.epoch ?? 0);
           if (outputDuringRepaint) {
             outputDuringRepaint.push({ data, position });
             return;
@@ -1311,8 +1307,9 @@ export function Terminal({
 
         // Subscribe to exit events via singleton dispatcher
         frontendLog("disconnect", `subscribed exit for session=${sessionId} tab=${tabId}`);
-        // The stream the tab shows: an exit of an older one does not end it (#6032).
-        const shownStream = () => Math.max(replayEnd.epoch, outputEpoch);
+        // The stream the tab repainted: an exit of an older one does not end it
+        // (#6032). Once output of a newer one arrived, the dispatcher knows it too.
+        const shownStream = () => replayEnd.epoch;
         const unsubExit = terminalDispatcher.subscribeExit(
           sessionId,
           (exitCode, endCause) => {
