@@ -3256,6 +3256,9 @@ mod tests {
                 Some(ServiceCause::RemotePortRefused)
             )
         );
+        // Another failure of a remote one is not about its port.
+        let other = TerminalError::TunnelError("Lock error: poisoned".into());
+        assert_eq!(start_reason(&remote, "shop-web", true, &other).cause, None);
         // A local one has no remote port to blame.
         assert_eq!(
             start_reason(&local_on(port), "shop-web", true, &turned_down).cause,

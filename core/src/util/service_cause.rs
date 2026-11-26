@@ -102,6 +102,7 @@ mod tests {
             "Not started: its agent could not start it: The folder ~/fw does not exist."
         ));
         assert!(!says_folder_missing("The folder is fine."));
+        assert!(!says_folder_missing("Port 8080 does not exist."));
         assert!(says_port_in_use(&port_in_use_reason(8080)));
         assert!(!says_port_in_use("Port 8080 cannot be opened: denied"));
     }

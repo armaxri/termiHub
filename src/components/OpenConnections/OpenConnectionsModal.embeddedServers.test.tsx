@@ -105,11 +105,11 @@ describe("OpenConnectionsModal — Embedded servers section", () => {
     container.remove();
   });
 
-  async function renderModal() {
+  async function renderModal(onOpenChange: (open: boolean) => void = () => {}) {
     await act(async () => {
       root.render(
         <TooltipProvider delayDuration={0}>
-          <OpenConnectionsModal open={true} onOpenChange={() => {}} />
+          <OpenConnectionsModal open={true} onOpenChange={onOpenChange} />
         </TooltipProvider>
       );
     });
@@ -163,7 +163,8 @@ describe("OpenConnectionsModal — Embedded servers section", () => {
       embeddedServerStates: { s1: serverState("s1", "running") },
       openServerEditorTab,
     });
-    await renderModal();
+    const onOpenChange = vi.fn();
+    await renderModal(onOpenChange);
     await act(async () => {
       (
         serverRows()[0]?.querySelector(
@@ -173,6 +174,8 @@ describe("OpenConnectionsModal — Embedded servers section", () => {
     });
     expect(openServerEditorTab).toHaveBeenCalledWith("s1");
     expect(useEditorViews.getState().views.s1).toBe("activity");
+    // The panel makes way for the editor.
+    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
   it("Kill-All stops every running server via stopEmbeddedServer", async () => {
