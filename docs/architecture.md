@@ -2165,8 +2165,10 @@ run paths, which take the two views `src/store/slices/automationViews.ts` derive
 - Both execute the stored automation, never the view. The workflow view spells `run-automation` as
   `run-macro` and always carries the `manual` trigger; the same conversion reads the entries of old
   files. Both paths record `AutomationRun`s, one per terminal, and a called automation its own.
-- Several terminals are independent runs, at most 8 at once. Typed keys fan out through
-  `runAutomationOnTargets`, step-by-step runs still through `runWithConcurrency` (#5984).
+- Several terminals are independent runs, at most 8 at once, all through `runAutomationOnTargets`
+  (#5984). A step-by-step run, alone or one of several, is split into `workflowTarget`'s start
+  (show it running, make its seams, or say why it does not run), hooks and settle (record it, say
+  it); a queued target can be stopped too. What is in flight is `workflowRunRegistry.ts`.
 
 The **Automations sidebar** (`src/components/AutomationSidebar/`, slice 6) reads the store directly:
 one list of every automation, run through `runAutomation`, which sends an automation that only
@@ -2177,8 +2179,10 @@ since), and "Cannot run" from `utils/runBlocked.ts`, which the palette and the r
 failed run's toast asks for the editor or the history through window events that
 `AutomationEditorHost` handles, as the stores must not import the views. `runAutomation` asks
 (`RunReplaceDialog`) before a run stops the one in progress, and an On connect trigger never does.
-Runs that type keys and step-by-step runs go on side by side, but never in one terminal: starting one
-where the other kind runs asks too and stops that one there (`runsReplacedBy`, #6042).
+Two runs never type into one terminal (`runsReplacedBy`, #6042): runs that type keys replace each
+other, and a step-by-step run stops only the runs in its own terminals (`stopWorkflowRunsOn`), so
+step-by-step runs on different terminals go on side by side. A run another one stopped says so in its
+History ("“Deploy” was started in this terminal"); one the user stopped names nothing.
 How far a run is has one wording, `utils/runProgress.ts`. What an import left out is
 `Automation.importedInPart`, which the row shows and the editor's Save drops. Closing the last window or
 quitting asks first while an automation runs (`WindowCloseRequest.runs`). The sidebar replaced the
