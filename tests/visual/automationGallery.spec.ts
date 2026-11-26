@@ -105,6 +105,8 @@ const STATES = {
   "run--history": "Find out what ran, when, where and how it ended.",
   "editor--triggers-deleted": "The connection a trigger watched was deleted: see and fix it.",
   "schedules--list": "See what runs by itself and when; turn one off.",
+  "schedules--list-room":
+    "Schedules is open: the automations above still show whole, warnings included (#6115).",
   "schedules--missed": "A scheduled run was missed and one failed: find out why.",
   "schedules--closed": "The section is closed: does anything need attention?",
   "schedules--first-on-long": "Switch on a long one for several connections.",
@@ -1229,6 +1231,53 @@ for (const viewport of WINDOWS) {
         await gap.click();
         await page.locator("[data-testid^='automation-gap-reason-s1']").waitFor();
         await shot(page, "schedules--history", SIDEBAR);
+      });
+
+      test("schedules, with room left for the list (#6115)", async ({ page }) => {
+        // The second automation's schedule cannot run: its row says why.
+        const blockedSecond = {
+          paused: false,
+          schedules: [
+            {
+              ...NIGHTLY,
+              action: { kind: "automation", automationId: "full" },
+              targets: { kind: "connections", connectionIds: ["Work/Old Build Box"] },
+            },
+            HEALTH_CHECK,
+            ARCHIVE,
+          ],
+        };
+        await bootSchedules(page, blockedSecond);
+        await page.locator(id("schedule-blocked-s1")).waitFor();
+        const warning = page.locator(id("automation-next-run-full"));
+        await expect(warning).toContainText("will not run");
+        // Nothing scrolled: the list as it opens shows both rows whole.
+        const list = await page.locator(".automation-sidebar__list").first().boundingBox();
+        for (const row of ["automation-item-keys", "automation-item-full"]) {
+          const box = await page.locator(id(row)).boundingBox();
+          expect(box, row).not.toBeNull();
+          expect(box!.y, `${row} starts in the list`).toBeGreaterThanOrEqual(list!.y - 0.5);
+          expect(box!.y + box!.height, `${row} ends in the list`).toBeLessThanOrEqual(
+            list!.y + list!.height + 0.5
+          );
+        }
+        // The open section keeps room too: its first schedule shows whole.
+        const section = await page.locator(id("schedules-section")).boundingBox();
+        const first = await page.locator(id("schedule-item-s1")).boundingBox();
+        expect(first!.y + first!.height).toBeLessThanOrEqual(section!.y + section!.height + 0.5);
+        await shot(page, "schedules--list-room", SIDEBAR);
+      });
+
+      test("schedules, below a short list that leaves them its room (#6115)", async ({ page }) => {
+        await bootSchedules(page, SCHEDULES, { automations: LIBRARY.slice(0, 1) });
+        // The list is as tall as its one row (and its padding), not half the sidebar.
+        await expect
+          .poll(async () => {
+            const list = await page.locator(".automation-sidebar__list").first().boundingBox();
+            const row = await page.locator(id("automation-item-keys")).boundingBox();
+            return list && row ? list.height - row.height : Infinity;
+          })
+          .toBeLessThan(40);
       });
 
       test("schedules, a deleted connection", async ({ page }) => {
