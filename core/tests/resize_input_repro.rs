@@ -24,15 +24,20 @@ mod resize_input;
 use resize_input::{enabled_rounds, run_rounds, wait_ready, Output, Report, Session};
 
 /// Fail with the whole report when a round did not run its line.
-fn assert_whole(report: &Report) {
-    println!("{}", report.render());
-    let failures = report.failures();
+/// Print every report, then fail when a round of any of them did not run its
+/// line whole: one session's failure must not hide the others' tables.
+fn assert_whole(reports: &[Report]) {
+    for report in reports {
+        println!("{}", report.render());
+    }
+    let failed: Vec<String> = reports
+        .iter()
+        .filter(|r| !r.failures().is_empty())
+        .map(|r| format!("{}: {} of {}", r.label, r.failures().len(), r.rounds.len()))
+        .collect();
     assert!(
-        failures.is_empty(),
-        "{}: {} of {} rounds did not run their line whole (#6078); see the report above",
-        report.label,
-        failures.len(),
-        report.rounds.len()
+        failed.is_empty(),
+        "rounds that did not run their line whole (#6078): {failed:?}; see the reports above"
     );
 }
 
@@ -155,9 +160,7 @@ mod local {
             .map(|bash| measure(bash.label, bash.program, &bash.env, rounds))
             .collect();
         assert!(!reports.is_empty(), "no bash to measure on this machine");
-        for report in &reports {
-            assert_whole(report);
-        }
+        assert_whole(&reports);
     }
 }
 
@@ -202,6 +205,6 @@ mod ssh {
             run_rounds("ssh login shell", &session, rounds)
         });
         ssh.disconnect().await.expect("disconnect cleanly");
-        assert_whole(&report);
+        assert_whole(std::slice::from_ref(&report));
     }
 }
