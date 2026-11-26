@@ -8,6 +8,7 @@ import {
   credentialRestoreStorageOffText,
 } from "@/utils/credentialStorageCopy";
 import { CredentialVaultImportDialog } from "./CredentialVaultImportDialog";
+import "./BackupRestore.css";
 
 /** Why passwords cannot be restored into the current store, or null. */
 function unavailableReason(mode: CredentialStorageMode, status: string | undefined): string | null {
