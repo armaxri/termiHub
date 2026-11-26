@@ -156,7 +156,8 @@ async fn every_attach_of_a_held_session_says_it_is_held() {
         .expect("later");
     assert!(later.held_by_peer);
 
-    manager.reclaim_session("tab-1").await.expect("reclaim");
+    // From the tab that waited: it is folded Evicted too, so it offers Reclaim.
+    manager.reclaim_session("tab-2").await.expect("reclaim");
     assert_eq!(spy.calls_to("reclaim_session").len(), 1);
     let after = manager
         .attach_persistent_tab("conn-1", "tab-4", emitter.clone())
