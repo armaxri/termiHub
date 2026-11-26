@@ -48,6 +48,7 @@ const STATES = {
   "services--search-word": 'Search for what it is: "file server".',
   "services--only-errors": "You pressed the errors: what is wrong, and how to see all again?",
   "services--stop-all": "Stop everything before you leave: what is cut off?",
+  "services--open-connections": "What runs right now, of everything: stop the services?",
   "services--quit": "You quit while someone downloads: what stops?",
   "services--nothing": "You searched for something that is not there.",
   "services--empty": "There is no service yet: what is this for, and make one.",
@@ -675,6 +676,7 @@ const BOTH_ROWS: Partial<Record<State, { tunnels: Row[]; servers: Row[] }>> = {
   "services--only-errors": BOTH,
   "services--stop-all": BOTH,
   "services--quit": BOTH,
+  "services--open-connections": BOTH,
   "services--nothing": BOTH,
   "services--palette": BOTH,
   "services--narrow": BOTH,
@@ -1055,6 +1057,14 @@ for (const viewport of WINDOWS) {
               }
               await page.locator(id("services-stop-all")).click();
               await page.locator(id("confirm-service-lifecycle-dialog")).waitFor();
+              over = true;
+              break;
+            case "services--open-connections":
+              if (!(await page.locator(id("services-open-connections")).isVisible())) {
+                await page.locator(id("services-more")).click();
+              }
+              await page.locator(id("services-open-connections")).click();
+              await page.locator(id("open-connections-services-section")).waitFor();
               over = true;
               break;
             case "services--quit":

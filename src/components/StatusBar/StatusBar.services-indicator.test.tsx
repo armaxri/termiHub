@@ -112,13 +112,14 @@ describe("StatusBar — services indicator (#4498, #5858)", () => {
     useAppStore.setState({ tunnels, tunnelStates });
     act(() => renderStatusBar(root));
     await flushAsync();
-    expect(indicator()!.textContent).toBe("3 running");
+    // What is not known needs a look (#6028, slice 6).
+    expect(indicator()!.textContent).toBe("3 running · 1 needs attention");
     expect(indicator()!.getAttribute("aria-label")).toBe(
-      "2 tunnels and 1 file server running — click to open Services"
+      "2 tunnels and 1 file server running, 1 needs attention — click to open Services"
     );
 
     act(() => useAppStore.setState({ embeddedServerStates: {} }));
-    expect(indicator()!.textContent).toBe("2 running");
+    expect(indicator()!.textContent).toBe("2 running · 1 needs attention");
     act(() => indicator()!.click());
     expect(setSidebarView).toHaveBeenCalledWith("services");
 
@@ -149,6 +150,7 @@ describe("StatusBar — services indicator (#4498, #5858)", () => {
     useAppStore.setState({ embeddedServers: [{ ...server("s1"), host }] });
     act(() => renderStatusBar(root));
     await flushAsync();
-    expect(indicator()).toBeNull();
+    // Not counted as running; it may run there.
+    expect(indicator()?.textContent).toBe("1 needs attention");
   });
 });

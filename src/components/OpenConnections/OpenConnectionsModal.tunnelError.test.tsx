@@ -94,7 +94,7 @@ function erroredState(id: string, error: string): TunnelState {
 
 function tunnelRows(): Element[] {
   const section = Array.from(document.querySelectorAll(".oc-section__title")).find(
-    (t) => t.textContent === "SSH tunnels"
+    (t) => t.textContent === "Services"
   );
   if (!section) return [];
   const sectionEl = section.closest("div")?.parentElement;

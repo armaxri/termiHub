@@ -1,3 +1,4 @@
+import { showServicesView, stopAllServices } from "@/components/ServicesSidebar/servicesView";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import {
   getActivePanelId,
@@ -325,6 +326,9 @@ export const CONTEXT_COMMANDS: Record<string, ContextCommand> = {
     run: continueWaitingAutomation,
   },
   "play-macro": { isAvailable: () => true, run: runOrStopAutomation },
+  // The Services (#6028, slice 6).
+  "show-services": { isAvailable: () => true, run: showServicesView },
+  "stop-all-services": { isAvailable: () => true, run: stopAllServices },
   "close-tab-group": { isAvailable: hasMultipleTabGroups, run: closeActiveTabGroup },
   "next-tab-group": { isAvailable: hasMultipleTabGroups, run: () => cycleTabGroup(1) },
   "prev-tab-group": { isAvailable: hasMultipleTabGroups, run: () => cycleTabGroup(-1) },
