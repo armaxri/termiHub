@@ -39,6 +39,7 @@ const GATE_PATTERNS = [
  */
 const PANEL_CATEGORY: Record<string, SettingsCategory> = {
   "GeneralSettings.tsx": "general",
+  "ConnectionDefaultsSettings.tsx": "connection-defaults",
   "SerialPortSettings.tsx": "serial",
   "AppearanceSettings.tsx": "appearance",
   "TerminalSettings.tsx": "terminal",
@@ -110,7 +111,7 @@ describe("settings registry coverage (#2828)", () => {
   it("discovers gated settings in the panels (sanity check on the extractor)", () => {
     const total = [...GATED_BY_PANEL.values()].reduce((n, keys) => n + keys.size, 0);
     expect(total).toBeGreaterThan(30);
-    expect(GATED_BY_PANEL.get("GeneralSettings.tsx")).toContain("defaultUser");
+    expect(GATED_BY_PANEL.get("ConnectionDefaultsSettings.tsx")).toContain("defaultUser");
   });
 
   it("maps every gated panel to a search category or an explicit, justified exclusion", () => {

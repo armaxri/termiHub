@@ -10,7 +10,7 @@ import { BackupRestoreSettings, restoredOffText } from "./BackupRestoreSettings"
 import { credentialsExportBlockedReason, validateBackupExport } from "./BackupExportDialog";
 import { buildRestoreRequest, defaultChoices } from "./BackupRestoreDialog";
 import { sectionSummary } from "./BackupSectionRow";
-import { KEYCHAIN_EXPORT_UNAVAILABLE_REASON } from "./CredentialVaultBackup";
+import { KEYCHAIN_EXPORT_UNAVAILABLE_REASON } from "./keychainExport";
 import { OS_AUTH_AVAILABLE, OS_AUTH_UNAVAILABLE } from "@/test/osAuthFixtures";
 
 vi.mock("@/services/api", async () => {
