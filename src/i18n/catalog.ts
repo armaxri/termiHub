@@ -1163,6 +1163,8 @@ const en = {
   "automation.wait.until": "Stops at {time} if you do nothing.",
   "automation.wait.stillAsking":
     "The terminal still asks for a password. Type it and press Enter first, or the next keys go into the prompt.",
+  "automation.wait.askedAgain":
+    "The terminal asks for a password again, or it changed since. Type it and press Enter first. While it keeps changing, Continue cannot go on; Stop ends the run.",
   "automation.wait.checking": "Looking at what the terminal prints…",
   "automation.wait.unchecked":
     "It cannot be told yet whether the terminal asks for a password: it still prints. Look at it first, or the next keys may go into a prompt.",

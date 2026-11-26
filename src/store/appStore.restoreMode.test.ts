@@ -65,6 +65,7 @@ import { currentSettingsView } from "./settingsBridge";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { setupAgentsRegion } from "@/test/agentsRegionTestHarness";
+import { flushDebouncedWrites } from "@/utils/debouncedWrites";
 import { saveLastSession, loadLastSession, clearLastSession } from "@/services/lastSessionApi";
 
 setupConnectionsRegion();
@@ -138,6 +139,16 @@ describe("startup restore mode", () => {
 
     it("persists when the mode is ask", async () => {
       await useAppStore.getState().saveLastSession();
+      expect(mockSave).toHaveBeenCalledTimes(1);
+    });
+
+    it("is not saved after it was cleared, and the window closing saves it once (#6094)", async () => {
+      useAppStore.getState().scheduleLastSessionSave();
+      await useAppStore.getState().clearLastSession();
+      await flushDebouncedWrites();
+      expect(mockSave).not.toHaveBeenCalled();
+      useAppStore.getState().scheduleLastSessionSave();
+      await flushDebouncedWrites();
       expect(mockSave).toHaveBeenCalledTimes(1);
     });
 

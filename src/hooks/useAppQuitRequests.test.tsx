@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { debounceWrite } from "@/utils/debouncedWrites";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 
@@ -95,6 +96,16 @@ describe("app quit request (#4296)", () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+  });
+
+  it("writes what waits to be written before it answers (#6094)", async () => {
+    const write = vi.fn();
+    debounceWrite("test-write", 60_000, write);
+    await handleAppQuitRequested();
+    expect(write).toHaveBeenCalledOnce();
+    expect(write.mock.invocationCallOrder[0]).toBeLessThan(
+      quitWindowReady.mock.invocationCallOrder[0]
+    );
   });
 
   it("confirms the quit at once when nothing would be lost", async () => {

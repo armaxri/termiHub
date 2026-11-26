@@ -124,3 +124,36 @@ async fn a_clipboard_failure_is_reported_as_a_typed_failure() {
         other => panic!("expected a typed Failure, got {other:?}"),
     }
 }
+
+/// A host that never answers is not "signing in" (#6062): the sidecar says
+/// `Authenticating` only once the host is reached and trusted.
+#[tokio::test]
+async fn it_does_not_say_authenticating_while_it_dials() {
+    use termihub_core::backends::rdp_sidecar::protocol::{read_message, SidecarMessage};
+    use termihub_core::connection::GraphicalState;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let holder = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.unwrap();
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        drop(socket);
+    });
+    let cfg = config_for(port, 1);
+    let mut ipc_in = tokio::io::empty();
+    let (mut ipc_out, mut said) = tokio::io::duplex(64 * 1024);
+    let result = super::run_session(cfg, &mut ipc_in, &mut ipc_out).await;
+    holder.abort();
+    assert!(result.is_err());
+    drop(ipc_out);
+    let mut states = Vec::new();
+    while let Ok(message) = read_message::<_, SidecarMessage>(&mut said).await {
+        if let SidecarMessage::State(state) = message {
+            states.push(state);
+        }
+    }
+    assert!(
+        !states.contains(&GraphicalState::Authenticating),
+        "it said Authenticating before the host answered: {states:?}"
+    );
+}

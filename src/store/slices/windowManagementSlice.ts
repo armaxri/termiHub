@@ -1,3 +1,4 @@
+import { debounceWrite } from "@/utils/debouncedWrites";
 import { StateCreator } from "zustand";
 
 import type { AppState } from "../appStore";
@@ -49,7 +50,6 @@ import { errorMessage } from "@/utils/errorMessage";
 import { frontendError, frontendLog, frontendWarn } from "@/utils/frontendLog";
 
 /** Debounce timer for reporting a secondary window's layout slice (#1925). */
-let windowLayoutReportTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
  * Window-management slice (ARCH-001/FES-011, appStore god-module split via #2881):
@@ -481,11 +481,9 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
     // report now would push a transient slice to the aggregation authority and
     // nudge the main window to persist it (GAP G5, #1146). Hold until settled.
     if (get().restoreInProgress) return;
-    if (windowLayoutReportTimer) clearTimeout(windowLayoutReportTimer);
-    windowLayoutReportTimer = setTimeout(() => {
-      windowLayoutReportTimer = null;
-      void get().reportOwnWindowLayout();
-    }, LAST_SESSION_SAVE_DEBOUNCE_MS);
+    debounceWrite("window-layout", LAST_SESSION_SAVE_DEBOUNCE_MS, () =>
+      get().reportOwnWindowLayout()
+    );
   },
 
   openNewWindow: async () => {

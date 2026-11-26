@@ -5,6 +5,7 @@ import { useAppStore } from "@/store/appStore";
 import { MAIN_WINDOW_LABEL } from "@/types/window";
 import { quitWindowListening, quitWindowPrompting, quitWindowReady } from "@/services/api";
 import { errorMessage } from "@/utils/errorMessage";
+import { flushDebouncedWrites } from "@/utils/debouncedWrites";
 import { flushPendingDeletes } from "@/utils/undoableDelete";
 import { frontendError } from "@/utils/frontendLog";
 import { subscribeGuarded, useTauriListener } from "./useTauriListener";
@@ -37,6 +38,8 @@ function ownsServices(): boolean {
 export async function handleAppQuitRequested(): Promise<void> {
   // Commit deletes still inside their undo window before the app goes (#5158).
   await flushPendingDeletes();
+  // The last change of the layout or the session, still waiting (#6094).
+  await flushDebouncedWrites();
   const store = useAppStore.getState();
   try {
     if (store.pendingWindowClose?.mode === "quit") {
