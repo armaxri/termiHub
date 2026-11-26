@@ -12,6 +12,7 @@ import {
   typeKeysTiming,
   type TypeKeysStep,
   type WorkflowRunnerDeps,
+  type WorkflowRunResult,
 } from "./workflowRunner";
 import { DEFAULT_FIXED_DELAY_MS, MAX_STEP_DELAY_MS } from "./macroPlayback";
 import { WORKFLOW_FANOUT_CONCURRENCY } from "@/store/slices/workflowFanout";
@@ -547,5 +548,43 @@ describe("runAutomationOnTargets", () => {
     const [result] = await run.done;
     expect(order).toEqual(["settled", "end h"]);
     expect(result?.historyRunId).toBe("h");
+  });
+
+  it("a seam that throws fails its target, which is settled like any other (#6042)", async () => {
+    const settled: string[] = [];
+    const run = runAutomationOnTargets(
+      auto,
+      [0, 1],
+      (t) => ({
+        send: async () => {
+          if (t === 0) throw new Error("the injector broke");
+          return true;
+        },
+      }),
+      {
+        settle: async (i, result) => {
+          settled.push(`${i} ${result.status} ${result.status === "failed" ? result.error : ""}`);
+          return result;
+        },
+      }
+    );
+    const results = await run.done;
+    expect(results.map((r) => r?.status)).toEqual(["failed", "completed"]);
+    expect(settled.sort()).toEqual(["0 failed the injector broke", "1 completed "]);
+  });
+
+  it("deps that cannot be made fail the target, settled (#6042)", async () => {
+    const settle = vi.fn(async (_i: number, result: WorkflowRunResult) => result);
+    const run = runAutomationOnTargets(
+      auto,
+      [0],
+      async () => {
+        throw new Error("no seams");
+      },
+      { settle }
+    );
+    const [result] = await run.done;
+    expect(result).toMatchObject({ status: "failed", stepsCompleted: 0, error: "no seams" });
+    expect(settle).toHaveBeenCalledTimes(1);
   });
 });

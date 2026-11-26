@@ -183,7 +183,10 @@ import { serializeAutomations } from "@/services/automationFileIo";
 import { checkLocalProcess } from "@/services/localProcessApi";
 import { currentSettingsView } from "./settingsBridge";
 import {
+  appendWorkflowOutputLine,
   currentWorkflowOutputContent,
+  dispatchWorkflowOutputOpened,
+  openWorkflowOutputContent,
   setWorkflowTransportForTest,
   stopWorkflowSubscription,
 } from "./workflowRunBridge";
@@ -1853,6 +1856,41 @@ describe("appStore — workflow run slice (#1852)", () => {
         await fan;
         expect(sentOn(sends, "tab-a")).toEqual(["hold\n", "after\n"]);
         expect(sentOn(sends, "tab-b")).toEqual(["w2cmd\n"]);
+      });
+
+      it("a run whose seam throws ends failed, recorded, and frees the way (#6042)", async () => {
+        seedTwoTerminals();
+        registerTerminalInputInjector(async (_tabId, data) => {
+          if (data === "hold\n") throw new Error("the injector broke");
+          return true;
+        });
+        await useAppStore.getState().runWorkflow("w1", { targetTabId: "tab-a" });
+        expect(recordedRuns.map((r) => [r.automationId, r.status, r.error])).toEqual([
+          ["w1", "failed", "the injector broke"],
+        ]);
+        // Nothing is left in flight, so schedules and triggers are not held off.
+        expect(activeWorkflowRunCount()).toBe(0);
+      });
+
+      it("a run beside another keeps that one's output panel (#6042)", async () => {
+        seedTwoTerminals();
+        const { release, waiting } = holdingSends();
+        const first = useAppStore.getState().runWorkflow("w1", { targetTabId: "tab-a" });
+        await waiting.a;
+        await dispatchWorkflowOutputOpened({
+          runId: "beside-run",
+          workflowId: "w1",
+          workflowName: "Workflow w1",
+          program: "make",
+          args: [],
+        });
+        openWorkflowOutputContent("w1", "beside-run");
+        appendWorkflowOutputLine({ id: 0, stream: "stdout", text: "kept" }, "beside-run");
+        await useAppStore.getState().runWorkflow("w2", { targetTabId: "tab-b" });
+        expect(currentWorkflowOutputContent()?.lines.map((l) => l.text)).toEqual(["kept"]);
+        expect(regionView().output).not.toBeNull();
+        release();
+        await first;
       });
 
       it("stop all still stops every run, side by side or not", async () => {
