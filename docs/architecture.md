@@ -1554,6 +1554,11 @@ sequenceDiagram
   keeps the last 1 MiB. A chunk's `offset` and a snapshot's `endOffset` are taken under its lock.
 - `epoch` grows with every new stream, so positions of a session created again under the same id are
   never compared with those of the one before.
+- `terminal-exit` names the stream that ended by its `epoch` too (#6032). An exit of an older
+  stream that arrives after the tab attached to a newer one ends nothing, and the dispatcher drops a
+  buffered one once a newer stream showed output.
+- A persistent session is re-created once at a time (#6033): a second attach waits for the first,
+  then finds the session alive, so its entry and its output route belong to the same stream.
 - Every attach of a daemon-backed session makes the agent send the whole buffer again. Its first
   chunk names the replay (`replay_id`, see [`connection.output`](remote-protocol.md#connectionoutput));
   the I/O task records where it lands (`src-tauri/src/terminal/output_route.rs`) and the capture
@@ -2375,6 +2380,15 @@ off. The preview lists what arrives off and what would start it. The list travel
 restore and becomes `restored-off.json` when it is applied; the next start asks once which entries to
 turn on (`components/RestoredOff/`), and Settings ▸ Backup & restore offers it until it is dealt with.
 HTTP monitors load stopped and macros have no triggers.
+
+A saved connection runs nothing by itself either once it changed elsewhere (#6065,
+`services/savedConnectionTrust.ts`): a restore, an import or a connection file another machine syncs can
+change where it connects, the program it starts here, its initial or reconnect command, its forwarded
+agent or display. What it runs is keyed (`saved:<sha256>` in `workspaceImportAllowlist`, a local
+permission key no file can write); the connections this machine had are confirmed once
+(`saved-baseline:1`), and a save in the editor or the user's Confirm adds one. Until then the last
+session and a workspace hold its tab with what would run, a schedule skips it, and opening it by hand
+shows what would run, or, when nothing runs by itself, is the confirmation.
 
 ```json
 {
@@ -3232,6 +3246,20 @@ model is pure, and the rules live there, not in components:
   dealings (`useEditorTab`: unsaved changes, closing) and the file server's form. What the form may save
   and what it warns of is `fileServerForm.ts` (pure). A password leaves neither the form nor, with
   "Move tabs", its window.
+- **What failed** (slice 10): a tunnel's start keeps the typed connect failure
+  (`TerminalError::from_session_ssh`), so `start_reason` names it by its code, not its words: sign-in
+  refused, host key not trusted, no answer in time, refused, or a remote port the server did not
+  allow. The forwarders count refused targets (`TunnelStats.refused`, `lastRefusedMs`); a running
+  tunnel with refusals says so. A file server checks its folder before it binds (core, so on agents
+  too). An agent's refusal carries no cause, so `agent_start_cause` reads its code, or this family's
+  own sentences. The model names the failing part of the path (`ServiceModel.failing`) for Show path
+  and Activity; Open connections offers the same steps (`ServiceRemedies`).
+- **Activity** is the editor's second sub-tab (`src/components/ServiceActivity`): the same model, the
+  four counters, what happened and, for a file server, its access log. What happened is a ring of 200
+  events per service (`src-tauri/src/agent_service/events.rs`), noted when the `tunnels` or `services`
+  region is published and only when the state or its reason changed; it is kept in memory only, and a
+  service on an agent shows what this computer saw. `get_service_events` reads it. The row and
+  Activity take next steps through one hook (`useServiceNextStep`).
 - **Actions** come in one order with one set of words and keys. An action that cannot act is absent.
   "Open in browser" is absent for a server on another machine's localhost.
 

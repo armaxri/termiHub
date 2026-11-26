@@ -28,6 +28,7 @@
 //! publish). The per-service start/stop control paths — whose event and error
 //! semantics genuinely diverge — stay in their managers.
 
+pub mod events;
 pub mod hosted;
 
 use std::sync::{Arc, Mutex};
@@ -35,7 +36,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Local};
 use tauri::{AppHandle, Manager, Runtime};
-use termihub_core::util::service_cause::ServiceCause;
+use termihub_core::util::service_cause::{says_folder_missing, says_port_in_use, ServiceCause};
 
 use self::hosted::{Away, WaitFor};
 
@@ -153,7 +154,33 @@ pub fn agent_start_error(error: &TerminalError) -> Reason {
         TerminalError::AgentUnsupported(_) => {
             "Not started: its agent is too old to run it. Update the agent.".into()
         }
-        error => format!("Not started: its agent could not start it: {error}").into(),
+        error => Reason::new(
+            format!("Not started: its agent could not start it: {error}"),
+            agent_start_cause(error),
+        ),
+    }
+}
+
+/// What an agent's refusal to start is about, for the remedy beside it (#6028,
+/// slice 10). A typed code where the agent relays one; else the words of this
+/// family's own sentences, which an agent sends as text.
+fn agent_start_cause(error: &TerminalError) -> Option<ServiceCause> {
+    use crate::utils::errors::IpcErrorCode as C;
+    let text = error.display_message();
+    if says_folder_missing(&text) {
+        return Some(ServiceCause::FolderMissing);
+    }
+    if says_port_in_use(&text) {
+        return Some(ServiceCause::PortInUse);
+    }
+    match error.code() {
+        C::AuthFailed | C::AgentAuthFailed | C::InteractionRequired => {
+            Some(ServiceCause::SignInRefused)
+        }
+        C::HostKeyUntrusted => Some(ServiceCause::HostKeyUntrusted),
+        C::Timeout => Some(ServiceCause::ServerSilent),
+        C::Refused | C::Unreachable | C::Dns => Some(ServiceCause::Connection),
+        _ => None,
     }
 }
 
@@ -761,5 +788,40 @@ mod tests {
         assert!(poller.is_running(), "polls on");
         advance_until(|| !poller.is_running()).await;
         assert!(calls.load(Ordering::SeqCst) > 5);
+    }
+
+    #[test]
+    fn an_agent_that_did_not_start_it_says_what_about() {
+        use termihub_core::errors::{ConnectFailureKind, SessionError};
+        let cause = |error: TerminalError| agent_start_error(&error).cause;
+        assert_eq!(
+            cause(TerminalError::RemoteError(
+                "The folder ~/fw does not exist.".into()
+            )),
+            Some(ServiceCause::FolderMissing)
+        );
+        assert_eq!(
+            cause(TerminalError::RemoteError(
+                termihub_core::util::service_cause::port_in_use_reason(69)
+            )),
+            Some(ServiceCause::PortInUse)
+        );
+        assert_eq!(
+            cause(TerminalError::from_session_ssh(SessionError::AuthFailed)),
+            Some(ServiceCause::SignInRefused)
+        );
+        assert_eq!(
+            cause(TerminalError::from_session_ssh(SessionError::Classified {
+                kind: ConnectFailureKind::Timeout,
+                message: "late".into(),
+            })),
+            Some(ServiceCause::ServerSilent)
+        );
+        assert_eq!(cause(TerminalError::RemoteError("disk full".into())), None);
+        let reason = agent_start_error(&TerminalError::RemoteError("disk full".into()));
+        assert_eq!(
+            reason.text,
+            "Not started: its agent could not start it: Remote agent error: disk full"
+        );
     }
 }

@@ -163,4 +163,48 @@ describe("OpenConnectionsModal — errored tunnels (#1240)", () => {
       payload: { id: "t1" },
     });
   });
+
+  it("offers the same remedy as the tunnel's row (#6028, slice 10)", async () => {
+    const openConnectionEditorTab = vi.fn();
+    useAppStore.setState({
+      tunnels: [tunnelConfig("t1", "expose-web")],
+      tunnelStates: {
+        t1: { ...erroredState("t1", "Build Box refused the sign-in."), cause: "signInRefused" },
+      },
+      openConnectionEditorTab,
+    });
+    await renderModal();
+    const row = tunnelRows()[0];
+    expect(row.textContent).toContain("Build Box refused the sign-in.");
+    await act(async () => {
+      row
+        .querySelector<HTMLButtonElement>('[data-testid="oc-service-t1-next-editConnection"]')!
+        .click();
+    });
+    expect(openConnectionEditorTab).toHaveBeenCalledWith("ssh-1");
+  });
+
+  it("says when its target refuses while it runs", async () => {
+    useAppStore.setState({
+      tunnels: [tunnelConfig("t1", "expose-web")],
+      tunnelStates: {
+        t1: {
+          tunnelId: "t1",
+          status: "connected",
+          stats: {
+            bytesSent: 0,
+            bytesReceived: 0,
+            activeConnections: 0,
+            totalConnections: 3,
+            refused: 3,
+            lastRefusedMs: new Date(2026, 10, 26, 14, 20).getTime(),
+          },
+        },
+      },
+    });
+    await renderModal();
+    expect(tunnelRows()[0].textContent).toContain(
+      "example.com:80 refused the connection. Last: 14:20, 3 times."
+    );
+  });
 });

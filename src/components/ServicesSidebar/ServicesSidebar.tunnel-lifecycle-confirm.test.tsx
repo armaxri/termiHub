@@ -84,7 +84,7 @@ async function renderSidebar() {
   await flush();
 }
 
-describe("TunnelSidebar — stop/reconnect confirmation (UX-021)", () => {
+describe("Services, tunnels — stop/reconnect confirmation (UX-021)", () => {
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);

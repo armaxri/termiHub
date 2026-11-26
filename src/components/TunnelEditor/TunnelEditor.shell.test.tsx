@@ -19,6 +19,7 @@ import { leaveField } from "@/test/leaveField";
 import { withTooltip } from "@/test/tooltip";
 import type { TunnelEditorMeta } from "@/types/terminal";
 import type { TunnelConfig, TunnelStatus } from "@/types/tunnel";
+import { useEditorViews } from "@/components/ServiceEditor/editorView";
 import { TunnelEditor } from "./TunnelEditor";
 
 const TAB = "tab-1";
@@ -353,4 +354,33 @@ it("has no accessibility violations, with the kinds, a warning, an error and the
   await press("show-path");
   await press("save-start");
   expect(await checkA11y()).toHaveNoViolations();
+});
+
+describe("Settings and Activity (#6028, slice 9)", () => {
+  const tab = (view: string) => byTestId(`service-editor-view-${view}`) as HTMLElement | null;
+
+  it("a new one has only Settings", async () => {
+    await render({ tunnelType: "local" });
+    expect(tab("activity")).toBeNull();
+    expect(field("activity")).toBeNull();
+  });
+
+  it("a saved one opens where it was asked for, and keeps its draft across both", async () => {
+    seed(DB, "connected");
+    useEditorViews.getState().show("db", "activity");
+    await render({ tunnelId: "db" });
+    expect(tab("activity")!.getAttribute("aria-selected")).toBe("true");
+    expect(field("activity")).not.toBeNull();
+    expect(field("form").hidden).toBe(true);
+    expect(byTestId("service-activity-state")!.textContent).toBe("Running");
+
+    await act(async () => tab("settings")!.click());
+    expect(field("form").hidden).toBe(false);
+    expect(field("activity")).toBeNull();
+    type("name", "Renamed");
+    await act(async () => tab("activity")!.click());
+    await act(async () => tab("settings")!.click());
+    expect(field("name").value).toBe("Renamed");
+    expect(await checkA11y()).toHaveNoViolations();
+  });
 });

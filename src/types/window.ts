@@ -53,6 +53,8 @@ export interface HandoffTab {
   pendingImportedCommand?: string;
   /** Held on an unconfirmed imported inline config (#4434); stays held. */
   pendingImportedConnection?: boolean;
+  /** A held saved connection that changed elsewhere (#6065); stays held. */
+  pendingConnectionChanged?: boolean;
   persistentConnectionId?: string;
   connectionId?: string;
   spawned?: boolean;

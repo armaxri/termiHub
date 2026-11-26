@@ -1,4 +1,5 @@
 import { cancelDebouncedWrite, debounceWrite } from "@/utils/debouncedWrites";
+import { unconfirmedConnectionCheck } from "@/services/savedConnectionTrust";
 import { StateCreator } from "zustand";
 
 import type { AppState } from "../appStore";
@@ -387,7 +388,8 @@ export const createLayoutPersistenceSlice: StateCreator<
         // window the layout spans.
         const trustedGroups = await resolveImportTrust(
           definition.tabGroups,
-          currentSettingsView().workspaceImportAllowlist
+          currentSettingsView().workspaceImportAllowlist,
+          unconfirmedConnectionCheck(resolvedConnections)
         );
         const plan = planWindowRestore(trustedGroups, definition.windows);
         const mainGroups = await restoreWindowedLayout(plan);
@@ -607,9 +609,12 @@ export const createLayoutPersistenceSlice: StateCreator<
         // this spawns nothing and restores every group here (back-compat path).
         // #4434: a held imported command or inline config stays held across a
         // restart unless it was confirmed in the meantime.
+        // #6065: and a saved connection changed elsewhere since it was confirmed
+        // here (a restore, an import, a synced file) does not reopen unasked.
         const trustedGroups = await resolveImportTrust(
           session.tabGroups,
-          currentSettingsView().workspaceImportAllowlist
+          currentSettingsView().workspaceImportAllowlist,
+          unconfirmedConnectionCheck(currentConnectionsView().connections)
         );
         const plan = planWindowRestore(trustedGroups, session.windows);
         if (hasWindowDimension(session.tabGroups, session.windows)) {

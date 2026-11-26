@@ -217,4 +217,12 @@ describe("buildTransferAwareHandoff", () => {
     expect(record.tab).not.toHaveProperty("panelId");
     expect(transferSessionIds).toEqual(["s1"]);
   });
+
+  it("keeps a changed saved connection held in the other window (#6065)", () => {
+    const tab = { ...base, pendingImportedConnection: true, pendingConnectionChanged: true };
+    expect(buildTransferAwareHandoff(tab as TerminalTab).record.tab).toMatchObject({
+      pendingImportedConnection: true,
+      pendingConnectionChanged: true,
+    });
+  });
 });

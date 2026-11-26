@@ -127,6 +127,11 @@ pub struct TerminalExitEvent {
         ts(type = "import(\"./SessionEndCause\").SessionEndCause | null")
     )]
     pub end_cause: Option<SessionEndCause>,
+    /// Which output stream of the session ended (#6032), as `terminal-output`
+    /// carries it: a session created again under the same id has a newer one,
+    /// and a tab attached to that ignores this event if it arrives late.
+    #[cfg_attr(test, ts(type = "number"))]
+    pub epoch: u64,
 }
 
 /// State change event emitted when a persistent session transitions state.
@@ -657,6 +662,14 @@ pub struct SessionManager {
     >,
     /// Registry for persistent sessions, keyed by connection ID.
     pub(super) persistent_sessions: Arc<Mutex<HashMap<String, PersistentRecord>>>,
+    /// The re-creation of a persistent session in progress, keyed by session id
+    /// (#6033): a second attach waits for it, then finds the session alive. See
+    /// [`super::persistent_controller::Recreating`].
+    pub(super) persistent_recreations: super::persistent_controller::Recreations,
+    /// Persistent sessions whose last re-creation another desktop refused as
+    /// held (SM-003), until a Reclaim (#6110): a later attach of the live
+    /// session reports it held too, so its tab is folded `Evicted` as well.
+    pub(super) held_persistent: Arc<StdMutex<HashSet<String>>>,
     /// Cancellation tokens for in-flight (still connecting) local sessions, keyed
     /// by the caller-supplied `connect_id`. Lets a Stop/close while connecting
     /// abort the handshake promptly instead of waiting out the timeout (#952).
@@ -825,6 +838,8 @@ impl SessionManager {
             monitoring_tasks: Arc::new(Mutex::new(HashMap::new())),
             monitoring_overrides: Arc::new(Mutex::new(HashMap::new())),
             persistent_sessions: Arc::new(Mutex::new(HashMap::new())),
+            persistent_recreations: Default::default(),
+            held_persistent: Default::default(),
             connecting: Arc::new(StdMutex::new(HashMap::new())),
             pending_creates: Arc::new(StdMutex::new(Reservations::new())),
             output_buffers: Arc::new(StdMutex::new(HashMap::new())),
@@ -1942,17 +1957,26 @@ impl SessionManager {
             .map(|(sid, _)| sid.clone())
     }
 
-    /// The agent-hosted session bound to a frontend tab, if any (SM-003): its
-    /// agent id and remote (agent) session id, resolved through the tab-id
-    /// identity bridge (#2431).
+    /// The agent-hosted session of a frontend tab, if any (SM-003): its agent id
+    /// and remote (agent) session id, resolved through the tab-id identity
+    /// bridge (#2431) or the persistent session the tab is attached to (#6110).
+    /// Tests read it; Reclaim resolves the session itself.
+    #[cfg(test)]
     pub async fn agent_session_for_tab(&self, tab_id: &str) -> Option<(String, String)> {
-        let session_id = self.session_of_tab(tab_id)?;
+        self.agent_session_of_tab(tab_id)
+            .await
+            .map(|(_, agent_id, remote_session_id)| (agent_id, remote_session_id))
+    }
+
+    /// The tab's agent-hosted session: its desktop session id, agent id and
+    /// remote (agent) session id (#6110).
+    async fn agent_session_of_tab(&self, tab_id: &str) -> Option<(String, String, String)> {
+        let session_id = self.reclaimable_session_of_tab(tab_id).await?;
         let sessions = self.sessions.lock().await;
         let entry = sessions.get(&session_id)?;
-        Some((
-            entry.info.agent_id.clone()?,
-            entry.remote_session_id.clone()?,
-        ))
+        let agent_id = entry.info.agent_id.clone()?;
+        let remote_session_id = entry.remote_session_id.clone()?;
+        Some((session_id, agent_id, remote_session_id))
     }
 
     /// The agent's own session id of each agent-hosted session among
@@ -1979,14 +2003,36 @@ impl SessionManager {
     /// by the daemon's buffer replay. Never called automatically; only from the
     /// user's Reclaim action, so control cannot ping-pong between desktops.
     pub async fn reclaim_session(&self, tab_id: &str) -> Result<(), TerminalError> {
-        let (agent_id, remote_session_id) = self
-            .agent_session_for_tab(tab_id)
+        let (session_id, agent_id, remote_session_id) = self
+            .agent_session_of_tab(tab_id)
             .await
             .ok_or_else(|| TerminalError::SessionNotFound(tab_id.to_string()))?;
         let client = self.agent_manager.clone();
         tokio::task::spawn_blocking(move || client.reclaim_session(&agent_id, &remote_session_id))
             .await
-            .map_err(|e| TerminalError::SpawnFailed(format!("spawn_blocking join: {e}")))?
+            .map_err(|e| TerminalError::SpawnFailed(format!("spawn_blocking join: {e}")))??;
+        // This desktop controls it again (#6110).
+        self.held_persistent
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&session_id);
+        Ok(())
+    }
+
+    /// The session a tab can reclaim: the one bound to it, or the persistent
+    /// session it is attached to (#6110). Only one tab of a session is bound, but
+    /// every tab of a held persistent session is folded `Evicted` and offers
+    /// Reclaim.
+    async fn reclaimable_session_of_tab(&self, tab_id: &str) -> Option<String> {
+        if let Some(session_id) = self.session_of_tab(tab_id) {
+            return Some(session_id);
+        }
+        self.persistent_sessions
+            .lock()
+            .await
+            .values()
+            .find(|record| record.attached_tabs.contains(tab_id))
+            .map(|record| record.session_id.clone())
     }
 
     /// Close a session.
@@ -2875,6 +2921,10 @@ impl SessionManager {
             session_id: session_id.to_string(),
             exit_code,
             end_cause,
+            epoch: capture
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .epoch(),
         };
         emitter.emit_exit(&exit_event);
 

@@ -27,6 +27,7 @@ fn stats(sent: u64, received: u64, active: u32, total: u64) -> TunnelStats {
         bytes_received: received,
         active_connections: active,
         total_connections: total,
+        ..TunnelStats::default()
     }
 }
 

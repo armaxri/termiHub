@@ -1,16 +1,17 @@
-import { useCallback, useMemo } from "react";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { useCallback } from "react";
+import { Plus } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { Button, Toggle, Tooltip, TooltipLines, toast, EmptyState } from "@/components/ui";
+import { Button, ConfirmDialog, EmptyState, Toggle, toast } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
-import { useTunnelDeleteConfirm } from "@/hooks/useTunnelDeleteConfirm";
+import { TunnelListItem } from "@/components/ServicesSidebar/TunnelListItem";
+import { useServiceEntries } from "@/components/ServicesSidebar/useServiceEntries";
+import { useTunnelActions } from "@/components/ServicesSidebar/useTunnelActions";
+import { showServicesView } from "@/components/ServicesSidebar/servicesView";
+import { useServiceLifecycleConfirm } from "@/hooks/useServiceLifecycleConfirm";
+import { t, tf } from "@/i18n/catalog";
 import type { TunnelConfig } from "@/types/tunnel";
-import { useProjectedAgents } from "@/store/useProjectedAgents";
-import { isAgentHost, resolveTunnelHost } from "@/utils/tunnelHost";
-import { serviceStateLabel, tunnelServiceState } from "@/utils/serviceState";
-import { tunnelPortMapping } from "@/utils/tunnelSummary";
-import { TUNNEL_TYPE_KINDS, tunnelTypeHelp } from "@/utils/tunnelTypeHelp";
 import { errorMessage } from "@/utils/errorMessage";
+import { TUNNEL_TYPE_KINDS, tunnelTypeHelp } from "@/utils/tunnelTypeHelp";
 
 interface ConnectionPortForwardingSectionProps {
   /**
@@ -22,26 +23,16 @@ interface ConnectionPortForwardingSectionProps {
 }
 
 /**
- * "Port Forwarding" section of the SSH connection editor (PROD-023).
+ * The tunnels of an SSH connection in its editor (PROD-023; #6028, slice 13).
  *
- * Lists the tunnels bound to this connection (`TunnelConfig.sshConnectionId`)
- * — the **same** tunnel entities the SSH Tunnels sidebar shows, read from the
- * backend-authoritative `tunnels` projection; there is no second store. Add and
- * Edit open the regular Tunnel editor (pre-bound to this connection for a new
- * forward) so validation, run-location and chaining stay in one place; Remove
- * shares the sidebar's delete flow (confirm, "don't ask again" opt-out and the
- * 10 s Undo, #5216); the per-row "Start with
- * connection" toggle binds the forward to this connection's sessions, which
- * start it when a terminal to the host connects.
+ * A view of the same tunnels as Services, with the same rows, words, actions
+ * and editor: each row is the Services row, its buttons do what they do there,
+ * and New tunnel opens the tunnel editor with this connection chosen. Only
+ * "Start with connection" is this section's own, because it is about this
+ * connection. Show in Services opens the Services view.
  *
- * Changes here apply immediately (tunnels are their own saved objects), not on
- * the connection editor's Save.
- *
- * Each forward says in plain words what its type does (#6027); the longer
- * explanation is the type's tooltip and part of its Edit button's description.
- *
- * The hint names the SSH Tunnels sidebar, which is always available since it
- * graduated from the experimental switch (#5858).
+ * Changes apply at once (tunnels are their own saved objects), not on the
+ * connection editor's Save.
  */
 export function ConnectionPortForwardingSection({
   connectionId,
@@ -50,16 +41,18 @@ export function ConnectionPortForwardingSection({
   const tunnelStates = useAppStore((s) => s.tunnelStates);
   const saveTunnel = useAppStore((s) => s.saveTunnel);
   const openTunnelEditorTab = useAppStore((s) => s.openTunnelEditorTab);
-  const { remoteAgents } = useProjectedAgents();
+  const { entries, context } = useServiceEntries(true);
+  const bound = connectionId
+    ? tunnels.filter((tunnel) => tunnel.sshConnectionId === connectionId)
+    : [];
 
-  const bound = useMemo(
-    () => (connectionId ? tunnels.filter((t) => t.sshConnectionId === connectionId) : []),
-    [tunnels, connectionId]
+  const modelOf = useCallback(
+    (id: string) =>
+      entries.find((entry) => entry.model.id === id)?.model ?? { name: t("service.unnamed") },
+    [entries]
   );
-
-  // Same confirm + opt-out + 10 s Undo as the Tunnels sidebar (#5216).
-  const tunnelDelete = useTunnelDeleteConfirm();
-  const handleRemove = tunnelDelete.requestDelete;
+  const lifecycle = useServiceLifecycleConfirm();
+  const actions = useTunnelActions(modelOf, lifecycle.request);
 
   const handleStartWithConnection = useCallback(
     (tunnel: TunnelConfig, startWithConnection: boolean) => {
@@ -72,12 +65,10 @@ export function ConnectionPortForwardingSection({
 
   return (
     <div className="settings-panel__category" data-testid="connection-port-forwarding-section">
-      <h3 className="settings-panel__category-title">Port Forwarding</h3>
+      <h3 className="settings-panel__category-title">{t("service.group.tunnels")}</h3>
       {!connectionId ? (
         <div className="settings-form__hint" data-testid="connection-port-forwarding-unsaved">
-          <p className="port-forwarding__types-intro">
-            Save this connection first, then attach port forwards to it:
-          </p>
+          <p className="port-forwarding__types-intro">{t("connection.tunnels.unsaved")}</p>
           <ul className="port-forwarding__types">
             {TUNNEL_TYPE_KINDS.map((kind) => {
               const help = tunnelTypeHelp(kind);
@@ -92,99 +83,56 @@ export function ConnectionPortForwardingSection({
       ) : (
         <>
           <p className="settings-form__hint" data-testid="connection-port-forwarding-hint">
-            Forwards bound to this connection. They are the same tunnels listed in the SSH Tunnels
-            sidebar, and changes here apply immediately. Forwards marked “Start with connection”
-            come up whenever a terminal to this host connects.
+            {t("connection.tunnels.hint")}{" "}
+            <button
+              type="button"
+              className="port-forwarding__link"
+              onClick={showServicesView}
+              data-testid="connection-port-forwarding-show-services"
+            >
+              {t("connection.tunnels.showServices")}
+            </button>
           </p>
           {bound.length === 0 ? (
             <EmptyState
-              title="No port forwards are attached to this connection yet."
+              title={t("connection.tunnels.none")}
               data-testid="connection-port-forwarding-empty"
             />
           ) : (
-            <ul className="port-forwarding__list">
+            <ul className="port-forwarding__list" aria-label={t("service.group.tunnels")}>
               {bound.map((tunnel) => {
                 const toggleId = `port-forward-start-${tunnel.id}`;
-                const helpId = `port-forward-help-${tunnel.id}`;
-                const status = serviceStateLabel(
-                  tunnelServiceState(tunnelStates[tunnel.id]?.status)
-                );
-                const host = resolveTunnelHost(tunnel);
-                const agentName = isAgentHost(host)
-                  ? remoteAgents.find((a) => a.id === host.agentId)?.name
-                  : undefined;
-                const help = tunnelTypeHelp(tunnel.tunnelType.type, host, agentName);
                 return (
-                  <li
-                    key={tunnel.id}
-                    className="port-forwarding__row"
-                    data-testid={`port-forward-row-${tunnel.id}`}
-                  >
-                    <div className="port-forwarding__info">
-                      <span className="port-forwarding__name">{tunnel.name}</span>
-                      <span className="port-forwarding__mapping">
-                        <Tooltip
-                          content={<TooltipLines lines={help.lines} />}
-                          side="top"
-                          align="start"
-                          data-testid={`port-forward-type-help-${tunnel.id}`}
-                        >
-                          <span
-                            className="port-forwarding__type"
-                            data-testid={`port-forward-type-${tunnel.id}`}
-                          >
-                            {help.label} (<code>{help.flag}</code>)
-                          </span>
-                        </Tooltip>{" "}
-                        · {tunnelPortMapping(tunnel)}
+                  <li key={tunnel.id} className="port-forwarding__row">
+                    <TunnelListItem
+                      tunnel={tunnel}
+                      state={tunnelStates[tunnel.id]}
+                      context={context}
+                      onStart={actions.start}
+                      onStop={actions.stop}
+                      onReconnect={actions.restart}
+                      onEdit={actions.edit}
+                      onActivity={actions.activity}
+                      onDuplicate={actions.duplicate}
+                      onDelete={actions.remove}
+                      onUsePort={actions.usePort}
+                    />
+                    {tunnel.companionOf ? (
+                      <span className="settings-form__hint port-forwarding__start">
+                        {t("connection.tunnels.followsParent")}
                       </span>
-                      <span className="port-forwarding__summary">{help.summary}</span>
-                      <span id={helpId} hidden>
-                        {help.lines.join(" ")}
-                      </span>
-                      <span
-                        className="port-forwarding__status"
-                        data-testid={`port-forward-status-${tunnel.id}`}
-                      >
-                        {status}
-                      </span>
-                    </div>
-                    <div className="port-forwarding__actions">
-                      {tunnel.companionOf ? (
-                        <span className="settings-form__hint">Follows its chained parent</span>
-                      ) : (
-                        <label className="port-forwarding__toggle" htmlFor={toggleId}>
-                          <Toggle
-                            id={toggleId}
-                            checked={tunnel.startWithConnection === true}
-                            onCheckedChange={(checked) =>
-                              handleStartWithConnection(tunnel, checked)
-                            }
-                            data-testid={`port-forward-start-with-connection-${tunnel.id}`}
-                          />
-                          Start with connection
-                        </label>
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="xs"
-                        iconOnly
-                        aria-label={`Edit ${tunnel.name}`}
-                        aria-describedby={helpId}
-                        icon={<Pencil size={12} />}
-                        onClick={() => openTunnelEditorTab(tunnel.id)}
-                        data-testid={`port-forward-edit-${tunnel.id}`}
-                      />
-                      <Button
-                        variant="ghost"
-                        size="xs"
-                        iconOnly
-                        aria-label={`Remove ${tunnel.name}`}
-                        icon={<Trash2 size={12} />}
-                        onClick={() => handleRemove(tunnel.id)}
-                        data-testid={`port-forward-remove-${tunnel.id}`}
-                      />
-                    </div>
+                    ) : (
+                      <label className="port-forwarding__start" htmlFor={toggleId}>
+                        <Toggle
+                          id={toggleId}
+                          checked={tunnel.startWithConnection === true}
+                          onCheckedChange={(checked) => handleStartWithConnection(tunnel, checked)}
+                          aria-label={tf("connection.tunnels.startWith", { name: tunnel.name })}
+                          data-testid={`port-forward-start-with-connection-${tunnel.id}`}
+                        />
+                        {t("connection.tunnels.startWithShort")}
+                      </label>
+                    )}
                   </li>
                 );
               })}
@@ -197,11 +145,18 @@ export function ConnectionPortForwardingSection({
             onClick={() => openTunnelEditorTab(null, { sshConnectionId: connectionId })}
             data-testid="connection-port-forwarding-add"
           >
-            Add port forward
+            {t("connection.tunnels.new")}
           </Button>
         </>
       )}
-      <ConfirmDeleteDialog {...tunnelDelete.dialogProps} />
+      <ConfirmDialog
+        {...lifecycle.dialogProps}
+        variant="danger"
+        confirmVariant="danger"
+        testIdBase="confirm-service-lifecycle"
+        data-testid="confirm-service-lifecycle-dialog"
+      />
+      <ConfirmDeleteDialog {...actions.deleteDialogProps} />
     </div>
   );
 }

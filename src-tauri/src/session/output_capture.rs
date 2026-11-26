@@ -108,6 +108,11 @@ impl OutputCapture {
         }
     }
 
+    /// Which stream of the session this captures (#6032).
+    pub fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
     /// The position the next byte will have.
     pub fn end_offset(&self) -> u64 {
         self.written

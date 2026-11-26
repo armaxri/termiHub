@@ -601,6 +601,9 @@ impl<R: Runtime> EmbeddedServerManager<R> {
             Err(e) => {
                 let reason = if taken {
                     Reason::new(port_in_use_here(asked.port), Some(ServiceCause::PortInUse))
+                } else if !std::path::Path::new(&asked.root_directory).is_dir() {
+                    // "Choose folder" beside it (#6028, slice 10).
+                    Reason::new(plain_reason(&e), Some(ServiceCause::FolderMissing))
                 } else {
                     plain_reason(&e).into()
                 };

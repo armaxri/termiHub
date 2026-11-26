@@ -170,6 +170,16 @@ pub async fn stop_embedded_server(
     off_main_thread(app_handle, move |manager| manager.stop_server(&server_id)).await
 }
 
+/// What happened to a service, a tunnel or a file server (#6028, slice 9), the
+/// oldest first.
+#[tauri::command]
+pub fn get_service_events(
+    service_id: String,
+    events: tauri::State<'_, crate::agent_service::events::ServiceEvents>,
+) -> Vec<crate::agent_service::events::ServiceEvent> {
+    events.of(&service_id)
+}
+
 /// Bring back a server that was just deleted.
 #[tauri::command]
 pub async fn restore_embedded_server(

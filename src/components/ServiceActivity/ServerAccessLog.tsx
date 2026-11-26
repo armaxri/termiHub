@@ -1,14 +1,17 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { Copy, Trash2, X } from "lucide-react";
+import { Copy, Trash2 } from "lucide-react";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import { Button, EmptyState, SearchInput, toast } from "@/components/ui";
-import "./EmbeddedServer.css";
 import { useEmbeddedServerActivity } from "@/hooks/useEmbeddedServerActivity";
 import { formatBytes, formatClockTime } from "@/utils/formatters";
 import { errorMessage } from "@/utils/errorMessage";
 import { t, tf } from "@/i18n/catalog";
 import { itemMatchesQuery } from "@/hooks/useListFilter";
+import type { RemoteAgentDefinition } from "@/types/connection";
 import type { AccessLogEntry, DetailedServerStats, TopEntry } from "@/types/embeddedServer";
+import type { HostChoice } from "@/utils/hostChoice";
+import { isAgentHost } from "@/utils/runLocation";
+import "./ServerAccessLog.css";
 
 /** The agent a server is hosted on, when it runs on one (#3453). */
 export interface ActivityHostAgent {
@@ -24,7 +27,24 @@ interface Props {
   live: boolean;
   /** Set when the server runs on a remote agent rather than this computer. */
   hostAgent?: ActivityHostAgent;
-  onClose: () => void;
+}
+
+/**
+ * The agent `runLocation` points at (#3453). An agent whose capabilities are
+ * unknown (not connected) is not flagged unsupported.
+ */
+export function hostAgentFor(
+  runLocation: HostChoice,
+  agents: readonly Pick<RemoteAgentDefinition, "id" | "name" | "capabilities">[]
+): ActivityHostAgent | undefined {
+  if (!isAgentHost(runLocation)) return undefined;
+  const agent = agents.find((a) => a.id === runLocation.agentId);
+  return {
+    name: agent?.name ?? "the agent",
+    supportsActivity: agent?.capabilities
+      ? agent.capabilities.embeddedServerActivity === true
+      : true,
+  };
 }
 
 /** What the panel says when there is nothing to read. */
@@ -82,11 +102,9 @@ function timeOf(timestamp: string): string {
 
 function StatsGrid({ stats, dropped }: { stats: DetailedServerStats; dropped: number }) {
   const items: [string, string][] = [
+    // Connections and bytes are the counters above it, for both kinds.
     ["Requests", String(stats.totalRequests)],
     ["Errors", String(stats.errors)],
-    ["Active", String(stats.activeConnections)],
-    ["Sent", formatBytes(stats.bytesSent, { maxUnit: "GB" })],
-    ["Received", formatBytes(stats.bytesReceived, { maxUnit: "GB" })],
   ];
   if (dropped > 0) items.push(["Dropped", String(dropped)]);
   return (
@@ -119,11 +137,11 @@ function TopList({ title, items }: { title: string; items: TopEntry[] }) {
 }
 
 /**
- * Expandable per-server activity panel: detailed stats, current transfers, top
- * paths/clients and a filterable, clearable list of requests (PROD-034,
- * PROD-036). Closed from its own heading, which is always there (#6063).
+ * The access log of a file server in its Activity (#6028, slice 9): who is
+ * downloading now, requests and errors, top paths and clients, and a filterable,
+ * clearable list of requests (PROD-034, PROD-036).
  */
-export function EmbeddedServerActivityPanel({ serverId, live, hostAgent, onClose }: Props) {
+export function ServerAccessLog({ serverId, live, hostAgent }: Props) {
   const { view, available, error, clear, retry } = useEmbeddedServerActivity(serverId, live);
   const [filter, setFilter] = useState("");
 
@@ -162,18 +180,6 @@ export function EmbeddedServerActivityPanel({ serverId, live, hostAgent, onClose
       onClick={(e) => e.stopPropagation()}
       onDoubleClick={(e) => e.stopPropagation()}
     >
-      <div className="server-activity__header">
-        <span className="server-activity__title">{t("service.action.activity")}</span>
-        <Button
-          variant="ghost"
-          size="sm"
-          iconOnly
-          aria-label={t("server.activity.close")}
-          icon={<X size={12} />}
-          onClick={onClose}
-          data-testid={`server-activity-close-${serverId}`}
-        />
-      </div>
       {content}
     </div>
   );

@@ -495,6 +495,7 @@ mod tests {
                 bytes_received: 2048,
                 active_connections: 2,
                 total_connections: 10,
+                ..TunnelStats::default()
             },
         );
         let json = serde_json::to_string(&state).unwrap();

@@ -32,12 +32,15 @@ vi.mock("@/components/ui", async () => {
 });
 
 import {
-  EmbeddedServerActivityPanel,
+  ServerAccessLog,
   entryMatches,
   entryToTsv,
+  hostAgentFor,
   type ActivityHostAgent,
-} from "./EmbeddedServerActivityPanel";
+} from "./ServerAccessLog";
 import { TooltipProvider } from "@/components/ui";
+import type { RemoteAgentDefinition } from "@/types/connection";
+import { THIS_COMPUTER } from "@/utils/runLocation";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -98,18 +101,11 @@ function activity(overrides: Partial<ServerActivity> = {}): ServerActivity {
   };
 }
 
-const onClose = vi.fn();
-
 async function renderPanel(live = false, hostAgent?: ActivityHostAgent) {
   await act(async () => {
     root.render(
       <TooltipProvider delayDuration={0}>
-        <EmbeddedServerActivityPanel
-          serverId="srv-1"
-          live={live}
-          hostAgent={hostAgent}
-          onClose={onClose}
-        />
+        <ServerAccessLog serverId="srv-1" live={live} hostAgent={hostAgent} />
       </TooltipProvider>
     );
   });
@@ -119,7 +115,7 @@ function q(testId: string): HTMLElement | null {
   return container.querySelector(`[data-testid="${testId}"]`);
 }
 
-describe("EmbeddedServerActivityPanel", () => {
+describe("ServerAccessLog", () => {
   beforeEach(() => {
     getActivity.mockReset();
     clearActivity.mockReset();
@@ -203,12 +199,12 @@ describe("EmbeddedServerActivityPanel", () => {
     expect(text).toContain("firmware.bin");
   });
 
-  it("has a heading and closes from it", async () => {
+  it("leaves the connections and bytes to the counters above it (slice 9)", async () => {
     getActivity.mockResolvedValue(activity());
     await renderPanel(true);
-    expect(container.querySelector(".server-activity__title")?.textContent).toBe("Activity");
-    act(() => q("server-activity-close-srv-1")!.click());
-    expect(onClose).toHaveBeenCalledOnce();
+    expect(q("server-activity-stat-active")).toBeNull();
+    expect(q("server-activity-stat-sent")).toBeNull();
+    expect(q("server-activity-close-srv-1")).toBeNull();
   });
 
   it("says that nobody has connected yet to a running server", async () => {
@@ -293,6 +289,22 @@ describe("EmbeddedServerActivityPanel", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("hostAgentFor", () => {
+  it("derives the host agent's access-log support from its capabilities", () => {
+    const agent = (caps?: object) =>
+      ({ id: "a", name: "Pi", capabilities: caps }) as unknown as RemoteAgentDefinition;
+    const loc = { kind: "agent" as const, agentId: "a" };
+    expect(hostAgentFor(THIS_COMPUTER, [agent()])).toBeUndefined();
+    expect(hostAgentFor(loc, [agent({ embeddedServerActivity: true })])).toEqual({
+      name: "Pi",
+      supportsActivity: true,
+    });
+    expect(hostAgentFor(loc, [agent({ maxSessions: 1 })])?.supportsActivity).toBe(false);
+    // Unknown capabilities (agent not connected) are not flagged unsupported.
+    expect(hostAgentFor(loc, [agent()])?.supportsActivity).toBe(true);
   });
 });
 
