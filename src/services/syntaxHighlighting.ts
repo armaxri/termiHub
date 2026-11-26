@@ -29,7 +29,12 @@ const MAX_LINE_LENGTH = 10_000;
 /** Default number of logical lines scanned per frame before deferring the rest. */
 const DEFAULT_LINE_BUDGET = 200;
 
-/** onWriteParsed events within the trailing second above this count enter the throttled state. */
+/**
+ * onWriteParsed events within the trailing second above this count enter the throttled state.
+ * xterm fires the event once per parse turn. Output is written in 16 KiB slices (#6080, #6087),
+ * so only more than 16 KiB per frame, about 1 MB/s, turns into several events: a flood, which
+ * is what this limit is for. Output below that is one event per frame, as before.
+ */
 const THROTTLE_WRITES_PER_SEC = 50;
 
 /** Trailing window used to estimate write throughput. */
