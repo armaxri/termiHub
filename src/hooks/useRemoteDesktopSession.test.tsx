@@ -468,6 +468,38 @@ describe("useRemoteDesktopSession", () => {
     expect(h.get().state).toBe("active");
   });
 
+  it("is not active while the helper still dials or signs in (#6062)", async () => {
+    let resolveConnect: (id: string) => void = () => {};
+    mockedConnect.mockReturnValueOnce(new Promise<string>((r) => (resolveConnect = r)));
+    const tabId = addTab();
+    const h = renderSession(tabId);
+    await flush();
+    dispatchState({ state: "connecting" });
+    await act(async () => resolveConnect("rd-1"));
+    await flush();
+    expect(h.get().sessionId).toBe("rd-1");
+    expect(h.get().state).toBe("connecting");
+    act(() => dispatchState({ state: "authenticating" }));
+    expect(h.get().state).toBe("authenticating");
+    act(() => dispatchState({ state: "active" }));
+    expect(h.get().state).toBe("active");
+  });
+
+  it("aborts a session that still signs in, after the connect returned (#6062)", async () => {
+    let resolveConnect: (id: string) => void = () => {};
+    mockedConnect.mockReturnValueOnce(new Promise<string>((r) => (resolveConnect = r)));
+    const tabId = addTab();
+    const h = renderSession(tabId);
+    await flush();
+    dispatchState({ state: "authenticating" });
+    await act(async () => resolveConnect("rd-1"));
+    await flush();
+    act(() => h.get().cancelConnect());
+    expect(mockedDisconnect).toHaveBeenCalledWith("rd-1");
+    expect(h.get().state).toBe("closed");
+    expect(h.get().aborted).toBe(true);
+  });
+
   it("falls back to active when no lifecycle event was seen before connect resolved (#4017)", async () => {
     const tabId = addTab();
     const h = renderSession(tabId);
@@ -1134,6 +1166,43 @@ describe("useRemoteDesktopSession — typed password saved only once connected (
     await flush();
     expect(persist).toHaveBeenCalledTimes(1);
     await expect(outcome).resolves.toBe("persisted");
+  });
+
+  it("writes it only once the helper signed in, not when it started (#6062)", async () => {
+    let resolveConnect: (id: string) => void = () => {};
+    mockedConnect.mockImplementationOnce(
+      () => new Promise<string>((res) => (resolveConnect = res))
+    );
+    const tabId = addTab();
+    const { persist, outcome } = hold(tabId);
+    renderSession(tabId);
+    await flush();
+    dispatchState({ state: "connecting" });
+    resolveConnect("rd-1");
+    await flush();
+    expect(persist).not.toHaveBeenCalled();
+    act(() => dispatchState({ state: "active" }));
+    await flush();
+    expect(persist).toHaveBeenCalledTimes(1);
+    await expect(outcome).resolves.toBe("persisted");
+  });
+
+  it("drops it when the helper's logon is rejected after the connect returned (#6062)", async () => {
+    let resolveConnect: (id: string) => void = () => {};
+    mockedConnect.mockImplementationOnce(
+      () => new Promise<string>((res) => (resolveConnect = res))
+    );
+    const tabId = addTab();
+    const { persist, outcome } = hold(tabId);
+    renderSession(tabId);
+    await flush();
+    dispatchState({ state: "authenticating" });
+    resolveConnect("rd-1");
+    await flush();
+    act(() => dispatchState({ state: "authFailed" }));
+    await flush();
+    expect(persist).not.toHaveBeenCalled();
+    await expect(outcome).resolves.toBe("discarded");
   });
 
   it("drops it when the server rejects the password", async () => {

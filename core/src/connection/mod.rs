@@ -396,6 +396,15 @@ pub trait ConnectionType: Send + Sync {
         None
     }
 
+    /// Whether a graphical session is established only after `connect()`
+    /// returned (#6062): the RDP sidecar dials, negotiates and signs in in its own
+    /// process, and reports its states through
+    /// [`GraphicalBackend::connect_states`]. `false` (the default) for a backend
+    /// that is connected and signed in once `connect()` returns.
+    fn establishes_after_connect(&self) -> bool {
+        false
+    }
+
     /// Watch whether this session has become **files-only** (#4078): the host
     /// refused the interactive shell but the file channel works, so the session
     /// stays up for the file browser and editor instead of ending.

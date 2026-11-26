@@ -702,8 +702,12 @@ impl GraphicalSessionManager {
         // Clipboard Sync off means no remote → local push (#4836).
         let clipboard_sync = clipboard_sync_enabled(&settings);
 
-        // Authenticating → establish.
-        emit_state(&sink, &session_id, GraphicalState::Authenticating, 0, None);
+        // A backend that signs in inside `connect()` is authenticating now; one
+        // that does it afterwards (the RDP helper) says when (#6062).
+        let establishes_later = connection.establishes_after_connect();
+        if !establishes_later {
+            emit_state(&sink, &session_id, GraphicalState::Authenticating, 0, None);
+        }
         // Bounded and cancellable (PARITY2-002, #4298): an unresponsive host, or
         // a peer that accepts TCP but never speaks the protocol, fails after
         // the connect timeout instead of hanging the tab, and closing or
@@ -787,14 +791,14 @@ impl GraphicalSessionManager {
         // before marking active.
         let generation =
             Generation::subscribe(connection.as_ref()).map_err(TerminalError::ConnectionFailed)?;
-
-        {
-            let mut sm = state.lock().await;
-            sm.transport_up();
-            sm.activated();
+        let helper_states = if establishes_later {
+            connection.graphical().and_then(|b| b.connect_states())
+        } else {
+            None
+        };
+        if helper_states.is_none() {
+            activate(&state, &sink, &session_id, type_id).await;
         }
-        emit_state(&sink, &session_id, GraphicalState::Active, 0, None);
-        info!(session_id = %session_id, type_id, "graphical session active");
 
         // The connection is shared with the cert-prompt pump (which drives
         // `send_cert_decision` on auto-accept) and the command handlers.
@@ -803,9 +807,11 @@ impl GraphicalSessionManager {
         let last_size: LastSize = Arc::default();
         let held: SharedHeldInput = Arc::default();
         let last_clipboard: LastClipboard = Arc::default();
+        let establish_failure: EstablishFailure = Arc::default();
 
         // The supervisor runs the frame + cursor (+ RDP cert-prompt) pumps and,
         // after an unexpected drop, the auto-reconnect loop (#3364).
+        let host_for_messages = host.clone();
         let supervisor = Supervisor {
             session_id: session_id.clone(),
             type_id: type_id.to_string(),
@@ -822,17 +828,34 @@ impl GraphicalSessionManager {
             forward_error,
             jitter: self.jitter,
             on_reactivated: self.on_reactivated(&session_id),
-            sink,
+            establish_failure: establish_failure.clone(),
+            sink: sink.clone(),
         };
         // Once the session ends for good (it rests in a terminal or manual-
         // reconnect state), its open side channel is dropped (#4384); a user
         // disconnect aborts this task and drops it in `disconnect`.
         let on_ended = self.on_session_ended(&session_id);
         // Not app-owned (#3105): session-scoped; aborted with the session on close.
-        let tasks = vec![tokio::spawn(async move {
+        let mut tasks = vec![tokio::spawn(async move {
             supervisor.run(generation).await;
             on_ended();
         })];
+        if let Some(helper_states) = helper_states {
+            tasks.push(tokio::spawn(establish(Establishing {
+                session_id: session_id.clone(),
+                type_id: type_id.to_string(),
+                host: host_for_messages.clone(),
+                states: helper_states,
+                state: state.clone(),
+                connection: connection.clone(),
+                pending_cert: pending_cert.clone(),
+                failure: establish_failure,
+                // A backstop: the helper bounds its own dial and sign-in and reports
+                // why it gave up; this only catches a helper that never says.
+                limit: timeout * 2,
+                sink,
+            })));
+        }
 
         let session = GraphicalSession {
             connection,
@@ -1475,6 +1498,106 @@ pub(crate) fn emit_coded_state<S: GraphicalEventSink>(
         message,
         code,
     });
+}
+
+/// Why a session that was never established failed, when the host gave up on it
+/// rather than the backend (#6062): the supervisor rests with this instead.
+pub(crate) type EstablishFailure = Arc<std::sync::Mutex<Option<(String, Option<IpcErrorCode>)>>>;
+
+/// Mark the session `Active` and say so.
+async fn activate<S: GraphicalEventSink>(
+    state: &Arc<Mutex<SessionStateMachine>>,
+    sink: &S,
+    session_id: &str,
+    type_id: &str,
+) {
+    {
+        let mut sm = state.lock().await;
+        sm.transport_up();
+        sm.activated();
+    }
+    emit_state(sink, session_id, GraphicalState::Active, 0, None);
+    info!(session_id = %session_id, type_id, "graphical session active");
+}
+
+/// What [`establish`] follows.
+struct Establishing<S: GraphicalEventSink> {
+    session_id: String,
+    type_id: String,
+    host: String,
+    states: tokio::sync::watch::Receiver<GraphicalState>,
+    state: Arc<Mutex<SessionStateMachine>>,
+    connection: Arc<Mutex<Box<dyn ConnectionType>>>,
+    pending_cert: PendingCert,
+    failure: EstablishFailure,
+    limit: Duration,
+    sink: S,
+}
+
+/// Follow a backend that establishes the session after `connect()` returned (#6062):
+/// `Authenticating` when it signs in, `Active` once it is in, never before. Its
+/// failures end its frame stream, and the supervisor rests the session with their
+/// reason. A backend that says nothing within `limit` fails as timed out; the time a
+/// certificate prompt waits for the user does not count.
+async fn establish<S: GraphicalEventSink>(mut e: Establishing<S>) {
+    let mut deadline = tokio::time::Instant::now() + e.limit;
+    loop {
+        let current = *e.states.borrow_and_update();
+        match current {
+            GraphicalState::Active => {
+                activate(&e.state, &e.sink, &e.session_id, &e.type_id).await;
+                return;
+            }
+            GraphicalState::Authenticating => {
+                let mut sm = e.state.lock().await;
+                if sm.state() == GraphicalState::Connecting {
+                    sm.transport_up();
+                    drop(sm);
+                    emit_state(
+                        &e.sink,
+                        &e.session_id,
+                        GraphicalState::Authenticating,
+                        0,
+                        None,
+                    );
+                }
+            }
+            GraphicalState::Connecting => {}
+            // It gave up; the supervisor tells why once its output ended.
+            _ => return,
+        }
+        tokio::select! {
+            changed = e.states.changed() => {
+                if changed.is_err() {
+                    return;
+                }
+            }
+            _ = tokio::time::sleep_until(deadline) => {
+                if e.pending_cert.lock().await.is_some() {
+                    // The user reads a certificate: wait, then give it a fresh limit.
+                    while e.pending_cert.lock().await.is_some() {
+                        tokio::time::sleep(Duration::from_millis(200)).await;
+                    }
+                    deadline = tokio::time::Instant::now() + e.limit;
+                    continue;
+                }
+                let message = format!(
+                    "Connection to {} timed out after {}s while the remote desktop helper connected \
+                     and signed in. Check that the host and port are correct, the server is \
+                     running, and no firewall is blocking the connection.",
+                    e.host,
+                    e.limit.as_secs()
+                );
+                warn!(session_id = %e.session_id, "graphical session was never established");
+                if let Ok(mut slot) = e.failure.lock() {
+                    *slot = Some((message, Some(IpcErrorCode::Timeout)));
+                }
+                // Ending it ends its frame stream: the supervisor rests the session.
+                let _ = e.connection.lock().await.disconnect().await;
+                return;
+            }
+        }
+    }
 }
 
 /// Pump frame updates from the backend to the session's frame channel until
@@ -2560,3 +2683,7 @@ mod connect_timeout_tests;
 /// The file side channel's place in the session lifecycle (#4384).
 #[path = "graphical_manager_side_channels.rs"]
 mod side_channels;
+
+#[cfg(test)]
+#[path = "graphical_establish_tests.rs"]
+mod establish_tests;
