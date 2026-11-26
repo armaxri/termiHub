@@ -258,10 +258,56 @@ describe("CommandPalette", () => {
       error.mockRestore();
     });
 
+    it("retries what failed and stops what waits, of both kinds (slice 6)", () => {
+      const stats = { bytesSent: 0, bytesReceived: 0, activeConnections: 0, totalConnections: 0 };
+      const startEmbeddedServer = vi.fn(() => Promise.resolve());
+      const stopTunnel = vi.fn(() => Promise.resolve());
+      setStore({
+        startEmbeddedServer,
+        stopTunnel,
+        tunnels: [
+          {
+            id: "db",
+            name: "Shop database",
+            sshConnectionId: "c",
+            tunnelType: { type: "dynamic", config: { localHost: "127.0.0.1", localPort: 1080 } },
+            autoStart: false,
+            reconnectOnDisconnect: true,
+          },
+        ],
+        tunnelStates: { db: { tunnelId: "db", status: "waiting", stats } },
+        embeddedServers: [
+          {
+            id: "web",
+            name: "Release builds",
+            serverType: "http",
+            rootDirectory: "/srv",
+            bindHost: "127.0.0.1",
+            port: 8080,
+            autoStart: false,
+            readOnly: true,
+          },
+        ],
+        embeddedServerStates: { web: { serverId: "web", status: "error", error: "x", stats } },
+      });
+      typeInto("start service: release");
+      expect(activeLabel()).toBe("Start service: Release builds");
+      keydown("Enter");
+      expect(startEmbeddedServer).toHaveBeenCalledWith("web");
+      setStore({ commandPaletteOpen: true });
+      typeInto("stop service: shop");
+      expect(activeLabel()).toBe("Stop service: Shop database");
+      keydown("Enter");
+      expect(stopTunnel).toHaveBeenCalledWith("db");
+    });
+
     it("stops all of them through the sidebar, which asks first (slice 6)", () => {
+      const setSidebarView = vi.fn();
+      setStore({ setSidebarView, sidebarView: "files", sidebarCollapsed: false });
       typeInto("stop all services");
       keydown("Enter");
       expect(useServicesView.getState().stopAllRequested).toBe(true);
+      expect(setSidebarView).toHaveBeenCalledWith("services");
       useServicesView.getState().takeStopAll();
     });
 

@@ -144,6 +144,19 @@ describe("StatusBar — services indicator (#4498, #5858)", () => {
     expect(indicator()!.getAttribute("aria-label")).toBe("1 error — click to open Services");
   });
 
+  it("says errors and what else needs a look together (#6028, slice 6)", async () => {
+    const at = (status: string) => ({ status, stats: STATS });
+    const states = { a: at("error"), b: at("notReachable") } as never;
+    useAppStore.setState({
+      tunnels: ["a", "b"].map(tunnel),
+      tunnelStates: states,
+      embeddedServerStates: {},
+    });
+    act(() => renderStatusBar(root));
+    await flushAsync();
+    expect(indicator()!.textContent).toBe("2 need attention");
+  });
+
   it("does not count what ran on a removed agent (#6076)", async () => {
     const host = { kind: "agent", agentId: "removed" } as never;
     seedAgentsRegion({ remoteAgents: [] });
