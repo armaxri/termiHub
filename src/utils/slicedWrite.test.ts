@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Terminal } from "@xterm/xterm";
-import { WRITE_SLICE_BYTES, writeSliced } from "./slicedWrite";
+import { WRITE_SLICE_BYTES, writeAllSliced, writeSliced } from "./slicedWrite";
 import { TerminalOutputFlow } from "./terminalFlowControl";
 
 describe("writeSliced", () => {
@@ -92,6 +92,25 @@ describe("writeSliced", () => {
     hidden.mockReturnValue(false);
     writeSliced(t, batch, onParsed);
     expect(t.writes).toHaveLength(4);
+  });
+
+  it("writes a whole scrollback in slices and says once when all of it is parsed (#6087)", () => {
+    const t = target();
+    const done = vi.fn();
+    writeAllSliced(t, "é".repeat(WRITE_SLICE_BYTES), done);
+    expect(t.writes.map((w) => w.length)).toEqual([WRITE_SLICE_BYTES, WRITE_SLICE_BYTES]);
+    t.callbacks[0]();
+    expect(done).not.toHaveBeenCalled();
+    t.callbacks[1]();
+    expect(done).toHaveBeenCalledOnce();
+    writeAllSliced(t, new Uint8Array(), done);
+    expect(done).toHaveBeenCalledTimes(1);
+    t.callbacks[2]();
+    expect(done).toHaveBeenCalledTimes(2);
+  });
+
+  it("throws what the terminal refused a scrollback with, as one write did (#6087)", () => {
+    expect(() => writeAllSliced(target(1), bytes(2 * WRITE_SLICE_BYTES), () => {})).toThrow("full");
   });
 
   it("keeps a multibyte character that a slice boundary splits", async () => {

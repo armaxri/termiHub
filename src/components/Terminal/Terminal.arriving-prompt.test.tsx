@@ -397,6 +397,23 @@ describe("Continue sees a prompt that has arrived (#6070)", () => {
     await heldBack(state);
   });
 
+  it("behind a large repaint that xterm takes in slices (#6087)", async () => {
+    const state = startWait();
+    let shown = (_: unknown) => {};
+    mockReplay.mockReturnValue(new Promise((resolve) => (shown = resolve)));
+    lose();
+    regain();
+    pressContinue();
+    terminals.block = true;
+    const repaint = encoder.encode(`${"x".repeat(60_000)}\r\n${PROMPT}`);
+    await act(async () => shown({ data: repaint, endOffset: streamed, epoch: 1 }));
+    // The repaint is several writes, and nothing decides before the last one.
+    expect(engine().queued.length).toBeGreaterThan(2);
+    expect(state.result).toBeUndefined();
+    engine().unblock();
+    await heldBack(state);
+  });
+
   it("which a repaint that began meanwhile drops and shows again", async () => {
     const state = startWait();
     terminals.block = true;
