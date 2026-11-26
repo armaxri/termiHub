@@ -199,7 +199,11 @@ describe("Terminal — backend-driven agent reconnect (#2476)", () => {
     expect(mockCreateTerminal).not.toHaveBeenCalled();
     // Terminal I/O re-attaches to the backend-chosen id.
     expect(mockSubscribeOutput).toHaveBeenCalledWith("agent-new", expect.any(Function));
-    expect(mockSubscribeExit).toHaveBeenCalledWith("agent-new", expect.any(Function));
+    expect(mockSubscribeExit).toHaveBeenCalledWith(
+      "agent-new",
+      expect.any(Function),
+      expect.any(Function)
+    );
   });
 
   it("settles disconnected on backend give-up, never calling the client engine", async () => {

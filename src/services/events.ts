@@ -2,6 +2,7 @@
  * Tauri event listener setup.
  */
 
+import { frontendLog } from "@/utils/frontendLog";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import type { AppUpdateProgress } from "@/types/generated/AppUpdateProgress";
 import { TAURI_EVENT } from "./eventNames";
@@ -328,9 +329,25 @@ export interface OutputHold {
   release: () => void;
 }
 
+/** An exit subscriber and the stream it shows, if it says. */
+interface ExitSubscriber {
+  callback: TerminalExitCallback;
+  streamEpoch?: () => number;
+}
+
+/** Whether the exit of stream `epoch` (`null`: not said) ends what `sub` shows. */
+function endsStream(sub: ExitSubscriber, epoch: number | null): boolean {
+  return epoch === null || !sub.streamEpoch || epoch >= sub.streamEpoch();
+}
+
 export class TerminalOutputDispatcher {
   private outputCallbacks = new Map<string, Set<TerminalOutputCallback>>();
-  private exitCallbacks = new Map<string, Set<TerminalExitCallback>>();
+  private exitCallbacks = new Map<string, Set<ExitSubscriber>>();
+  /**
+   * The newest output stream seen of each session (#6032): an exit of an older
+   * one is on its way late and ends nothing.
+   */
+  private newestEpoch = new Map<string, number>();
   /** Buffer output for sessions whose subscriber hasn't registered yet. */
   private pendingOutput = new Map<string, OutputChunk[]>();
   /** The output collected for each tab that holds a session (#5990). */
@@ -345,7 +362,7 @@ export class TerminalOutputDispatcher {
   /** Buffer exit events for sessions whose subscriber hasn't registered yet. */
   private pendingExit = new Map<
     string,
-    { exitCode: number | null; endCause: SessionEndCause | null }
+    { exitCode: number | null; endCause: SessionEndCause | null; epoch: number | null }
   >();
   private unlistenOutput: UnlistenFn | null = null;
   private unlistenExit: UnlistenFn | null = null;
@@ -387,6 +404,7 @@ export class TerminalOutputDispatcher {
         const chunk = base64ToBytes(data);
         const holds = this.heldOutput.get(session_id);
         const position = { offset, epoch };
+        this.noteStream(session_id, epoch);
         for (const hold of holds ?? []) hold.push({ data: chunk, position });
         if (cbs && cbs.size > 0) {
           for (const cb of cbs) cb(chunk, position);
@@ -414,6 +432,13 @@ export class TerminalOutputDispatcher {
       const { session_id, exit_code } = event.payload;
       // Older emitters (an agent-proxied session) may omit the cause (#5696).
       const endCause = event.payload.end_cause ?? null;
+      // And which stream ended (#6032): then it is taken as the current one.
+      const epoch = event.payload.epoch ?? null;
+      if (epoch !== null && epoch < (this.newestEpoch.get(session_id) ?? 0)) {
+        frontendLog("disconnect", `ignored the exit of an older stream of ${session_id}`);
+        return;
+      }
+      this.newestEpoch.delete(session_id);
       // The session is gone: drop any pre-subscribe output still buffered for it.
       // A session that exits before (or without) a subscriber ever attaching would
       // otherwise keep its buffered output alive forever (#2073). The scrollback a
@@ -422,11 +447,13 @@ export class TerminalOutputDispatcher {
       this.pendingOutput.delete(session_id);
       const cbs = this.exitCallbacks.get(session_id);
       if (cbs && cbs.size > 0) {
-        for (const cb of cbs) cb(exit_code, endCause);
+        for (const sub of [...cbs]) {
+          if (endsStream(sub, epoch)) sub.callback(exit_code, endCause);
+        }
       } else {
         // Buffer the exit for sessions whose subscriber hasn't registered yet
         // (e.g. race between session death and tab reattach setup).
-        this.pendingExit.set(session_id, { exitCode: exit_code, endCause });
+        this.pendingExit.set(session_id, { exitCode: exit_code, endCause, epoch });
       }
     });
 
@@ -475,27 +502,45 @@ export class TerminalOutputDispatcher {
     };
   }
 
-  /** Subscribe to exit events for a specific session. Returns an unsubscribe function. */
-  subscribeExit(sessionId: string, callback: TerminalExitCallback): () => void {
+  /**
+   * Subscribe to exit events for a specific session. Returns an unsubscribe function.
+   *
+   * `streamEpoch` says which output stream of the session the subscriber shows
+   * (#6032): the exit of an older one does not end it.
+   */
+  subscribeExit(
+    sessionId: string,
+    callback: TerminalExitCallback,
+    streamEpoch?: () => number
+  ): () => void {
     let cbs = this.exitCallbacks.get(sessionId);
     if (!cbs) {
       cbs = new Set();
       this.exitCallbacks.set(sessionId, cbs);
     }
-    cbs.add(callback);
+    const sub: ExitSubscriber = { callback, streamEpoch };
+    cbs.add(sub);
     // Fire any exit that arrived before this subscriber registered
-    if (this.pendingExit.has(sessionId)) {
-      const { exitCode, endCause } = this.pendingExit.get(sessionId)!;
+    const pending = this.pendingExit.get(sessionId);
+    if (pending && endsStream(sub, pending.epoch)) {
       this.pendingExit.delete(sessionId);
-      callback(exitCode, endCause);
+      callback(pending.exitCode, pending.endCause);
     }
     return () => {
       const set = this.exitCallbacks.get(sessionId);
       if (set) {
-        set.delete(callback);
+        set.delete(sub);
         if (set.size === 0) this.exitCallbacks.delete(sessionId);
       }
     };
+  }
+
+  /** A stream of `sessionId` showed output: an exit of an older one waiting here is stale. */
+  private noteStream(sessionId: string, epoch: number): void {
+    if (epoch <= (this.newestEpoch.get(sessionId) ?? 0)) return;
+    this.newestEpoch.set(sessionId, epoch);
+    const pending = this.pendingExit.get(sessionId);
+    if (pending?.epoch != null && pending.epoch < epoch) this.pendingExit.delete(sessionId);
   }
 
   /** Discard any buffered exit for a session (call at the start of a fresh reattach to clear stale exits). */
@@ -568,6 +613,7 @@ export class TerminalOutputDispatcher {
     this.pendingOutput.clear();
     this.heldOutput.clear();
     this.pendingExit.clear();
+    this.newestEpoch.clear();
     this.initPromise = null;
   }
 }

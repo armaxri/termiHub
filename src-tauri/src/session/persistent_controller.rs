@@ -27,8 +27,10 @@
 //! remains a field on the manager.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
+use tokio::sync::{Mutex, OwnedMutexGuard};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
@@ -61,6 +63,51 @@ const CATCH_UP_POLL: Duration = Duration::from_millis(5);
 /// mirrors the persistent-session operation that previously lived inline on the
 /// manager and delegates back to the manager for the shared session-lifecycle
 /// primitives (`create_connection`, `close_session`, `run_output_reader`).
+/// The re-creations in progress, keyed by session id (#6033).
+pub(super) type Recreations = Arc<StdMutex<HashMap<String, Arc<Mutex<()>>>>>;
+
+/// Holds the re-creation of one persistent session; the entry goes when nobody
+/// else waits for it.
+pub(super) struct Recreating {
+    recreations: Recreations,
+    session_id: String,
+    guard: OwnedMutexGuard<()>,
+}
+
+impl Recreating {
+    /// Wait for a re-creation of `session_id` in progress, then hold it.
+    async fn begin(recreations: &Recreations, session_id: &str) -> Self {
+        let lock = recreations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .entry(session_id.to_string())
+            .or_default()
+            .clone();
+        Self {
+            recreations: recreations.clone(),
+            session_id: session_id.to_string(),
+            guard: lock.lock_owned().await,
+        }
+    }
+}
+
+impl Drop for Recreating {
+    fn drop(&mut self) {
+        let mut recreations = self
+            .recreations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // The map and this guard hold it: nobody else waits. A waiter takes its
+        // clone under the same lock, so it cannot appear in between.
+        let unwaited = recreations.get(&self.session_id).is_some_and(|lock| {
+            Arc::ptr_eq(lock, OwnedMutexGuard::mutex(&self.guard)) && Arc::strong_count(lock) == 2
+        });
+        if unwaited {
+            recreations.remove(&self.session_id);
+        }
+    }
+}
+
 pub(super) struct PersistentController<'a> {
     manager: &'a SessionManager,
 }
@@ -286,6 +333,12 @@ impl<'a> PersistentController<'a> {
 
         // Phase 2: Check if the backend session is alive. If not, try to re-create
         // the RemoteProxy by reconnecting to the surviving daemon on the agent.
+        // One re-creation per session at a time (#6033): two would each register
+        // an output route and insert an entry, and the entry could end up with
+        // the one whose route gets nothing. A second attach waits here, then finds
+        // the session alive; after a failed one it tries itself.
+        let _recreating =
+            Recreating::begin(&self.manager.persistent_recreations, &session_id).await;
         let session_alive = self.manager.sessions.lock().await.contains_key(&session_id);
         let mut held_by_peer = false;
         if !session_alive {
@@ -775,5 +828,31 @@ mod buffer_place_tests {
                 "old id {old}"
             );
         }
+    }
+
+    /// A re-creation that somebody waits for stays held for them, also against a
+    /// third attach; the entry goes once nobody waits (#6033).
+    #[tokio::test]
+    async fn a_re_creation_is_held_for_whoever_waits_for_it() {
+        let recreations = Recreations::default();
+        let first = Recreating::begin(&recreations, "sess-1").await;
+        let second = tokio::spawn({
+            let recreations = recreations.clone();
+            async move { Recreating::begin(&recreations, "sess-1").await }
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        drop(first);
+        let second = second.await.unwrap();
+
+        let third = tokio::time::timeout(
+            Duration::from_millis(50),
+            Recreating::begin(&recreations, "sess-1"),
+        )
+        .await;
+        assert!(third.is_err(), "a third attach ran beside the second");
+        drop(second);
+
+        drop(Recreating::begin(&recreations, "sess-1").await);
+        assert!(recreations.lock().unwrap().is_empty());
     }
 }

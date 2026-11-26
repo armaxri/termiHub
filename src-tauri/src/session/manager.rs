@@ -127,6 +127,11 @@ pub struct TerminalExitEvent {
         ts(type = "import(\"./SessionEndCause\").SessionEndCause | null")
     )]
     pub end_cause: Option<SessionEndCause>,
+    /// Which output stream of the session ended (#6032), as `terminal-output`
+    /// carries it: a session created again under the same id has a newer one,
+    /// and a tab attached to that ignores this event if it arrives late.
+    #[cfg_attr(test, ts(type = "number"))]
+    pub epoch: u64,
 }
 
 /// State change event emitted when a persistent session transitions state.
@@ -657,6 +662,10 @@ pub struct SessionManager {
     >,
     /// Registry for persistent sessions, keyed by connection ID.
     pub(super) persistent_sessions: Arc<Mutex<HashMap<String, PersistentRecord>>>,
+    /// The re-creation of a persistent session in progress, keyed by session id
+    /// (#6033): a second attach waits for it, then finds the session alive. See
+    /// [`super::persistent_controller::Recreating`].
+    pub(super) persistent_recreations: super::persistent_controller::Recreations,
     /// Cancellation tokens for in-flight (still connecting) local sessions, keyed
     /// by the caller-supplied `connect_id`. Lets a Stop/close while connecting
     /// abort the handshake promptly instead of waiting out the timeout (#952).
@@ -825,6 +834,7 @@ impl SessionManager {
             monitoring_tasks: Arc::new(Mutex::new(HashMap::new())),
             monitoring_overrides: Arc::new(Mutex::new(HashMap::new())),
             persistent_sessions: Arc::new(Mutex::new(HashMap::new())),
+            persistent_recreations: Default::default(),
             connecting: Arc::new(StdMutex::new(HashMap::new())),
             pending_creates: Arc::new(StdMutex::new(Reservations::new())),
             output_buffers: Arc::new(StdMutex::new(HashMap::new())),
@@ -2875,6 +2885,10 @@ impl SessionManager {
             session_id: session_id.to_string(),
             exit_code,
             end_cause,
+            epoch: capture
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .epoch(),
         };
         emitter.emit_exit(&exit_event);
 
