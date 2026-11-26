@@ -58,13 +58,14 @@
 }
 
 /* Grouped nav (#5561): sentence-case group headings over tighter rows, so the
-   four always-open groups fit a 1280x800 window; Advanced folds away. */
+   always-open groups fit a 1280x800 window; Advanced folds away. Rows stay 28px
+   tall (above the 24px target size) with the groups by object of #5860. */
 .settings-nav--grouped {
   gap: var(--spacing-xs);
 }
 
 .settings-nav--grouped .settings-nav__item {
-  padding: var(--spacing-xs-sm) var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
 }
 
 .settings-nav__group {

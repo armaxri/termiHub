@@ -33,6 +33,7 @@ import {
   Check,
   CalendarClock,
   Activity,
+  Network,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
@@ -63,6 +64,7 @@ import {
   settingsFieldIdFor,
 } from "./settingsSavedAck";
 import { GeneralSettings, type SettingsUpdate } from "./GeneralSettings";
+import { ConnectionDefaultsSettings } from "./ConnectionDefaultsSettings";
 import { SessionSettings } from "./SessionSettings";
 import { SafetyPromptSettings } from "./SafetyPromptSettings";
 import { XServerSettings } from "./XServerSettings";
@@ -104,6 +106,7 @@ const EditorSettingsSection = lazy(() =>
 
 const SETTINGS_ICONS: Record<SettingsCategory, LucideIcon> = {
   general: Settings2,
+  "connection-defaults": Network,
   appearance: Palette,
   terminal: TerminalSquare,
   serial: Cable,
@@ -454,6 +457,13 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
   const sections: Record<SettingsCategory, (fields?: Set<string>) => ReactNode> = {
     general: (fields) => (
       <GeneralSettings settings={settings} onChange={handleSettingsChange} visibleFields={fields} />
+    ),
+    "connection-defaults": (fields) => (
+      <ConnectionDefaultsSettings
+        settings={settings}
+        onChange={handleSettingsChange}
+        visibleFields={fields}
+      />
     ),
     appearance: (fields) => (
       <AppearanceSettings
