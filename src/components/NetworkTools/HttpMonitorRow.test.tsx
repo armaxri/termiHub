@@ -23,7 +23,14 @@ const monitor = (over: Partial<HttpMonitorState> = {}): HttpMonitorState => ({
   ...over,
 });
 
-function render(m: HttpMonitorState, runsOn?: string) {
+const steps = vi.fn();
+
+function render(
+  m: HttpMonitorState,
+  runsOn?: string,
+  nextSteps: { id: "connectAgent" | "setUpAgain"; label: string }[] = [],
+  runs = { pause: !m.paused && m.running, resume: m.paused || !m.running, stop: m.running }
+) {
   const noop = vi.fn();
   act(() =>
     root.render(
@@ -36,6 +43,9 @@ function render(m: HttpMonitorState, runsOn?: string) {
           onResume={noop}
           onStop={noop}
           onRemove={noop}
+          runs={runs}
+          nextSteps={nextSteps}
+          onNextStep={steps}
         />
       )
     )
@@ -57,20 +67,52 @@ describe("HttpMonitorRow", () => {
   it("names the agent it runs on, and its state in the words of a service", () => {
     render(monitor({ status: "running" }), "Edge box");
     expect(container.textContent).toContain("on Edge box");
-    expect(text("monitor-state-m")).toBe("running");
+    expect(text("monitor-state-m")).toBe("Running");
   });
 
   it("says why it does not check now", () => {
     const why = "Its agent is offline. It may still run there; termiHub cannot tell.";
     render(monitor({ running: false, status: "notReachable", reason: why }), "Edge box");
-    expect(text("monitor-state-m")).toBe("not reachable");
+    expect(text("monitor-state-m")).toBe("Not reachable");
     expect(text("monitor-reason-m")).toBe(why);
   });
 
   it("a paused one says paused, and one here names no machine", () => {
     render(monitor({ paused: true, status: "running" }));
-    expect(text("monitor-state-m")).toBe("paused");
+    expect(text("monitor-state-m")).toBe("Paused");
     expect(container.textContent).not.toContain(" on ");
     expect(text("monitor-reason-m")).toBeUndefined();
+  });
+
+  it("its actions say what they do, on one line of their own (F-009)", () => {
+    render(monitor({ status: "running" }));
+    const actions = container.querySelector('[data-testid="monitor-actions-m"]')!;
+    const words = [...actions.querySelectorAll("button")].map((b) => b.textContent);
+    expect(words).toEqual(["Show checks", "Pause", "Stop", "Delete"]);
+  });
+
+  it("offers only what can be done now", () => {
+    render(monitor({ status: "stopping" }), "Edge box", [], {
+      pause: false,
+      resume: false,
+      stop: false,
+    });
+    const words = [...container.querySelectorAll('[data-testid="monitor-actions-m"] button')].map(
+      (b) => b.textContent
+    );
+    expect(words).toEqual(["Show checks", "Delete"]);
+  });
+
+  it("a reason comes with its next step", () => {
+    const why = "Not started: termiHub cannot read where it runs.";
+    render(monitor({ running: false, status: "error", reason: why }), undefined, [
+      { id: "setUpAgain", label: "Set it up again" },
+    ]);
+    const step = container.querySelector<HTMLButtonElement>(
+      '[data-testid="monitor-step-setUpAgain-m"]'
+    )!;
+    expect(step.textContent).toBe("Set it up again");
+    act(() => step.click());
+    expect(steps).toHaveBeenCalledWith("setUpAgain", "m");
   });
 });
