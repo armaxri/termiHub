@@ -29,6 +29,7 @@ import {
 } from "./workflowRunOnTarget";
 import {
   cancelAllWorkflowRuns,
+  activeWorkflowRunCount,
   cancelWorkflowRunById,
   holdWorkflowFanout,
   stopWorkflowRunsOn,
@@ -376,9 +377,12 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
       const line = describeFanoutProgress(statuses);
       toast.loading(title, { id: toastId, description: note ? `${line} — ${note}` : line });
     };
-    // One clean output panel for the whole fan-out; targets then preserve it.
-    clearWorkflowOutputContent();
-    void dispatchWorkflowDismissOutput();
+    // One clean output panel for the whole fan-out; targets then preserve it. A run
+    // beside it in another terminal keeps its panel (#6042).
+    if (activeWorkflowRunCount() === 0) {
+      clearWorkflowOutputContent();
+      void dispatchWorkflowDismissOutput();
+    }
     claimWorkflowRunToast(toastId);
     renderProgress();
 

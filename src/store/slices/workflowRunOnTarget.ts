@@ -81,7 +81,7 @@ import { automationForRun, recordAutomationRun } from "./automationStoreState";
 import { collectNestedRun, nestedRunRecord, workflowToAutomation } from "./automationViews";
 import type { LocalProcessAuthDecision, WorkflowRunOutputLine } from "./workflowsSlice";
 import { stepProgress } from "@/utils/runProgress";
-import { forgetWorkflowRun, holdWorkflowRun } from "./workflowRunRegistry";
+import { activeWorkflowRunCount, forgetWorkflowRun, holdWorkflowRun } from "./workflowRunRegistry";
 
 /**
  * Default timeout (ms) applied to a `run-local-process` step from the frontend.
@@ -684,6 +684,8 @@ export function workflowTarget(run: WorkflowTargetRun, cancel: () => void): Work
     const notRun = notStarted();
     if (notRun) return { notRun };
     startedAt = new Date().toISOString();
+    // Another run in flight, in another terminal (#6042): its output panel stays.
+    const beside = activeWorkflowRunCount() > 0;
     if (!fanout) {
       claimWorkflowRunToast(toastId);
       toast.loading(`Running automation “${workflow.name}”…`, {
@@ -694,8 +696,8 @@ export function workflowTarget(run: WorkflowTargetRun, cancel: () => void): Work
       // starts; a new panel is created lazily only if this run spawns a local
       // process (#1865). The projected panel is reset by `runStarted` below. A
       // fan-out clears once up front instead, so a concurrent sibling's panel
-      // survives this target's start.
-      clearWorkflowOutputContent();
+      // survives this target's start, and so does that of a run beside it.
+      if (!beside) clearWorkflowOutputContent();
     }
     // The workflow-run region is authoritative (#2206 reducer-removal): the run
     // progress + output-panel status are driven solely by dispatching the
@@ -728,7 +730,7 @@ export function workflowTarget(run: WorkflowTargetRun, cancel: () => void): Work
       tabId: targetTabId,
       total,
       label: targetLabel,
-      preserveOutput: fanout !== undefined,
+      preserveOutput: fanout !== undefined || beside,
     });
     return deps;
   };
@@ -791,7 +793,8 @@ export function workflowTarget(run: WorkflowTargetRun, cancel: () => void): Work
       id: newId("workflow-run"),
       automationId: workflowId,
       automationName: workflow.name,
-      startedAt,
+      // A run whose seams could not be made has no start of its own.
+      startedAt: startedAt || new Date().toISOString(),
       endedAt: new Date().toISOString(),
       status: result.status,
       stepsCompleted: result.stepsCompleted,

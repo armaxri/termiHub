@@ -25,6 +25,7 @@
  * protocol change.
  */
 import { tf } from "@/i18n/catalog";
+import { errorMessage } from "@/utils/errorMessage";
 import { clampFanoutConcurrency, runWithConcurrency } from "@/store/slices/workflowFanout";
 import {
   describeAutomationCycle,
@@ -331,21 +332,47 @@ export function runAutomationOnTargets<T>(
         ? 1
         : clampFanoutConcurrency(undefined);
 
+  /** Settle a target's result and report its end. */
+  const end = async (index: number, ended: WorkflowRunResult): Promise<WorkflowRunResult> => {
+    const result = options.settle ? await options.settle(index, ended) : ended;
+    options.onTargetEnd?.(index, result);
+    return result;
+  };
+  /** What a seam that threw leaves: a failed run, settled like any other (#6042). */
+  const failed = (err: unknown, stepsCompleted: number): WorkflowRunResult => ({
+    status: "failed",
+    stepsCompleted,
+    error: errorMessage(err),
+  });
+
   const runTarget = async (target: T, index: number): Promise<WorkflowRunResult | undefined> => {
     // Stopped while it waited for its turn: it never starts.
     if (cancelled.has(index)) return undefined;
-    const deps = await depsFor(target, index);
+    let deps: AutomationTargetDeps;
+    try {
+      deps = await depsFor(target, index);
+    } catch (err) {
+      return end(index, failed(err, 0));
+    }
     if ("notRun" in deps) return deps.notRun;
-    const handle = runAutomation(automation, deps, options.hooksFor?.(index), options.paramValues);
+    // How far it got, for a run whose seam throws.
+    let completed = 0;
+    const hooks = options.hooksFor?.(index);
+    const counted: WorkflowRunHooks = {
+      ...hooks,
+      onProgress: (done, total, step) => {
+        completed = done;
+        hooks?.onProgress?.(done, total, step);
+      },
+    };
+    const handle = runAutomation(automation, deps, counted, options.paramValues);
     handles.set(index, handle);
     // Stopped while its seams were made: it ends before its first step.
     if (cancelled.has(index) || stopped) handle.cancel();
     options.onTargetStart?.(index);
     try {
-      const ended = await handle.done;
-      const result = options.settle ? await options.settle(index, ended) : ended;
-      options.onTargetEnd?.(index, result);
-      return result;
+      const ended = await handle.done.catch((err: unknown) => failed(err, completed));
+      return await end(index, ended);
     } finally {
       handles.delete(index);
     }
