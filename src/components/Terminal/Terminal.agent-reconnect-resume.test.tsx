@@ -185,6 +185,10 @@ describe("Terminal — backend-driven agent reconnect RESUME via reconcile (#247
     // Client agent engine stays suppressed; terminal I/O re-attaches to S2.
     expect(mockCreateTerminal).not.toHaveBeenCalled();
     expect(mockSubscribeOutput).toHaveBeenCalledWith("S2", expect.any(Function));
-    expect(mockSubscribeExit).toHaveBeenCalledWith("S2", expect.any(Function));
+    expect(mockSubscribeExit).toHaveBeenCalledWith(
+      "S2",
+      expect.any(Function),
+      expect.any(Function)
+    );
   });
 });

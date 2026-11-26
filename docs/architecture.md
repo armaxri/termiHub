@@ -1554,6 +1554,11 @@ sequenceDiagram
   keeps the last 1 MiB. A chunk's `offset` and a snapshot's `endOffset` are taken under its lock.
 - `epoch` grows with every new stream, so positions of a session created again under the same id are
   never compared with those of the one before.
+- `terminal-exit` names the stream that ended by its `epoch` too (#6032). An exit of an older
+  stream that arrives after the tab attached to a newer one ends nothing, and the dispatcher drops a
+  buffered one once a newer stream showed output.
+- A persistent session is re-created once at a time (#6033): a second attach waits for the first,
+  then finds the session alive, so its entry and its output route belong to the same stream.
 - Every attach of a daemon-backed session makes the agent send the whole buffer again. Its first
   chunk names the replay (`replay_id`, see [`connection.output`](remote-protocol.md#connectionoutput));
   the I/O task records where it lands (`src-tauri/src/terminal/output_route.rs`) and the capture
