@@ -19,6 +19,7 @@ import {
   PLUGIN_UPDATE_PREVIEW,
   PLUGIN_UPDATE_TRUST,
 } from "./pluginUpdatePreview";
+import { CHOICE_HELP_CONNECTIONS } from "./choiceHelpIds";
 import { STORED_SECRET_CONNECTIONS } from "./storedSecretIds";
 import { MONITOR_KEY, MONITOR_SESSION_ID, VISUAL_SESSION_ID } from "./interactionIds";
 import { MOBAXTERM_CANDIDATES, MOBAXTERM_PREVIEW } from "./mobaxtermImportPreview";
@@ -53,6 +54,11 @@ export interface VisualScenario {
    * jump-host hop has a stored password, with real-shaped connection types.
    */
   storedSecrets?: boolean;
+  /**
+   * Seed a serial, an RDP, a VNC and a jump-host SSH connection with their real
+   * bare-word choices, and answer agent setup's architecture check (#6036).
+   */
+  choiceHelp?: boolean;
   /**
    * Answer the plugin file picker, `preview_plugin` and `assess_plugin_trust`
    * with an update whose preview carries an access diff (#4418).
@@ -608,6 +614,163 @@ const LOCAL_BROWSABLE_TYPE = {
   capabilities: { ...CAPABILITIES, fileBrowser: true },
 };
 
+const option = (value: string, label: string) => ({ value, label });
+
+/** The backends' bare-word choices as their schemas send them (#6036). */
+const CHOICE_HELP_TYPES = [
+  {
+    typeId: "ssh",
+    displayName: "SSH",
+    icon: "terminal",
+    schema: { groups: [{ key: "connection", label: "Connection", fields: SSH_FIELDS }] },
+    capabilities: CAPABILITIES,
+  },
+  {
+    typeId: "serial",
+    displayName: "Serial",
+    icon: "cable",
+    schema: {
+      groups: [
+        {
+          key: "connection",
+          label: "Connection",
+          fields: [
+            { key: "port", label: "Port", fieldType: { type: "text" }, required: true },
+            {
+              key: "parity",
+              label: "Parity",
+              fieldType: {
+                type: "select",
+                options: [option("none", "None"), option("odd", "Odd"), option("even", "Even")],
+              },
+              required: true,
+              default: "none",
+            },
+            {
+              key: "flowControl",
+              label: "Flow control",
+              fieldType: {
+                type: "select",
+                options: [
+                  option("none", "None"),
+                  option("hardware", "Hardware (RTS/CTS)"),
+                  option("software", "Software (XON/XOFF)"),
+                ],
+              },
+              required: true,
+              default: "none",
+            },
+          ],
+        },
+      ],
+    },
+    capabilities: CAPABILITIES,
+  },
+  {
+    typeId: "rdp",
+    displayName: "RDP",
+    icon: "monitor",
+    schema: {
+      groups: [
+        {
+          key: "connection",
+          label: "Connection",
+          fields: [
+            { key: "host", label: "Host", fieldType: { type: "text" }, required: true },
+            {
+              key: "securityMode",
+              label: "Security",
+              description:
+                "How the session is secured. NLA (CredSSP) is recommended; legacy RDP security is insecure and offered only for old servers.",
+              fieldType: {
+                type: "select",
+                options: [
+                  option("auto", "Auto (negotiate)"),
+                  option("nla", "NLA (CredSSP)"),
+                  option("tls", "TLS"),
+                  option("rdp", "Legacy RDP (insecure)"),
+                ],
+              },
+              required: false,
+              default: "auto",
+            },
+          ],
+        },
+      ],
+    },
+    capabilities: CAPABILITIES,
+  },
+  {
+    typeId: "vnc",
+    displayName: "VNC",
+    icon: "monitor",
+    schema: {
+      groups: [
+        {
+          key: "connection",
+          label: "Connection",
+          fields: [
+            { key: "host", label: "Host", fieldType: { type: "text" }, required: true },
+            {
+              key: "preferredEncoding",
+              label: "Encoding",
+              description:
+                "Framebuffer encoding preference. ZRLE is compressed; Raw is uncompressed.",
+              fieldType: {
+                type: "select",
+                options: [option("zrle", "ZRLE (compressed)"), option("raw", "Raw (uncompressed)")],
+              },
+              required: false,
+              default: "zrle",
+            },
+          ],
+        },
+      ],
+    },
+    capabilities: CAPABILITIES,
+  },
+];
+
+/** The connections whose choices the choice-help gallery opens (#6036). */
+const CHOICE_HELP_ROWS = [
+  {
+    id: CHOICE_HELP_CONNECTIONS.serial,
+    name: "Bench console",
+    folderId: "Work",
+    config: {
+      type: "serial",
+      config: { port: "/dev/ttyUSB0", parity: "even", flowControl: "hardware" },
+    },
+  },
+  {
+    id: CHOICE_HELP_CONNECTIONS.rdp,
+    name: "Build desktop",
+    folderId: "Work",
+    config: { type: "rdp", config: { host: "build-win.example.com", securityMode: "nla" } },
+  },
+  {
+    id: CHOICE_HELP_CONNECTIONS.vnc,
+    name: "Lab screen",
+    folderId: "Work",
+    config: { type: "vnc", config: { host: "lab-screen.example.com", preferredEncoding: "raw" } },
+  },
+  {
+    id: CHOICE_HELP_CONNECTIONS.hop,
+    name: "Behind gateway",
+    folderId: "Work",
+    config: {
+      type: "ssh",
+      config: {
+        host: "10.30.0.7",
+        port: 22,
+        username: "deploy",
+        authMethod: "key",
+        proxyJump: [{ host: "gateway.example.com", port: 22, username: "ops", authMethod: "key" }],
+      },
+    },
+  },
+];
+
 /** Connection types for the stored-secrets editor surfaces (#4431). */
 const STORED_SECRET_TYPES = [
   {
@@ -781,6 +944,7 @@ function regionView(region: string, populated: boolean): unknown {
     const scenario = window.__VISUAL_SCENARIO__ ?? {};
     const extra = [
       ...(scenario.storedSecrets ? STORED_SECRET_ROWS : []),
+      ...(scenario.choiceHelp ? CHOICE_HELP_ROWS : []),
       ...(scenario.iconStyles ? ICON_STYLE_ROWS : []),
     ];
     return {
@@ -1019,12 +1183,24 @@ export function handleCommand(cmd: string, args: Args): unknown {
       };
 
     // ── data the sidebars list ──
+    case "detect_agent_arch":
+      return {
+        arch: "aarch64",
+        os: "Linux",
+        archSuffix: "linux-arm64",
+        downloadBaseUrl:
+          "https://github.com/armaxri/termiHub/releases/download/v0.1.0/termihub-agent-",
+        downloadUrl:
+          "https://github.com/armaxri/termiHub/releases/download/v0.1.0/termihub-agent-linux-arm64",
+        buildBranch: null,
+      };
     case "network_http_monitor_list":
       return populated ? HTTP_MONITORS : [];
     case "load_connections_and_folders":
       return populated ? wire : { connections: [], folders: [], agents: [], externalErrors: [] };
     case "get_connection_types":
       if (scenario.storedSecrets) return STORED_SECRET_TYPES;
+      if (scenario.choiceHelp) return CHOICE_HELP_TYPES;
       return scenario.fileListing ? [LOCAL_BROWSABLE_TYPE] : [];
     case "list_stored_field_secret_keys":
       return STORED_SECRET_KEYS[String(args?.connectionId ?? "")] ?? { fields: [], hops: [] };

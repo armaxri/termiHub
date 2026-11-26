@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { AgentSetupDialog } from "./AgentSetupDialog";
+import { withTooltip } from "@/test/tooltip";
 import type { RemoteArchInfo } from "@/services/api";
 import type { RemoteAgentDefinition } from "@/types/connection";
 
@@ -92,7 +93,9 @@ function makeAgent(): RemoteAgentDefinition {
 /** Render the dialog and let the async architecture detection settle. */
 async function renderAndDetect(agent: RemoteAgentDefinition, onOpenChange = vi.fn()) {
   await act(async () => {
-    root.render(<AgentSetupDialog open={true} onOpenChange={onOpenChange} agent={agent} />);
+    root.render(
+      withTooltip(<AgentSetupDialog open={true} onOpenChange={onOpenChange} agent={agent} />)
+    );
   });
   for (let i = 0; i < 5; i++) {
     await act(async () => {
@@ -129,7 +132,9 @@ describe("AgentSetupDialog — primitive migration", () => {
     // A detection that never resolves keeps the dialog in the detecting phase.
     detectAgentArch.mockImplementation(() => new Promise<RemoteArchInfo>(() => {}));
     await act(async () => {
-      root.render(<AgentSetupDialog open={true} onOpenChange={vi.fn()} agent={makeAgent()} />);
+      root.render(
+        withTooltip(<AgentSetupDialog open={true} onOpenChange={vi.fn()} agent={makeAgent()} />)
+      );
     });
     expect(document.querySelector(".agent-setup-dialog__detecting")).not.toBeNull();
     // No form fields until detection completes.

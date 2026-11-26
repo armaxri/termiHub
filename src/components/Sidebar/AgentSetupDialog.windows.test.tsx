@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { AgentSetupDialog } from "./AgentSetupDialog";
 import { getByRole } from "@/test/accessibleRoles";
+import { withTooltip } from "@/test/tooltip";
 import type { RemoteArchInfo } from "@/services/api";
 import type { RemoteAgentDefinition } from "@/types/connection";
 
@@ -74,7 +75,7 @@ function makeAgent(): RemoteAgentDefinition {
 /** Render the dialog and let the async architecture detection settle. */
 async function renderAndDetect(agent: RemoteAgentDefinition) {
   await act(async () => {
-    root.render(<AgentSetupDialog open={true} onOpenChange={vi.fn()} agent={agent} />);
+    root.render(withTooltip(<AgentSetupDialog open={true} onOpenChange={vi.fn()} agent={agent} />));
   });
   // Flush the detection promise + the state updates it triggers.
   for (let i = 0; i < 5; i++) {
@@ -128,6 +129,34 @@ describe("AgentSetupDialog Windows support", () => {
 
     const url = document.querySelector(".agent-setup-dialog__url");
     expect(url?.textContent).toBe(`${baseUrl}windows-x64.exe`);
+  });
+
+  it("says what each binary source means, and more in its help (#6036)", async () => {
+    detectAgentArch.mockResolvedValue(makeArchInfo());
+    await renderAndDetect(makeAgent());
+    const q = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+    expect(q("agent-setup-source-github-summary")?.textContent).toBe(
+      "The released agent; the usual choice"
+    );
+    expect(q("agent-setup-source-branch-summary")?.textContent).toBe("A test build of a branch");
+    expect(q("agent-setup-source-local-summary")?.textContent).toBe(
+      "An agent file on this computer"
+    );
+    // The radio is described by its summary and its three lines.
+    const local = q("agent-setup-source-local")!;
+    const said = (local.getAttribute("aria-describedby") ?? "")
+      .split(" ")
+      .map((id) => document.getElementById(id)?.textContent)
+      .join(" ");
+    expect(said).toContain("An agent file on this computer");
+    expect(said).toContain("or it will not start.");
+    await act(async () => {
+      local.focus();
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    });
+    expect(q("agent-setup-source-local-help")?.textContent).toContain(
+      "an agent you built yourself."
+    );
   });
 
   it("shows the extensionless download URL for POSIX hosts", async () => {

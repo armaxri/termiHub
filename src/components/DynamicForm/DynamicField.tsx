@@ -10,7 +10,9 @@ import {
   groupContainersByComposeProject,
 } from "./dockerContainerGroups";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
-import { Button, Field, Input, Modal, NumberInput, Select, Toggle } from "@/components/ui";
+import { Button, Field, Input, Modal, NumberInput, Select, Toggle, Tooltip } from "@/components/ui";
+import { TooltipLines } from "@/components/ui/Tooltip";
+import { choiceHelp, schemaChoiceTopic } from "@/utils/choiceHelp";
 import { fieldPlatformLimitation } from "@/utils/platformFieldSupport";
 import { SavedConnectionField, type SavedConnectionContext } from "./SavedConnectionField";
 import { SerialPortField } from "./SerialPortField";
@@ -829,20 +831,59 @@ function SelectField({
   testIdBase: string;
 }) {
   const isLocked = fieldType.options.length <= 1;
+  // A bare-word choice says what it means (#6036): each option in the list,
+  // and the chosen one under the select, with its three lines as help.
+  const topic = schemaChoiceTopic(field.key);
+  const chosenValue = typeof value === "string" ? value : "";
+  const chosen = topic ? choiceHelp(topic, chosenValue) : undefined;
+  const chosenLabel = fieldType.options.find((o) => o.value === chosenValue)?.label ?? chosenValue;
+  const choiceId = `${a11y.id}-choice`;
+  const linesId = `${a11y.id}-choice-lines`;
+  const options = topic
+    ? fieldType.options.map((o) => ({ ...o, description: choiceHelp(topic, o.value)?.summary }))
+    : fieldType.options;
+  const describedBy =
+    [a11y.describedBy, chosen && choiceId, chosen && linesId].filter(Boolean).join(" ") ||
+    undefined;
   return (
     <>
       <Select
         id={a11y.id}
         value={(value as string) || undefined}
         onChange={(v) => onChange(v)}
-        options={fieldType.options}
+        options={options}
         disabled={isLocked}
         aria-label={field.label}
-        aria-describedby={a11y.describedBy}
+        aria-describedby={describedBy}
         aria-invalid={a11y.invalid}
         placeholder={field.placeholder}
         data-testid={testIdBase}
       />
+      {chosen && (
+        <div className="settings-form__choice">
+          <span id={choiceId} data-testid={`${testIdBase}-choice`}>
+            {chosen.summary}.
+          </span>
+          <span id={linesId} hidden>
+            {chosen.lines.join(" ")}
+          </span>
+          <Tooltip
+            content={<TooltipLines lines={chosen.lines} />}
+            side="top"
+            data-testid={`${testIdBase}-choice-help`}
+          >
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              className="settings-form__help"
+              icon={<HelpCircle size={13} />}
+              aria-label={`About ${chosenLabel}`}
+              data-testid={`${testIdBase}-choice-about`}
+            />
+          </Tooltip>
+        </div>
+      )}
     </>
   );
 }

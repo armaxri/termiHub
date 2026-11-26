@@ -1198,6 +1198,102 @@ const en = {
   "terminalToolbar.chip.recordingPaused": "Stop recording (not connected)",
   "terminalToolbar.chip.playback": "Stop “{name}” ({percent} % typed)",
   "terminalToolbar.chip.playbackSeveral": "Stop “{name}” in {count} terminals",
+  // ── What a bare-word choice means (choiceHelp.ts, #6036) ────────────────
+  // Same shape as the tunnel types: a summary for the line under the choice,
+  // then what it is, how it works and when to pick it.
+  "choice.parity.none.summary": "No check bit; the usual choice",
+  "choice.parity.none.lead": "Each character is sent without an extra check bit.",
+  "choice.parity.none.how": "Most devices use 8 data bits, no parity and 1 stop bit (8N1).",
+  "choice.parity.none.example": "Pick this unless the device's manual names odd or even parity.",
+  "choice.parity.odd.summary": "One extra bit makes the count of 1 bits odd",
+  "choice.parity.odd.lead": "Each character gets one extra bit, so the number of 1 bits is odd.",
+  "choice.parity.odd.how":
+    "The receiving side notices a single flipped bit, but cannot correct it.",
+  "choice.parity.odd.example": "Only when the device's manual says odd parity, such as 7O1.",
+  "choice.parity.even.summary": "One extra bit makes the count of 1 bits even",
+  "choice.parity.even.lead": "Each character gets one extra bit, so the number of 1 bits is even.",
+  "choice.parity.even.how":
+    "The receiving side notices a single flipped bit, but cannot correct it.",
+  "choice.parity.even.example": "Only when the device's manual says even parity, such as 7E1.",
+  "choice.flowControl.none.summary": "Nothing pauses the data; the usual choice",
+  "choice.flowControl.none.lead": "Data is sent as fast as the baud rate allows.",
+  "choice.flowControl.none.how":
+    "Right for consoles and most devices; a device too slow to keep up loses characters.",
+  "choice.flowControl.none.example": "The console port of a router or a development board.",
+  "choice.flowControl.hardware.summary": "The RTS and CTS wires pause the sender",
+  "choice.flowControl.hardware.lead":
+    "Each side tells the other to wait on its own wire: termiHub on RTS, the device on CTS.",
+  "choice.flowControl.hardware.how":
+    "The cable must connect RTS and CTS; with a three-wire cable nothing may be sent at all.",
+  "choice.flowControl.hardware.example": "Modems, and devices whose manual says RTS/CTS.",
+  "choice.flowControl.software.summary": "XON and XOFF characters pause the sender",
+  "choice.flowControl.software.lead":
+    "The receiving side sends XOFF (Ctrl+S) to pause and XON (Ctrl+Q) to go on.",
+  "choice.flowControl.software.how":
+    "Works over three wires, but those two characters can no longer be sent as data.",
+  "choice.flowControl.software.example": "Older terminals, and devices whose manual says XON/XOFF.",
+  "choice.preferredEncoding.zrle.summary": "Compressed; the usual choice",
+  "choice.preferredEncoding.zrle.lead":
+    "The screen is sent compressed, so it stays quick over a network.",
+  "choice.preferredEncoding.zrle.how": "It costs a little processor time on both sides.",
+  "choice.preferredEncoding.zrle.example": "Any server you reach over a network.",
+  "choice.preferredEncoding.raw.summary": "Uncompressed; only for a very fast link",
+  "choice.preferredEncoding.raw.lead": "Every pixel is sent as it is, without compression.",
+  "choice.preferredEncoding.raw.how":
+    "A full HD screen is about 8 MB each time all of it changes, so a slow link stutters.",
+  "choice.preferredEncoding.raw.example":
+    "A server on this computer or a fast local network, or one whose ZRLE shows errors.",
+  "choice.securityMode.auto.summary": "termiHub and the server agree on the best both have",
+  "choice.securityMode.auto.lead":
+    "termiHub and the server settle on the strongest security they both support.",
+  "choice.securityMode.auto.how": "That is usually NLA; an older server may settle on TLS.",
+  "choice.securityMode.auto.example": "Pick this unless a server refuses to connect.",
+  "choice.securityMode.nla.summary": "You are signed in before the session starts",
+  "choice.securityMode.nla.lead":
+    "Network Level Authentication: the server checks who you are before it starts a session.",
+  "choice.securityMode.nla.how":
+    "The connection is encrypted with TLS, and a stranger never gets a sign-in screen.",
+  "choice.securityMode.nla.example": "Current Windows and Windows Server use this by default.",
+  "choice.securityMode.tls.summary": "Encrypted; the server checks you after the session starts",
+  "choice.securityMode.tls.lead": "The connection is encrypted with TLS, without NLA.",
+  "choice.securityMode.tls.how":
+    "The server starts a session before it knows who you are, which costs it work for anyone.",
+  "choice.securityMode.tls.example": "A server that has NLA turned off.",
+  "choice.securityMode.rdp.summary": "Old, weak encryption; only for old servers",
+  "choice.securityMode.rdp.lead": "RDP's own encryption from before TLS.",
+  "choice.securityMode.rdp.how":
+    "Someone on the network path can read or change it, your password included.",
+  "choice.securityMode.rdp.example": "Only a very old server that offers nothing else.",
+  "choice.jumpHostSource.saved.summary": "An SSH connection you saved",
+  "choice.jumpHostSource.saved.lead":
+    "This hop uses a saved SSH connection: its host, user and sign-in.",
+  "choice.jumpHostSource.saved.how":
+    "Change that connection, and every connection going through it follows.",
+  "choice.jumpHostSource.saved.example": "A bastion host that several connections go through.",
+  "choice.jumpHostSource.inline.summary": "Type this hop's details here",
+  "choice.jumpHostSource.inline.lead":
+    "This hop's host, user and sign-in are kept with this connection only.",
+  "choice.jumpHostSource.inline.how":
+    "Nothing else uses them, so changing them here changes only this connection.",
+  "choice.jumpHostSource.inline.example": "A hop that only this one connection needs.",
+  "choice.agentBinarySource.github.summary": "The released agent; the usual choice",
+  "choice.agentBinarySource.github.lead":
+    "termiHub downloads the agent released with this version of termiHub.",
+  "choice.agentBinarySource.github.how":
+    "It is the build for the system and processor chosen above.",
+  "choice.agentBinarySource.github.example": "Pick this unless you were asked to test a build.",
+  "choice.agentBinarySource.branch.summary": "A test build of a branch",
+  "choice.agentBinarySource.branch.lead":
+    "termiHub downloads the agent built from a branch of the termiHub project.",
+  "choice.agentBinarySource.branch.how":
+    "Type the branch name; a branch that has no build yet cannot be downloaded.",
+  "choice.agentBinarySource.branch.example": "Trying a fix before it is released.",
+  "choice.agentBinarySource.local.summary": "An agent file on this computer",
+  "choice.agentBinarySource.local.lead":
+    "termiHub copies an agent file you already have to the machine.",
+  "choice.agentBinarySource.local.how":
+    "It must be built for the system and processor chosen above, or it will not start.",
+  "choice.agentBinarySource.local.example": "No internet here, or an agent you built yourself.",
 } as const;
 
 /** A stable id naming one catalog message. */

@@ -431,6 +431,25 @@
   outline: none;
 }
 
+/* An option with a line saying what it means (#6036). */
+.ui-select__item--described {
+  height: auto;
+  min-height: var(--control-height-md);
+  padding-block: var(--spacing-xs);
+}
+
+.ui-select__item-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xxs);
+  min-width: 0;
+}
+
+.ui-select__item-desc {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
 .ui-select__item[data-highlighted] {
   /* #5249: secondary text here sits on --bg-hover / --bg-active. */
   --text-secondary: var(--text-secondary-on-selection);

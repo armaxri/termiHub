@@ -4,6 +4,7 @@ import { createRoot, Root } from "react-dom/client";
 import { JumpHostEntry } from "./JumpHostEntry";
 import { checkA11y } from "@/test/axe";
 import { pressRadioArrow } from "@/test/radioKeyboard";
+import { withTooltip } from "@/test/tooltip";
 import type { JumpHostConfig } from "@/types/connection";
 import type { SavedConnectionOption } from "@/utils/jumpHost";
 
@@ -39,7 +40,9 @@ function render({ hop: h, saved = SAVED }: RenderOpts, onChange = vi.fn()) {
     root.render(
       // fields=[] keeps the inline branch free of the shared schema-driven
       // DynamicField, isolating this test to JumpHostEntry's own source/mode logic.
-      <JumpHostEntry hop={h} index={0} fields={[]} onChange={onChange} savedConnections={saved} />
+      withTooltip(
+        <JumpHostEntry hop={h} index={0} fields={[]} onChange={onChange} savedConnections={saved} />
+      )
     );
   });
   return onChange;
@@ -71,6 +74,30 @@ describe("JumpHostEntry", () => {
     expect(query("jump-host-source-saved-0")?.getAttribute("aria-checked")).toBe("true");
     expect(query("jump-host-source-inline-0")?.getAttribute("aria-checked")).toBe("false");
     expect(query("jump-host-connection-0")).not.toBeNull();
+  });
+
+  it("says what each source means, and more in its help (#6036)", async () => {
+    render({ hop: hop() });
+    expect(query("jump-host-source-saved-0")?.textContent).toContain("An SSH connection you saved");
+    expect(query("jump-host-source-inline-0")?.textContent).toContain(
+      "Type this hop's details here"
+    );
+    await act(async () => {
+      query("jump-host-source-saved-0")!.dispatchEvent(
+        new PointerEvent("pointermove", { bubbles: true, pointerType: "mouse" })
+      );
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    });
+    // The tooltip is portalled out of the container.
+    const help = document.querySelector('[data-testid="jump-host-source-saved-0-help"]');
+    expect(help?.textContent).toContain("every connection going through it follows.");
+  });
+
+  it("an unavailable saved source keeps its reason, not the help", () => {
+    render({ hop: hop(), saved: [] });
+    const saved = query("jump-host-source-saved-0")!;
+    expect(saved.getAttribute("title")).toBe("No saved SSH connections to reference");
+    expect(saved.textContent).toContain("An SSH connection you saved");
   });
 
   it("disables the Saved-connection option when no SSH connections exist", () => {
