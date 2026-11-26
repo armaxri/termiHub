@@ -7,7 +7,7 @@
 import { StateCreator } from "zustand";
 
 import {
-  isPasswordPrompt,
+  isSecretPrompt,
   promptOfTerminal,
   readTerminalPrompt,
   type PromptPin,
@@ -118,6 +118,8 @@ interface Looked {
   before: string | null;
   /** Whether it is all that had arrived: `false` for a prompt seen on the way. */
   settled: boolean;
+  /** Whether the program reads with its echo off, where the PTY says (#6014). */
+  hidden?: boolean | null;
 }
 
 /**
@@ -131,23 +133,27 @@ function readPrompt(tabId: string, slow: () => void, then: (looked: Looked) => v
   let done = false;
   let seen: string | null = null;
   const timers: ReturnType<typeof setTimeout>[] = [];
-  const finish = (before: string | null, settled = true) => {
+  let seenHidden: boolean | null = null;
+  const finish = (before: string | null, settled = true, hidden: boolean | null = null) => {
     if (done) return;
     done = true;
     timers.forEach(clearTimeout);
-    then({ before, settled });
+    then({ before, settled, hidden });
   };
   const read = () => {
     const terminal = promptOfTerminal(tabId);
     const arrived = terminal?.arrived();
     try {
-      readTerminalPrompt(tabId, (before) => {
+      readTerminalPrompt(tabId, (before, hidden = null) => {
         if (done) return;
-        if (before !== null && isPasswordPrompt(before)) seen = before;
+        if (before !== null && isSecretPrompt(before, hidden)) {
+          seen = before;
+          seenHidden = hidden;
+        }
         // More is in the app than was looked at, and it may be a prompt.
         const more = terminal?.arrived() !== arrived || promptOfTerminal(tabId) !== terminal;
         if (before !== null && more) read();
-        else finish(before);
+        else finish(before, true, hidden);
       });
     } catch (err) {
       frontendLog("automation_wait", `reading the terminal failed: ${errorMessage(err)}`);
@@ -155,7 +161,12 @@ function readPrompt(tabId: string, slow: () => void, then: (looked: Looked) => v
     }
   };
   timers.push(setTimeout(slow, PROMPT_CHECK_SHOWS_MS));
-  timers.push(setTimeout(() => finish(seen, seen === null), PROMPT_CHECK_LIMIT_MS));
+  timers.push(
+    setTimeout(
+      () => finish(seen, seen === null, seen === null ? null : seenHidden),
+      PROMPT_CHECK_LIMIT_MS
+    )
+  );
   read();
 }
 
@@ -228,7 +239,7 @@ export const createAutomationWaitSlice: StateCreator<AppState, [], [], Automatio
       // A press while one is being decided is the same press.
       if (!wait || deciding.has(runId)) return;
       deciding.add(runId);
-      const decide = ({ before, settled }: Looked) => {
+      const decide = ({ before, settled, hidden }: Looked) => {
         deciding.delete(runId);
         if (waitOf(runId)?.checking) change(runId, { checking: false });
         // It may have ended, or the user may have gone elsewhere meanwhile.
@@ -244,7 +255,7 @@ export const createAutomationWaitSlice: StateCreator<AppState, [], [], Automatio
             });
             return;
           }
-        } else if (isPasswordPrompt(before)) {
+        } else if (isSecretPrompt(before, hidden)) {
           // Insisting counts for the prompt it was said of, not for the next one.
           // A prompt seen on the way is no insisted one: the screen goes on changing.
           const insisted = now.stillAsking && settled;
@@ -266,10 +277,10 @@ export const createAutomationWaitSlice: StateCreator<AppState, [], [], Automatio
     recheckWaitingPrompts: () => {
       for (const { runId, tabId } of get().automationWaits) {
         // What cannot be told now is told the next time.
-        readTerminalPrompt(tabId, (before) => {
+        readTerminalPrompt(tabId, (before, hidden) => {
           const w = waitOf(runId);
           if (!w || before === null) return;
-          const asking = isPasswordPrompt(before);
+          const asking = isSecretPrompt(before, hidden);
           const prompted = w.prompted === true || asking || w.stillAsking;
           const next = {
             prompted,

@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useCallback } from "react";
+import { sessionInputHidden } from "@/services/api";
 import { beginConnectAttempt } from "@/store/connectProgressBridge";
 import { ABORTED_CONNECT_MESSAGE } from "@/store/reconnectHelpers";
 import { takePreconnectFailure } from "@/utils/preconnect";
@@ -1285,7 +1286,21 @@ export function Terminal({
           if (!enqueueSandboxMarker(sessionId, staged)) staged();
         };
         const unregisterPrompt = registerTerminalPrompt(tabId, {
-          read: (then) => whenOutputShown(() => then(textBeforeCursor(xterm.buffer.active))),
+          // What the screen shows, and whether the PTY reads with echo off (#6014).
+          read: (then) =>
+            whenOutputShown(() => {
+              const before = textBeforeCursor(xterm.buffer.active);
+              let hidden: Promise<boolean | null>;
+              try {
+                hidden = sessionInputHidden(sessionId);
+              } catch {
+                hidden = Promise.resolve(null);
+              }
+              hidden.then(
+                (value) => then(before, value ?? null),
+                () => then(before, null)
+              );
+            }),
           arrived: () => arrived,
           pin: () => {
             const seen = arrived;

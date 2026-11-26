@@ -5,7 +5,7 @@
  * state, so a keystroke copies nothing.
  */
 import type { TypeKeysChunk } from "@/types/generated/TypeKeysChunk";
-import { isPasswordPrompt, type PromptReader } from "./passwordPrompt";
+import { isSecretPrompt, type PromptReader } from "./passwordPrompt";
 
 /**
  * Chunks `start`..`end` (exclusive) were typed at the password prompt `prompt`, or
@@ -53,6 +53,8 @@ interface Asked {
   apart?: string;
   /** The text it was typed behind; `null` when that cannot be told. */
   before: string | null;
+  /** Whether the program read it with its echo off, where the PTY says (#6014). */
+  hidden?: boolean | null;
   /** Whether `before` is the answer. */
   known: boolean;
   timer?: ReturnType<typeof setTimeout>;
@@ -68,7 +70,10 @@ interface OpenRun {
 }
 
 /** The screen must never get in the way of typing: what cannot be read is not known. */
-function readSafely(readPrompt: PromptReader, then: (before: string | null) => void): void {
+function readSafely(
+  readPrompt: PromptReader,
+  then: (before: string | null, hidden?: boolean | null) => void
+): void {
   try {
     readPrompt(then);
   } catch {
@@ -178,10 +183,11 @@ export class InputRecorder {
     const asked: Asked = { entry, readPrompt, apart, before: null, known: false };
     this.asked.push(asked);
     let typing = true;
-    const know = (before: string | null) => {
+    const know = (before: string | null, hidden?: boolean | null) => {
       const index = this.asked.indexOf(asked);
       if (index < 0) return;
       asked.before = before;
+      asked.hidden = hidden;
       asked.known = true;
       // Answers come in order: those before this one are lost.
       if (before !== null && readPrompt) {
@@ -199,25 +205,33 @@ export class InputRecorder {
   /** Judge what is known, in the order it was typed. */
   private drain(): void {
     while (this.asked[0]?.known) {
-      const { entry, readPrompt, apart, before, timer } = this.asked.shift()!;
+      const { entry, readPrompt, apart, before, hidden, timer } = this.asked.shift()!;
       clearTimeout(timer);
       this.readPrompt = readPrompt ?? null;
-      entry.secret = this.judge(before, apart, readPrompt !== undefined);
+      entry.secret = this.judge(before, apart, readPrompt !== undefined, hidden);
       entry.judged = true;
       if (entry.data !== null && ENDS_ANSWER.test(entry.data)) this.open = null;
     }
   }
 
   /** The run the next chunk belongs to, if it is typed at a password prompt. */
-  private judge(before: string | null, apart: string | undefined, read: boolean): OpenRun | null {
+  private judge(
+    before: string | null,
+    apart: string | undefined,
+    read: boolean,
+    hidden?: boolean | null
+  ): OpenRun | null {
     if (apart !== undefined) {
       if (!this.open?.kept) this.open = { prompt: apart, kept: true };
       return this.open;
     }
-    if (before !== null) this.dropEchoedRun(before);
+    // Echo off on the PTY: nothing is echoed, so nothing to drop it for (#6014).
+    if (before !== null && hidden !== true) this.dropEchoedRun(before);
     // The wait it was typed for is over.
     if (this.open?.kept) this.open = null;
-    if (!this.open && before !== null && isPasswordPrompt(before)) this.open = { prompt: before };
+    if (!this.open && before !== null && isSecretPrompt(before, hidden)) {
+      this.open = { prompt: before };
+    }
     // Not known whether a password was asked for: kept apart, and the user decides. In a
     // run of its own, which a prompt that turns out to be none does not take along.
     const unknown = read && before === null;
