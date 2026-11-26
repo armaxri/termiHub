@@ -4020,3 +4020,7 @@ mod tests {
 #[cfg(test)]
 #[path = "tunnel_manager_agent_tests.rs"]
 mod agent_tests;
+
+#[cfg(test)]
+#[path = "tunnel_manager_desktop_tests.rs"]
+mod desktop_tests;
