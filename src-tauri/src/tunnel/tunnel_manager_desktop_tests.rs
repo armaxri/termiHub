@@ -214,3 +214,14 @@ async fn a_server_that_closes_at_once_ends_the_start_with_a_reason() {
     assert!(!row.error.unwrap_or_default().is_empty());
     assert_eq!(run.shown(), "error", "what the UI was last sent");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stop_on_a_failed_tunnel_dismisses_its_failure_in_the_ui() {
+    let (port, _server) = serve(Server::Refuses);
+    let run = boot(port, 30);
+    let _ = run.start().join().unwrap();
+    run.becomes(TunnelStatus::Error, Duration::from_secs(1));
+    run.manager.stop_tunnel("web").unwrap();
+    assert_eq!(run.row().status, TunnelStatus::Disconnected);
+    assert_eq!(run.shown(), "disconnected", "what the UI was last sent");
+}
