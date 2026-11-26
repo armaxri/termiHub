@@ -4,6 +4,7 @@ import { createRoot, Root } from "react-dom/client";
 import type { JumpHostConfig } from "@/types/connection";
 import type { SettingsSchema } from "@/types/schema";
 import { JumpHostSection } from "./JumpHostSection";
+import { withTooltip } from "@/test/tooltip";
 
 // A minimal SSH connection schema mirroring the real backend shape (field keys
 // and types are what matter): the jump-host inline fields are sourced from it so
@@ -133,15 +134,17 @@ function render(
 ) {
   act(() => {
     root.render(
-      <JumpHostSection
-        value={value}
-        targetHost={opts.targetHost ?? "target.internal"}
-        onChange={onChange}
-        savedConnections={opts.savedConnections}
-        sshSchema={opts.sshSchema ?? SSH_SCHEMA}
-        errors={opts.errors}
-        warnings={opts.warnings}
-      />
+      withTooltip(
+        <JumpHostSection
+          value={value}
+          targetHost={opts.targetHost ?? "target.internal"}
+          onChange={onChange}
+          savedConnections={opts.savedConnections}
+          sshSchema={opts.sshSchema ?? SSH_SCHEMA}
+          errors={opts.errors}
+          warnings={opts.warnings}
+        />
+      )
     );
   });
 }

@@ -615,7 +615,11 @@ pub(super) fn drop_may_reconnect(
     agent_hosted: bool,
     end_cause: Option<SessionEndCause>,
 ) -> bool {
-    resilient && !(agent_hosted && end_cause == Some(SessionEndCause::DeviceGone))
+    // A shell that exited without a status it can trust was ended by the user
+    // (#5995): reconnecting would start it again.
+    resilient
+        && end_cause != Some(SessionEndCause::ShellExited)
+        && !(agent_hosted && end_cause == Some(SessionEndCause::DeviceGone))
 }
 
 /// Status of a session's output logging, returned to the frontend.
