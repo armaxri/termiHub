@@ -535,16 +535,26 @@ describe("events service", () => {
 
       it("does not end a subscriber attached to a newer stream, live or buffered", () => {
         const attached = vi.fn();
-        dispatcher.subscribeExit("s", attached, () => 2);
+        const unsubscribe = dispatcher.subscribeExit("s", attached, () => 2);
         exit(1);
         expect(attached).not.toHaveBeenCalled();
         exit(2);
         expect(attached).toHaveBeenCalledTimes(1);
+        unsubscribe();
 
         exit(1);
         const late = vi.fn();
         dispatcher.subscribeExit("s", late, () => 2);
         expect(late).not.toHaveBeenCalled();
+      });
+
+      it("late output of the older stream does not make its exit current again", () => {
+        const cb = vi.fn();
+        dispatcher.subscribeExit("s", cb);
+        output(2);
+        output(1);
+        exit(1);
+        expect(cb).not.toHaveBeenCalled();
       });
 
       it("of an emitter that does not say which stream ended, still ends it", () => {
