@@ -79,6 +79,42 @@ fn the_setup_runs_no_script_file_an_execution_policy_could_refuse() {
     }
 }
 
+/// #6002: a setup killed between its two renames leaves the working agent as
+/// `termihub-agent.previous.exe`. Connect puts it back once, before it says
+/// the agent is not installed, for the agent at the path setup manages.
+#[test]
+fn connect_recovers_only_the_agent_the_setup_manages() {
+    use crate::utils::errors::TerminalError;
+    let missing = TerminalError::agent_missing("Exec failed: not recognized");
+    let managed = r"C:\Users\ci\AppData\Local\termiHub\agent\termihub-agent.exe";
+    assert!(recovers_windows_setup(managed, &missing));
+    assert!(recovers_windows_setup(&managed.to_uppercase(), &missing));
+    assert!(recovers_windows_setup(
+        &managed.replace('\\', "/"),
+        &missing
+    ));
+    // A Windows shell reports a missing program with its own status (cmd.exe
+    // 9009, PowerShell 1), not 127: any start that did not answer counts.
+    let exited = TerminalError::RemoteError("Initialize read failed: exited 9009".into());
+    assert!(recovers_windows_setup(managed, &exited));
+    // A host that did not answer at all is not a missing agent.
+    let slow = TerminalError::Timeout("agent handshake".into());
+    assert!(!recovers_windows_setup(managed, &slow));
+    // A path the setup does not manage, and every POSIX host.
+    assert!(!recovers_windows_setup(
+        r"D:\tools\termihub-agent.exe",
+        &missing
+    ));
+    assert!(!recovers_windows_setup(
+        "~/.local/bin/termihub-agent",
+        &missing
+    ));
+    assert!(!recovers_windows_setup(
+        "/home/me/termiHub/agent/termihub-agent.exe",
+        &missing
+    ));
+}
+
 #[test]
 fn nothing_typed_or_uploaded_is_posix_or_overwrites_a_file() {
     let script = windows_setup_script();

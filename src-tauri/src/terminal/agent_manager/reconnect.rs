@@ -132,6 +132,8 @@ pub(super) async fn reconnect_agent(
         &mut jitter,
     );
 
+    // Put back an agent a killed setup left aside, once per reconnect (#6002).
+    let mut recovered = false;
     while state.phase == ReconnectPhase::Waiting {
         // The armed backoff delay for the attempt about to start.
         let backoff = tokio::time::Duration::from_millis(state.delay_ms.max(0) as u64);
@@ -195,6 +197,16 @@ pub(super) async fn reconnect_agent(
                     return Err("Reconnect stopped by user".to_string());
                 }
                 warn!("Reconnect attempt {} failed ({})", attempt + 1, e);
+                let failed = crate::utils::errors::TerminalError::RemoteError(e);
+                if !recovered
+                    && crate::terminal::agent_setup_windows::recovers_windows_setup(
+                        config.agent_path(),
+                        &failed,
+                    )
+                {
+                    recovered = true;
+                    crate::terminal::agent_setup_windows::recover_windows_setup(&session).await;
+                }
             }
         }
 
