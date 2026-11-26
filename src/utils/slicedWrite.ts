@@ -48,3 +48,56 @@ export function writeSliced(
   }
   return null;
 }
+
+/** `text` in slices of at most `size` code units, never inside a surrogate pair. */
+function textSlices(text: string, size: number): string[] {
+  if (text.length <= size) return [text];
+  const slices: string[] = [];
+  for (let at = 0; at < text.length; ) {
+    let end = Math.min(at + size, text.length);
+    // A high surrogate at the end belongs with the low one after it.
+    if (end < text.length && /[\uD800-\uDBFF]/.test(text[end - 1])) end -= 1;
+    slices.push(text.slice(at, end));
+    at = end;
+  }
+  return slices;
+}
+
+/** The part of xterm's `Terminal` {@link writeAllSliced} needs: bytes or text. */
+export interface SlicedTextWriteTarget {
+  write(data: Uint8Array | string, callback?: () => void): void;
+}
+
+/**
+ * Write a whole scrollback (a repaint, a replay, a snapshot) to `target` in slices
+ * (#6087), and call `done` once xterm has parsed all of it. All slices are handed over
+ * at once, so whatever is written after them still comes after them. Not sliced while
+ * the document is hidden, like {@link writeSliced}. Throws what `target` refused, as
+ * one large write did.
+ */
+export function writeAllSliced(
+  target: SlicedTextWriteTarget,
+  data: Uint8Array | string,
+  done: () => void,
+  sliceSize: number = document.hidden ? Infinity : WRITE_SLICE_BYTES
+): void {
+  if (typeof data !== "string") {
+    if (data.length === 0) {
+      target.write(data, done);
+      return;
+    }
+    const refused = writeSliced(target, data, (_n, last) => last && done(), sliceSize);
+    if (refused) throw refused.error;
+    return;
+  }
+  const slices = textSlices(data, sliceSize);
+  slices.forEach((slice, i) => target.write(slice, i === slices.length - 1 ? done : undefined));
+}
+
+/** {@link writeAllSliced} as a promise: resolves once all of it is parsed. */
+export function writeAllSlicedAsync(
+  target: SlicedTextWriteTarget,
+  data: Uint8Array | string
+): Promise<void> {
+  return new Promise<void>((resolve) => writeAllSliced(target, data, resolve));
+}

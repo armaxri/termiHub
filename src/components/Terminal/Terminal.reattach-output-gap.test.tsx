@@ -25,6 +25,7 @@ import {
 } from "@/plugins/sandbox/pluginSandboxHost";
 import type { HostToWorkerMessage, WorkerToHostMessage } from "@/plugins/sandbox/protocol";
 import { mockXtermInstances as xtermInstances } from "@/test/mockXterm";
+import { WRITE_SLICE_BYTES } from "@/utils/slicedWrite";
 
 vi.mock("@xterm/xterm", async () => (await import("@/test/mockXterm")).createMockXtermModule());
 vi.mock("@xterm/addon-fit", () => ({
@@ -214,6 +215,74 @@ function shown(): string {
     .map((call) => (typeof call[0] === "string" ? call[0] : decoder.decode(call[0] as Uint8Array)))
     .join("");
 }
+
+/** The longest single write since the last reset: nothing large blocks the UI (#6087). */
+function largestWrite(): number {
+  const xterm = xtermInstances[xtermInstances.length - 1];
+  const resets = xterm.reset.mock.invocationCallOrder;
+  const from = resets.length > 0 ? resets[resets.length - 1] : 0;
+  return Math.max(
+    0,
+    ...xterm.write.mock.calls
+      .filter((_, i) => xterm.write.mock.invocationCallOrder[i] > from)
+      .map((call) => (call[0] as Uint8Array | string).length)
+  );
+}
+const BIG = "x".repeat(40_000) + "\r\n$ ";
+
+describe("Terminal — a large repaint is written in slices, in order (#6087)", () => {
+  it("of a persistent re-attach", async () => {
+    mockGetAgentSessionBuffer.mockResolvedValue(snapshot(BIG, 0));
+    await mountPersistent();
+    emitOutput("later");
+    releaseLineEnding();
+    await settle();
+    expect(shown()).toBe(`${BIG}later`);
+    expect(largestWrite()).toBeLessThanOrEqual(WRITE_SLICE_BYTES);
+  });
+
+  it("of a session moved to this window", async () => {
+    mockReplayScrollback.mockResolvedValue(snapshot(BIG, 0));
+    const config = { type: "local" as const, config: {} };
+    const tabId = useAppStore.getState().addTab("Moved", "local", config, {
+      contentType: "terminal",
+      sessionId: SID,
+    });
+    act(() => {
+      root.render(
+        <TerminalPortalProvider>
+          <Terminal
+            tabId={tabId}
+            config={config}
+            isVisible={true}
+            existingSessionId={SID}
+            replayScrollbackOnAttach={true}
+          />
+        </TerminalPortalProvider>
+      );
+    });
+    await settle();
+    emitOutput("later");
+    releaseLineEnding();
+    await settle();
+    expect(shown()).toBe(`${BIG}later`);
+    expect(largestWrite()).toBeLessThanOrEqual(WRITE_SLICE_BYTES);
+  });
+
+  it("of a window that regains the session", async () => {
+    mockGetAgentSessionBuffer.mockResolvedValue(snapshot("", 0));
+    await mountPersistent();
+    releaseLineEnding();
+    await settle();
+    mockReplayScrollback.mockResolvedValue(snapshot(BIG, 0));
+    act(() => useAppStore.getState().setSessionOwners({ [SID]: "win-1" }));
+    act(() => useAppStore.getState().setSessionOwners({ [SID]: "main" }));
+    emitOutput("later");
+    await settle();
+    expect(shown()).toBe(`${BIG}later`);
+    expect(largestWrite()).toBeLessThanOrEqual(WRITE_SLICE_BYTES);
+  });
+});
 
 describe("Terminal — persistent re-attach keeps the output of the hand-over (#5990)", () => {
   it("shows the answer to input typed before the tab subscribed, once", async () => {

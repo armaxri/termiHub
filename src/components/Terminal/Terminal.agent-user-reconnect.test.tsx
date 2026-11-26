@@ -10,6 +10,7 @@
  * the backend re-attached the tab's own session (then the session's own buffer
  * repaints the tab and its live re-forward is discarded).
  */
+import { WRITE_SLICE_BYTES } from "@/utils/slicedWrite";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -337,6 +338,24 @@ describe("Terminal — a resumed session and the tab's own scrollback (#5990)", 
   function emptyRepaint(coming: boolean) {
     return { data: new Uint8Array(), endOffset: 0, epoch: 1, coming };
   }
+
+  it("repaints a large buffer in slices, in order (#6087)", async () => {
+    const tabId = await mountConnected();
+    const buffer = new TextEncoder().encode("y".repeat(40_000) + "\r\n$ ");
+    mockTakeResumed.mockResolvedValue(true);
+    mockGetAgentSessionBuffer.mockResolvedValue({
+      data: buffer,
+      endOffset: buffer.length,
+      epoch: 1,
+    });
+
+    await disconnectAndReconnect(tabId);
+
+    const fresh = xtermInstances[xtermInstances.length - 1];
+    const parts = fresh.write.mock.calls.map((call) => call[0] as Uint8Array | string);
+    expect(Math.max(...parts.map((p) => p.length))).toBeLessThanOrEqual(WRITE_SLICE_BYTES);
+    expect(written(fresh).join("")).toContain(new TextDecoder().decode(buffer));
+  });
 
   it("shows the history once when the buffer is not here yet and comes as live output", async () => {
     const tabId = await mountConnected();

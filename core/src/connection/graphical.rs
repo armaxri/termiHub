@@ -1120,6 +1120,15 @@ pub trait GraphicalBackend: Send + Sync {
         Ok(())
     }
 
+    /// The backend's own lifecycle while it establishes the session (#6062), for a
+    /// backend that does so after `connect()` returned: the RDP sidecar reports
+    /// `Connecting` while it dials and `Authenticating` once it signs in. `None`
+    /// (the default) for a backend that is established when `connect()` returns;
+    /// the host then reports `Authenticating` itself, before `connect()`.
+    fn connect_states(&self) -> Option<tokio::sync::watch::Receiver<GraphicalState>> {
+        None
+    }
+
     /// The typed reason this backend's session ended fatally, when the backend
     /// learned one **after** `connect()` returned (#3390).
     ///

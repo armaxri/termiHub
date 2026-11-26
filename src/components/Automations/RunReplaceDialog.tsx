@@ -11,7 +11,11 @@ export function RunReplaceDialog() {
   const prompt = useAppStore((s) => s.runReplacePrompt);
   const resolve = useAppStore((s) => s.resolveRunReplacePrompt);
   const running = prompt?.running ?? [];
-  const names = joinWords(running.map((r) => tf("automation.replace.one", { ...r })));
+  const names = joinWords(
+    running.map((r) =>
+      tf("automation.replace.one", { name: r.name, where: r.where, progress: r.progress })
+    )
+  );
   return (
     <ConfirmDialog
       open={prompt !== null}

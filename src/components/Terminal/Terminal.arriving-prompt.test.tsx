@@ -26,6 +26,7 @@ import {
 } from "@/plugins/sandbox/pluginSandboxHost";
 import type { HostToWorkerMessage, WorkerToHostMessage } from "@/plugins/sandbox/protocol";
 import { FLOW_HIGH_WATERMARK } from "@/utils/terminalFlowControl";
+import { WRITE_SLICE_BYTES } from "@/utils/slicedWrite";
 
 /** The terminals the component made: a fake view on a real buffer and parser. */
 const terminals = vi.hoisted(() => ({ list: [] as unknown[], block: false }));
@@ -151,6 +152,7 @@ interface Engine {
   real: RealTerminal;
   typed: (data: string) => void;
   unblock: () => void;
+  queued: unknown[];
   step: () => void;
   write: Mock;
 }
@@ -230,7 +232,12 @@ beforeEach(async () => {
   await settle();
   expect(line()).toBe("");
 });
+/** Run `fn` every `ms` until the test ends, however it ends. */
+const repeating: ReturnType<typeof setInterval>[] = [];
+const repeat = (fn: () => void, ms: number) => void repeating.push(setInterval(fn, ms));
+
 afterEach(() => {
+  repeating.splice(0).forEach(clearInterval);
   act(() => root.unmount());
   container.remove();
   terminalDispatcher.destroy();
@@ -332,7 +339,14 @@ describe("Continue sees a prompt that has arrived (#6070)", () => {
     arrive(PROMPT);
     pressContinue();
     engine().unblock();
-    await vi.waitFor(() => expect(wait()?.stillAsking).toBe(true), { timeout: 3000 });
+    // Taken in slice by slice (#6080): on a slow machine that is longer than Continue
+    // looks, and then it asks rather than holds back. Either way it does not go on.
+    await vi.waitFor(() => expect(wait()?.stillAsking || wait()?.unchecked).toBe(true), {
+      timeout: 3000,
+    });
+    expect(state.result).toBeUndefined();
+    await vi.waitFor(() => expect(line()).toBe(PROMPT.trim()), { timeout: 5000 });
+    if (!wait()?.stillAsking) pressContinue();
     await heldBack(state);
   });
 
@@ -387,6 +401,24 @@ describe("Continue sees a prompt that has arrived (#6070)", () => {
     await act(async () =>
       shown({ data: encoder.encode(`$ sudo\r\n${PROMPT}`), endOffset: streamed, epoch: 1 })
     );
+    await heldBack(state);
+  });
+
+  it("behind a large repaint that xterm takes in slices (#6087)", async () => {
+    const state = startWait();
+    let shown = (_: unknown) => {};
+    mockReplay.mockReturnValue(new Promise((resolve) => (shown = resolve)));
+    lose();
+    regain();
+    pressContinue();
+    const { write } = engine();
+    write.mockClear();
+    const repaint = encoder.encode(`${"x".repeat(60_000)}\r\n${PROMPT}`);
+    await act(async () => shown({ data: repaint, endOffset: streamed, epoch: 1 }));
+    await settle();
+    const sizes = write.mock.calls.map((call) => (call[0] as Uint8Array | string).length);
+    expect(sizes.filter((n) => n > 0).length).toBeGreaterThan(2);
+    expect(Math.max(...sizes)).toBeLessThanOrEqual(WRITE_SLICE_BYTES);
     await heldBack(state);
   });
 
@@ -493,11 +525,10 @@ describe("Continue sees a prompt that has arrived (#6070)", () => {
 
   it("goes on in a terminal that prints every now and then", async () => {
     const state = startWait();
-    const busy = setInterval(() => arrive("tick\r\n"), 25);
+    repeat(() => arrive("tick\r\n"), 25);
     await settle();
     pressContinue();
     await vi.waitFor(() => expect(state.result).toBe("continued"), { timeout: 900 });
-    clearInterval(busy);
   });
 
   it("asks in one that never stops printing, and an insisting press goes on", async () => {
@@ -508,14 +539,13 @@ describe("Continue sees a prompt that has arrived (#6070)", () => {
       arrive("y\r\n");
       engine().step();
     };
-    const flood = setInterval(keepPrinting, 1);
+    repeat(keepPrinting, 1);
     await settle();
     pressContinue();
     await vi.waitFor(() => expect(wait()?.unchecked).toBe(true), { timeout: 2000 });
     expect(state.result).toBeUndefined();
     pressContinue();
     await vi.waitFor(() => expect(state.result).toBe("continued"), { timeout: 2000 });
-    clearInterval(flood);
   });
 
   it("insists on a prompt of the alternate screen only while nothing arrives", async () => {
@@ -529,9 +559,23 @@ describe("Continue sees a prompt that has arrived (#6070)", () => {
     pressContinue();
     await settle();
     expect(state.result).toBeUndefined();
+    // Insisting counts only for what was said: the screen changed since.
+    expect(wait()?.askedAgain).toBe(true);
     pressContinue();
     await settle();
     expect(state.result).toBe("continued");
+  });
+
+  it("decides across a batch that xterm takes in several slices (#6080)", async () => {
+    const state = startWait();
+    terminals.block = true;
+    arrive(`${"x".repeat(40_000)}\r\n${PROMPT}`);
+    pressContinue();
+    expect(engine().queued.length).toBeGreaterThan(2);
+    engine().unblock();
+    await settle(60);
+    expect(state.result).toBeUndefined();
+    expect(wait()?.stillAsking).toBe(true);
   });
 
   it("leaves no marker of the prompts that held it back", async () => {
