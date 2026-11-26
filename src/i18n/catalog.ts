@@ -1081,6 +1081,7 @@ const en = {
   "monitor.tooltip.lastDown": "Last check failed {age}",
   "monitor.tooltip.lastDownError": "Last check failed {age}: {error}",
   "monitor.marker.down": "Down",
+  "monitor.tooltip.runsOn": "Checks from {machine}",
   "monitor.marker.overdue": "Overdue",
   "monitor.marker.paused": "Paused",
   "monitor.marker.stopped": "Stopped",

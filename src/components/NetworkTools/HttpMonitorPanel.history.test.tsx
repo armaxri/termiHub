@@ -31,6 +31,7 @@ vi.mock("@/services/networkApi", () => ({
   networkHttpMonitorResume: vi.fn(() => Promise.resolve()),
   networkHttpMonitorList: vi.fn(() => Promise.resolve([])),
   onHttpMonitorCheck: vi.fn(() => Promise.resolve(() => {})),
+  onHttpMonitorChanged: vi.fn(() => Promise.resolve(() => {})),
 }));
 vi.mock("@/services/networkHistoryApi", () => ({
   listHttpMonitorChecks: vi.fn(() => Promise.resolve([])),

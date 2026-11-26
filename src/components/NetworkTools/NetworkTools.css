@@ -279,6 +279,7 @@
 
 .http-monitor-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--spacing-sm);
   padding: var(--spacing-xxs) 0;
@@ -289,6 +290,7 @@
   font-family: var(--font-mono);
   color: var(--text-primary);
   flex: 1;
+  min-width: 40%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -298,6 +300,13 @@
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
   white-space: nowrap;
+}
+
+/* Why a monitor on an agent does not check now (#6052). */
+.http-monitor-row__reason {
+  flex-basis: 100%;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
 }
 
 /* ===================================================================

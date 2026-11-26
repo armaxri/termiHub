@@ -49,6 +49,7 @@ vi.mock("@/services/networkApi", () => {
     networkHttpMonitorResume: vi.fn(() => Promise.resolve()),
     networkHttpMonitorList: vi.fn(() => Promise.resolve([])),
     onHttpMonitorCheck: vi.fn(onEvent),
+    onHttpMonitorChanged: vi.fn(() => Promise.resolve(() => {})),
   };
 });
 

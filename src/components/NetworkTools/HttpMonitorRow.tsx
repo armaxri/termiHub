@@ -1,11 +1,12 @@
 import { Play, Pause, StopCircle, Trash2, LineChart } from "lucide-react";
 import { Button, Tooltip } from "@/components/ui";
 import type { HttpMonitorState } from "@/types/network";
+import { monitorServiceState, serviceStateLabel } from "@/utils/serviceState";
 
 interface HttpMonitorRowProps {
   monitor: HttpMonitorState;
-  /** The hosting agent's id, or `undefined` when it runs on this computer. */
-  agentId?: string;
+  /** The machine it runs on, by name; `undefined` for this computer (#6039). */
+  runsOn?: string;
   onShow: (id: string) => void;
   onPause: (id: string) => void;
   onResume: (id: string) => void;
@@ -20,7 +21,7 @@ interface HttpMonitorRowProps {
  */
 export function HttpMonitorRow({
   monitor: m,
-  agentId,
+  runsOn,
   onShow,
   onPause,
   onResume,
@@ -34,9 +35,17 @@ export function HttpMonitorRow({
         {m.config.url}
       </span>
       <span className="http-monitor-row__meta">
-        {m.config.method} · every {m.config.intervalMs / 1000}s{agentId ? ` · on ${agentId}` : ""}
-        {!m.running ? " · stopped" : m.paused ? " · paused" : ""}
+        {m.config.method} · every {m.config.intervalMs / 1000}s{runsOn ? ` · on ${runsOn}` : ""}
+        {" · "}
+        <span data-testid={`monitor-state-${id}`}>
+          {m.paused ? "paused" : serviceStateLabel(monitorServiceState(m)).toLowerCase()}
+        </span>
       </span>
+      {m.reason && (
+        <span className="http-monitor-row__reason" data-testid={`monitor-reason-${id}`}>
+          {m.reason}
+        </span>
+      )}
       {m.running && !m.paused && (
         <Tooltip content="Pause" side="left">
           <Button

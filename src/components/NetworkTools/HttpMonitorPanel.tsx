@@ -26,8 +26,8 @@ import {
 import type { HttpMonitorState, HttpCheckResult } from "@/types/network";
 import { RunLocationSelect } from "@/components/RunLocationSelect";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
-import { useRunLocationStore } from "@/store/runLocationStore";
-import { THIS_COMPUTER, isAgentHost, type RunLocation } from "@/utils/runLocation";
+import { hostChoice } from "@/utils/hostChoice";
+import { THIS_COMPUTER, type RunLocation } from "@/utils/runLocation";
 import { listHttpMonitorChecks } from "@/services/networkHistoryApi";
 import { HttpMonitorChecks } from "./HttpMonitorChecks";
 import { HttpMonitorRow } from "./HttpMonitorRow";
@@ -83,8 +83,6 @@ export function HttpMonitorPanel() {
   // id in the run-location store once the monitor is created.
   const [runLocation, setRunLocation] = useState<RunLocation>(THIS_COMPUTER);
   const { remoteAgents: agents } = useProjectedAgents();
-  const monitorLocations = useRunLocationStore((s) => s.monitorLocations);
-  const setMonitorLocation = useRunLocationStore((s) => s.setMonitorLocation);
 
   const urlRef = useAutofocusSelect<HTMLInputElement>();
 
@@ -255,8 +253,6 @@ export function HttpMonitorPanel() {
         normalizeItemDescription(name),
         normalizeItemDescription(description)
       );
-      // Remember where this monitor runs so its row can show the vantage.
-      setMonitorLocation(monitorId, runLocation);
       activeMonitorIdRef.current = monitorId;
       setActiveMonitorId(monitorId);
       // Reconcile any checks buffered before the id was known (see the listener).
@@ -284,7 +280,6 @@ export function HttpMonitorPanel() {
     allowPrivateNetwork,
     name,
     description,
-    setMonitorLocation,
     loadMonitors,
     stopListening,
     appendCheck,
@@ -558,12 +553,18 @@ export function HttpMonitorPanel() {
         <>
           <div className="network-panel__section-title">Monitors</div>
           {monitors.map((m) => {
-            const location = monitorLocations[m.config.id] ?? THIS_COMPUTER;
+            // Where it runs is stored with it (#6039).
+            const location = hostChoice(m.config.host);
             return (
               <HttpMonitorRow
                 key={m.config.id}
                 monitor={m}
-                agentId={isAgentHost(location) ? location.agentId : undefined}
+                runsOn={
+                  // An unreadable one says so in its reason line.
+                  location.kind === "agent"
+                    ? (agents.find((a) => a.id === location.agentId)?.name ?? location.agentId)
+                    : undefined
+                }
                 onShow={(id) => void showMonitor(id)}
                 onPause={handlePauseMonitor}
                 onResume={handleResumeMonitor}

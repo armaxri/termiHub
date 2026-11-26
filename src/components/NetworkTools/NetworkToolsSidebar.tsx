@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useId, useState, type MouseEvent } from "react";
+import { monitorServiceState, serviceStateDot } from "@/utils/serviceState";
+import { hostChoice } from "@/utils/hostChoice";
+import { useProjectedAgents } from "@/store/useProjectedAgents";
 import "./NetworkTools.css";
 import {
   Activity,
@@ -17,6 +20,7 @@ import {
   networkHttpMonitorRemove,
   networkHttpMonitorPause,
   networkHttpMonitorResume,
+  onHttpMonitorChanged,
   onHttpMonitorCheck,
 } from "@/services/networkApi";
 import type { NetworkTool } from "@/types/terminal";
@@ -67,6 +71,8 @@ interface MonitorRowProps {
   onResume: (id: string) => void;
   onRemove: (id: string) => void;
   onOpen: (id: string) => void;
+  /** The machine it checks from, by name; none for this computer (#6039). */
+  runsOn?: string;
 }
 
 /** Tone and accessible name of a monitor's status dot. */
@@ -75,6 +81,12 @@ function monitorStatus(
   stale: boolean
 ): { tone: StatusTone; label: string; pulse?: boolean } {
   const { running, paused, lastResult } = monitor;
+  // On an agent, the states of a service (#6052).
+  const state = monitorServiceState(monitor);
+  if (state !== "running" && state !== "stopped") {
+    const dot = serviceStateDot(state);
+    return { tone: dot.tone, label: dot.label, pulse: dot.pulse };
+  }
   if (!running) return { tone: "neutral", label: "Stopped" };
   if (paused) return { tone: "neutral", label: "Paused" };
   if (!lastResult) return { tone: "neutral", label: "Checking", pulse: true };
@@ -98,6 +110,7 @@ function MonitorRow({
   onResume,
   onRemove,
   onOpen,
+  runsOn,
 }: MonitorRowProps) {
   const { config, running, paused, lastResult } = monitor;
   const stale = isMonitorStale(lastResult?.timestampMs, config.intervalMs, now);
@@ -150,7 +163,7 @@ function MonitorRow({
       nameTooltip={label}
       description={config.description}
       descriptionTestId={`monitor-description-${config.id}`}
-      tooltip={monitorRowTooltip(monitor, now)}
+      tooltip={monitorRowTooltip(monitor, now, runsOn)}
       tooltipTestId={`monitor-tooltip-${config.id}`}
       onClick={() => onOpen(config.id)}
       status={
@@ -243,6 +256,13 @@ export function NetworkToolsSidebar() {
   const httpMonitors = useAppStore((s) => s.httpMonitors);
   const setHttpMonitors = useAppStore((s) => s.setHttpMonitors);
   const openNetworkDiagnosticTab = useAppStore((s) => s.openNetworkDiagnosticTab);
+  const { remoteAgents } = useProjectedAgents();
+  /** The machine a monitor checks from, by name; none for this computer (#6039). */
+  const runsOnOf = (monitor: HttpMonitorState): string | undefined => {
+    const host = hostChoice(monitor.config.host);
+    if (host.kind !== "agent") return undefined;
+    return remoteAgents.find((a) => a.id === host.agentId)?.name ?? host.agentId;
+  };
 
   // A ticking "now" so relative ages and the overdue flag refresh on their own
   // between check events — otherwise a long-interval monitor's dot would stay a
@@ -271,23 +291,26 @@ export function NetworkToolsSidebar() {
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     let disposed = false;
+    let unlistenChanged: (() => void) | null = null;
+    const keep = (fn: () => void, into: (fn: () => void) => void) => (disposed ? fn() : into(fn));
+    const failed = (err: unknown) =>
+      frontendLog("network_sidebar", `Failed to subscribe to checks: ${errorMessage(err)}`);
     onHttpMonitorCheck(() => {
       void refreshMonitors();
     })
-      .then((fn) => {
-        if (disposed) {
-          fn();
-        } else {
-          unlisten = fn;
-        }
-      })
-      .catch((err) =>
-        frontendLog("network_sidebar", `Failed to subscribe to checks: ${errorMessage(err)}`)
-      );
+      .then((fn) => keep(fn, (f) => (unlisten = f)))
+      .catch(failed);
+    // Its agent went or came back (#6052): the row says so without a check.
+    onHttpMonitorChanged(() => {
+      void refreshMonitors();
+    })
+      .then((fn) => keep(fn, (f) => (unlistenChanged = f)))
+      .catch(failed);
 
     return () => {
       disposed = true;
       unlisten?.();
+      unlistenChanged?.();
     };
   }, [refreshMonitors]);
 
@@ -395,6 +418,7 @@ export function NetworkToolsSidebar() {
             onResume={handleResumeMonitor}
             onRemove={handleRemoveMonitor}
             onOpen={handleOpenMonitor}
+            runsOn={runsOnOf(m)}
           />
         ))}
         <Button

@@ -1,5 +1,6 @@
 import { t, tf } from "@/i18n/catalog";
 import type { HttpMonitorState } from "@/types/network";
+import { monitorServiceState, serviceStateLabel } from "@/utils/serviceState";
 import { formatCheckedAgo, isMonitorStale } from "./monitorStaleness";
 
 /** The URL as a row shows it when the monitor has no name: without its scheme. */
@@ -23,8 +24,13 @@ export function monitorRowName(monitor: HttpMonitorState): string {
 export function monitorRowMarker(
   monitor: HttpMonitorState,
   now: number
-): { kind: "stopped" | "paused" | "overdue" | "down"; label: string } | null {
+): { kind: "stopped" | "paused" | "overdue" | "down" | "state"; label: string } | null {
   const { running, paused, lastResult, config } = monitor;
+  // On an agent: not reachable, stopping, starting or failed, and why (#6052).
+  const state = monitorServiceState(monitor);
+  if (state !== "running" && state !== "stopped") {
+    return { kind: "state", label: monitor.reason ?? serviceStateLabel(state) };
+  }
   if (!running) return { kind: "stopped", label: t("monitor.marker.stopped") };
   if (paused) return { kind: "paused", label: t("monitor.marker.paused") };
   if (!lastResult) return null;
@@ -40,10 +46,18 @@ export function monitorRowMarker(
  * row itself shows only the name, the description and a marker that needs
  * attention. See docs/copy-style.md -> "List rows".
  */
-export function monitorRowTooltip(monitor: HttpMonitorState, now: number): string[] {
+export function monitorRowTooltip(
+  monitor: HttpMonitorState,
+  now: number,
+  runsOn?: string
+): string[] {
   const { config, lastResult } = monitor;
   const out: string[] = [];
   if (config.name?.trim()) out.push(config.url);
+  // Where it checks from, when that is not this computer (#6039).
+  if (runsOn) out.push(tf("monitor.tooltip.runsOn", { machine: runsOn }));
+  // Why it does not check now, in full (#6052).
+  if (monitor.reason) out.push(monitor.reason);
   out.push(
     tf("monitor.tooltip.check", {
       method: config.method,

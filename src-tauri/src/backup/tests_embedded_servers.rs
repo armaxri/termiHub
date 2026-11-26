@@ -432,3 +432,16 @@ fn a_backup_without_a_host_keeps_the_current_one() {
     );
     assert_eq!(entry["host"], json!({"kind": "thisComputer"}));
 }
+
+/// An HTTP monitor set to an agent stays there when a backup from before the
+/// host was stored is restored (#6039).
+#[test]
+fn a_monitor_backup_without_a_host_keeps_the_current_one() {
+    let spec = sections::spec("httpMonitors").expect("a section");
+    let host = json!({"kind": "agent", "agentId": "edge"});
+    let current = json!({"monitors": [{"id": "m", "host": host}]});
+    let mut doc = json!({"monitors": [{"id": "m"}, {"id": "new"}]});
+    sections::keep_current_hosts(spec, &mut doc, &current);
+    assert_eq!(doc["monitors"][0]["host"], host);
+    assert!(doc["monitors"][1].get("host").is_none());
+}
