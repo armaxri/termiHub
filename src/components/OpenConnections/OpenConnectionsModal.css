@@ -234,3 +234,10 @@
 .oc-x11--failed .ui-chip__icon {
   color: var(--color-error);
 }
+
+/* A service's next steps and its Activity (#6028, slice 10). */
+.oc-row__remedies {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+}

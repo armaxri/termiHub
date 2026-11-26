@@ -1,4 +1,6 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
+import { ServiceRemedies } from "@/components/ServiceActivity/ServiceRemedies";
+import { useServiceEntries } from "@/components/ServicesSidebar/useServiceEntries";
 import {
   Terminal,
   Server,
@@ -138,6 +140,19 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const shutdownRemoteAgent = useAppStore((s) => s.shutdownRemoteAgent);
   const stopTunnel = useAppStore((s) => s.stopTunnel);
   const tunnels = useAppStore((s) => s.tunnels);
+  // What each service row says and offers, as in Services (#6028, slice 10).
+  const { entries: serviceEntries } = useServiceEntries(false);
+  const serviceModels = new Map(serviceEntries.map(({ model }) => [model.id, model]));
+  const remedies = (id: string, sshConnectionId?: string) => {
+    const model = serviceModels.get(id);
+    return model ? (
+      <ServiceRemedies
+        model={model}
+        sshConnectionId={sshConnectionId}
+        onLeave={() => onOpenChange(false)}
+      />
+    ) : undefined;
+  };
   // Live single source of truth for tunnel status (folded from the authoritative
   // `tunnels` projection region by the tunnel slice); the panel reads it directly
   // so it never drifts from the sidebar.
@@ -1209,7 +1224,8 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                 hostText,
                 statsText,
                 reach?.label,
-                serviceReason(tunnelServiceState(status), state?.error),
+                serviceModels.get(t.id)?.reason ??
+                  serviceReason(tunnelServiceState(status), state?.error),
               ]
                 .filter(Boolean)
                 .join(" · ");
@@ -1228,6 +1244,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                       : () => handleKillTunnel(t.id)
                   }
                   killLabel={companion ? "Stop pair" : "Stop"}
+                  actions={remedies(t.id, t.sshConnectionId)}
                 />
               );
             })}
@@ -1254,6 +1271,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                   }
                   onKill={() => handleStopEmbeddedServer(s.id)}
                   killLabel="Stop"
+                  actions={remedies(s.id)}
                   data-testid={`open-connections-embedded-server-${s.id}`}
                   killTestId={`open-connections-embedded-server-stop-${s.id}`}
                 />

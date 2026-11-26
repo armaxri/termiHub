@@ -8,6 +8,7 @@
  * Services sidebar reads), listing each running server with a per-row Stop and a
  * Kill-All, both wired to the store's `stopEmbeddedServer` action.
  */
+import { useEditorViews } from "@/components/ServiceEditor/editorView";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -145,12 +146,33 @@ describe("OpenConnectionsModal — Embedded servers section", () => {
 
     await renderModal();
 
-    const killBtn = serverRows()[0]?.querySelector("button") as HTMLButtonElement;
+    const killBtn = serverRows()[0]?.querySelector(
+      '[data-testid="open-connections-embedded-server-stop-s1"]'
+    ) as HTMLButtonElement;
     await act(async () => {
       killBtn.click();
     });
 
     expect(stopEmbeddedServer).toHaveBeenCalledWith("s1");
+  });
+
+  it("offers the server's Activity, which opens its editor there (#6028, slice 10)", async () => {
+    const openServerEditorTab = vi.fn();
+    useAppStore.setState({
+      embeddedServers: [config("s1", "Docs HTTP", "http")],
+      embeddedServerStates: { s1: serverState("s1", "running") },
+      openServerEditorTab,
+    });
+    await renderModal();
+    await act(async () => {
+      (
+        serverRows()[0]?.querySelector(
+          '[data-testid="oc-service-s1-activity"]'
+        ) as HTMLButtonElement
+      ).click();
+    });
+    expect(openServerEditorTab).toHaveBeenCalledWith("s1");
+    expect(useEditorViews.getState().views.s1).toBe("activity");
   });
 
   it("Kill-All stops every running server via stopEmbeddedServer", async () => {

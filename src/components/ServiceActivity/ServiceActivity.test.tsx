@@ -9,6 +9,10 @@ const { getServiceEvents, writeText, getActivity } = vi.hoisted(() => ({
   getActivity: vi.fn(() => Promise.resolve(null)),
 }));
 vi.mock("@/services/serviceEventsApi", () => ({ getServiceEvents }));
+const { connect } = vi.hoisted(() => ({ connect: vi.fn(() => Promise.resolve()) }));
+vi.mock("@/hooks/useConnectSavedConnection", () => ({
+  useConnectSavedConnection: () => ({ connect }),
+}));
 vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({ writeText }));
 vi.mock("@/services/embeddedServerApi", () => ({
   listNetworkInterfaces: vi.fn(() => Promise.resolve([])),
@@ -25,6 +29,7 @@ import { seedConnectionsRegion, setupConnectionsRegion } from "@/test/connection
 import { flushAsync } from "@/test/flushAsync";
 import { withTooltip } from "@/test/tooltip";
 import type { EmbeddedServerConfig, ServerStatus } from "@/types/embeddedServer";
+import type { ServiceCause } from "@/types/generated/ServiceCause";
 import type { TunnelConfig, TunnelStatus } from "@/types/tunnel";
 import { formatClockTime } from "@/utils/formatters";
 import { ServiceActivityView } from "./ServiceActivity";
@@ -70,11 +75,16 @@ const actions = {
 };
 const onEdit = vi.fn();
 
-function tunnelIn(status: TunnelStatus, error?: string, activeConnections = 0) {
+function tunnelIn(
+  status: TunnelStatus,
+  error?: string,
+  activeConnections = 0,
+  cause?: ServiceCause
+) {
   useAppStore.setState({
     tunnels: [DB],
     tunnelStates: {
-      db: { tunnelId: "db", status, error, stats: { ...STATS, activeConnections } },
+      db: { tunnelId: "db", status, error, cause, stats: { ...STATS, activeConnections } },
     },
   });
 }
@@ -191,6 +201,50 @@ describe("a failed one", () => {
     await render("tunnel", "db");
     await click("service-activity-next-chooseConnection");
     expect(onEdit).toHaveBeenCalled();
+  });
+});
+
+describe("errors with a next step (#6028, slice 10)", () => {
+  it("marks the part of the path that fails, and opens a terminal on a silent server", async () => {
+    tunnelIn("error", "Build Box did not answer in time.", 0, "serverSilent");
+    await render("tunnel", "db");
+    const fails = q("tunnel-diagram-fails")!;
+    expect(fails.textContent).toBe("Fails here");
+    expect(fails.closest("[data-part]")!.getAttribute("data-part")).toBe("server");
+    await click("service-activity-next-openTerminal");
+    expect(connect).toHaveBeenCalledWith(expect.objectContaining({ id: "ssh-1" }));
+  });
+
+  it("reviews the host key by starting again", async () => {
+    tunnelIn("error", "The host key of Build Box is not trusted.", 0, "hostKeyUntrusted");
+    await render("tunnel", "db");
+    await click("service-activity-next-reviewKey");
+    expect(actions.startTunnel).toHaveBeenCalledWith("db");
+  });
+
+  it("shows no path while nothing fails", async () => {
+    tunnelIn("connected");
+    await render("tunnel", "db");
+    expect(q("tunnel-diagram")).toBeNull();
+  });
+
+  it("a server whose folder is gone opens Settings to choose another", async () => {
+    useAppStore.setState({
+      embeddedServers: [DOCS],
+      embeddedServerStates: {
+        docs: {
+          serverId: "docs",
+          status: "error",
+          error: "The folder /srv does not exist.",
+          cause: "folderMissing",
+          stats: STATS,
+        },
+      },
+    });
+    await render("fileServer", "docs");
+    await click("service-activity-next-chooseFolder");
+    expect(onEdit).toHaveBeenCalled();
+    expect(q("tunnel-diagram")).toBeNull();
   });
 });
 
