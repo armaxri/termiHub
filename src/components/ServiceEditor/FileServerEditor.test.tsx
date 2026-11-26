@@ -368,6 +368,39 @@ describe("who can open it", () => {
   });
 });
 
+describe("a folder shared from the file browser (slice 12)", () => {
+  it("asks who and what, for this session only", async () => {
+    await render({ serverType: "ftp", folder: "/home/ann/Builds" });
+    expect((field("root") as HTMLInputElement).value).toBe("/home/ann/Builds");
+    expect((field("name") as HTMLInputElement).value).toBe("Builds");
+    expect(checked("bind-here")).toBe("true");
+    expect(checked("can-download")).toBe("true");
+    expect(field("temporary")?.getAttribute("aria-checked")).toBe("true");
+    expect(field("autostart")).toBeNull();
+    await press("bind-network");
+    expect(field("warning")?.textContent).toContain("Anyone on your network can get these files.");
+    await press("save-start");
+    expect(saved()).toMatchObject({ temporary: true, autoStart: false, bindHost: "0.0.0.0" });
+    expect(actions.startEmbeddedServer).toHaveBeenCalledWith(saved().id);
+  });
+
+  it("can be kept", async () => {
+    seed([{ ...DOCS, temporary: true }]);
+    await render({ serverId: "srv-1" });
+    await press("temporary");
+    await press("autostart");
+    await press("save");
+    expect(saved().temporary).toBeUndefined();
+    expect(saved().autoStart).toBe(true);
+  });
+
+  it("is not offered for a saved server that is kept", async () => {
+    seed([DOCS]);
+    await render({ serverId: "srv-1" });
+    expect(field("temporary")).toBeNull();
+  });
+});
+
 describe("its port (V-002, V-003)", () => {
   it("is one that no service of this computer is set to", async () => {
     seed([

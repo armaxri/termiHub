@@ -595,6 +595,8 @@ export function fileServerModel(
         ? t(host.kind === "thisComputer" ? "service.risk.upload.here" : "service.risk.upload.there")
         : undefined,
     address,
+    // Shared for this session only (slice 12), unless the user wrote one.
+    ...(config.temporary && !config.description ? { description: t("server.temporary") } : {}),
     addressStep:
       address && !address.open && config.serverType === "tftp"
         ? { id: "letReach", label: t("service.next.letReach") }

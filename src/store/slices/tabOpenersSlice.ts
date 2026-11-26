@@ -152,7 +152,7 @@ export interface TabOpenersSlice {
   /** Open (or focus) the editor tab of a file server; `null` makes one (#6028). */
   openServerEditorTab: (
     serverId: string | null,
-    options?: Pick<ServerEditorMeta, "serverType" | "copyOf">
+    options?: Pick<ServerEditorMeta, "serverType" | "copyOf" | "folder">
   ) => void;
   /**
    * Open (or focus) the tunnel-editor tab for `tunnelId` (`null` = new tunnel).
@@ -666,6 +666,7 @@ export const createTabOpenersSlice: StateCreator<AppState, [], [], TabOpenersSli
           serverId,
           ...(serverId === null && options?.serverType ? { serverType: options.serverType } : {}),
           ...(serverId === null && options?.copyOf ? { copyOf: options.copyOf } : {}),
+          ...(serverId === null && options?.folder ? { folder: options.folder } : {}),
         };
         const allLeaves = getAllLeaves(state.rootPanel);
         for (const leaf of allLeaves) {
@@ -674,7 +675,8 @@ export const createTabOpenersSlice: StateCreator<AppState, [], [], TabOpenersSli
               contentType === "server-editor" &&
               open?.serverId === meta.serverId &&
               open.serverType === meta.serverType &&
-              open.copyOf === meta.copyOf
+              open.copyOf === meta.copyOf &&
+              open.folder === meta.folder
           );
           if (existing) {
             const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({

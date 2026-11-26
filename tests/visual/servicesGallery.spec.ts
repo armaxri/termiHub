@@ -76,6 +76,7 @@ const STATES = {
   "tunnels--narrow": "The narrowest sidebar, long names: read everything.",
   "tunnels--hover": "Change, copy or delete a running tunnel.",
   "tunnels--menu": "The same, from its menu.",
+  "servers--shared": "A folder you shared for now: how long does it stay?",
   "servers--stopped": "Find the folder you share and start it.",
   "servers--waiting": "Two servers have not started yet: why, and will they?",
   "servers--starting": "A server was just started: is it there yet?",
@@ -110,6 +111,8 @@ const STATES = {
   "server-editor--ftp": "Share a folder to upload and download files.",
   "server-editor--tftp": "Make a server that gives firmware to a switch.",
   "server-editor--port-taken": "The port you typed is one of your other servers'.",
+  "server-editor--share":
+    "You shared a folder from the file browser: who gets it, and for how long?",
   "server-editor--missing": "Saving did nothing: what is missing?",
   "server-editor--warning": "Others may upload without a password: do you see what that means?",
   "server-editor--sign-in": "Only people with the password may open it.",
@@ -430,6 +433,16 @@ const TUNNEL_ROWS: Partial<Record<State, Row[]>> = {
 };
 const SERVER_ROWS: Partial<Record<State, Row[]>> = {
   "servers--stopped": serversIn("stopped"),
+  "servers--shared": [
+    {
+      id: "shared",
+      name: "Builds",
+      type: "http",
+      status: "running",
+      over: { temporary: true, rootDirectory: "/home/ann/Builds", port: 8081 },
+    },
+    ...serversIn("running").slice(0, 1),
+  ],
   "servers--waiting": [
     ...serversIn("waiting", WHY.agent, { host: ON_EDGE }, AGENT).slice(0, 1),
     { id: "pw", name: "With a password", status: "waiting", error: WHY.store, state: STORE },
@@ -934,6 +947,15 @@ for (const viewport of WINDOWS) {
             case "server-editor--port-taken":
               await open("http");
               await field("port").fill("8080");
+              break;
+            case "server-editor--share":
+              await page.evaluate(() => {
+                const store = window.__visual.store.getState() as unknown as {
+                  openServerEditorTab(id: null, options: object): void;
+                };
+                store.openServerEditorTab(null, { serverType: "http", folder: "/home/ann/Builds" });
+              });
+              await page.locator(id("server-editor")).waitFor();
               break;
             case "server-editor--missing":
               await open("tftp");
