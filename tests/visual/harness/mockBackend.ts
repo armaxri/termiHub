@@ -41,6 +41,8 @@ export interface VisualScenario {
   serviceData?: { tunnels: unknown; services: unknown };
   /** Answer `list_network_interfaces` with these instead of one LAN address. */
   networkInterfaces?: { name: string; addr: string }[];
+  /** The lab agent lists its machine's addresses (`hostAddresses`, #6086). */
+  agentAddresses?: boolean;
   /** Answer `get_embedded_server_activity` with this. */
   serverActivity?: unknown;
   /**
@@ -786,6 +788,14 @@ function regionView(region: string, populated: boolean): unknown {
   }
   if (region === "agents") {
     if (!populated) return {};
+    if (window.__VISUAL_SCENARIO__?.agentAddresses) {
+      return {
+        ...AGENTS_VIEW,
+        agents: AGENTS_VIEW.agents.map((a) =>
+          a.id === "agent-lab" ? { ...a, capabilities: { hostAddresses: true } } : a
+        ),
+      };
+    }
     return window.__VISUAL_SCENARIO__?.iconStyles ? ICON_STYLE_AGENTS_VIEW : AGENTS_VIEW;
   }
   const { serviceData } = window.__VISUAL_SCENARIO__ ?? {};
@@ -951,6 +961,14 @@ export function handleCommand(cmd: string, args: Args): unknown {
           { name: "en0", addr: "192.168.1.20" },
         ]
       );
+    case "list_agent_addresses":
+      return {
+        supported: true,
+        addresses: [
+          { name: "eth0", addr: "192.168.20.14" },
+          { name: "wlan0", addr: "10.4.0.22" },
+        ],
+      };
     case "get_embedded_server_activity":
       return activitySince(scenario.serverActivity, Number(args?.sinceSeq ?? 0));
     case "list_windows":

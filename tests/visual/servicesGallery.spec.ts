@@ -119,6 +119,8 @@ const STATES = {
   "server-editor--sign-in": "Only people with the password may open it.",
   "server-editor--address": "It should be open on one address only.",
   "server-editor--agent": "The folder is on another machine.",
+  "server-editor--agent-addresses": "Open it on one address of that machine: which ones are there?",
+  "server-editor--agent-offline": "That machine's agent is offline: how do you give its address?",
   "server-editor--kinds": "You took the wrong kind: change it.",
   "server-editor--edit": "Change the port of a running server.",
   "server-editor--unsaved": "You closed the tab with changes in it.",
@@ -692,6 +694,7 @@ const TUNNEL_EDITOR_STATES = (Object.keys(STATES) as State[]).filter((state) =>
 /** What else the backend answers in a state. */
 const ANSWERS: Partial<Record<State, Partial<VisualScenario>>> = {
   "servers--open-unknown": { networkInterfaces: [] },
+  "server-editor--agent-addresses": { agentAddresses: true },
   "servers--activity": { serverActivity: REQUESTS },
   "servers--activity-nobody": { serverActivity: NO_REQUESTS },
 };
@@ -983,6 +986,18 @@ for (const viewport of WINDOWS) {
               await field("root").fill("/srv/docs");
               await field("bind-address").click();
               await look("address");
+              break;
+            case "server-editor--agent-addresses":
+            case "server-editor--agent-offline":
+              await open("http");
+              await field("runloc").click();
+              await page
+                .locator("[role=option]")
+                .nth(state.endsWith("offline") ? 2 : 1)
+                .click();
+              await field("root").fill("/srv/docs");
+              await field("bind-address").click();
+              await look(state.endsWith("offline") ? "address-note" : "address");
               break;
             case "server-editor--agent":
               await open("http");
