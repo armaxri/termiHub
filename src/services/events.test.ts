@@ -484,6 +484,88 @@ describe("events service", () => {
       expect(late).toHaveBeenCalledWith(null, "io_error");
     });
 
+    describe("an exit of an older stream of the session (#6032)", () => {
+      let handlers: Record<string, (event: unknown) => void>;
+      const output = (epoch: number) =>
+        handlers["terminal-output"]({
+          payload: { session_id: "s", data: b64([65]), offset: 0, epoch },
+        });
+      const exit = (epoch?: number) =>
+        handlers["terminal-exit"]({
+          payload: { session_id: "s", exit_code: null, ...(epoch ? { epoch } : {}) },
+        });
+
+      beforeEach(async () => {
+        handlers = {};
+        mockedListen.mockImplementation((eventName, handler) => {
+          handlers[eventName as string] = handler as (event: unknown) => void;
+          return Promise.resolve(vi.fn());
+        });
+        await dispatcher.init();
+      });
+
+      it("does not end a newer stream that already showed output", () => {
+        const cb = vi.fn();
+        dispatcher.subscribeExit("s", cb);
+        output(2);
+        exit(1);
+        expect(cb).not.toHaveBeenCalled();
+        exit(2);
+        expect(cb).toHaveBeenCalledTimes(1);
+      });
+
+      it("keeps the output a newer stream buffered, and is not buffered itself", () => {
+        output(2);
+        exit(1);
+        const exitCb = vi.fn();
+        dispatcher.subscribeExit("s", exitCb);
+        expect(exitCb).not.toHaveBeenCalled();
+        const outputCb = vi.fn();
+        dispatcher.subscribeOutput("s", outputCb);
+        expect(outputCb).toHaveBeenCalledTimes(1);
+      });
+
+      it("buffered before a newer stream began, it is dropped when that stream shows output", () => {
+        exit(1);
+        output(2);
+        const cb = vi.fn();
+        dispatcher.subscribeExit("s", cb);
+        expect(cb).not.toHaveBeenCalled();
+      });
+
+      it("does not end a subscriber attached to a newer stream, live or buffered", () => {
+        const attached = vi.fn();
+        const unsubscribe = dispatcher.subscribeExit("s", attached, () => 2);
+        exit(1);
+        expect(attached).not.toHaveBeenCalled();
+        exit(2);
+        expect(attached).toHaveBeenCalledTimes(1);
+        unsubscribe();
+
+        exit(1);
+        const late = vi.fn();
+        dispatcher.subscribeExit("s", late, () => 2);
+        expect(late).not.toHaveBeenCalled();
+      });
+
+      it("late output of the older stream does not make its exit current again", () => {
+        const cb = vi.fn();
+        dispatcher.subscribeExit("s", cb);
+        output(2);
+        output(1);
+        exit(1);
+        expect(cb).not.toHaveBeenCalled();
+      });
+
+      it("of an emitter that does not say which stream ended, still ends it", () => {
+        const cb = vi.fn();
+        dispatcher.subscribeExit("s", cb, () => 2);
+        output(2);
+        exit();
+        expect(cb).toHaveBeenCalledTimes(1);
+      });
+    });
+
     it("delivers buffered null exit code when exit_code is null", async () => {
       const handlers: Record<string, (event: unknown) => void> = {};
       mockedListen.mockImplementation((eventName, handler) => {

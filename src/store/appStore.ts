@@ -160,6 +160,11 @@ export interface AddTabOptions {
    * Defaults to `false`; open tabs are never renamed.
    */
   numberTitle?: boolean;
+  /**
+   * Hold the tab until the user confirms what its saved connection runs by itself
+   * here (#6065): it does not connect, and shows what would run.
+   */
+  heldUntilConfirmed?: boolean;
 }
 
 /**

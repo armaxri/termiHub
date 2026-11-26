@@ -29,6 +29,10 @@ import {
   flushSessionRegion,
   installSessionLifecycleHarness,
 } from "@/test/sessionLifecycleRegionTestHarness";
+import { __trustAllSavedConnectionsForTest } from "@/services/savedConnectionTrust";
+
+// The connect flow under test, not the check of changed connections (#6065).
+__trustAllSavedConnectionsForTest(true);
 
 const sessionRegion = installSessionLifecycleHarness();
 

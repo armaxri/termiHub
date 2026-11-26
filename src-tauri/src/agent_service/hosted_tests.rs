@@ -582,3 +582,125 @@ fn what_runs_again_is_not_taken_back() {
     assert!(!services.keep("edge", "a"));
     assert_eq!(view(&services), running(0));
 }
+
+// ─── After an app restart (#6051) ─────────────────────────────────────────
+
+#[test]
+fn after_a_restart_what_still_runs_there_is_taken_over() {
+    let (agent, answers) = agent();
+    let services = Services::default();
+    services.expect("a", "edge");
+    assert!(services.any(), "asked about");
+    assert_eq!(
+        view(&services),
+        None,
+        "its row says what the manager says until then"
+    );
+
+    online(&agent, false);
+    assert_eq!(
+        tick(&services, &agent),
+        vec![],
+        "asked again once its agent is there"
+    );
+    assert_eq!(view(&services), None);
+
+    online(&agent, true);
+    say(&answers, "a", Ok(json!(5)));
+    assert_eq!(tick(&services, &agent), presence());
+    assert_eq!(view(&services), running(5));
+    assert!(services.is_running("a"));
+    // From here on it is one like any other: it can be stopped.
+    assert_eq!(services.stop("a"), StopPlan::StopThere("edge".into()));
+}
+
+#[test]
+fn after_a_restart_what_does_not_run_there_is_left_alone() {
+    let (agent, _answers) = agent();
+    let services = Services::default();
+    services.expect("a", "edge");
+    assert_eq!(tick(&services, &agent), vec![]);
+    assert_eq!(view(&services), None);
+    assert!(!services.any(), "asked once");
+    assert_eq!(tick(&services, &agent), vec![]);
+    assert_eq!(agent.requests().len(), 1);
+}
+
+#[test]
+fn a_start_before_the_answer_ends_the_question() {
+    let (agent, answers) = agent();
+    let services = Services::default();
+    services.expect("a", "edge");
+    started(&services, "a");
+    say(&answers, "a", Ok(json!(3)));
+    assert_eq!(tick(&services, &agent), sampled(true));
+    assert_eq!(view(&services), running(3));
+}
+
+#[test]
+fn what_the_user_stopped_or_removed_is_stopped_there_not_taken_over() {
+    let (agent, answers) = agent();
+    let services = Services::default();
+    services.expect("a", "edge");
+    // A stop on its row (it reads Stopped), a delete or a move.
+    assert_eq!(services.stop("a"), StopPlan::Nothing);
+    say(&answers, "a", Ok(json!(3)));
+    assert_eq!(tick(&services, &agent), vec![], "not taken over");
+    assert!(!services.is_running("a"));
+    // What still ran there is stopped on the next tick.
+    tick(&services, &agent);
+    assert_eq!(stops_sent(&agent), 1);
+    assert!(!services.any(), "and nothing is left");
+
+    // Not running there: nothing to stop.
+    let (quiet, _answers) = self::agent();
+    let services = Services::default();
+    services.expect("b", "edge");
+    services.stop("b");
+    tick(&services, &quiet);
+    tick(&services, &quiet);
+    assert_eq!(stops_sent(&quiet), 0);
+    assert!(!services.any());
+}
+
+#[test]
+fn a_stop_owed_before_a_restart_is_kept_on_disk_and_sent_when_the_agent_is_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("owed.json");
+    let (agent, answers) = agent();
+    {
+        let services = Services::stored(file.clone());
+        say(&answers, "a", Ok(json!(1)));
+        started(&services, "a");
+        online(&agent, false);
+        tick(&services, &agent);
+        assert_eq!(services.stop("a"), StopPlan::StopThere("edge".into()));
+    }
+    // The app ends; a new one starts. The service may even have been deleted.
+    let services = Services::stored(file.clone());
+    assert_eq!(view(&services), stopping());
+    services.expect("a", "edge");
+    assert_eq!(
+        view(&services),
+        stopping(),
+        "the stop wins over a take-over"
+    );
+    online(&agent, true);
+    assert_eq!(tick(&services, &agent), vec![Change::Stopped("a".into())]);
+    assert_eq!(stops_sent(&agent), 1);
+    assert!(!services.any());
+    // Confirmed: the next start of the app owes nothing.
+    assert_eq!(view(&Services::stored(file.clone())), None);
+}
+
+#[test]
+fn an_unreadable_file_of_owed_stops_owes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("owed.json");
+    std::fs::write(&file, "not json").unwrap();
+    let services = Services::stored(file.clone());
+    assert!(!services.any());
+    assert_eq!(view(&services), None);
+    // No file: the same.
+    assert!(!Services::stored(dir.path().join("none.json")).any());
+}

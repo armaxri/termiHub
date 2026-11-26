@@ -16,6 +16,7 @@
 //! their own errors; what they changed arrives here. Every change publishes the
 //! whole view, and the projector sends only what differs.
 
+use crate::agent_service::events::ServiceEvents;
 use std::sync::Arc;
 
 use serde_json::{json, Map, Value};
@@ -59,9 +60,14 @@ pub fn publish_services<R: Runtime>(app: &AppHandle<R>) {
     ) else {
         return;
     };
-    projection
-        .projector
-        .publish_with(SERVICES_REGION, || build_services_view(&manager));
+    projection.projector.publish_with(SERVICES_REGION, || {
+        let view = build_services_view(&manager);
+        // What happened to each, for its Activity (#6028, slice 9).
+        if let Some(events) = app.try_state::<ServiceEvents>() {
+            events.note(&view);
+        }
+        view
+    });
 }
 
 #[cfg(test)]

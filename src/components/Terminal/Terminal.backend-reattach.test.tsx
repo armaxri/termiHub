@@ -191,7 +191,11 @@ describe("Terminal — backend-driven direct reconnect re-attach (#2457)", () =>
     expect(mockCreateTerminal).not.toHaveBeenCalled();
     // Terminal I/O re-attaches to the backend-chosen id.
     expect(mockSubscribeOutput).toHaveBeenCalledWith("backend-new", expect.any(Function));
-    expect(mockSubscribeExit).toHaveBeenCalledWith("backend-new", expect.any(Function));
+    expect(mockSubscribeExit).toHaveBeenCalledWith(
+      "backend-new",
+      expect.any(Function),
+      expect.any(Function)
+    );
   });
 
   it("a user-initiated reconnect (region not reconnecting) drives a fresh create_connection", async () => {

@@ -1,7 +1,7 @@
 /**
  * What the three SSH tunnel types mean, in plain words (#6027) — the one source
  * for every surface that names a tunnel type: the editor's type cards, the
- * sidebar row's tooltip and the connection editor's Port Forwarding section.
+ * row's tooltip in Services and in the connection editor's SSH tunnels.
  *
  * The wording follows the SSH semantics the editor's endpoint lines show
  * (`tunnelHost.ts`): "local" is the machine that hosts the tunnel, so a local

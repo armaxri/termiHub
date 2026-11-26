@@ -5,7 +5,7 @@ grades run without an app in the per-PR lane and on the live page in
 ``tests/test_product_run_security_page.py``.
 
 - :func:`collapsed_section_problems` — with "Don't save passwords", Shared
-  credentials and Credential vault backup are each their heading plus the one
+  credentials and Back up saved passwords are each their heading plus the one
   storage-off line: no description paragraph, no action (R-050).
 - :func:`storing_section_problems` — with a store, the same sections keep their
   description, so the collapse is tied to the mode and not a lost paragraph.
@@ -28,16 +28,17 @@ SECTIONS: tuple[tuple[str, str, str, str], ...] = (
         "shared-credentials-unavailable",
         "Shared credentials",
     ),
+    # Credential vault backup until #5860 (one backup flow): it points to Backup & restore.
     (
-        "credential-vault-backup",
-        "credential-vault-description",
-        "credential-vault-unavailable",
-        "Credential vault backup",
+        "password-backup",
+        "password-backup-description",
+        "password-backup-unavailable",
+        "Back up saved passwords",
     ),
 )
 
 #: How every storage-off line starts (``credentialStorageOffText``).
-OFF_LINE_PREFIX = "Credential storage is off — choose "
+OFF_LINE_PREFIX = "Passwords aren't saved — choose "
 
 #: Touch ID test ids.
 TOUCHID_HINT = "biometric-unlock-hint"

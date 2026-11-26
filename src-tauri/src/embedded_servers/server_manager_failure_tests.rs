@@ -161,6 +161,31 @@ fn start_on_a_busy_port_fails_and_succeeds_once_the_port_frees() {
 }
 
 #[test]
+fn a_folder_that_is_gone_says_so_with_its_cause() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let gone = root.path().join("firmware");
+    let h = harness(dir.path(), None);
+    h.manager.save_config(http_on("web", 0, &gone)).unwrap();
+
+    h.manager.start_server("web").expect_err("no folder");
+    let state = h.state_of("web");
+    assert_eq!(
+        (state.status, state.cause),
+        (ServerStatus::Error, Some(ServiceCause::FolderMissing))
+    );
+    assert_eq!(
+        state.error,
+        Some(format!("The folder {} does not exist.", gone.display()))
+    );
+    // Back, it starts.
+    std::fs::create_dir(&gone).unwrap();
+    h.manager.start_server("web").expect("the folder is back");
+    assert_eq!(h.state_of("web").cause, None);
+    h.manager.stop_all();
+}
+
+#[test]
 fn a_start_that_fails_on_a_free_port_is_not_blamed_on_it() {
     let dir = tempfile::tempdir().unwrap();
     let root = tempfile::tempdir().unwrap();

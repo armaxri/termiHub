@@ -225,13 +225,13 @@ class TestProductRunRowsNames(
         with self.step(
             "rows-names.schedule",
             "A schedule row shows its name and description, and answers when, what and where",
-            expect="Settings -> Schedules: 'Rows schedule …', 'Every minute check' muted under "
+            expect="Automations ▸ Schedules: 'Rows schedule …', 'Every minute check' muted under "
             "the name, 'Off until you switch it on · Every minute', and 'Rows macro … on "
             "pr-rows-local-…'; nothing is cut (#5757, the schedule exception of #6024)",
         ):
             self.require("rows-names.items")
-            self.close_automation_schedules()  # its rows share Settings' testIds
-            self.open_settings_category("schedules")
+            # The one schedules list since #5860.
+            self.open_automation_schedules()
             sid = self.ids["schedule"]
             row = f"schedule-item-{sid}"
             self.wait(lambda: self.driver.exists(row), what="the schedule row")

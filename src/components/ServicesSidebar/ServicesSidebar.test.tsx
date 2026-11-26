@@ -1,4 +1,5 @@
 /** The Services sidebar (#6028): groups, search, numbers, New, keys, held order. */
+import { useEditorViews } from "@/components/ServiceEditor/editorView";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -488,6 +489,18 @@ describe("the keys", () => {
     key(q("server-item-s")!, "Enter");
     await flushAsync();
     expect(openServerEditorTab).toHaveBeenCalledWith("s");
+  });
+
+  it("Activity opens the editor of either kind on Activity, Edit on Settings (slice 9)", async () => {
+    await act(async () => q("tunnel-activity-a")!.click());
+    expect(openTunnelEditorTab).toHaveBeenLastCalledWith("a");
+    expect(useEditorViews.getState().views.a).toBe("activity");
+    await act(async () => q("server-open-activity-s")!.click());
+    expect(openServerEditorTab).toHaveBeenLastCalledWith("s");
+    expect(useEditorViews.getState().views.s).toBe("activity");
+    act(() => q("tunnel-item-a")!.focus());
+    key(q("tunnel-item-a")!, "Enter");
+    expect(useEditorViews.getState().views.a).toBe("settings");
   });
 
   it("closes and opens a group", () => {

@@ -17,8 +17,16 @@
 //!
 //! Every transition takes the one lock, so a stop and an answer that race
 //! cannot both win. Nothing here sends while holding it.
+//!
+//! After an app restart (#6051) nothing is known: what a service's stored agent
+//! says decides. [`expect`](HostedServices::expect) asks it once the agent is
+//! there; what still runs is taken over, unless the user stopped, moved or
+//! deleted it meanwhile, which stops it there. Stops an agent has not confirmed
+//! are kept on disk ([`stored`](HostedServices::stored)), so they are sent after
+//! a restart too, also for a service that has no row any more.
 
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -187,6 +195,8 @@ pub struct Target<S> {
 enum Ask<S> {
     Status(S),
     Stop,
+    /// Whether a service stored to run there still does, after a restart.
+    Find(S),
 }
 
 /// The answer to one [`Target`].
@@ -196,6 +206,7 @@ pub struct Sample<S> {
     agent_id: String,
     seq: u64,
     stop: bool,
+    find: bool,
     probe: Probe<S>,
 }
 
@@ -274,6 +285,16 @@ struct Starting {
     stop: bool,
 }
 
+/// A service stored to run on an agent that has not been asked since the app
+/// started (#6051).
+struct Expected {
+    agent_id: String,
+    seq: u64,
+    /// The user stopped, moved or deleted it before the answer: what runs is
+    /// stopped there, not taken over.
+    orphan: bool,
+}
+
 struct Inner<S> {
     /// Tells a record from a later one of the same service.
     seq: u64,
@@ -283,6 +304,7 @@ struct Inner<S> {
     owed: HashMap<(String, String), Owed>,
     waits: HashMap<String, Wait>,
     starting: HashMap<String, Starting>,
+    expected: HashMap<String, Expected>,
 }
 
 impl<S> Inner<S> {
@@ -299,6 +321,8 @@ impl<S> Inner<S> {
             return Err(Busy::Starting);
         }
         self.waits.remove(id);
+        // A start answers the question of what runs there.
+        self.expected.remove(id);
         let seq = self.next_seq();
         self.starting
             .insert(id.to_string(), Starting { seq, stop: false });
@@ -317,15 +341,32 @@ impl<S> Inner<S> {
     }
 }
 
+/// Where the stops an agent owes are kept between app runs (#6051).
+struct OwedFile {
+    path: PathBuf,
+    /// One write at a time, each of the latest stops.
+    write: Mutex<()>,
+}
+
+/// One owed stop on disk.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OwedStop {
+    agent_id: String,
+    id: String,
+}
+
 /// The records of one manager's services. A clone shares them.
 pub struct HostedServices<K: HostedKind> {
     inner: Arc<Mutex<Inner<K::State>>>,
+    file: Option<Arc<OwedFile>>,
 }
 
 impl<K: HostedKind> Clone for HostedServices<K> {
     fn clone(&self) -> Self {
         Self {
             inner: Arc::clone(&self.inner),
+            file: self.file.clone(),
         }
     }
 }
@@ -339,15 +380,89 @@ impl<K: HostedKind> Default for HostedServices<K> {
                 owed: HashMap::new(),
                 waits: HashMap::new(),
                 starting: HashMap::new(),
+                expected: HashMap::new(),
             })),
+            file: None,
         }
     }
 }
 
 impl<K: HostedKind> HostedServices<K> {
+    /// Records whose owed stops are kept in `path`, with those of the last run
+    /// (#6051). A file that cannot be read owes nothing.
+    pub fn stored(path: PathBuf) -> Self {
+        let services = Self {
+            file: Some(Arc::new(OwedFile {
+                path,
+                write: Mutex::new(()),
+            })),
+            ..Self::default()
+        };
+        let owed: Vec<OwedStop> = services
+            .file
+            .as_ref()
+            .and_then(|file| std::fs::read(&file.path).ok())
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default();
+        {
+            let mut inner = services.lock();
+            for stop in owed {
+                inner.owe(&stop.agent_id, &stop.id, None);
+            }
+        }
+        services
+    }
+
     fn lock(&self) -> MutexGuard<'_, Inner<K::State>> {
         // The maps stay consistent when a holder panicked.
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Keep the owed stops on disk, when they are kept. A failure is logged:
+    /// the stops are still sent in this run.
+    fn save_owed(&self) {
+        let Some(file) = &self.file else {
+            return;
+        };
+        let _one = file.write.lock().unwrap_or_else(|e| e.into_inner());
+        let mut owed: Vec<OwedStop> = self
+            .lock()
+            .owed
+            .keys()
+            .map(|(agent_id, id)| OwedStop {
+                agent_id: agent_id.clone(),
+                id: id.clone(),
+            })
+            .collect();
+        owed.sort_by(|a, b| (&a.agent_id, &a.id).cmp(&(&b.agent_id, &b.id)));
+        let written = serde_json::to_vec(&owed)
+            .map_err(std::io::Error::other)
+            .and_then(|bytes| termihub_core::util::persist::write_atomic(&file.path, bytes));
+        if let Err(error) = written {
+            tracing::warn!(path = %file.path.display(), %error, "could not keep the owed stops");
+        }
+    }
+
+    /// After an app start: ask agent `agent_id` whether `id`, stored to run
+    /// there, still does, and take it over when it does (#6051). Nothing while
+    /// a stop of it is owed there, or it runs or starts already.
+    pub fn expect(&self, id: &str, agent_id: &str) {
+        let mut inner = self.lock();
+        let owed = inner
+            .owed
+            .contains_key(&(agent_id.to_string(), id.to_string()));
+        if owed || inner.live.contains_key(id) || inner.starting.contains_key(id) {
+            return;
+        }
+        let seq = inner.next_seq();
+        inner.expected.insert(
+            id.to_string(),
+            Expected {
+                agent_id: agent_id.to_string(),
+                seq,
+                orphan: false,
+            },
+        );
     }
 
     // ─── Reading ──────────────────────────────────────────────────────────
@@ -435,7 +550,8 @@ impl<K: HostedKind> HostedServices<K> {
         !(inner.live.is_empty()
             && inner.owed.is_empty()
             && inner.waits.is_empty()
-            && inner.starting.is_empty())
+            && inner.starting.is_empty()
+            && inner.expected.is_empty())
     }
 
     // ─── Waiting ──────────────────────────────────────────────────────────
@@ -550,10 +666,15 @@ impl<K: HostedKind> HostedServices<K> {
         let settle_at = unanswered.then(|| now + UNKNOWN_SETTLE);
         if stop {
             inner.owe(&agent_id, &ticket.id, settle_at);
+            drop(inner);
+            self.save_owed();
             return Finished::StopThere(agent_id);
         }
         // It runs there now, so an older stop of it is settled.
-        inner.owed.remove(&(agent_id.clone(), ticket.id.clone()));
+        let settled = inner
+            .owed
+            .remove(&(agent_id.clone(), ticket.id.clone()))
+            .is_some();
         let seq = inner.next_seq();
         inner.live.insert(
             ticket.id,
@@ -570,6 +691,10 @@ impl<K: HostedKind> HostedServices<K> {
                 seq,
             },
         );
+        drop(inner);
+        if settled {
+            self.save_owed();
+        }
         Finished::Done
     }
 
@@ -579,8 +704,14 @@ impl<K: HostedKind> HostedServices<K> {
     pub fn stop(&self, id: &str) -> StopPlan {
         let mut inner = self.lock();
         let waited = inner.waits.remove(id).is_some();
+        // Not asked yet after a restart: what runs there is stopped, not taken over.
+        if let Some(expected) = inner.expected.get_mut(id) {
+            expected.orphan = true;
+        }
         if let Some(live) = inner.live.remove(id) {
             inner.owe(&live.agent_id, id, live.settle_at);
+            drop(inner);
+            self.save_owed();
             return StopPlan::StopThere(live.agent_id);
         }
         if let Some(starting) = inner.starting.get_mut(id) {
@@ -617,6 +748,8 @@ impl<K: HostedKind> HostedServices<K> {
             seq,
         };
         inner.live.insert(id.to_string(), live);
+        drop(inner);
+        self.save_owed();
         true
     }
 
@@ -652,6 +785,8 @@ impl<K: HostedKind> HostedServices<K> {
                 .is_some_and(|o| o.seq == seq && o.settle_at.is_none_or(|at| at <= now));
         if done {
             inner.owed.remove(key);
+            drop(inner);
+            self.save_owed();
         }
         done
     }
@@ -675,6 +810,7 @@ impl<K: HostedKind> HostedServices<K> {
             }
             keep
         });
+        self.save_owed();
         ids
     }
 
@@ -700,7 +836,13 @@ impl<K: HostedKind> HostedServices<K> {
             seq: owed.seq,
             ask: Ask::Stop,
         });
-        status.chain(stops).collect()
+        let finds = inner.expected.iter().map(|(id, expected)| Target {
+            id: id.clone(),
+            agent_id: expected.agent_id.clone(),
+            seq: expected.seq,
+            ask: Ask::Find(K::unknown_state(id)),
+        });
+        status.chain(stops).chain(finds).collect()
     }
 
     /// Ask the agents. Blocking; an agent that leaves one request unanswered is
@@ -728,6 +870,7 @@ impl<K: HostedKind> HostedServices<K> {
                     agent_id: target.agent_id.clone(),
                     seq: target.seq,
                     stop: matches!(target.ask, Ask::Stop),
+                    find: matches!(target.ask, Ask::Find(_)),
                     probe,
                 }
             })
@@ -746,9 +889,52 @@ impl<K: HostedKind> HostedServices<K> {
                 }
                 continue;
             }
+            if sample.find {
+                changes.extend(self.apply_find(sample));
+                continue;
+            }
             changes.extend(self.apply_status(sample, now));
         }
         changes
+    }
+
+    /// What the agent said about a service it may still run after a restart.
+    fn apply_find(&self, sample: Sample<K::State>) -> Option<Change> {
+        let mut inner = self.lock();
+        let expected = inner.expected.get(&sample.id)?;
+        if expected.seq != sample.seq {
+            return None;
+        }
+        let orphan = expected.orphan;
+        let state = match sample.probe {
+            // Asked again on a later tick.
+            Probe::Offline | Probe::NoAnswer => return None,
+            Probe::NotRunning => {
+                inner.expected.remove(&sample.id);
+                return None;
+            }
+            Probe::Running(state) => state,
+        };
+        inner.expected.remove(&sample.id);
+        if orphan {
+            inner.owe(&sample.agent_id, &sample.id, None);
+            drop(inner);
+            self.save_owed();
+            return None;
+        }
+        let seq = inner.next_seq();
+        inner.live.insert(
+            sample.id.clone(),
+            Live {
+                agent_id: sample.agent_id,
+                state,
+                presence: Presence::Here,
+                settle_at: None,
+                misses: 0,
+                seq,
+            },
+        );
+        Some(Change::Presence(sample.id))
     }
 
     fn apply_status(&self, sample: Sample<K::State>, now: Instant) -> Option<Change> {
@@ -818,14 +1004,14 @@ fn ask<K: HostedKind>(
         return (Probe::Offline, false);
     }
     let ((method, params), timeout) = match what {
-        Ask::Status(_) => (K::status_request(id), STATUS_TIMEOUT),
+        Ask::Status(_) | Ask::Find(_) => (K::status_request(id), STATUS_TIMEOUT),
         Ask::Stop => (K::stop_request(id), STOP_TIMEOUT),
     };
     match client.send_request_bounded(agent_id, method, params, timeout) {
         Ok(reply) => {
             let probe = match what {
                 Ask::Stop => Probe::NotRunning,
-                Ask::Status(last) => match K::read_status(id, &reply, last) {
+                Ask::Status(last) | Ask::Find(last) => match K::read_status(id, &reply, last) {
                     Reading::Running(state) => Probe::Running(state),
                     Reading::NotRunning => Probe::NotRunning,
                     Reading::Unreadable => Probe::NoAnswer,

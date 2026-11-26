@@ -550,6 +550,11 @@ export function Terminal({
         // Where the scrollback this tab repainted ends in the session's output
         // stream (#5990): live output before it is on screen already.
         let replayEnd = NO_REPLAY;
+        /**
+         * The stream a re-attach snapshot was taken of, also when it held nothing
+         * to repaint (#6110): the exit of an older one does not end this tab.
+         */
+        let snapshotEpoch = 0;
         // Set by a resumed session's repaint, see `ResumedRepaint`.
         let takeTyped: () => string[] = () => [];
         let beforeFirstOutput: (() => void) | null = null;
@@ -693,6 +698,7 @@ export function Terminal({
             try {
               const { data: buffer, ...end } = await getAgentSessionBuffer(sessionId);
               if (isCanceled()) return;
+              snapshotEpoch = end.epoch;
               if (buffer.length > 0) {
                 // Drop the reattaching flag BEFORE writing the buffer.
                 // SplitView swaps TerminalSlot for TerminalConnectionOverlay
@@ -745,6 +751,7 @@ export function Terminal({
             try {
               const { data: buffer, ...end } = await replaySessionScrollback(sessionId);
               if (isCanceled()) return;
+              snapshotEpoch = end.epoch;
               if (buffer.length > 0) {
                 useAppStore.getState().setTerminalReattaching(tabId, false);
                 await waitForUsableDimensions(xterm, fitAddon, isCanceled);
@@ -1307,47 +1314,55 @@ export function Terminal({
 
         // Subscribe to exit events via singleton dispatcher
         frontendLog("disconnect", `subscribed exit for session=${sessionId} tab=${tabId}`);
-        const unsubExit = terminalDispatcher.subscribeExit(sessionId, (exitCode, endCause) => {
-          // Output that waits for a repaint comes before the end line, and the
-          // repaint must not wipe that line (#5990).
-          endRepaint();
-          // Classify why the session ended so the disconnect overlay can tailor
-          // its wording (#1121). A user-initiated kill (e.g. from the Open
-          // Connections panel) was tagged beforehand; otherwise exit code 0 is a
-          // clean exit and anything else (or an unknown code) is a dropped/failed
-          // session.
-          const store = useAppStore.getState();
-          // A user agent Disconnect ended the tab at the backend first (#5959).
-          const wasKilled =
-            store.consumeSessionKilled(sessionId) || sessionEndedByUser(tabId, agentId);
-          const reason = classifyExitReason({ wasKilled, exitCode });
-          frontendLog(
-            "disconnect",
-            `terminal-exit fired session=${sessionId} tab=${tabId} code=${exitCode} reason=${reason} cause=${endCause}`
-          );
-          // A dropped link is not a process exit (#5619): a serial unplug or a
-          // network drop writes a timed "connection lost" line instead.
-          const exitLabel = sessionEndSeparator({
-            transport: dropTransportOf(connectOverlayIdentity(config)),
-            exitCode,
-            reason,
-            at: new Date(),
-            endCause,
-          });
-          // Staged behind the output still waiting for its flush, so the exit
-          // line is always written after the session's last output (#5955).
-          // Output a protocol parser still holds queues first (#5965).
-          const exitBytes = textEncoder.encode(`\r\n\x1b[90m${exitLabel}\x1b[0m\r\n`);
-          if (!enqueueSandboxPassthrough(sessionId, exitBytes)) {
-            outputFlow.push(exitBytes);
-            flushOutput();
-          }
-          // Notify sandboxed frontend-plugin protocol parsers the session ended (#1998).
-          sandboxNotifySessionEnd(sessionId);
-          sessionIdRef.current = null;
-          unregisterSession(tabId);
-          store.setTerminalExited(tabId, { code: exitCode, reason }, endCause);
-        });
+        // The stream the tab re-attached to: an exit of an older one does not end
+        // it (#6032), also when its snapshot was empty (#6110). Once output of a
+        // newer one arrived, the dispatcher knows it too.
+        const shownStream = () => Math.max(replayEnd.epoch, snapshotEpoch);
+        const unsubExit = terminalDispatcher.subscribeExit(
+          sessionId,
+          (exitCode, endCause) => {
+            // Output that waits for a repaint comes before the end line, and the
+            // repaint must not wipe that line (#5990).
+            endRepaint();
+            // Classify why the session ended so the disconnect overlay can tailor
+            // its wording (#1121). A user-initiated kill (e.g. from the Open
+            // Connections panel) was tagged beforehand; otherwise exit code 0 is a
+            // clean exit and anything else (or an unknown code) is a dropped/failed
+            // session.
+            const store = useAppStore.getState();
+            // A user agent Disconnect ended the tab at the backend first (#5959).
+            const wasKilled =
+              store.consumeSessionKilled(sessionId) || sessionEndedByUser(tabId, agentId);
+            const reason = classifyExitReason({ wasKilled, exitCode });
+            frontendLog(
+              "disconnect",
+              `terminal-exit fired session=${sessionId} tab=${tabId} code=${exitCode} reason=${reason} cause=${endCause}`
+            );
+            // A dropped link is not a process exit (#5619): a serial unplug or a
+            // network drop writes a timed "connection lost" line instead.
+            const exitLabel = sessionEndSeparator({
+              transport: dropTransportOf(connectOverlayIdentity(config)),
+              exitCode,
+              reason,
+              at: new Date(),
+              endCause,
+            });
+            // Staged behind the output still waiting for its flush, so the exit
+            // line is always written after the session's last output (#5955).
+            // Output a protocol parser still holds queues first (#5965).
+            const exitBytes = textEncoder.encode(`\r\n\x1b[90m${exitLabel}\x1b[0m\r\n`);
+            if (!enqueueSandboxPassthrough(sessionId, exitBytes)) {
+              outputFlow.push(exitBytes);
+              flushOutput();
+            }
+            // Notify sandboxed frontend-plugin protocol parsers the session ended (#1998).
+            sandboxNotifySessionEnd(sessionId);
+            sessionIdRef.current = null;
+            unregisterSession(tabId);
+            store.setTerminalExited(tabId, { code: exitCode, reason }, endCause);
+          },
+          shownStream
+        );
 
         // Send user input to backend
         // What the terminal itself sends (focus reports, query replies) is no

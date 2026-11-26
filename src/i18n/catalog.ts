@@ -244,6 +244,8 @@ const en = {
   "schedule.connect.skip.agentTooOld": "agent too old for unattended connect",
   "schedule.connect.skip.agentDisconnected": "agent not connected",
   "schedule.connect.skip.notTerminal": "not a terminal connection",
+  "schedule.connect.skip.unconfirmed":
+    "changed elsewhere (a restore, an import or a synced file) and not confirmed here: open it once yourself",
   "schedule.connect.skip.missing": "the saved connection no longer exists",
   "schedule.connect.skip.cancelled": "the connect was cancelled",
   "schedule.connect.skip.failed": "could not connect: {error}",
@@ -888,6 +890,14 @@ const en = {
   "service.next.unlock": "Unlock",
   "service.next.editConnection": "Edit connection",
   "service.next.retryNow": "Retry now",
+  "service.next.openTerminal": "Open a terminal on {via}",
+  "service.next.reviewKey": "Review key",
+  "tunnel.diagram.fails": "Fails here",
+  "service.next.chooseFolder": "Choose folder",
+  "service.reason.targetRefused": "{target} refused the connection. Last: {last}, {times}.",
+  "service.reason.siteRefused": "A site refused the connection. Last: {last}, {times}.",
+  "service.refused.once": "once",
+  "service.refused.times": "{count} times",
   "service.reason.portHeld": 'Port {port} is used by "{name}".',
   "service.reason.agentRemoved": "Its agent was removed from termiHub. It may still run there.",
   "service.reason.needsConnection": "Its SSH connection was deleted.",
@@ -977,8 +987,45 @@ const en = {
   "service.new.ftp.technical": "FTP server",
   "service.new.tftp": "Give files to a device",
   "service.new.tftp.technical": "TFTP server, firmware and network boot",
+  // The tunnels of an SSH connection, in its editor (#6028, slice 13).
+  "connection.tunnels.hint":
+    "The tunnels through this connection. They are the same as in Services; changes apply at once.",
+  "connection.tunnels.showServices": "Show in Services",
+  "connection.tunnels.none": "No tunnels go through this connection yet.",
+  "connection.tunnels.new": "New tunnel",
+  "connection.tunnels.unsaved": "Save this connection first, then add tunnels through it:",
+  "connection.tunnels.followsParent": "Follows its chained parent",
+  "connection.tunnels.startWithShort": "Start when a session opens",
+  "connection.tunnels.startWith": "Start {name} when a session to this connection opens",
+  // The Activity of a service, both kinds (#6028, slice 9).
+  "service.activity.label": "Activity of {name}",
+  "service.activity.since": "Since {time}",
+  "service.activity.now": "Connected now",
+  "service.activity.total": "Connections in all",
+  "service.activity.sent": "Sent",
+  "service.activity.received": "Received",
+  "service.activity.reach": "Who reaches it: {reach}.",
+  "service.activity.reachOn": "It opens on {machine}. Who reaches it: {reach}.",
+  "service.activity.events": "What happened",
+  "service.activity.events.none": "Nothing happened to it since termiHub started.",
+  "service.activity.events.note":
+    "Since termiHub started, the last 200. Nothing is written to disk.",
+  "service.activity.events.agent":
+    "What this computer saw since termiHub started, the last 200. The agent may know more.",
+  "service.activity.requests": "Requests",
+  "service.activity.use.local":
+    "Point your program at this address instead of the target. termiHub carries it through the SSH server.",
+  "service.activity.use.remote":
+    "Programs on the server use this address and reach what you chose here.",
+  "service.activity.use.dynamic":
+    "Set this address as the SOCKS5 proxy of your browser or program.",
+  "service.activity.use.http":
+    "Open this address in a browser, here or on a device that reaches it.",
+  "service.activity.use.ftp": "Connect an FTP program to this address.",
+  "service.activity.use.tftp": "Point the TFTP client of the device at this address.",
+  "service.editor.settings": "Settings",
+  "service.editor.views": "Settings or activity",
   // A file server's Activity panel (#6063).
-  "server.activity.close": "Close activity",
   "server.activity.nobody": "Nobody has connected yet.",
   "server.activity.nobody.hint": "Requests and connected devices appear here.",
   "server.activity.now": "Now",

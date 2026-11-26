@@ -25,6 +25,10 @@ import { useAppStore } from "@/store/appStore";
 import type { SavedConnection } from "@/types/connection";
 import type { ConnectionTypeInfo } from "@/types/generated/ConnectionTypeInfo";
 import { connectSavedConnection } from "./connectSavedConnection";
+import { __trustAllSavedConnectionsForTest } from "@/services/savedConnectionTrust";
+
+// The connect flow under test, not the check of changed connections (#6065).
+__trustAllSavedConnectionsForTest(true);
 
 const mockedResolveFieldSecrets = vi.mocked(resolveFieldSecrets);
 const mockedStoreFieldSecrets = vi.mocked(storeFieldSecrets);

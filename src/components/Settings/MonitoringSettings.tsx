@@ -18,7 +18,7 @@ export const POWER_MONITORING_HELP =
 
 /**
  * The Monitoring settings category (#5775): host metrics for SSH agent sessions
- * (Power monitoring), for this computer's local shells, and the status-bar
+ * (Host monitoring, "Power monitoring" until #5860), for this computer's local shells, and the status-bar
  * chips. These lived under External files ▸ Advanced, where nobody looked for
  * them; the setting keys are unchanged, so no migration is needed.
  */
@@ -39,7 +39,7 @@ export function MonitoringSettings() {
           Default for new SSH connections. Each connection can override it in its SSH settings.
         </p>
         <SettingsField
-          label="Power monitoring"
+          label="Host monitoring"
           hint={POWER_MONITORING_HINT}
           help={POWER_MONITORING_HELP}
           hintTestId="settings-power-monitoring-hint"

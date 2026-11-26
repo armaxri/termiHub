@@ -25,6 +25,7 @@ import { resetRuntimeCache } from "@/hooks/useAvailableRuntimes";
 import { getAllTabsAcrossGroupTrees } from "@/store/layoutSelectors";
 import { claimedTargetIds } from "@/store/scheduledRuns";
 import { ConnectionEditor } from "./ConnectionEditor";
+import { isSavedConnectionConfirmed } from "@/services/savedConnectionTrust";
 import { TooltipProvider, toast } from "@/components/ui";
 import type { ConnectionTypeInfo, SavedConnection } from "@/types/connection";
 import type { ScheduleFire } from "@/types/schedule";
@@ -220,6 +221,37 @@ describe("ConnectionEditor — Save and connect binds the tab to its connection 
     expect(tabs[0].connectionId).toBe("Core router");
     // The optimistic id the editor previewed the row under never reaches the tab.
     expect(tabs[0].connectionId).not.toMatch(/^conn-/);
+  });
+
+  it("confirms what the saved connection runs here (#6065)", async () => {
+    persistedId = "Core router";
+    await render("new");
+    await flush();
+    await act(async () =>
+      setValue(
+        container.querySelector<HTMLInputElement>('[data-testid="connection-editor-name-input"]')!,
+        "Core router"
+      )
+    );
+    await act(async () =>
+      setValue(container.querySelector<HTMLInputElement>('[data-testid="field-host"]')!, "10.0.0.1")
+    );
+    await flush();
+    await saveAndConnect();
+    await flush();
+    const saved: SavedConnection = {
+      id: "Core router",
+      name: "Core router",
+      folderId: null,
+      config: { type: "local", config: { host: "10.0.0.1" } },
+    };
+    expect(await isSavedConnectionConfirmed(saved)).toBe(true);
+    expect(
+      await isSavedConnectionConfirmed({
+        ...saved,
+        config: { type: "local", config: { host: "10.0.0.2" } },
+      })
+    ).toBe(false);
   });
 
   it("is a schedule target once connected (#5257)", async () => {

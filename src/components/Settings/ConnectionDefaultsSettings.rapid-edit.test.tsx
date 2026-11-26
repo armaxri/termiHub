@@ -20,7 +20,7 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { AppSettings } from "@/types/connection";
 import { TooltipProvider } from "@/components/ui";
-import { GeneralSettings } from "./GeneralSettings";
+import { ConnectionDefaultsSettings } from "./ConnectionDefaultsSettings";
 
 vi.mock("@/themes", () => ({
   applyTheme: vi.fn(),
@@ -70,7 +70,7 @@ function setValue(el: HTMLInputElement, value: string) {
   });
 }
 
-describe("GeneralSettings — rapid back-to-back edits (#2680)", () => {
+describe("ConnectionDefaultsSettings — rapid back-to-back edits (#2680)", () => {
   beforeEach(async () => {
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -97,7 +97,7 @@ describe("GeneralSettings — rapid back-to-back edits (#2680)", () => {
     await act(async () => {
       root.render(
         <TooltipProvider delayDuration={0}>
-          <GeneralSettings settings={BASE_SETTINGS} onChange={onChange} />
+          <ConnectionDefaultsSettings settings={BASE_SETTINGS} onChange={onChange} />
         </TooltipProvider>
       );
     });

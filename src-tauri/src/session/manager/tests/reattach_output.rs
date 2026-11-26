@@ -502,6 +502,41 @@ async fn a_new_stream_of_the_same_session_has_a_larger_epoch() {
     assert_eq!(emitted, epochs);
 }
 
+/// The end of a stream names it (#6032): a tab attached to a newer stream of
+/// the same id can tell an exit event of the older one that is still on its way.
+#[tokio::test]
+async fn the_exit_event_says_which_stream_ended() {
+    let spy = Arc::new(spy_agent().always("send_request", buffer_reply(b"")));
+    let manager = SessionManager::new(ConnectionTypeRegistry::new(), spy.clone());
+    let emitter = MockEventEmitter::new();
+    persistent_session(&manager).await;
+    let mut epochs = Vec::new();
+    for round in 1..=2 {
+        manager
+            .attach_persistent_tab("conn-1", "tab-1", emitter.clone())
+            .await
+            .expect("attach");
+        epochs.push(manager.replay_scrollback("sess-1").await.epoch);
+        // The agent's end of the stream.
+        spy.session_outputs.lock().unwrap().clear();
+        for _ in 0..300 {
+            if emitter.exits.lock().unwrap().len() == round {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+    let ended: Vec<u64> = emitter
+        .exits
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|e| e.epoch)
+        .collect();
+    assert_eq!(ended, epochs);
+    assert!(epochs[1] > epochs[0], "{epochs:?}");
+}
+
 /// What one session id has in the manager: its entry, capture, logger and tab.
 struct Registered {
     sessions: Arc<Mutex<HashMap<String, SessionEntry>>>,

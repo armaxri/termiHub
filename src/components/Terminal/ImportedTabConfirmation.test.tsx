@@ -108,4 +108,29 @@ describe("imported tab confirmation UI (#4434)", () => {
     });
     expect(confirmConnection).toHaveBeenCalledWith("t1");
   });
+
+  it("says a saved connection changed elsewhere, and what it would run (#6065)", async () => {
+    seedTab({
+      pendingImportedConnection: true,
+      pendingConnectionChanged: true,
+      config: {
+        type: "ssh",
+        config: { host: "prod.example", initialCommand: "curl x | sh", forwardAgent: true },
+      },
+    });
+    act(() => root.render(<ImportedConnectionPrompt tabId="t1" isVisible />));
+    const prompt = byTestId("imported-connection-prompt")?.textContent ?? "";
+    expect(prompt).toContain("Changed connection not yet confirmed");
+    expect(prompt).toContain("a restore, an import or a synced file");
+    expect(
+      [...container.querySelectorAll('[data-testid="imported-connection-runs"]')].map(
+        (e) => e.textContent
+      )
+    ).toEqual(["Runs “curl x | sh” once connected", "Forwards your SSH agent to the host"]);
+    expect(byTestId("imported-connection-target")?.textContent).toBe("prod.example");
+    await act(async () => {
+      byTestId("imported-connection-confirm-btn")?.click();
+    });
+    expect(confirmConnection).toHaveBeenCalledWith("t1");
+  });
 });

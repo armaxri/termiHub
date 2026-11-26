@@ -783,3 +783,17 @@ fn vault_error_serializes_with_stable_kind() {
     assert_eq!(value["kind"], "wrongPassphrase");
     assert_eq!(value["message"], "m");
 }
+
+/// An export file made by an older termiHub (Settings ▸ Security ▸ Export vault,
+/// removed by #5860) still restores: Backup & restore keeps a way to read it.
+#[test]
+fn an_export_made_by_an_older_termihub_still_opens() {
+    let json = include_str!("../../../../tests/fixtures/credentials/older-export.json");
+    let vault = open_json(json, "older export passphrase 5860").unwrap();
+    assert_eq!(vault.entries.len(), 1);
+    assert_eq!(
+        vault.entries[0].0,
+        key("named-credential:nc-older-export", CredentialType::Password)
+    );
+    assert_eq!(vault.entries[0].1.as_str(), "older-export-secret-5860");
+}

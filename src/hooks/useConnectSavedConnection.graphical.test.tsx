@@ -18,6 +18,10 @@ import {
   graphicalConnectSucceeded,
   hasHeldGraphicalSecret,
 } from "@/utils/graphicalSecretOnceConnected";
+import { __trustAllSavedConnectionsForTest } from "@/services/savedConnectionTrust";
+
+// The connect flow under test, not the check of changed connections (#6065).
+__trustAllSavedConnectionsForTest(true);
 
 vi.mock("@/services/api", () => ({
   createTerminal: vi.fn(() => Promise.resolve("session-1")),

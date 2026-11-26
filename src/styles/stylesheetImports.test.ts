@@ -29,7 +29,9 @@ function imported(importer: string): string[] {
     ...text.matchAll(/(?:^|\n)\s*import\s+(?:[^"';]*?from\s+)?["']([^"']+\.css)["']/g),
     ...text.matchAll(/@import\s+(?:url\()?["']([^"']+\.css)["']/g),
   ].map((match) => match[1]);
-  return specs.map((spec) =>
+  // A package's stylesheet (`@xterm/xterm/css/xterm.css`) is not one of ours.
+  const own = specs.filter((spec) => spec.startsWith(".") || spec.startsWith("@/"));
+  return own.map((spec) =>
     spec.startsWith("@/") ? join(SRC, spec.slice(2)) : resolve(dirname(importer), spec)
   );
 }
@@ -43,6 +45,21 @@ describe("stylesheets", () => {
     const sheets = all.filter((path) => path.endsWith(".css"));
     const orphans = sheets.filter((sheet) => !used.has(sheet)).map((s) => relative(SRC, s));
     expect(orphans).toEqual([]);
+  });
+
+  // A stylesheet moved with its component leaves no import behind (#6102): the
+  // build fails on it, and a merge can bring one back.
+  it("that code imports exist", () => {
+    const importers = all.filter(
+      (path) => /\.(tsx?|css)$/.test(path) && !isTest(path) && !path.endsWith(".d.ts")
+    );
+    const existing = new Set(all);
+    const missing = importers.flatMap((importer) =>
+      imported(importer)
+        .filter((sheet) => !existing.has(sheet))
+        .map((sheet) => `${relative(SRC, importer)} -> ${relative(SRC, sheet)}`)
+    );
+    expect(missing).toEqual([]);
   });
 
   it("are found by the check", () => {

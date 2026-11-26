@@ -11,7 +11,7 @@ import {
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Button, RadioGroup, Select, Toggle, toast } from "@/components/ui";
 import { SettingsField } from "./SettingsField";
-import { CredentialVaultBackup } from "./CredentialVaultBackup";
+import { PasswordBackupLink } from "./PasswordBackupLink";
 import { SharedCredentialsSettings } from "./SharedCredentialsSettings";
 import { BiometricUnlockSettings } from "./BiometricUnlockSettings";
 import { AllowedPrograms } from "./AllowedPrograms";
@@ -21,7 +21,6 @@ import { MasterPasswordSetupFields } from "@/components/CredentialStorage/Master
 import { credentialStorageRadioOptions } from "@/components/CredentialStorage/credentialStorageOptions";
 import { validateNewMasterPassword } from "@/utils/masterPasswordValidation";
 import { errorMessage } from "@/utils/errorMessage";
-import { CREDENTIAL_STORAGE_CHOICES } from "@/utils/credentialStorageCopy";
 import {
   needsSwitchConfirm,
   remainingTitle,
@@ -54,11 +53,6 @@ const STORAGE_MODE_TEST_IDS: { mode: CredentialStorageMode; testId: string }[] =
 
 function storageModeTestId(mode: CredentialStorageMode): string {
   return STORAGE_MODE_TEST_IDS.find((o) => o.mode === mode)?.testId ?? mode;
-}
-
-/** The option card's name of a storage mode ("Don't save passwords", #5685). */
-function modeLabel(mode: CredentialStorageMode): string {
-  return CREDENTIAL_STORAGE_CHOICES.find((c) => c.mode === mode)?.label ?? mode;
 }
 
 /**
@@ -573,9 +567,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
 
       {show("sharedCredentials") && <SharedCredentialsSettings />}
 
-      {show("credentialVaultBackup") && (
-        <CredentialVaultBackup modeLabel={modeLabel(currentMode)} />
-      )}
+      {show("credentialVaultBackup") && <PasswordBackupLink />}
 
       {show("workflowLocalProcess") && (
         <div className="settings-panel__section">

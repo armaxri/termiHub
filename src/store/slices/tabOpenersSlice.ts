@@ -157,7 +157,7 @@ export interface TabOpenersSlice {
   /**
    * Open (or focus) the tunnel-editor tab for `tunnelId` (`null` = new tunnel).
    * `options.sshConnectionId` pre-selects the SSH connection of a NEW tunnel —
-   * used by the connection editor's "Port Forwarding" section (PROD-023).
+   * used by the connection editor's "SSH tunnels" section (PROD-023).
    */
   openTunnelEditorTab: (
     tunnelId: string | null,

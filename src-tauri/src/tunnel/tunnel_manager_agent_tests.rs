@@ -56,7 +56,9 @@ impl Machine {
         let mut forwards = self.forwards.lock().unwrap();
         Some(Ok(match method {
             TUNNEL_START if forwards.contains(&id) => {
-                return Some(Err(TerminalError::RemoteError("already running".into())))
+                return Some(Err(TerminalError::RemoteError(format!(
+                    "tunnel '{id}' is already running on this agent"
+                ))))
             }
             TUNNEL_START => {
                 forwards.insert(id);
@@ -122,6 +124,16 @@ fn run(tunnels: Vec<Value>, store: Arc<RecordingStore>, hops: Value) -> Run {
     let doc = json!({"version": "1", "tunnels": tunnels});
     std::fs::write(dir.path().join("tunnels.json"), doc.to_string()).unwrap();
     let machine = Arc::new(Machine::default());
+    boot(dir, machine, store, hops)
+}
+
+/// An app run over `dir` and the agent of `machine`.
+fn boot(
+    dir: tempfile::TempDir,
+    machine: Arc<Machine>,
+    store: Arc<RecordingStore>,
+    hops: Value,
+) -> Run {
     let agent = machine.agent();
     let app = mock_app();
     // The status poller ends at once: a test ticks by hand.
@@ -163,6 +175,21 @@ fn run(tunnels: Vec<Value>, store: Arc<RecordingStore>, hops: Value) -> Run {
 }
 
 impl Run {
+    /// The app ends and starts again over the same files, with the agent
+    /// machine as it is (#6051).
+    fn restart(self) -> Run {
+        let Run {
+            app,
+            manager,
+            machine,
+            _dir,
+            ..
+        } = self;
+        drop(manager);
+        drop(app);
+        boot(_dir, machine, Arc::default(), json!([]))
+    }
+
     fn online(&self, online: bool) {
         self.agent.host().connected.store(online, Ordering::SeqCst);
     }
@@ -378,7 +405,13 @@ async fn an_auto_start_waits_for_the_credential_store_of_its_jump_host() {
     store.locked.store(false, Ordering::SeqCst);
     run.tick();
     run.assert_row(TunnelStatus::Connected, "");
-    let (_, params) = run.agent.requests().remove(0);
+    // After what the agent was asked about it at the launch (#6051).
+    let (_, params) = run
+        .agent
+        .requests()
+        .into_iter()
+        .find(|(method, _)| method == TUNNEL_START)
+        .expect("started");
     let hop = &params["sshConfig"]["proxyJump"][0];
     assert_eq!(hop["password"], "secret", "with the hop's password");
 }
@@ -577,4 +610,55 @@ async fn a_pending_stop_can_be_taken_back() {
     run.tick();
     run.assert_row(TunnelStatus::Connected, "");
     assert!(run.machine.forwards("db"), "not stopped");
+}
+
+// ─── After an app restart (#6051) ────────────────────────────────────────────
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_tunnel_that_still_runs_on_its_agent_after_a_restart_is_connected() {
+    let run = db_on_edge(|t| t["autoStart"] = json!(false));
+    run.manager.start_tunnel("db").unwrap();
+    let run = run.restart();
+    assert_eq!(
+        run.row("db").status,
+        TunnelStatus::Disconnected,
+        "until its agent says"
+    );
+    run.manager.start_auto_tunnels();
+    run.tick();
+    run.assert_row(TunnelStatus::Connected, "");
+    assert_eq!(run.sent(TUNNEL_START), 0, "taken over, not started again");
+    run.manager.stop_tunnel("db").unwrap();
+    run.becomes(TunnelStatus::Disconnected);
+    assert!(!run.machine.forwards("db"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_auto_start_after_a_restart_takes_over_what_still_runs() {
+    let run = db_on_edge(|_| {});
+    run.manager.start_tunnel("db").unwrap();
+    let run = run.restart();
+    // The start comes first: the agent says it already runs.
+    run.manager.start_auto_tunnels();
+    run.becomes(TunnelStatus::Connected);
+    run.tick();
+    run.assert_row(TunnelStatus::Connected, "");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stop_owed_before_a_restart_is_sent_and_a_deleted_tunnel_is_stopped_there() {
+    let run = db_on_edge(|t| t["autoStart"] = json!(false));
+    run.manager.start_tunnel("db").unwrap();
+    run.online(false);
+    run.tick();
+    run.manager.delete_tunnel("db").unwrap();
+    let run = run.restart();
+    assert!(run.manager.get_tunnels().unwrap().is_empty(), "no row");
+    run.manager.start_auto_tunnels();
+    run.online(true);
+    run.tick();
+    assert!(
+        !run.machine.forwards("db"),
+        "nothing stays open without a row"
+    );
 }

@@ -1,0 +1,135 @@
+/* ─── The Activity of a service, both kinds (#6028, slice 9) ───────────── */
+
+.service-activity {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  max-width: 720px;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.service-activity__state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.service-activity__state-word {
+  font-weight: var(--font-weight-semibold);
+}
+
+.service-activity__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+  margin-left: auto;
+}
+
+.service-activity__reason {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-xs);
+  margin: 0;
+  color: var(--color-error);
+}
+
+.service-activity__address {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-sm);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+}
+
+.service-activity__url {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.service-activity__address p {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.service-activity__muted {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.service-activity__use {
+  color: var(--text-primary);
+}
+
+.service-activity__counters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--spacing-sm);
+  margin: 0;
+}
+
+.service-activity__counter dt {
+  color: var(--text-secondary);
+}
+
+.service-activity__counter dd {
+  margin: 0;
+  font-size: var(--font-size-md);
+  font-variant-numeric: tabular-nums;
+}
+
+.service-activity__heading {
+  margin: var(--spacing-sm) 0 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.service-activity__events {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.service-activity__event {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.service-activity__time {
+  min-width: 72px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.service-activity__event-word {
+  font-weight: var(--font-weight-medium);
+}
+
+/* A next step reads as a link, as on the row (#6028, slice 10). */
+.service-activity__next {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-link);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.service-activity__next:hover {
+  color: var(--text-primary);
+}
+
+.service-activity__next:focus-visible {
+  outline: 2px solid var(--focus-border);
+  outline-offset: 2px;
+}

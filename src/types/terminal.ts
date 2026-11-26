@@ -166,7 +166,7 @@ export interface TunnelEditorMeta {
   tunnelId: string | null;
   /**
    * For a NEW tunnel (`tunnelId === null`): the SSH connection to pre-select,
-   * set when the editor is opened from a connection's "Port Forwarding"
+   * set when the editor is opened from a connection's "SSH tunnels"
    * section (PROD-023). Ignored when editing an existing tunnel.
    */
   sshConnectionId?: string;
@@ -423,6 +423,12 @@ export interface TerminalTab {
    * created) until the user confirms it.
    */
   pendingImportedConnection?: boolean;
+  /**
+   * With {@link pendingImportedConnection}: it is a saved connection that changed
+   * elsewhere (a restore, an import, a synced file) since it was confirmed here
+   * (#6065), not an imported inline config.
+   */
+  pendingConnectionChanged?: boolean;
 }
 
 /**

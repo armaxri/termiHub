@@ -5,6 +5,7 @@ import { RestoredOffDialog } from "@/components/RestoredOff/RestoredOffDialog";
 import { useRestoredOff } from "@/components/RestoredOff/useRestoredOff";
 import { BackupExportDialog } from "./BackupExportDialog";
 import { BackupRestoreDialog } from "./BackupRestoreDialog";
+import { OlderPasswordImport } from "./OlderPasswordImport";
 import "./CredentialVault.css";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
@@ -19,7 +20,9 @@ export function restoredOffText(count: number): string {
  * Settings → Backup & restore (PROD-068): back up all app data — connections,
  * settings (incl. themes and keyboard shortcuts), workspaces, macros,
  * workflows, tunnels, embedded servers, network tools and, optionally, the
- * encrypted credential vault — to one file, and restore it.
+ * saved passwords — to one file, and restore it. It is the one backup flow
+ * (#5860, R-052): Security links here, and an older passwords-only export is
+ * restored here too ({@link OlderPasswordImport}).
  */
 export function BackupRestoreSettings() {
   const [exportOpen, setExportOpen] = useState(false);
@@ -31,8 +34,8 @@ export function BackupRestoreSettings() {
     <div className="settings-panel__section" data-testid="backup-restore-settings">
       <SettingsSectionHeading>Backup &amp; restore</SettingsSectionHeading>
       <p className="settings-panel__description" data-testid="backup-restore-description">
-        Save your connections, settings and other data to one file, and restore it here or on
-        another computer.
+        Save your connections, settings and saved passwords to one passphrase-locked file, and
+        restore it on any computer.
       </p>
       <div className="credential-vault__actions">
         <Button
@@ -67,6 +70,7 @@ export function BackupRestoreSettings() {
           </Button>
         </div>
       )}
+      <OlderPasswordImport />
       <RestoredOffDialog
         open={offOpen}
         entries={entries}

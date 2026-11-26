@@ -28,6 +28,10 @@ import { useAppStore } from "@/store/appStore";
 import type { SavedConnection } from "@/types/connection";
 import { connectSavedConnection } from "./connectSavedConnection";
 import type { ToastOptions } from "@/components/ui/Toast/toast";
+import { __trustAllSavedConnectionsForTest } from "@/services/savedConnectionTrust";
+
+// The connect flow under test, not the check of changed connections (#6065).
+__trustAllSavedConnectionsForTest(true);
 
 let addTabSpy: ReturnType<typeof vi.fn>;
 let infoSpy: ReturnType<typeof vi.spyOn>;

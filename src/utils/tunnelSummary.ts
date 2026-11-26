@@ -1,6 +1,6 @@
 /**
  * Shared, pure tunnel presentation helpers used by every surface that lists
- * tunnels — the Tunnels sidebar and the connection editor's "Port Forwarding"
+ * tunnels — the Services view and the connection editor's "SSH tunnels"
  * section (PROD-023) — so both describe and guard a tunnel identically.
  */
 import { t, tf } from "@/i18n/catalog";

@@ -1554,6 +1554,11 @@ sequenceDiagram
   keeps the last 1 MiB. A chunk's `offset` and a snapshot's `endOffset` are taken under its lock.
 - `epoch` grows with every new stream, so positions of a session created again under the same id are
   never compared with those of the one before.
+- `terminal-exit` names the stream that ended by its `epoch` too (#6032). An exit of an older
+  stream that arrives after the tab attached to a newer one ends nothing, and the dispatcher drops a
+  buffered one once a newer stream showed output.
+- A persistent session is re-created once at a time (#6033): a second attach waits for the first,
+  then finds the session alive, so its entry and its output route belong to the same stream.
 - Every attach of a daemon-backed session makes the agent send the whole buffer again. Its first
   chunk names the replay (`replay_id`, see [`connection.output`](remote-protocol.md#connectionoutput));
   the I/O task records where it lands (`src-tauri/src/terminal/output_route.rs`) and the capture
@@ -1586,6 +1591,25 @@ flowchart LR
 ```
 
 The theme engine writes CSS custom properties directly to `:root` via JavaScript — no separate CSS files per theme. When "System" is selected, a `matchMedia` listener auto-switches between Dark and Light when the OS preference changes. The activity bar stays dark in Dark, Light and Solarized Dark (VS Code convention); Solarized Light paints it base2 with dark icons so it matches the cream sidebar and editor (#5853).
+
+### Settings navigation (#5561, #5860)
+
+The Settings tab lists its categories in groups by the object a setting is about
+(`CATEGORY_GROUPS` in `src/components/Settings/settingsRegistry.ts`):
+
+| Group             | Categories                                                                                    |
+| ----------------- | --------------------------------------------------------------------------------------------- |
+| General           | General, Appearance, Accessibility, Keyboard, Open in termiHub, Plugins, Updates              |
+| Terminal          | Terminal, Sessions, Editor                                                                    |
+| Connections       | Connection defaults (SSH user and key, X11, file browser), Serial, Monitoring, External files |
+| Automation        | Schedules (opens the one list, in the Automations sidebar)                                    |
+| Security and data | Security, Safety prompts, Backup & restore, Import & migration                                |
+| Advanced (folded) | X server, Portable mode                                                                       |
+
+A category id never changes when it moves between groups, so a deep link
+(`openSettingsTab({ category })`) keeps landing. Search reads `SETTINGS_REGISTRY` only; a setting
+that moved keeps its old home's word as a keyword (`general`, `advanced`, its old name), so it is
+found by its old and its new words. No setting key changed with the regrouping.
 
 ### Per-Workspace Settings (PROD-052)
 
@@ -1730,8 +1754,14 @@ empty keychain count still asks before a switch to Don't save passwords.
 
 #### Credential vault export / import
 
-Settings → Security → **Credential vault backup** exports every saved credential to an encrypted
-file and imports such a file into the **current** store (PROD-063, `src-tauri/src/credential/vault/`).
+Settings → Security → **Credential vault backup** exported every saved credential to an encrypted
+file and imported such a file into the **current** store (PROD-063, `src-tauri/src/credential/vault/`).
+Since #5860 there is one backup flow: passwords are backed up with everything else in Backup &
+restore, Security ▸ **Back up saved passwords** points there, and the export action is gone from the
+UI and the IPC surface (`export_credential_vault` is removed). A file an older termiHub
+exported still restores: Backup & restore ▸ **Restore passwords from an older export…**
+(`OlderPasswordImport.tsx`), whose dialog speaks of the chosen store, not of a vault.
+`tests/fixtures/credentials/older-export.json` is such a file; the vault tests open it.
 
 - **Export** requires re-authentication (in master-password mode the store must be unlocked and the
   master password re-entered) and an **export passphrase** entered twice (minimum 12 characters,
@@ -2375,6 +2405,15 @@ off. The preview lists what arrives off and what would start it. The list travel
 restore and becomes `restored-off.json` when it is applied; the next start asks once which entries to
 turn on (`components/RestoredOff/`), and Settings ▸ Backup & restore offers it until it is dealt with.
 HTTP monitors load stopped and macros have no triggers.
+
+A saved connection runs nothing by itself either once it changed elsewhere (#6065,
+`services/savedConnectionTrust.ts`): a restore, an import or a connection file another machine syncs can
+change where it connects, the program it starts here, its initial or reconnect command, its forwarded
+agent or display. What it runs is keyed (`saved:<sha256>` in `workspaceImportAllowlist`, a local
+permission key no file can write); the connections this machine had are confirmed once
+(`saved-baseline:1`), and a save in the editor or the user's Confirm adds one. Until then the last
+session and a workspace hold its tab with what would run, a schedule skips it, and opening it by hand
+shows what would run, or, when nothing runs by itself, is the confirmation.
 
 ```json
 {
@@ -3126,6 +3165,13 @@ remote agent by id. The rule is **the right machine or not at all**:
   the entry. A save without a host keeps the stored one (a list in another window may be out of
   date), and so does restoring a backup that has none.
 - Moving a running service stops it where it ran; it is not started on the new machine by itself.
+- **After an app restart** (#6051) the desktop knows nothing of what runs on agents
+  (`agent_service/hosted.rs`). At launch each service stored to run on an agent is asked about
+  once that agent is connected (`HostedServices::expect`): one that still runs there is taken over
+  and reads Running; one the user stopped, moved or deleted before the answer is stopped there
+  instead. A start that meets a tunnel the agent still runs takes it over. Stops an agent has not
+  confirmed are kept in `embedded_servers_owed_stops.json` and `tunnels_owed_stops.json` beside the
+  configs and sent when the agent is back, also for a service that has no row any more.
 
 A server without a `host` runs on this computer, as it did before the field existed. Older builds
 kept an agent choice in memory only, so it cannot be recovered: the user has to choose it once more.
@@ -3214,6 +3260,20 @@ model is pure, and the rules live there, not in components:
   dealings (`useEditorTab`: unsaved changes, closing) and the file server's form. What the form may save
   and what it warns of is `fileServerForm.ts` (pure). A password leaves neither the form nor, with
   "Move tabs", its window.
+- **What failed** (slice 10): a tunnel's start keeps the typed connect failure
+  (`TerminalError::from_session_ssh`), so `start_reason` names it by its code, not its words: sign-in
+  refused, host key not trusted, no answer in time, refused, or a remote port the server did not
+  allow. The forwarders count refused targets (`TunnelStats.refused`, `lastRefusedMs`); a running
+  tunnel with refusals says so. A file server checks its folder before it binds (core, so on agents
+  too). An agent's refusal carries no cause, so `agent_start_cause` reads its code, or this family's
+  own sentences. The model names the failing part of the path (`ServiceModel.failing`) for Show path
+  and Activity; Open connections offers the same steps (`ServiceRemedies`).
+- **Activity** is the editor's second sub-tab (`src/components/ServiceActivity`): the same model, the
+  four counters, what happened and, for a file server, its access log. What happened is a ring of 200
+  events per service (`src-tauri/src/agent_service/events.rs`), noted when the `tunnels` or `services`
+  region is published and only when the state or its reason changed; it is kept in memory only, and a
+  service on an agent shows what this computer saw. `get_service_events` reads it. The row and
+  Activity take next steps through one hook (`useServiceNextStep`).
 - **Actions** come in one order with one set of words and keys. An action that cannot act is absent.
   "Open in browser" is absent for a server on another machine's localhost.
 

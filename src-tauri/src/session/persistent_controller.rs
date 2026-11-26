@@ -27,8 +27,10 @@
 //! remains a field on the manager.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
+use tokio::sync::{Mutex, OwnedMutexGuard};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
@@ -52,6 +54,80 @@ const CATCH_UP_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// How often the wait looks.
 const CATCH_UP_POLL: Duration = Duration::from_millis(5);
+
+/// The re-creations in progress, keyed by session id (#6033).
+pub(super) type Recreations = Arc<StdMutex<HashMap<String, Arc<Mutex<()>>>>>;
+
+/// Remove `session_id`'s entry when `lock` is it and only the map and one more
+/// handle hold it: nobody else waits. A waiter takes its clone under the same
+/// lock, so it cannot appear in between.
+fn remove_if_unwaited(recreations: &Recreations, session_id: &str, lock: &Arc<Mutex<()>>) {
+    let mut recreations = recreations
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let unwaited = recreations
+        .get(session_id)
+        .is_some_and(|held| Arc::ptr_eq(held, lock) && Arc::strong_count(held) == 2);
+    if unwaited {
+        recreations.remove(session_id);
+    }
+}
+
+/// A wait for a re-creation in progress; given up, it removes the entry it
+/// would have left behind (#6110).
+struct Waiting<'a> {
+    recreations: &'a Recreations,
+    session_id: &'a str,
+    lock: Arc<Mutex<()>>,
+}
+
+impl Drop for Waiting<'_> {
+    fn drop(&mut self) {
+        // Once the lock is taken its guard holds it too: this removes nothing.
+        remove_if_unwaited(self.recreations, self.session_id, &self.lock);
+    }
+}
+
+/// Holds the re-creation of one persistent session; the entry goes when nobody
+/// else waits for it.
+pub(super) struct Recreating {
+    recreations: Recreations,
+    session_id: String,
+    guard: OwnedMutexGuard<()>,
+}
+
+impl Recreating {
+    /// Wait for a re-creation of `session_id` in progress, then hold it.
+    async fn begin(recreations: &Recreations, session_id: &str) -> Self {
+        let lock = recreations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .entry(session_id.to_string())
+            .or_default()
+            .clone();
+        let _waiting = Waiting {
+            recreations,
+            session_id,
+            lock: lock.clone(),
+        };
+        let guard = lock.lock_owned().await;
+        Self {
+            recreations: recreations.clone(),
+            session_id: session_id.to_string(),
+            guard,
+        }
+    }
+}
+
+impl Drop for Recreating {
+    fn drop(&mut self) {
+        remove_if_unwaited(
+            &self.recreations,
+            &self.session_id,
+            OwnedMutexGuard::mutex(&self.guard),
+        );
+    }
+}
 
 /// Borrowing facade exposing the manager's persistent-session operations.
 ///
@@ -286,8 +362,21 @@ impl<'a> PersistentController<'a> {
 
         // Phase 2: Check if the backend session is alive. If not, try to re-create
         // the RemoteProxy by reconnecting to the surviving daemon on the agent.
+        // One re-creation per session at a time (#6033): two would each register
+        // an output route and insert an entry, and the entry could end up with
+        // the one whose route gets nothing. A second attach waits here, then finds
+        // the session alive; after a failed one it tries itself.
+        let _recreating =
+            Recreating::begin(&self.manager.persistent_recreations, &session_id).await;
         let session_alive = self.manager.sessions.lock().await.contains_key(&session_id);
-        let mut held_by_peer = false;
+        // A live session keeps what its re-creation learned (#6110).
+        let mut held_by_peer = session_alive
+            && self
+                .manager
+                .held_persistent
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .contains(&session_id);
         if !session_alive {
             match (opt_agent_id, opt_remote_sid) {
                 (Some(agent_id), Some(remote_sid)) => {
@@ -308,6 +397,18 @@ impl<'a> PersistentController<'a> {
                     .map_err(|e| TerminalError::SpawnFailed(format!("spawn_blocking join: {e}")))?
                     .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
                     held_by_peer = outcome == ReattachOutcome::HeldByPeer;
+                    {
+                        let mut held = self
+                            .manager
+                            .held_persistent
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        if held_by_peer {
+                            held.insert(session_id.clone());
+                        } else {
+                            held.remove(&session_id);
+                        }
+                    }
 
                     let output_rx = proxy.subscribe_output();
 
@@ -775,5 +876,48 @@ mod buffer_place_tests {
                 "old id {old}"
             );
         }
+    }
+
+    /// A re-creation that somebody waits for stays held for them, also against a
+    /// third attach; the entry goes once nobody waits (#6033).
+    #[tokio::test]
+    async fn a_re_creation_is_held_for_whoever_waits_for_it() {
+        let recreations = Recreations::default();
+        let first = Recreating::begin(&recreations, "sess-1").await;
+        let second = tokio::spawn({
+            let recreations = recreations.clone();
+            async move { Recreating::begin(&recreations, "sess-1").await }
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        drop(first);
+        let second = second.await.unwrap();
+
+        let third = tokio::time::timeout(
+            Duration::from_millis(50),
+            Recreating::begin(&recreations, "sess-1"),
+        )
+        .await;
+        assert!(third.is_err(), "a third attach ran beside the second");
+        drop(second);
+
+        drop(Recreating::begin(&recreations, "sess-1").await);
+        assert!(recreations.lock().unwrap().is_empty());
+    }
+
+    /// A waiter that gives up after the holder let go leaves no entry behind (#6110).
+    #[tokio::test]
+    async fn a_waiter_that_gives_up_leaves_nothing_behind() {
+        let recreations = Recreations::default();
+        let first = Recreating::begin(&recreations, "sess-1").await;
+        let second = tokio::spawn({
+            let recreations = recreations.clone();
+            async move { Recreating::begin(&recreations, "sess-1").await }
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        // Let go and give up before the waiter runs again.
+        drop(first);
+        second.abort();
+        assert!(second.await.is_err_and(|e| e.is_cancelled()));
+        assert!(recreations.lock().unwrap().is_empty());
     }
 }

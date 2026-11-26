@@ -47,6 +47,7 @@
 //! immediately; the `connecting` → `connected` / `error` transitions stream in
 //! as diffs from the manager's own status-emit path.
 
+use crate::agent_service::events::ServiceEvents;
 use std::sync::Arc;
 
 use serde_json::{json, Map, Value};
@@ -108,9 +109,14 @@ pub fn publish_tunnels<R: tauri::Runtime>(app_handle: &AppHandle<R>) {
     ) else {
         return;
     };
-    projection
-        .projector
-        .publish_with(TUNNELS_REGION, || build_tunnel_view(&manager));
+    projection.projector.publish_with(TUNNELS_REGION, || {
+        let view = build_tunnel_view(&manager);
+        // What happened to each, for its Activity (#6028, slice 9).
+        if let Some(events) = app_handle.try_state::<ServiceEvents>() {
+            events.note(&view);
+        }
+        view
+    });
 }
 
 /// Publish only the live per-tunnel stats onto the `tunnels` region, as an

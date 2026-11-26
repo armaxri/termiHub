@@ -1,38 +1,36 @@
 /**
- * The SSH connection editor's "Port Forwarding" section (PROD-023).
+ * The tunnels of an SSH connection in its editor (PROD-023; #6028, slice 13).
  *
- * Pins that the section lists exactly the tunnels bound to the edited
- * connection (the same `tunnels` store the Tunnels sidebar renders — no second
- * store), and that add / edit / remove / "start with connection" route through
- * the shared tunnel actions: add + edit open the regular Tunnel editor (add
- * pre-bound to this connection), remove shares the sidebar's confirm + opt-out
- * + Undo flow (#5216), and the toggle upserts the same tunnel with
- * `startWithConnection` flipped. The Undo itself is exercised end to end against
- * the real store in `ConnectionPortForwardingSection.delete-undo.test.tsx`.
+ * A view of the same tunnels as Services: each is the Services row with its
+ * actions, New tunnel opens the tunnel editor with this connection chosen, and
+ * only "Start when a session opens" is this section's own. The Undo of a delete
+ * is exercised against the real store in
+ * `ConnectionPortForwardingSection.delete-undo.test.tsx`.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { useEditorViews } from "@/components/ServiceEditor/editorView";
 import { useAppStore } from "@/store/appStore";
+import { setupAgentsRegion } from "@/test/agentsRegionTestHarness";
+import { checkA11y } from "@/test/axe";
+import { seedConnectionsRegion, setupConnectionsRegion } from "@/test/connectionsHarness";
+import { serviceMenuItem } from "@/test/serviceMenu";
+import { withTooltip } from "@/test/tooltip";
 import type { TunnelConfig, TunnelState } from "@/types/tunnel";
-import { __emitSettingsViewForTest, stopSettingsSubscription } from "@/store/settingsBridge";
-import { TooltipProvider } from "@/components/ui";
-import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { ConnectionPortForwardingSection } from "./ConnectionPortForwardingSection";
 
-const saveTunnel = vi.fn((_config: TunnelConfig) => Promise.resolve());
-const deleteTunnel = vi.fn((_id: string, _opts?: { undoable?: boolean }) => Promise.resolve());
-const updateSettings = vi.fn((_s: unknown) => Promise.resolve());
-const openTunnelEditorTab = vi.fn();
-const openSettingsTab = vi.fn();
+vi.mock("@/services/embeddedServerApi", () => ({
+  listNetworkInterfaces: vi.fn(() => Promise.resolve([])),
+}));
 
-vi.mock("@/store/appStore", () => {
-  const state: Record<string, unknown> = {};
-  const useAppStore = (selector: (s: Record<string, unknown>) => unknown) => selector(state);
-  useAppStore.setState = (patch: Record<string, unknown>) => Object.assign(state, patch);
-  useAppStore.getState = () => state;
-  return { useAppStore };
-});
+const actions = {
+  saveTunnel: vi.fn((_config: TunnelConfig) => Promise.resolve()),
+  startTunnel: vi.fn((_id: string) => Promise.resolve()),
+  stopTunnel: vi.fn((_id: string) => Promise.resolve()),
+  openTunnelEditorTab: vi.fn(),
+  setSidebarView: vi.fn(),
+};
 
 function tunnel(id: string, connectionId: string, extra: Partial<TunnelConfig> = {}): TunnelConfig {
   return {
@@ -58,15 +56,7 @@ function state(id: string, status: TunnelState["status"]): TunnelState {
 }
 
 function seed(tunnels: TunnelConfig[], tunnelStates: Record<string, TunnelState> = {}) {
-  (useAppStore as unknown as { setState: (p: Record<string, unknown>) => void }).setState({
-    tunnels,
-    tunnelStates,
-    saveTunnel,
-    deleteTunnel,
-    updateSettings,
-    openTunnelEditorTab,
-    openSettingsTab,
-  });
+  useAppStore.setState({ tunnels, tunnelStates });
 }
 
 let container: HTMLDivElement;
@@ -74,17 +64,12 @@ let root: Root;
 
 async function render(connectionId: string | undefined) {
   await act(async () => {
-    root.render(
-      <TooltipProvider delayDuration={0}>
-        <ConnectionPortForwardingSection connectionId={connectionId} />
-      </TooltipProvider>
-    );
+    root.render(withTooltip(<ConnectionPortForwardingSection connectionId={connectionId} />));
   });
 }
 
-function byTestId<T extends HTMLElement = HTMLElement>(id: string): T | null {
-  return document.querySelector<T>(`[data-testid="${id}"]`);
-}
+const byTestId = <T extends HTMLElement = HTMLElement>(id: string): T | null =>
+  document.querySelector<T>(`[data-testid="${id}"]`);
 
 async function click(el: HTMLElement | null) {
   expect(el).not.toBeNull();
@@ -94,231 +79,113 @@ async function click(el: HTMLElement | null) {
 }
 
 setupAgentsRegion();
+setupConnectionsRegion();
 
-describe("ConnectionPortForwardingSection (PROD-023)", () => {
-  beforeEach(() => {
-    container = document.createElement("div");
-    document.body.appendChild(container);
-    root = createRoot(container);
-    vi.clearAllMocks();
+beforeEach(() => {
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = createRoot(container);
+  vi.clearAllMocks();
+  useAppStore.setState({ ...useAppStore.getInitialState(), ...actions });
+  seedConnectionsRegion({
+    connections: [
+      {
+        id: "conn-1",
+        name: "Build Box",
+        folderId: null,
+        config: { type: "ssh", config: { host: "build.example", username: "u" } },
+      } as never,
+    ],
   });
+});
 
-  afterEach(() => {
-    act(() => root.unmount());
-    container.remove();
-    stopSettingsSubscription();
-  });
+afterEach(() => {
+  act(() => root.unmount());
+  container.remove();
+  useAppStore.setState(useAppStore.getInitialState());
+});
 
-  it("asks to save first for an unsaved connection and offers no add", async () => {
+describe("the tunnels of a connection (#6028, slice 13)", () => {
+  it("asks to save first for an unsaved connection and explains each type", async () => {
     seed([tunnel("t1", "conn-1")]);
     await render(undefined);
-    expect(byTestId("connection-port-forwarding-unsaved")).not.toBeNull();
+    const unsaved = byTestId("connection-port-forwarding-unsaved")!;
+    expect(unsaved.textContent).toContain("Save this connection first");
+    expect(unsaved.textContent).toContain("ssh -L");
+    expect(unsaved.textContent).toContain("ssh -D");
     expect(byTestId("connection-port-forwarding-add")).toBeNull();
-    expect(byTestId("port-forward-row-t1")).toBeNull();
+    expect(byTestId("tunnel-item-t1")).toBeNull();
   });
 
-  it("lists only the tunnels bound to this connection, with mapping and status", async () => {
-    seed([tunnel("t1", "conn-1"), tunnel("t2", "conn-2"), tunnel("t3", "conn-1")], {
+  it("lists only this connection's tunnels, on the rows of Services", async () => {
+    seed([tunnel("t1", "conn-1"), tunnel("t2", "other"), tunnel("t3", "conn-1")], {
       t1: state("t1", "connected"),
     });
     await render("conn-1");
-    expect(byTestId("port-forward-row-t1")).not.toBeNull();
-    expect(byTestId("port-forward-row-t3")).not.toBeNull();
-    expect(byTestId("port-forward-row-t2")).toBeNull();
-    expect(byTestId("port-forward-row-t1")!.textContent).toContain("127.0.0.1:5432 → db:5432");
-    expect(byTestId("port-forward-type-t1")!.textContent).toBe("Local (ssh -L)");
-    expect(byTestId("port-forward-status-t1")!.textContent).toBe("Running");
-    expect(byTestId("port-forward-status-t3")!.textContent).toBe("Stopped");
+    expect(byTestId("tunnel-item-t1")).not.toBeNull();
+    expect(byTestId("tunnel-item-t3")).not.toBeNull();
+    expect(byTestId("tunnel-item-t2")).toBeNull();
+    // The row's own words: state, address with Copy.
+    expect(byTestId("tunnel-kind-t1")!.textContent).toContain("Running");
+    expect(byTestId("tunnel-address-t1")!.textContent).toContain("localhost:5432");
+    expect(byTestId("tunnel-kind-t3")!.textContent).toContain("Stopped");
+    expect(document.querySelector("h3")!.textContent).toBe("SSH tunnels");
+    expect(await checkA11y(container)).toHaveNoViolations();
   });
 
-  it("explains each type before the connection is saved (#6027)", async () => {
-    seed([]);
-    await render(undefined);
-    const items = byTestId("connection-port-forwarding-unsaved")!.querySelectorAll("li");
-    expect(Array.from(items, (li) => li.textContent)).toEqual([
-      "Local (ssh -L): Reach something on the SSH server's side",
-      "Remote (ssh -R): Let the SSH server reach something here",
-      "Dynamic (ssh -D): SOCKS5 proxy through the SSH server",
-    ]);
-  });
-
-  it("explains a forward on its row, on hover and to screen readers (#6027)", async () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    seedAgentsRegion({ remoteAgents: [{ id: "agent-1", name: "build-box" } as any] });
-    seed([
-      tunnel("t1", "conn-1"),
-      tunnel("t2", "conn-1", { host: { kind: "agent", agentId: "agent-1" } }),
-    ]);
+  it("says when none goes through it, and makes a new one with it chosen", async () => {
+    seed([tunnel("t2", "other")]);
     await render("conn-1");
-    expect(byTestId("port-forward-row-t1")!.textContent).toContain(
-      "Reach something on the SSH server's side"
+    expect(byTestId("connection-port-forwarding-empty")!.textContent).toContain(
+      "No tunnels go through this connection yet."
     );
-    const describedBy = byTestId("port-forward-edit-t1")!.getAttribute("aria-describedby");
-    expect(document.getElementById(describedBy!)?.textContent).toContain(
-      "Opens a port on this computer"
-    );
-    await act(async () => {
-      byTestId("port-forward-type-t2")!.dispatchEvent(
-        new PointerEvent("pointermove", { bubbles: true, pointerType: "mouse" })
-      );
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    });
-    expect(byTestId("port-forward-type-help-t2")!.textContent).toContain(
-      "Opens a port on agent build-box"
-    );
-  });
-
-  it("shows an empty state when nothing is attached", async () => {
-    seed([tunnel("t2", "conn-2")]);
-    await render("conn-1");
-    expect(byTestId("connection-port-forwarding-empty")).not.toBeNull();
-  });
-
-  it("Add opens a new Tunnel editor pre-bound to this connection", async () => {
-    seed([]);
-    await render("conn-1");
     await click(byTestId("connection-port-forwarding-add"));
-    expect(openTunnelEditorTab).toHaveBeenCalledWith(null, { sshConnectionId: "conn-1" });
+    expect(byTestId("connection-port-forwarding-add")!.textContent).toBe("New tunnel");
+    expect(actions.openTunnelEditorTab).toHaveBeenCalledWith(null, { sshConnectionId: "conn-1" });
   });
 
-  it("Edit opens the Tunnel editor for that tunnel", async () => {
+  it("the row's buttons do what they do in Services", async () => {
     seed([tunnel("t1", "conn-1")]);
     await render("conn-1");
-    await click(byTestId("port-forward-edit-t1"));
-    expect(openTunnelEditorTab).toHaveBeenCalledWith("t1");
+    await click(byTestId("tunnel-start-t1"));
+    expect(actions.startTunnel).toHaveBeenCalledWith("t1");
+    await click(byTestId("tunnel-edit-t1"));
+    expect(actions.openTunnelEditorTab).toHaveBeenLastCalledWith("t1");
+    expect(useEditorViews.getState().views.t1).toBe("settings");
+    await click(byTestId("tunnel-activity-t1"));
+    expect(useEditorViews.getState().views.t1).toBe("activity");
   });
 
-  it("the start-with-connection toggle upserts the same tunnel with the flag flipped", async () => {
-    const t1 = tunnel("t1", "conn-1");
+  it("Delete asks first, as in Services", async () => {
+    seed([tunnel("t1", "conn-1")]);
+    await render("conn-1");
+    await click(serviceMenuItem("tunnel-delete-t1"));
+    expect(byTestId("confirm-delete-dialog")).not.toBeNull();
+  });
+
+  it("Show in Services opens the Services view", async () => {
+    seed([tunnel("t1", "conn-1")]);
+    await render("conn-1");
+    await click(byTestId("connection-port-forwarding-show-services"));
+    expect(actions.setSidebarView).toHaveBeenCalledWith("services");
+  });
+
+  it("starting with a session saves the same tunnel with the flag flipped", async () => {
+    const t1 = tunnel("t1", "conn-1", { startWithConnection: false });
     seed([t1]);
     await render("conn-1");
-    const toggle = byTestId("port-forward-start-with-connection-t1");
-    expect(toggle!.getAttribute("aria-checked")).toBe("false");
+    const toggle = byTestId("port-forward-start-with-connection-t1")!;
+    expect(toggle.getAttribute("aria-label")).toBe(
+      "Start Tunnel t1 when a session to this connection opens"
+    );
     await click(toggle);
-    expect(saveTunnel).toHaveBeenCalledWith({ ...t1, startWithConnection: true });
+    expect(actions.saveTunnel).toHaveBeenCalledWith({ ...t1, startWithConnection: true });
   });
 
-  it("a chained companion shows no toggle (it follows its parent)", async () => {
+  it("a chained companion follows its parent and has no switch", async () => {
     seed([tunnel("t1", "conn-1", { companionOf: "parent" })]);
     await render("conn-1");
     expect(byTestId("port-forward-start-with-connection-t1")).toBeNull();
-  });
-
-  it("Remove confirms an idle tunnel first, with the opt-out offered (#5216)", async () => {
-    seed([tunnel("t1", "conn-1")]);
-    await render("conn-1");
-    await click(byTestId("port-forward-remove-t1"));
-    expect(byTestId("confirm-delete-dialog")?.textContent).toContain("Tunnel t1");
-    expect(byTestId("confirm-delete-dont-ask-again")).not.toBeNull();
-    expect(deleteTunnel).not.toHaveBeenCalled();
-    await click(byTestId("confirm-delete-confirm"));
-    expect(deleteTunnel).toHaveBeenCalledWith("t1", { undoable: true });
-    expect(updateSettings).not.toHaveBeenCalled();
-  });
-
-  it("cancelling the confirm keeps the tunnel", async () => {
-    seed([tunnel("t1", "conn-1")]);
-    await render("conn-1");
-    await click(byTestId("port-forward-remove-t1"));
-    await click(byTestId("confirm-delete-cancel"));
-    expect(byTestId("confirm-delete-dialog")).toBeNull();
-    expect(byTestId("port-forward-row-t1")).not.toBeNull();
-    expect(deleteTunnel).not.toHaveBeenCalled();
-  });
-
-  it("saves the opt-out only when confirmed with the box ticked", async () => {
-    seed([tunnel("t1", "conn-1")]);
-    await render("conn-1");
-    await click(byTestId("port-forward-remove-t1"));
-    await click(byTestId("confirm-delete-dont-ask-again"));
-    await click(byTestId("confirm-delete-confirm"));
-    expect(deleteTunnel).toHaveBeenCalledWith("t1", { undoable: true });
-    expect(updateSettings).toHaveBeenCalledWith(
-      expect.objectContaining({ confirmUndoableDelete: false })
-    );
-  });
-
-  it("a ticked box is dropped on cancel", async () => {
-    seed([tunnel("t1", "conn-1")]);
-    await render("conn-1");
-    await click(byTestId("port-forward-remove-t1"));
-    await click(byTestId("confirm-delete-dont-ask-again"));
-    await click(byTestId("confirm-delete-cancel"));
-    await click(byTestId("port-forward-remove-t1"));
-    await click(byTestId("confirm-delete-confirm"));
-    expect(deleteTunnel).toHaveBeenCalledWith("t1", { undoable: true });
-    expect(updateSettings).not.toHaveBeenCalled();
-  });
-
-  it("deletes an idle tunnel without asking once opted out (Undo stays)", async () => {
-    act(() =>
-      __emitSettingsViewForTest(
-        {
-          version: "1",
-          externalConnectionFiles: [],
-          powerMonitoringEnabled: true,
-          fileBrowserEnabled: true,
-          confirmUndoableDelete: false,
-        },
-        1
-      )
-    );
-    seed([tunnel("t1", "conn-1")]);
-    await render("conn-1");
-    await click(byTestId("port-forward-remove-t1"));
-    expect(byTestId("confirm-delete-dialog")).toBeNull();
-    expect(deleteTunnel).toHaveBeenCalledWith("t1", { undoable: true });
-  });
-
-  it("Remove confirms an active tunnel without an opt-out, even when opted out", async () => {
-    act(() =>
-      __emitSettingsViewForTest(
-        {
-          version: "1",
-          externalConnectionFiles: [],
-          powerMonitoringEnabled: true,
-          fileBrowserEnabled: true,
-          confirmUndoableDelete: false,
-        },
-        2
-      )
-    );
-    seed([tunnel("t1", "conn-1")], { t1: state("t1", "connected") });
-    await render("conn-1");
-    await click(byTestId("port-forward-remove-t1"));
-    expect(byTestId("confirm-delete-dialog")).not.toBeNull();
-    expect(byTestId("confirm-delete-dont-ask-again")).toBeNull();
-    expect(deleteTunnel).not.toHaveBeenCalled();
-    await click(byTestId("confirm-delete-confirm"));
-    expect(deleteTunnel).toHaveBeenCalledWith("t1", { undoable: true });
-  });
-
-  describe("hint copy no longer depends on the experimental gate (#5363, #5858)", () => {
-    function emitExperimental(enabled: boolean) {
-      act(() =>
-        __emitSettingsViewForTest(
-          {
-            version: "1",
-            externalConnectionFiles: [],
-            powerMonitoringEnabled: true,
-            fileBrowserEnabled: true,
-            experimentalFeaturesEnabled: enabled,
-          },
-          3
-        )
-      );
-    }
-
-    it.each([false, true])(
-      "names the SSH Tunnels sidebar and shows no toggle link (experimental %s, #5858)",
-      async (enabled) => {
-        emitExperimental(enabled);
-        seed([]);
-        await render("conn-1");
-        const hint = byTestId("connection-port-forwarding-hint")!;
-        expect(hint.textContent).toContain("same tunnels listed in the SSH Tunnels sidebar");
-        expect(byTestId("connection-port-forwarding-experimental-link")).toBeNull();
-      }
-    );
+    expect(container.textContent).toContain("Follows its chained parent");
   });
 });

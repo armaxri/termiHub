@@ -9,7 +9,7 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { AppSettings } from "@/types/connection";
-import { GeneralSettings } from "./GeneralSettings";
+import { ConnectionDefaultsSettings } from "./ConnectionDefaultsSettings";
 import { TooltipProvider } from "@/components/ui";
 
 vi.mock("@/utils/shell-detection", () => ({
@@ -41,14 +41,14 @@ async function renderWith(settings: AppSettings) {
   await act(async () => {
     root.render(
       <TooltipProvider delayDuration={0}>
-        <GeneralSettings settings={settings} onChange={vi.fn()} />
+        <ConnectionDefaultsSettings settings={settings} onChange={vi.fn()} />
       </TooltipProvider>
     );
   });
   return container.querySelector<HTMLElement>("[data-testid='settings-default-x11-forwarding']");
 }
 
-describe("GeneralSettings — X11 forwarding default (#5555)", () => {
+describe("ConnectionDefaultsSettings — X11 forwarding default (#5555)", () => {
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);

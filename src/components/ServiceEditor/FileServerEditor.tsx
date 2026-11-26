@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ServiceActivityView } from "@/components/ServiceActivity";
+import { useEditorView, useEditorViews } from "@/components/ServiceEditor/editorView";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { RunLocationSelect } from "@/components/RunLocationSelect";
 import {
@@ -298,10 +300,25 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
     );
   };
 
+  // Settings or Activity (#6028, slice 9).
+  const view = useEditorView(existing?.id);
+  const showIn = useEditorViews((s) => s.show);
+
   return (
     <ServiceEditorShell
       testId="server-editor"
       isVisible={isVisible}
+      activity={
+        existing ? (
+          <ServiceActivityView
+            kind="fileServer"
+            id={existing.id}
+            onEdit={() => showIn(existing.id, "settings")}
+          />
+        ) : undefined
+      }
+      view={view}
+      onView={(next) => existing && showIn(existing.id, next)}
       title={existing ? existing.name : t(`service.new.${form.serverType}`)}
       subtitle={editorSubtitle(!existing, t(`service.new.${form.serverType}.technical`))}
       onChangeType={choosing ? undefined : () => setChoosing(true)}

@@ -755,4 +755,74 @@ describe("Terminal — a window that regains a session keeps the repaint's outpu
     expect(shown()).toMatch(/kept [^]*connection lost/i);
     expect(shown()).not.toContain("stale");
   });
+
+  it("is not ended by the exit of the stream before the one it attached to (#6032)", async () => {
+    // The session was created again: the tab repaints the new stream.
+    epoch = 2;
+    mockGetAgentSessionBuffer.mockResolvedValue(snapshot("$ ", 0));
+    await mountPersistent();
+    releaseLineEnding();
+    await settle();
+    act(() => {
+      handlers.get("terminal-exit")?.({ payload: { session_id: SID, exit_code: null, epoch: 1 } });
+    });
+    await settle();
+    expect(shown()).not.toMatch(/connection lost/i);
+    emitOutput("still here");
+    await settle();
+    expect(shown()).toContain("still here");
+
+    act(() => {
+      handlers.get("terminal-exit")?.({ payload: { session_id: SID, exit_code: null, epoch: 2 } });
+    });
+    await settle();
+    expect(shown()).toMatch(/still here[^]*connection lost/i);
+  });
+
+  it("is not ended by the exit of the stream before an empty re-attach snapshot (#6110)", async () => {
+    epoch = 2;
+    mockGetAgentSessionBuffer.mockResolvedValue(snapshot("", 0));
+    await mountPersistent();
+    // The old stream's exit arrives after the snapshot, before the tab subscribed.
+    act(() => {
+      handlers.get("terminal-exit")?.({ payload: { session_id: SID, exit_code: null, epoch: 1 } });
+    });
+    releaseLineEnding();
+    await settle();
+    emitOutput("new stream");
+    await settle();
+    expect(shown()).not.toMatch(/connection lost/i);
+    expect(shown()).toContain("new stream");
+  });
+
+  it("of a moved tab with an empty snapshot is not ended by an older stream's exit (#6110)", async () => {
+    epoch = 2;
+    mockReplayScrollback.mockResolvedValue(snapshot("", 0));
+    const config = { type: "local" as const, config: {} };
+    const tabId = useAppStore.getState().addTab("Moved", "local", config, {
+      contentType: "terminal",
+      sessionId: SID,
+    });
+    act(() => {
+      root.render(
+        <TerminalPortalProvider>
+          <Terminal
+            tabId={tabId}
+            config={config}
+            isVisible={true}
+            existingSessionId={SID}
+            replayScrollbackOnAttach={true}
+          />
+        </TerminalPortalProvider>
+      );
+    });
+    await settle();
+    const exited = vi.spyOn(useAppStore.getState(), "setTerminalExited");
+    act(() => {
+      handlers.get("terminal-exit")?.({ payload: { session_id: SID, exit_code: null, epoch: 1 } });
+    });
+    releaseLineEnding();
+    await settle();
+    expect(exited).not.toHaveBeenCalled();
+  });
 });

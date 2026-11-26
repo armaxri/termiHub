@@ -45,6 +45,10 @@ export interface VisualScenario {
   agentAddresses?: boolean;
   /** Answer `get_embedded_server_activity` with this. */
   serverActivity?: unknown;
+  /** Answer `get_service_events` with these, by service id (#6028, slice 9). */
+  serviceEvents?: Record<string, unknown[]>;
+  /** The lab agent is connected and too old to read the access log of (#3453). */
+  oldAgent?: boolean;
   /**
    * Seed saved connections whose schema secrets are stored (#4431): a plugin
    * connection with stored token fields and an SSH connection whose inline
@@ -796,6 +800,15 @@ function regionView(region: string, populated: boolean): unknown {
         ),
       };
     }
+    if (window.__VISUAL_SCENARIO__?.oldAgent) {
+      const old = { connectionTypes: [], maxSessions: 4 };
+      return {
+        ...AGENTS_VIEW,
+        agents: AGENTS_VIEW.agents.map((a) =>
+          a.id === "agent-lab" ? { ...a, capabilities: old } : a
+        ),
+      };
+    }
     return window.__VISUAL_SCENARIO__?.iconStyles ? ICON_STYLE_AGENTS_VIEW : AGENTS_VIEW;
   }
   const { serviceData } = window.__VISUAL_SCENARIO__ ?? {};
@@ -969,6 +982,8 @@ export function handleCommand(cmd: string, args: Args): unknown {
           { name: "wlan0", addr: "10.4.0.22" },
         ],
       };
+    case "get_service_events":
+      return scenario.serviceEvents?.[String(args?.serviceId)] ?? [];
     case "get_embedded_server_activity":
       return activitySince(scenario.serverActivity, Number(args?.sinceSeq ?? 0));
     case "list_windows":

@@ -1,4 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import { ServiceActivityView } from "@/components/ServiceActivity";
+import { useEditorView, useEditorViews } from "@/components/ServiceEditor/editorView";
 import { ITEM_DESCRIPTION_MAX_LENGTH, normalizeItemDescription } from "@/utils/itemDescription";
 import { z } from "zod";
 import { useZodEditorForm } from "@/hooks/useZodEditorForm";
@@ -237,7 +239,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
     defaultValues: {
       name: existingTunnel?.name ?? "",
       description: existingTunnel?.description ?? "",
-      // A new tunnel opened from a connection's "Port Forwarding" section
+      // A new tunnel opened from a connection's "SSH tunnels" section
       // (PROD-023) pre-selects that connection when it is a saved SSH one.
       sshConnectionId:
         existingTunnel?.sshConnectionId ??
@@ -586,6 +588,10 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
     { tunnelId: "", status: "connected", stats: NO_TRAFFIC },
     context
   ).address;
+  // The part of the saved one's path that fails, marked under Show path (slice 10).
+  const failing = existingTunnel
+    ? tunnelModel(existingTunnel, tunnelStates[existingTunnel.id], context).failing
+    : undefined;
   // Asked only when the New menu did not (U-008).
   const [choosing, setChoosing] = useState(!existingTunnel && !meta.tunnelType);
   const [showsPath, setShowsPath] = useState(false);
@@ -689,10 +695,25 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
     </label>
   );
 
+  // Settings or Activity (#6028, slice 9).
+  const view = useEditorView(existingTunnel?.id);
+  const showIn = useEditorViews((s) => s.show);
+
   return (
     <ServiceEditorShell
       testId="tunnel-editor"
       isVisible={isVisible}
+      activity={
+        existingTunnel ? (
+          <ServiceActivityView
+            kind="tunnel"
+            id={existingTunnel.id}
+            onEdit={() => showIn(existingTunnel.id, "settings")}
+          />
+        ) : undefined
+      }
+      view={view}
+      onView={(next) => existingTunnel && showIn(existingTunnel.id, next)}
       title={existingTunnel ? existingTunnel.name : t(`service.new.${tunnelType.type}`)}
       subtitle={editorSubtitle(!existingTunnel, t(`service.new.${tunnelType.type}.technical`))}
       onChangeType={choosing ? undefined : () => setChoosing(true)}
@@ -929,7 +950,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
         </button>
         {showsPath && (
           <>
-            <TunnelDiagram tunnelType={tunnelType} agentName={hostAgentName} />
+            <TunnelDiagram tunnelType={tunnelType} agentName={hostAgentName} failing={failing} />
             <div className="tunnel-editor__endpoints" data-testid="tunnel-editor-endpoints">
               <div className="tunnel-editor__endpoints-host">
                 {isAgentHost(host) ? <Server size={13} /> : <Monitor size={13} />}

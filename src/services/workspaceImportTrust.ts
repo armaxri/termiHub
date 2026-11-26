@@ -25,6 +25,13 @@ import type {
   WorkspaceTabGroupDef,
 } from "@/types/workspace";
 
+/**
+ * A tab def as {@link resolveImportTrust} returns it: also whether the saved
+ * connection it opens changed elsewhere since it was confirmed here (#6065). Never
+ * stored.
+ */
+export type TrustedTabDef = WorkspaceTabDef & { savedConnectionUnconfirmed?: boolean };
+
 const COMMAND_KEY_PREFIX = "cmd:";
 const CONNECTION_KEY_PREFIX = "conn:";
 
@@ -141,9 +148,15 @@ export function collectImportedItems(groups: readonly WorkspaceTabGroupDef[]): I
 
 async function resolveTab(
   tab: WorkspaceTabDef,
-  allowlist: readonly string[]
+  allowlist: readonly string[],
+  isUnconfirmed: (ref: string) => Promise<boolean>
 ): Promise<WorkspaceTabDef> {
-  let next = tab;
+  let next: TrustedTabDef = tab;
+  // A saved connection changed elsewhere since it was confirmed here (#6065): the
+  // tab waits like an imported inline config. Nothing of it is written back.
+  if (tab.connectionRef && (await isUnconfirmed(tab.connectionRef))) {
+    next = { ...next, savedConnectionUnconfirmed: true };
+  }
   const pending = tab.pendingInitialCommand;
   if (pending && isImportConfirmed(allowlist, await importedCommandKey(pending))) {
     const { pendingInitialCommand: _promoted, ...rest } = next;
@@ -162,14 +175,20 @@ async function resolveTab(
 
 async function resolveLayout(
   node: WorkspaceLayoutNode,
-  allowlist: readonly string[]
+  allowlist: readonly string[],
+  isUnconfirmed: (ref: string) => Promise<boolean>
 ): Promise<WorkspaceLayoutNode> {
   if (node.type === "leaf") {
-    return { ...node, tabs: await Promise.all(node.tabs.map((t) => resolveTab(t, allowlist))) };
+    return {
+      ...node,
+      tabs: await Promise.all(node.tabs.map((t) => resolveTab(t, allowlist, isUnconfirmed))),
+    };
   }
   return {
     ...node,
-    children: await Promise.all(node.children.map((c) => resolveLayout(c, allowlist))),
+    children: await Promise.all(
+      node.children.map((c) => resolveLayout(c, allowlist, isUnconfirmed))
+    ),
   };
 }
 
@@ -177,15 +196,18 @@ async function resolveLayout(
  * Apply this machine's confirmations to a workspace's tab groups before they
  * are launched: a pending command the user confirmed becomes the tab's
  * `initialCommand`, and a confirmed inline config loses its unconfirmed flag.
- * Everything else stays pending. Returns new groups; the input is not mutated.
+ * Everything else stays pending. A tab whose saved connection `isUnconfirmed`
+ * (#6065) is held like an unconfirmed inline config. Returns new groups; the
+ * input is not mutated.
  */
 export async function resolveImportTrust(
   groups: WorkspaceTabGroupDef[],
-  allowlist: readonly string[] | undefined
+  allowlist: readonly string[] | undefined,
+  isUnconfirmed: (connectionRef: string) => Promise<boolean> = async () => false
 ): Promise<WorkspaceTabGroupDef[]> {
   const list = allowlist ?? [];
   return Promise.all(
-    groups.map(async (g) => ({ ...g, layout: await resolveLayout(g.layout, list) }))
+    groups.map(async (g) => ({ ...g, layout: await resolveLayout(g.layout, list, isUnconfirmed) }))
   );
 }
 

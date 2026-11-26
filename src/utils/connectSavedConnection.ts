@@ -45,6 +45,12 @@
  * `PasswordPrompt` / `UnlockDialog` that the attended flow drives through the
  * store.
  */
+import {
+  confirmSavedConnection,
+  confirmedWithoutWaiting,
+  isSavedConnectionConfirmed,
+  whatRunsByItself,
+} from "@/services/savedConnectionTrust";
 import { saveAfterStorageChoice } from "@/utils/credentialStorageChoice";
 import { toast } from "@/components/ui";
 import { toastConnectCanceled as showConnectCanceledToast } from "@/utils/connectCanceledToast";
@@ -252,6 +258,25 @@ export async function connectSavedConnection(
   if (pluginIssue) {
     if (!unattended) toast.error(`Cannot connect to ${connection.name}: ${pluginIssue.message}`);
     return { status: "refused", reason: pluginIssue.message };
+  }
+
+  // What it runs by itself changed elsewhere since it was confirmed here (#6065):
+  // nobody watching runs it; the user is shown what would run, or, when nothing
+  // runs by itself, opening it is the confirmation.
+  if (!confirmedWithoutWaiting(connection) && !(await isSavedConnectionConfirmed(connection))) {
+    if (unattended) {
+      frontendLog("connection_trust", `${connection.id}: not confirmed here, not connected`);
+      return { status: "refused", reason: t("schedule.connect.skip.unconfirmed") };
+    }
+    if (whatRunsByItself(connection.config).length > 0) {
+      const tabId = addTab(connection.name, connection.config.type, connection.config, {
+        connectionId: connection.id,
+        besideSibling: true,
+        heldUntilConfirmed: true,
+      });
+      return { status: "opened", tabId, sessionId: null };
+    }
+    await confirmSavedConnection(connection.config);
   }
 
   // Schema secrets other than `password` (a VNC SSH-tunnel password, an
