@@ -46,9 +46,14 @@ fn until(probe: &dyn Fn() -> bool, want: bool, what: &str) {
 
 #[test]
 fn a_program_reading_with_echo_off_is_seen_on_the_pty() {
-    let script =
-        "stty -echo; printf 'Enter code: '; read x; stty echo; printf '\\nName: '; read y; \
-                  printf 'done\\n'";
+    // Then a key read raw with echo off, as a line editor reads at the shell's
+    // prompt: that is no hidden line, or every prompt would count as a password.
+    let script = concat!(
+        "stty -echo; printf 'Enter code: '; read x; stty echo; ",
+        "printf '\\nName: '; read y; ",
+        "stty -icanon -echo min 1; printf 'Key: '; dd bs=1 count=1 2>/dev/null >/dev/null; ",
+        "stty icanon echo; printf 'done\\n'"
+    );
     let command = ShellCommand {
         program: "/bin/sh".to_string(),
         args: vec!["-c".into(), script.into()],
@@ -96,6 +101,16 @@ fn a_program_reading_with_echo_off_is_seen_on_the_pty() {
         "the hidden answer was echoed"
     );
     writer.write_all(b"ana\n").expect("type the name");
+    writer.flush().expect("flush");
+
+    // Raw mode with echo off, as a line editor: not hidden.
+    wait_for(&rx, &mut output, "Key: ");
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(
+        !hidden(),
+        "a raw read with echo off counted as hidden input"
+    );
+    writer.write_all(b"k").expect("press a key");
     writer.flush().expect("flush");
     wait_for(&rx, &mut output, "done");
     (spawned.kill)();

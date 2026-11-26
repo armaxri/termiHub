@@ -175,3 +175,16 @@ impl Read for PollingReader {
         }
     }
 }
+
+#[cfg(test)]
+mod hidden_input_tests {
+    use super::*;
+
+    /// What is no terminal cannot tell: it reads as "not hidden" (#6014).
+    #[test]
+    fn a_file_that_is_no_terminal_is_not_hidden_input() {
+        let file = std::fs::File::open("/dev/null").expect("open /dev/null");
+        let fd = OwnedFd::from(file);
+        assert!(!hidden_input_reading(&fd));
+    }
+}
