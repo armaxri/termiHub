@@ -362,6 +362,55 @@ class TestProductRunAutomationRecording(
             problems += secret_problems(self._stored_text(), secret)
             assert not problems, problems
 
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="ConPTY has no echo flag to ask (#6014)"
+    )
+    def test_32_echo_off_prompt(self):
+        t = self.tag
+        with self.step(
+            "automation-recording.echo-off",
+            "What is typed where a local program reads with echo off is left out, whatever "
+            "its prompt says (#6014)",
+            expect="the password prompt's bar while 'Enter code:' waits; Save recording names "
+            "'Enter code:' and the stored automation has a wait in its place",
+            screenshot=False,
+        ):
+            self.require("automation-recording.toolbar")
+            tab, secret = self.ids["tab"], f"code{t}"
+            self.switch_to_tab(tab)
+            self.run_command(
+                "stty -echo; printf 'Enter code: '; IFS= read -r CODE; stty echo; "
+                'printf "\\nPR_CODE_%s\\n" "${#CODE}"'
+            )
+            self.wait(
+                lambda: self.driver.read_terminal(tab).rstrip().endswith("Enter code:"),
+                what="the code prompt",
+            )
+            self._start()
+            self._press(secret)
+            self.wait(
+                lambda: self.driver.exists(PROMPT_BAR), what="the hidden input's bar"
+            )
+            self._press("\r")
+            self.wait_for_output(f"PR_CODE_{len(secret)}", tab_id=tab)
+            self._press("id\r")
+            self._stop()
+            note = self.driver.get_text("recording-save-secrets")
+            self.evidence(f"note {note!r}")
+            problems = []
+            if "Enter code:" not in note or secret in note:
+                problems.append(f"the dialog says {note!r}")
+            self.driver.type("recording-save-name", f"Code {t}")
+            self._save()
+            stored = self.wait(
+                lambda: self.stored_automation(f"Code {t}"), what="the stored automation"
+            )
+            kinds = [s["kind"] for s in stored["steps"]]
+            if kinds != ["wait-for-user", "type-keys"]:
+                problems.append(f"the code's place is not a wait: {kinds}")
+            problems += secret_problems(self._stored_text(), secret)
+            assert not problems, problems
+
     def test_35_password_wait(self):
         t = self.tag
         with self.step(

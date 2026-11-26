@@ -80,6 +80,8 @@ const STATES = {
   "editor--more-keys": "Type a key that has no letter.",
   "recording--chip": "Know that typing is being recorded, and stop it.",
   "recording--password-prompt": "Typing a password while recording: know that it is noticed.",
+  "recording--echo-off":
+    "A program asks for a code with its echo off, in words no list knows: is it noticed? (#6014)",
   "recording--save": "Name the recording, or add it to an automation.",
   "recording--save-no-enter": "The recording does not end with Enter: what will it do?",
   "recording--save-password": "Decide what happens to the password that was typed.",
@@ -489,7 +491,7 @@ interface GalleryState {
   recordInput(
     tabId: string,
     data: string,
-    readPrompt?: (then: (before: string) => void) => void
+    readPrompt?: (then: (before: string, hidden?: boolean) => void) => void
   ): void;
   recording: { tabId: string } | null;
 }
@@ -554,8 +556,11 @@ async function print(page: Page, n: number, text: string): Promise<void> {
   );
 }
 
-/** Start recording from the toolbar and type `keys`, each after `prompt`. */
-async function record(page: Page, keys: [string, string][]): Promise<void> {
+/**
+ * Start recording from the toolbar and type `keys`, each after `prompt`; `hidden` is
+ * what the terminal's PTY says about the echo (#6014).
+ */
+async function record(page: Page, keys: [string, string][], hidden = false): Promise<void> {
   const recording = await page.evaluate(
     () => (window.__visual.store.getState() as unknown as GalleryState).recording !== null
   );
@@ -563,12 +568,15 @@ async function record(page: Page, keys: [string, string][]): Promise<void> {
     await page.locator(id("automation-record-btn")).click();
     await page.locator(id("terminal-view-active-recording")).waitFor();
   }
-  await page.evaluate((typed) => {
-    for (const [data, prompt] of typed) {
-      const state = window.__visual.store.getState() as unknown as GalleryState;
-      state.recordInput(state.recording!.tabId, data, (then) => then(prompt));
-    }
-  }, keys);
+  await page.evaluate(
+    ([typed, echoOff]) => {
+      for (const [data, prompt] of typed) {
+        const state = window.__visual.store.getState() as unknown as GalleryState;
+        state.recordInput(state.recording!.tabId, data, (then) => then(prompt, echoOff));
+      }
+    },
+    [keys, hidden] as const
+  );
 }
 
 async function edit(page: Page, automationId: string): Promise<void> {
@@ -1010,6 +1018,12 @@ for (const viewport of WINDOWS) {
         await page.locator(id("recording-bar-unsaved")).waitFor();
         await shot(page, "recording--unsaved", id("recording-bar-unsaved"));
         await page.locator(id("recording-bar-discard")).click();
+        // "Enter code: " says no secret word: the PTY's echo flag tells it (#6014).
+        await record(page, [["7", "Enter code: "]], true);
+        await page.locator(id("recording-bar-prompt")).waitFor();
+        await shot(page, "recording--echo-off", id("recording-bar-prompt"));
+        await page.locator(id("terminal-view-active-recording")).click();
+        await page.locator(id("recording-save-discard")).click();
         await record(page, [["git pull", "$ "]]);
         await page.locator(id("terminal-view-active-recording")).click();
         await page.locator(id("recording-save-no-enter")).waitFor();
