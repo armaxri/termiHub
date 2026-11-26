@@ -70,7 +70,7 @@ export function ServiceEditorShell({
         <h2 className="service-editor__title" data-testid={`${testId}-title`}>
           {title}
         </h2>
-        <p className="service-editor__subtitle">
+        <p className="service-editor__subtitle" data-testid={`${testId}-subtitle`}>
           {subtitle}
           {onChangeType && (
             <>
@@ -148,8 +148,10 @@ export function ServiceEditorShell({
 }
 
 /** "New service · Web server (HTTP)", or what a saved one is. */
-export function editorSubtitle(isNew: boolean, technical: string): string {
-  return isNew ? tf("service.editor.new", { technical }) : technical;
+export function editorSubtitle(isNew: boolean, technical: string, running = false): string {
+  if (isNew) return tf("service.editor.new", { technical });
+  // Said always while it runs, not only once something changed (#6117, F-013).
+  return running ? tf("service.editor.running", { technical }) : technical;
 }
 
 /** What the user should know before saving, beside the field it is about. */

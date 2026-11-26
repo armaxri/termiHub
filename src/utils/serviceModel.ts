@@ -672,7 +672,10 @@ export function fileServerModel(
     addressStep:
       address && !address.open && config.serverType === "tftp"
         ? { id: "letReach", label: t("service.next.letReach") }
-        : undefined,
+        : // A folder shared for now that only this computer reaches is for nobody yet (F-004).
+          address && !address.open && config.temporary
+          ? { id: "letReach", label: t("service.next.letOthersReach") }
+          : undefined,
     counters: stats && {
       sent: stats.bytesSent,
       received: stats.bytesReceived,

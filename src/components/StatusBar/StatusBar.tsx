@@ -429,7 +429,10 @@ function ServicesIndicator() {
         : attention.length === 1
           ? t("service.counts.attention.one")
           : tf("service.counts.attention", { count: String(attention.length) });
-  if (running.length === 0 && !errors) return null;
+  // A tunnel that lost its connection and tries again is down for now: the bar
+  // says so, not nothing (#6117, F-005).
+  const reconnecting = models.filter((model) => model.health === "reconnecting");
+  if (running.length === 0 && !errors && reconnecting.length === 0) return null;
 
   const tunnels = running.filter((model) => model.kind === "tunnel").length;
   const servers = running.length - tunnels;
@@ -437,9 +440,17 @@ function ServicesIndicator() {
     tunnels > 0 && counted(tunnels, "tunnel"),
     servers > 0 && counted(servers, "file server"),
   ].filter(Boolean);
-  const says = [kinds.length > 0 && `${kinds.join(" and ")} running`, errors].filter(Boolean);
+  const lost =
+    reconnecting.length === 1
+      ? [reconnecting[0].name, reconnecting[0].reason].filter(Boolean).join(": ")
+      : reconnecting.length > 1 && `${reconnecting.length} reconnecting`;
+  const says = [kinds.length > 0 && `${kinds.join(" and ")} running`, lost, errors].filter(Boolean);
   const label = `${says.join(", ")} — click to open Services`;
-  const text = [running.length > 0 && `${running.length} running`, errors].filter(Boolean);
+  const text = [
+    running.length > 0 && `${running.length} running`,
+    reconnecting.length > 0 && `${reconnecting.length} reconnecting`,
+    errors,
+  ].filter(Boolean);
 
   return (
     <Tooltip content={label} side="top">

@@ -5,8 +5,12 @@ it.each([
   ["stopped", 2, "It is not running."],
   ["error", 0, "It is not running."],
   ["running", 0, "It is running. Deleting stops it."],
-  ["running", 1, "It is running. Deleting stops it and breaks 1 open connection."],
-  ["reconnecting", 2, "It is running. Deleting stops it and breaks 2 open connections."],
+  ["running", 1, "It is running and someone is connected. Deleting stops it and cuts them off."],
+  [
+    "reconnecting",
+    2,
+    "It is running and 2 are connected. Deleting stops it and cuts them all off.",
+  ],
 ] as const)("deleting one that is %s with %i connections", (state, open, text) => {
   expect(serviceDeleteEffect(state, open)).toBe(text);
 });

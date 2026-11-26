@@ -98,4 +98,45 @@ describe("TunnelDiagram", () => {
     expect(first(remote)).toContain("Agent-side target");
     expect(container.textContent).not.toContain("This computer");
   });
+
+  it("names the SSH server as the user knows it, not by a role (#6117, F-010)", () => {
+    act(() => {
+      root.render(
+        <TunnelDiagram
+          serverName="Build Box"
+          tunnelType={{
+            type: "local",
+            config: {
+              localHost: "127.0.0.1",
+              localPort: 15432,
+              remoteHost: "db",
+              remotePort: 5432,
+            },
+          }}
+        />
+      );
+    });
+    const server = container.querySelector("[data-part='server']")!;
+    expect(server.querySelector(".tunnel-diagram__box-title")?.textContent).toBe("Build Box");
+    expect(server.textContent).toContain("SSH server");
+    expect(container.textContent).not.toContain("relay");
+  });
+
+  it("keeps an address on one line with all of it in the tooltip (#6117, F-006)", () => {
+    render({
+      type: "local",
+      config: {
+        localHost: "192.168.100.200",
+        localPort: 15432,
+        remoteHost: "db",
+        remotePort: 5432,
+      },
+    });
+    const detail = container.querySelector<HTMLElement>(
+      "[data-part='listener'] .tunnel-diagram__box-detail"
+    )!;
+    expect(detail.title).toBe("192.168.100.200:15432");
+    expect(detail.querySelector(".middle-ellipsis")).not.toBeNull();
+    expect(detail.querySelector("wbr")).toBeNull();
+  });
 });

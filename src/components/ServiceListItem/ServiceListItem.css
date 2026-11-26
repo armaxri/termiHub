@@ -125,14 +125,10 @@
 }
 
 .service-row__address-text code {
+  display: flex;
   min-width: 0;
-  overflow-wrap: anywhere;
   font-family: var(--font-mono);
   color: var(--text-primary);
-}
-
-.service-row__port {
-  white-space: nowrap;
 }
 
 /* Beside the text and no taller than its line. */

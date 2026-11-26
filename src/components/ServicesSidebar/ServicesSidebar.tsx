@@ -135,7 +135,11 @@ export function ServicesSidebar() {
           () => undefined,
           (err: unknown) =>
             void toast.error(t("service.stopAll.failed"), { description: errorMessage(err) })
-        )
+        ),
+      // Who it cuts off, by name (#6117, F-002).
+      stoppable
+        .filter(({ counters }) => (counters?.active ?? 0) > 0)
+        .map(({ name, counters }) => ({ name, count: counters?.active ?? 0 }))
     );
   // A Stop all asked for elsewhere, e.g. by its shortcut (#6028, slice 6).
   const stopAllRequested = useServicesView((s) => s.stopAllRequested);

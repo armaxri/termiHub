@@ -221,13 +221,13 @@ describe("OpenConnectionsModal — failed agent disconnect through the real stor
     expect(rowsMatching("build-box")).toHaveLength(1);
   });
 
-  it("Kill All with one failed disconnect shows one summary toast", async () => {
+  it("Stop all with one failed disconnect shows one summary toast", async () => {
     disconnectAgent.mockImplementation((id) =>
       id === "a2" ? Promise.reject(new Error("socket stuck")) : Promise.resolve()
     );
     await renderWith([agent("a1", "build-box"), agent("a2", "edge")]);
 
-    await bulkAndConfirm("Kill All Agent Connections");
+    await bulkAndConfirm("Stop all Agent Connections");
 
     expect(disconnectAgent).toHaveBeenCalledWith("a1");
     expect(disconnectAgent).toHaveBeenCalledWith("a2");
@@ -242,10 +242,10 @@ describe("OpenConnectionsModal — failed agent disconnect through the real stor
     );
   });
 
-  it("Kill All with every disconnect succeeding shows no error", async () => {
+  it("Stop all with every disconnect succeeding shows no error", async () => {
     await renderWith([agent("a1", "build-box"), agent("a2", "edge")]);
 
-    await bulkAndConfirm("Kill All Agent Connections");
+    await bulkAndConfirm("Stop all Agent Connections");
 
     expect(disconnectAgent).toHaveBeenCalledTimes(2);
     expect(toastError).not.toHaveBeenCalled();

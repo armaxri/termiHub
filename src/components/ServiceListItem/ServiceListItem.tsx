@@ -1,4 +1,3 @@
-import { Fragment } from "react";
 import type React from "react";
 import {
   Activity,
@@ -304,8 +303,10 @@ export function ServiceListItem({
         <span className="service-row__address" data-testid={ids.addressTestId}>
           {address.copy && (
             <span className="service-row__address-text">
-              <code>
-                <BreakableAddress text={address.copy} />
+              {/* One line, never broken inside the host: it loses its middle, keeps
+                  the port, and Copy and the tooltip have all of it (#6117, F-006). */}
+              <code title={address.copy}>
+                <MiddleEllipsis text={address.copy} />
               </code>
               {copy && button(copy)}
             </span>
@@ -397,36 +398,6 @@ export function ServiceListItem({
         {menuItems(ids.menuTestIds)}
       </ContextMenuContent>
     </ContextMenuRoot>
-  );
-}
-
-/** An address that may break before its port, never inside it. */
-function BreakableAddress({ text }: { text: string }) {
-  // Breaks after the scheme and the dots of the host, never before the port (V-011).
-  const at = text.lastIndexOf(":");
-  const scheme = text.indexOf("://") + 3;
-  const head = text.slice(scheme > 2 ? scheme : 0, at);
-  const dot = head.lastIndexOf(".");
-  const parts = (dot > 0 ? head.slice(0, dot + 1) : "").split(/(?<=\.)/).filter(Boolean);
-  return (
-    <>
-      {scheme > 2 && (
-        <>
-          {text.slice(0, scheme)}
-          <wbr />
-        </>
-      )}
-      {parts.map((part, index) => (
-        <Fragment key={index}>
-          {part}
-          <wbr />
-        </Fragment>
-      ))}
-      <span className="service-row__port">
-        {head.slice(dot + 1)}
-        {text.slice(at)}
-      </span>
-    </>
   );
 }
 

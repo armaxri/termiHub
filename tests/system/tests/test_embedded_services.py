@@ -228,8 +228,9 @@ class TestEmbeddedServices(
 
         Mirrors the in-app File Browser flow: a local terminal supplies a
         directory, ``context-file-share-<proto>`` opens the editor with the folder
-        for this session, and Save and start starts it on this computer only (on a
-        free port near the protocol's default). Returns the started server's store
+        for this session and asks who can open it; the test chooses this computer
+        only, and Save and start starts it (on a free port near the protocol's
+        default). Returns the started server's store
         config.
         """
         # A local terminal gives the file browser a directory to share.
@@ -247,11 +248,13 @@ class TestEmbeddedServices(
         self.driver.click(menu_item)
 
         # The share opens the editor (#6028, slice 12): who and what, for this
-        # session; a device server starts with nobody chosen.
+        # session. Who can open it is asked, never preset (#6117, F-004).
         self.wait(lambda: self.driver.exists(self.DIALOG_NAME), what="the share's editor")
         assert self.driver.get_attribute("server-dialog-temporary", "aria-checked") == "true"
-        if self.driver.get_attribute(self.BIND_HERE, "aria-checked") != "true":
-            self.driver.click(self.BIND_HERE)
+        assert self.driver.get_attribute(self.BIND_HERE, "aria-checked") != "true", (
+            "the share preset who can open it"
+        )
+        self.driver.click(self.BIND_HERE)
         self.driver.click("server-dialog-save-start")
         self.wait(lambda: self.driver.exists(self.SIDEBAR), what="the Services sidebar")
         # Select the server just shared by the unique folder it serves — NOT

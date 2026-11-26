@@ -373,7 +373,11 @@ describe("a folder shared from the file browser (slice 12)", () => {
     await render({ serverType: "ftp", folder: "/home/ann/Builds" });
     expect((field("root") as HTMLInputElement).value).toBe("/home/ann/Builds");
     expect((field("name") as HTMLInputElement).value).toBe("Builds");
-    expect(checked("bind-here")).toBe("true");
+    // Who can open it is asked, never preset: a share is for someone else (#6117, F-004).
+    expect(checked("bind-here")).toBe("false");
+    expect(checked("bind-network")).toBe("false");
+    expect(note()).toBe("Still needed: who can open it");
+    expect(byTestId("server-editor-title")?.textContent).toBe("Share Builds for now");
     expect(checked("can-download")).toBe("true");
     expect(field("temporary")?.getAttribute("aria-checked")).toBe("true");
     expect(field("autostart")).toBeNull();
@@ -382,6 +386,14 @@ describe("a folder shared from the file browser (slice 12)", () => {
     await press("save-start");
     expect(saved()).toMatchObject({ temporary: true, autoStart: false, bindHost: "0.0.0.0" });
     expect(actions.startEmbeddedServer).toHaveBeenCalledWith(saved().id);
+  });
+
+  it("asks who also when the kind is changed (#6117, F-004)", async () => {
+    await render({ serverType: "tftp", folder: "/srv/fw" });
+    await act(async () => byTestId("server-editor-change-type")!.click());
+    await press("proto-http");
+    expect(checked("bind-here")).toBe("false");
+    expect(note()).toBe("Still needed: who can open it");
   });
 
   it("can be kept", async () => {
@@ -542,9 +554,19 @@ describe("a saved one", () => {
   it("that runs says when changes apply, and can be restarted with them", async () => {
     seed([DOCS], "running");
     await render({ serverId: "srv-1" });
-    expect(note()).toBe("");
+    // Said always while it runs (#6117, F-013).
+    expect(byTestId("server-editor-subtitle")?.textContent).toContain(
+      "Running. Changes apply when it restarts."
+    );
     type("port", "8090");
-    expect(note()).toBe("Changes apply when it restarts.");
+    expect(note()).toBe("");
+    expect(field("save")?.textContent).toBe("Save, apply later");
+    // Closing without saving keeps it as it runs (F-014).
+    await act(async () => byTestId("server-dialog-cancel")!.click());
+    expect(byTestId("unsaved-changes-dialog")?.textContent).toContain(
+      "It keeps running unchanged."
+    );
+    await act(async () => byTestId("unsaved-changes-cancel")!.click());
     expect(field("save-start")?.textContent).toBe("Save and restart");
     await press("save-start");
     expect(actions.restartEmbeddedServer).toHaveBeenCalledWith("srv-1");

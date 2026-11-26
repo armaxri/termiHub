@@ -58,6 +58,8 @@ export interface VisualScenario {
    * with an update whose preview carries an access diff (#4418).
    */
   pluginUpdate?: boolean;
+  /** Offer the SSH connection type, so an SSH connection's editor shows its type (#6117). */
+  sshType?: boolean;
   /** Answer these commands with these values (#6056, #6057). */
   answers?: Record<string, unknown>;
   /** The allowed programs (#6057). */
@@ -1025,6 +1027,7 @@ export function handleCommand(cmd: string, args: Args): unknown {
       return populated ? wire : { connections: [], folders: [], agents: [], externalErrors: [] };
     case "get_connection_types":
       if (scenario.storedSecrets) return STORED_SECRET_TYPES;
+      if (scenario.sshType) return STORED_SECRET_TYPES.slice(0, 1);
       return scenario.fileListing ? [LOCAL_BROWSABLE_TYPE] : [];
     case "list_stored_field_secret_keys":
       return STORED_SECRET_KEYS[String(args?.connectionId ?? "")] ?? { fields: [], hops: [] };

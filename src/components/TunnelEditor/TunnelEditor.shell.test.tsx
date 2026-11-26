@@ -306,9 +306,12 @@ describe("a running tunnel", () => {
   it("says when changes apply, and can be restarted with them", async () => {
     seed(DB, "connected");
     await render({ tunnelId: "db" });
-    expect(text("note")).toBe("");
+    // Said always while it runs, not only once something changed (#6117, F-013).
+    const subtitle = () => document.querySelector("[data-testid='tunnel-editor-subtitle']");
+    expect(subtitle()?.textContent).toContain("Running. Changes apply when it restarts.");
     type("local-port", "15433");
-    expect(text("note")).toBe("Changes apply when it restarts.");
+    expect(text("note")).toBe("");
+    expect(text("save")).toBe("Save, apply later");
     expect(text("save-start")).toBe("Save and restart");
     await press("save-start");
     expect(actions.reconnectTunnel).toHaveBeenCalledWith("db");

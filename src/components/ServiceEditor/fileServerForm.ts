@@ -74,7 +74,9 @@ export function newForm(
 
 /**
  * A folder shared from the file browser (#6028, slice 12): the safer defaults, for
- * this session only, and called like the folder.
+ * this session only, and called like the folder. Who can open it is asked, never
+ * preset (#6117, F-004): a share is for someone else, and "only this computer"
+ * made one nobody could open.
  */
 export function shareForm(
   type: ServerType,
@@ -85,6 +87,7 @@ export function shareForm(
     ...newForm(type, free),
     rootDirectory: folder,
     name: folderName(folder) ?? "",
+    bindHost: "",
     temporary: true,
   };
 }
