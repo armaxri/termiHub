@@ -13,6 +13,9 @@ vi.mock("@/services/embeddedServerApi", () => ({
       { name: "en0", addr: "192.168.1.20" },
     ])
   ),
+  listAgentAddresses: vi.fn(() =>
+    Promise.resolve({ supported: true, addresses: [{ name: "eth0", addr: "10.1.2.3" }] })
+  ),
 }));
 vi.mock("@/components/RunLocationSelect", () => ({
   RunLocationSelect: (props: {
@@ -36,7 +39,7 @@ vi.mock("@/components/RunLocationSelect", () => ({
 }));
 
 import { toast } from "@/components/ui";
-import { listNetworkInterfaces } from "@/services/embeddedServerApi";
+import { listAgentAddresses, listNetworkInterfaces } from "@/services/embeddedServerApi";
 import { useAppStore } from "@/store/appStore";
 import { seedAgentsRegion, setupAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { checkA11y } from "@/test/axe";
@@ -368,12 +371,71 @@ describe("who can open it", () => {
   });
 });
 
+describe("the addresses of an agent machine (#6086)", () => {
+  const agent = (over: object) =>
+    seedAgentsRegion({
+      remoteAgents: [{ id: "a1", name: "Build server", config: {}, ...over } as never],
+    });
+  const toAgent = async () => {
+    await render();
+    type("root", "/srv/docs");
+    await act(async () => byTestId("pick-agent")!.click());
+    await flushAsync();
+  };
+
+  it("a connected agent that lists them: chosen, and the preview uses its network address", async () => {
+    agent({ connectionState: "connected", capabilities: { hostAddresses: true } });
+    await toAgent();
+    expect(listAgentAddresses).toHaveBeenCalledWith("a1");
+    await press("bind-address");
+    const address = field("address")!;
+    expect(address.tagName).not.toBe("INPUT");
+    expect(address.textContent).toContain("10.1.2.3 (eth0)");
+    expect(field("address-note")).toBeNull();
+    await press("bind-network");
+    expect(field("address-preview")?.textContent).toContain("http://10.1.2.3:");
+  });
+
+  it("an agent that is not connected: typed, and the note says why", async () => {
+    agent({ connectionState: "disconnected" });
+    await toAgent();
+    await press("bind-address");
+    expect(field("address")?.tagName).toBe("INPUT");
+    expect(field("address-note")?.textContent).toBe(
+      "Build server is not connected, so termiHub cannot list its addresses. Type one, or connect it."
+    );
+    expect(listAgentAddresses).not.toHaveBeenCalled();
+  });
+
+  it("an agent too old to list them: typed, and the note says to update it", async () => {
+    agent({ connectionState: "connected", capabilities: { hostAddresses: false } });
+    await toAgent();
+    await press("bind-address");
+    expect(field("address")?.tagName).toBe("INPUT");
+    expect(field("address-note")?.textContent).toContain("Update agent Build server");
+    expect(listAgentAddresses).not.toHaveBeenCalled();
+  });
+
+  it("an agent that says it cannot: typed", async () => {
+    vi.mocked(listAgentAddresses).mockResolvedValueOnce({ supported: false, addresses: [] });
+    agent({ connectionState: "connected", capabilities: { hostAddresses: true } });
+    await toAgent();
+    await press("bind-address");
+    expect(field("address")?.tagName).toBe("INPUT");
+    expect(field("address-note")?.textContent).toContain("Update agent Build server");
+  });
+});
+
 describe("a folder shared from the file browser (slice 12)", () => {
   it("asks who and what, for this session only", async () => {
     await render({ serverType: "ftp", folder: "/home/ann/Builds" });
     expect((field("root") as HTMLInputElement).value).toBe("/home/ann/Builds");
     expect((field("name") as HTMLInputElement).value).toBe("Builds");
-    expect(checked("bind-here")).toBe("true");
+    // Who can open it is asked, never preset: a share is for someone else (#6117, F-004).
+    expect(checked("bind-here")).toBe("false");
+    expect(checked("bind-network")).toBe("false");
+    expect(note()).toBe("Still needed: who can open it");
+    expect(byTestId("server-editor-title")?.textContent).toBe("Share Builds for now");
     expect(checked("can-download")).toBe("true");
     expect(field("temporary")?.getAttribute("aria-checked")).toBe("true");
     expect(field("autostart")).toBeNull();
@@ -382,6 +444,14 @@ describe("a folder shared from the file browser (slice 12)", () => {
     await press("save-start");
     expect(saved()).toMatchObject({ temporary: true, autoStart: false, bindHost: "0.0.0.0" });
     expect(actions.startEmbeddedServer).toHaveBeenCalledWith(saved().id);
+  });
+
+  it("asks who also when the kind is changed (#6117, F-004)", async () => {
+    await render({ serverType: "tftp", folder: "/srv/fw" });
+    await act(async () => byTestId("server-editor-change-type")!.click());
+    await press("proto-http");
+    expect(checked("bind-here")).toBe("false");
+    expect(note()).toBe("Still needed: who can open it");
   });
 
   it("can be kept", async () => {
@@ -542,9 +612,19 @@ describe("a saved one", () => {
   it("that runs says when changes apply, and can be restarted with them", async () => {
     seed([DOCS], "running");
     await render({ serverId: "srv-1" });
-    expect(note()).toBe("");
+    // Said always while it runs (#6117, F-013).
+    expect(byTestId("server-editor-subtitle")?.textContent).toContain(
+      "Running. Changes apply when it restarts."
+    );
     type("port", "8090");
-    expect(note()).toBe("Changes apply when it restarts.");
+    expect(note()).toBe("");
+    expect(field("save")?.textContent).toBe("Save, apply later");
+    // Closing without saving keeps it as it runs (F-014).
+    await act(async () => byTestId("server-dialog-cancel")!.click());
+    expect(byTestId("unsaved-changes-dialog")?.textContent).toContain(
+      "It keeps running unchanged."
+    );
+    await act(async () => byTestId("unsaved-changes-cancel")!.click());
     expect(field("save-start")?.textContent).toBe("Save and restart");
     await press("save-start");
     expect(actions.restartEmbeddedServer).toHaveBeenCalledWith("srv-1");

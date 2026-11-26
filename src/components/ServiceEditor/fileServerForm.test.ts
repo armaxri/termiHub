@@ -89,6 +89,8 @@ describe("a folder shared from the file browser (slice 12)", () => {
       port: 2122,
       rootDirectory: "/home/ann/Builds/",
       name: "Builds",
+      // Who is asked, never preset (#6117, F-004).
+      bindHost: "",
       temporary: true,
     });
     expect(shareForm("tftp", "/").name).toBe("");

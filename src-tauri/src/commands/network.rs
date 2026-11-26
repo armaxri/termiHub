@@ -354,7 +354,7 @@ pub fn network_wol_device_delete(
 // Tauri maps each IPC argument to a parameter; the flat list is the wire shape.
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
-pub fn network_http_monitor_start(
+pub async fn network_http_monitor_start(
     url: String,
     interval_ms: Option<u64>,
     method: Option<String>,
@@ -376,7 +376,22 @@ pub fn network_http_monitor_start(
     );
     config.name = optional_label(name);
     config.description = optional_label(description);
-    manager.start_http_monitor(config, run_location.unwrap_or_default())
+    let location = run_location.unwrap_or_default();
+    off_the_window(&manager, move |manager| {
+        manager.start_http_monitor(config, location)
+    })
+    .await
+}
+
+/// Run `work`, which may wait for an agent, off the window's thread (#6052).
+async fn off_the_window<T: Send + 'static>(
+    manager: &State<'_, Arc<NetworkManager>>,
+    work: impl FnOnce(&NetworkManager) -> Result<T, TerminalError> + Send + 'static,
+) -> Result<T, TerminalError> {
+    let manager = Arc::clone(manager.inner());
+    tauri::async_runtime::spawn_blocking(move || work(&manager))
+        .await
+        .map_err(|e| TerminalError::InternalError(format!("monitor task failed: {e}")))?
 }
 
 /// A monitor's optional name or description as stored (#5789): line breaks
@@ -411,39 +426,51 @@ fn http_monitor_start_config(
 /// Stop a running HTTP monitor, keeping it listed (as not running) so it can be
 /// resumed. Use [`network_http_monitor_remove`] to delete it.
 #[tauri::command]
-pub fn network_http_monitor_stop(
+pub async fn network_http_monitor_stop(
     monitor_id: String,
     manager: State<'_, Arc<NetworkManager>>,
 ) -> Result<(), TerminalError> {
-    manager.stop_http_monitor(&monitor_id)
+    off_the_window(&manager, move |manager| {
+        manager.stop_http_monitor(&monitor_id)
+    })
+    .await
 }
 
 /// Remove an HTTP monitor entirely (cancel + drop handle + delete persisted
 /// config).
 #[tauri::command]
-pub fn network_http_monitor_remove(
+pub async fn network_http_monitor_remove(
     monitor_id: String,
     manager: State<'_, Arc<NetworkManager>>,
 ) -> Result<(), TerminalError> {
-    manager.remove_http_monitor(&monitor_id)
+    off_the_window(&manager, move |manager| {
+        manager.remove_http_monitor(&monitor_id)
+    })
+    .await
 }
 
 /// Pause a running HTTP monitor (suspend polling, keep the loop alive).
 #[tauri::command]
-pub fn network_http_monitor_pause(
+pub async fn network_http_monitor_pause(
     monitor_id: String,
     manager: State<'_, Arc<NetworkManager>>,
 ) -> Result<(), TerminalError> {
-    manager.pause_http_monitor(&monitor_id)
+    off_the_window(&manager, move |manager| {
+        manager.pause_http_monitor(&monitor_id)
+    })
+    .await
 }
 
 /// Resume a paused or stopped HTTP monitor with the same config.
 #[tauri::command]
-pub fn network_http_monitor_resume(
+pub async fn network_http_monitor_resume(
     monitor_id: String,
     manager: State<'_, Arc<NetworkManager>>,
 ) -> Result<(), TerminalError> {
-    manager.resume_http_monitor(&monitor_id)
+    off_the_window(&manager, move |manager| {
+        manager.resume_http_monitor(&monitor_id)
+    })
+    .await
 }
 
 /// Stop every running HTTP monitor at once.
@@ -451,11 +478,14 @@ pub fn network_http_monitor_resume(
 /// Backs the "Kill All" action of the Open Connections panel's HTTP Monitors
 /// group (#1147). Reuses the same teardown as app shutdown.
 #[tauri::command]
-pub fn network_http_monitor_stop_all(
+pub async fn network_http_monitor_stop_all(
     manager: State<'_, Arc<NetworkManager>>,
 ) -> Result<(), TerminalError> {
-    manager.stop_all_http_monitors();
-    Ok(())
+    off_the_window(&manager, |manager| {
+        manager.stop_all_http_monitors();
+        Ok(())
+    })
+    .await
 }
 
 /// List all HTTP monitors and their current state.

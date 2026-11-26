@@ -45,6 +45,7 @@ import {
   hasUploads,
   missingText,
   newForm,
+  serverName,
   shareForm,
   openWarning,
   savedSignIn,
@@ -54,6 +55,7 @@ import {
 import { editorSubtitle, ServiceEditorShell, ServiceEditorWarning } from "./ServiceEditorShell";
 import { freePort, portTaken, PortTakenNote, tftpPortNote } from "./PortNote";
 import { WhoCanOpen } from "./WhoCanOpen";
+import { useAgentAddresses } from "./useAgentAddresses";
 import { useEditorTab } from "./useEditorTab";
 
 interface FileServerEditorProps {
@@ -152,7 +154,8 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
   // ── What it is for ─────────────────────────────────────────────────────────
   const [choosing, setChoosing] = useState(false);
   // Whether who can open it is still what a new server of this kind starts with.
-  const [presetWho, setPresetWho] = useState(!existing && !original);
+  // A share asks who from the start (F-004): no preset to follow the kind.
+  const [presetWho, setPresetWho] = useState(!existing && !original && !meta.folder);
   const changeType = (type: ServerType) => {
     const next = withType(getValues(), type, presetWho, free);
     for (const [key, value] of Object.entries(next)) {
@@ -190,7 +193,29 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
       };
   const warning = openWarning(form);
 
-  const context = useServiceContext(isWideBind(form.bindHost));
+  // The agent machine's own addresses (#6086): chosen from, and the preview's.
+  const hostAgent = isAgentHost(form.host)
+    ? remoteAgents.find((agent) => agent.id === (isAgentHost(form.host) ? form.host.agentId : ""))
+    : undefined;
+  const agentAddresses = useAgentAddresses(hostAgent);
+  const there = {
+    addresses: agentAddresses?.known ? agentAddresses.addresses : undefined,
+    note:
+      agentAddresses && !agentAddresses.known
+        ? tf(`server.editor.address.${agentAddresses.why}`, { agent: agentName ?? "" })
+        : undefined,
+  };
+  const ownContext = useServiceContext(isWideBind(form.bindHost));
+  const context = useMemo(
+    () =>
+      hostAgent && agentAddresses?.known && agentAddresses.addresses[0]
+        ? {
+            ...ownContext,
+            agentNetworks: { [hostAgent.id]: agentAddresses.addresses[0].addr },
+          }
+        : ownContext,
+    [ownContext, hostAgent, agentAddresses]
+  );
   const taken = onAgent ? undefined : portTaken(form.port, existing?.id, context);
   const preview =
     form.bindHost.trim() !== "" && form.port !== ""
@@ -249,7 +274,11 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
       </Button>
     );
   };
-  const saveButton = button("close", t("service.editor.save"), "server-dialog-save");
+  const saveButton = button(
+    "close",
+    t(active ? "service.editor.saveLater" : "service.editor.save"),
+    "server-dialog-save"
+  );
   const runButton = button(
     "run",
     t(active ? "service.editor.saveAndRestart" : "service.editor.saveAndStart"),
@@ -296,18 +325,22 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
       }
       view={view}
       onView={(next) => existing && showIn(existing.id, next)}
-      title={existing ? existing.name : t(`service.new.${form.serverType}`)}
-      subtitle={editorSubtitle(!existing, t(`service.new.${form.serverType}.technical`))}
+      title={
+        existing
+          ? existing.name
+          : meta.folder
+            ? tf("server.editor.share.title", { name: serverName(form) || "this folder" })
+            : t(`service.new.${form.serverType}`)
+      }
+      subtitle={editorSubtitle(
+        !existing,
+        t(`service.new.${form.serverType}.technical`),
+        active && !moves
+      )}
       onChangeType={choosing ? undefined : () => setChoosing(true)}
       rootProps={rootProps}
       onKeyDown={onKeyDown}
-      note={
-        canSave
-          ? active && isDirty && !moves
-            ? t("service.editor.afterRestart")
-            : undefined
-          : missingText(allErrors)
-      }
+      note={canSave ? undefined : missingText(allErrors)}
       actions={
         <>
           <Button variant="secondary" onClick={tab.cancel} data-testid="server-dialog-cancel">
@@ -437,6 +470,7 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
         labels={whoLabels}
         here="127.0.0.1"
         onThisComputer={!onAgent}
+        there={onAgent ? there : undefined}
         error={errors.bindHost}
       />
       {warning.length > 0 && (
@@ -558,6 +592,7 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
         open={tab.asking}
         subject="file server"
         name={form.name.trim() || undefined}
+        note={active ? t("service.editor.unsavedRunning") : undefined}
         onCancel={tab.stopAsking}
         onJustClose={() => {
           tab.stopAsking();

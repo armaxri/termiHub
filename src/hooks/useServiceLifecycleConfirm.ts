@@ -9,7 +9,36 @@ interface Pending {
   kind: ServiceLifecycle;
   name: string;
   open: number;
+  /** For Stop all: each service in use and how many are connected to it. */
+  inUse: InUse[];
   run: () => void | Promise<void>;
+}
+
+/** A service someone is connected to now, and how many are. */
+export interface InUse {
+  name: string;
+  count: number;
+}
+
+/** Who a stop or a restart cuts off, by service (#6117, F-002). */
+export function cutOffText(kind: ServiceLifecycle, open: number, inUse: readonly InUse[]): string {
+  if (kind === "stopAll" && inUse.length > 0) {
+    const list = inUse
+      .map((item) =>
+        tf("service.confirm.inUse.item", { name: item.name, count: String(item.count) })
+      )
+      .join(", ");
+    return tf(
+      inUse.length === 1 ? "service.confirm.inUse.stopAll.one" : "service.confirm.inUse.stopAll",
+      {
+        list,
+      }
+    );
+  }
+  const verb = kind === "restart" ? "restart" : "stop";
+  return open === 1
+    ? t(`service.confirm.inUse.${verb}.one`)
+    : tf(`service.confirm.inUse.${verb}`, { count: String(open) });
 }
 
 const TITLE: Record<ServiceLifecycle, MessageId> = {
@@ -28,7 +57,8 @@ export interface ServiceLifecycleConfirm {
   request: (
     kind: ServiceLifecycle,
     model: Pick<ServiceModel, "name" | "counters">,
-    run: () => void | Promise<void>
+    run: () => void | Promise<void>,
+    inUse?: readonly InUse[]
   ) => void | Promise<void>;
   /** Spread onto the `ConfirmDialog`. */
   dialogProps: {
@@ -48,11 +78,14 @@ export interface ServiceLifecycleConfirm {
 export function useServiceLifecycleConfirm(): ServiceLifecycleConfirm {
   const [pending, setPending] = useState<Pending | null>(null);
 
-  const request = useCallback<ServiceLifecycleConfirm["request"]>((kind, model, run) => {
-    const open = model.counters?.active ?? 0;
-    if (open === 0) return run();
-    setPending({ kind, name: model.name, open, run });
-  }, []);
+  const request = useCallback<ServiceLifecycleConfirm["request"]>(
+    (kind, model, run, inUse = []) => {
+      const open = model.counters?.active ?? 0;
+      if (open === 0) return run();
+      setPending({ kind, name: model.name, open, inUse: [...inUse], run });
+    },
+    []
+  );
 
   const onConfirm = useCallback(() => {
     setPending(null);
@@ -65,12 +98,7 @@ export function useServiceLifecycleConfirm(): ServiceLifecycleConfirm {
     dialogProps: {
       open: pending !== null,
       title: pending ? tf(TITLE[pending.kind], { name: pending.name }) : "",
-      message:
-        pending === null
-          ? ""
-          : pending.open === 1
-            ? t("service.confirm.drops.one")
-            : tf("service.confirm.drops", { count: String(pending.open) }),
+      message: pending === null ? "" : cutOffText(pending.kind, pending.open, pending.inUse),
       confirmLabel: pending ? t(LABEL[pending.kind]) : "",
       onConfirm,
       onCancel,

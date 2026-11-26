@@ -254,7 +254,7 @@ describe("Services, file servers — delete confirmation (#1393)", () => {
     );
     await renderSidebar();
     await clickDelete("srv-1");
-    expect(document.body.textContent).toContain("stops it and breaks 1 open connection.");
+    expect(document.body.textContent).toContain("Deleting stops it and cuts them off.");
   });
 
   // #1427: the store's deleteEmbeddedServer used to swallow backend errors, so

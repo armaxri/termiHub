@@ -149,6 +149,12 @@ pub struct AgentCapabilities {
     #[serde(default)]
     #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub file_truncate: bool,
+    /// Whether the agent lists its host's network addresses (`host.addresses`,
+    /// protocol 0.46.0, #6086), which the file server editor offers to choose
+    /// from. `false` for older agents, for which the address is typed.
+    #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
+    pub host_addresses: bool,
     /// Agent binary version string, e.g. "1.4.2".
     #[serde(default)]
     #[cfg_attr(test, ts(as = "Option<String>", optional))]

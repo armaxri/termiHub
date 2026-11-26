@@ -1,5 +1,6 @@
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { ServiceRemedies } from "@/components/ServiceActivity/ServiceRemedies";
+import type { ServiceModel } from "@/utils/serviceModel";
 import { useServiceEntries } from "@/components/ServicesSidebar/useServiceEntries";
 import {
   Terminal,
@@ -139,6 +140,10 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const disconnectRemoteAgent = useAppStore((s) => s.disconnectRemoteAgent);
   const shutdownRemoteAgent = useAppStore((s) => s.shutdownRemoteAgent);
   const stopTunnel = useAppStore((s) => s.stopTunnel);
+  const startTunnel = useAppStore((s) => s.startTunnel);
+  const startEmbeddedServer = useAppStore((s) => s.startEmbeddedServer);
+  // Focus lands on Close, never on a destructive action (#6117, F-001).
+  const closeRef = useRef<HTMLButtonElement>(null);
   const tunnels = useAppStore((s) => s.tunnels);
   // What each service row says and offers, as in Services (#6028, slice 10).
   const { entries: serviceEntries } = useServiceEntries(false);
@@ -891,20 +896,32 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
           {totalCount > 0 && <span className="oc-section__count">{totalCount}</span>}
         </span>
       }
+      initialFocusRef={closeRef}
       footer={
-        <Tooltip
-          content="Remove backend agent entries whose connection has already died"
-          side="top"
-        >
+        <>
+          <Tooltip
+            content="Remove backend agent entries whose connection has already died"
+            side="top"
+          >
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handlePruneDeadAgents}
+              data-testid="open-connections-prune-dead-agents"
+            >
+              Prune dead agents
+            </Button>
+          </Tooltip>
           <Button
+            ref={closeRef}
             variant="secondary"
             size="sm"
-            onClick={handlePruneDeadAgents}
-            data-testid="open-connections-prune-dead-agents"
+            onClick={() => onOpenChange(false)}
+            data-testid="open-connections-close"
           >
-            Prune dead agents
+            Close
           </Button>
-        </Tooltip>
+        </>
       }
     >
       <div className="open-connections__body">
@@ -1179,7 +1196,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
             icon={<Server size={14} />}
             count={activeTunnels.length + runningEmbeddedServers.length}
             onKillAll={handleStopAllServices}
-            killAllLabel="Stop all"
+            killAllLabel="Stop all…"
             data-testid="open-connections-services-section"
           >
             {orderTunnelRows(activeTunnels).map(({ tunnel: t, parent }) => {
@@ -1220,15 +1237,11 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                 isRunning && state?.reachableFrom
                   ? reportedReachability(state.reachableFrom, hostBadge.label, state.boundAddress)
                   : null;
-              const detail = [
-                hostText,
-                statsText,
-                reach?.label,
-                serviceModels.get(t.id)?.reason ??
-                  serviceReason(tunnelServiceState(status), state?.error),
-              ]
-                .filter(Boolean)
-                .join(" · ");
+              const model = serviceModels.get(t.id);
+              const detail = [hostText, statsText, reach?.label].filter(Boolean).join(" · ");
+              // The reason decides the next step: its own line, not cut (F-001).
+              const reason =
+                model?.reason ?? serviceReason(tunnelServiceState(status), state?.error);
               const detailWithLink = isCompanion(t) ? `chained · ${detail}` : detail;
               return (
                 <ConnectionRow
@@ -1236,23 +1249,37 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                   icon={<ArrowLeftRight size={14} />}
                   title={t.name}
                   detail={detailWithLink}
+                  reason={reason}
                   badge={badge}
+                  badgeLabel={model?.stateLabel}
                   indent={nested}
                   onKill={
-                    isCompanion(t)
-                      ? () => setCompanionStop({ id: t.id, name: t.name })
-                      : () => handleKillTunnel(t.id)
+                    !stops(model)
+                      ? undefined
+                      : isCompanion(t)
+                        ? () => setCompanionStop({ id: t.id, name: t.name })
+                        : () => handleKillTunnel(t.id)
                   }
                   killLabel={companion ? "Stop pair" : "Stop"}
-                  actions={remedies(t.id, t.sshConnectionId)}
+                  actions={
+                    <>
+                      {retries(model) && (
+                        <RetryButton name={t.name} onRetry={() => startTunnel(t.id)} />
+                      )}
+                      {remedies(t.id, t.sshConnectionId)}
+                    </>
+                  }
                 />
               );
             })}
             {runningEmbeddedServers.map((s) => {
               const status = embeddedServerStates[s.id]?.status;
               const serverHost = hostChoice(s.host);
+              const model = serviceModels.get(s.id);
               return (
                 <ConnectionRow
+                  reason={model?.reason}
+                  badgeLabel={model?.stateLabel}
                   key={s.id}
                   icon={<Server size={14} />}
                   title={s.name}
@@ -1269,9 +1296,16 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                         ? "notReachable"
                         : "connecting"
                   }
-                  onKill={() => handleStopEmbeddedServer(s.id)}
+                  onKill={stops(model) ? () => handleStopEmbeddedServer(s.id) : undefined}
                   killLabel="Stop"
-                  actions={remedies(s.id)}
+                  actions={
+                    <>
+                      {retries(model) && (
+                        <RetryButton name={s.name} onRetry={() => startEmbeddedServer(s.id)} />
+                      )}
+                      {remedies(s.id)}
+                    </>
+                  }
                   data-testid={`open-connections-embedded-server-${s.id}`}
                   killTestId={`open-connections-embedded-server-stop-${s.id}`}
                 />
@@ -1538,7 +1572,7 @@ interface SectionProps {
   count: number;
   /** When omitted, no bulk-action button is rendered (nothing to stop). */
   onKillAll?: () => void | Promise<void>;
-  /** Label for the bulk-action button (defaults to "Kill all"). */
+  /** Label for the bulk-action button (defaults to "Stop all…"). */
   killAllLabel?: string;
   "data-testid"?: string;
   children: React.ReactNode;
@@ -1548,10 +1582,12 @@ function Section({
   title,
   count,
   onKillAll,
-  killAllLabel = "Kill all",
+  killAllLabel = "Stop all…",
   "data-testid": testId,
   children,
 }: SectionProps) {
+  // The button asks, so it ends in "…"; what the confirm does does not (F-001).
+  const action = killAllLabel.replace(/…$/, "");
   // Bulk teardown is irreversible — confirm before running it (#1343).
   const noun = count === 1 ? "item" : "items";
   return (
@@ -1562,11 +1598,11 @@ function Section({
         {onKillAll && (
           <ConfirmButton
             className="oc-section__kill-all"
-            ariaLabel={`${killAllLabel} ${title}`}
-            tooltip={`${killAllLabel} ${title}`}
-            confirmTitle={`${killAllLabel} — ${title}?`}
+            ariaLabel={`${action} ${title}`}
+            tooltip={`${action} ${title}`}
+            confirmTitle={`${action} — ${title}?`}
             confirmMessage={`This will stop ${count} ${noun} in “${title}”. This cannot be undone.`}
-            confirmLabel={killAllLabel}
+            confirmLabel={action}
             confirmTestId={testId ? `${testId}-confirm` : undefined}
             onConfirm={onKillAll}
           >
@@ -1664,6 +1700,10 @@ interface ConnectionRowProps {
   /** Secondary line of context (e.g. the X display number). */
   detail?: string;
   badge: BadgeVariant;
+  /** The badge's word when the row has its own, e.g. a service's state word (F-001). */
+  badgeLabel?: string;
+  /** Why it is in its state: on its own line, up to two lines, all of it on hover. */
+  reason?: string;
   /** Extra info rendered between the title and the status badge (e.g. agent version). */
   meta?: React.ReactNode;
   /**
@@ -1699,6 +1739,8 @@ function ConnectionRow({
   title,
   detail,
   badge,
+  badgeLabel,
+  reason,
   meta,
   owningWindow,
   onFocusWindow,
@@ -1713,10 +1755,22 @@ function ConnectionRow({
   return (
     <div className={indent ? "oc-row oc-row--indent" : "oc-row"} data-testid={testId}>
       <span className="oc-row__icon">{icon}</span>
-      <span className="oc-row__title" title={title}>
-        {title}
-        {detail && <span className="oc-row__detail">{detail}</span>}
-      </span>
+      {reason ? (
+        <span className="oc-row__main">
+          <span className="oc-row__title" title={title}>
+            {title}
+            {detail && <span className="oc-row__detail">{detail}</span>}
+          </span>
+          <span className="oc-row__reason" title={reason} data-testid="oc-row-reason">
+            {reason}
+          </span>
+        </span>
+      ) : (
+        <span className="oc-row__title" title={title}>
+          {title}
+          {detail && <span className="oc-row__detail">{detail}</span>}
+        </span>
+      )}
       {meta}
       {owningWindow && (
         <Tooltip content={`Focus ${owningWindow.name}`} side="top">
@@ -1734,7 +1788,7 @@ function ConnectionRow({
         </Tooltip>
       )}
       <span className={`oc-row__badge oc-row__badge--${badge}`}>
-        {badge === "notReachable" ? serviceStateLabel(badge).toLowerCase() : badge}
+        {badgeLabel ?? (badge === "notReachable" ? serviceStateLabel(badge).toLowerCase() : badge)}
       </span>
       {actions}
       {onKill && (
@@ -1877,5 +1931,30 @@ function MonitorRowActions({
         </DropdownMenuContent>
       </DropdownMenuRoot>
     </span>
+  );
+}
+
+/** Whether a service row offers Stop: only where it applies (F-001); unknown ones do. */
+function stops(model: ServiceModel | undefined): boolean {
+  return !model || model.actions.some((a) => a.id === "stop" || a.id === "stopWaiting");
+}
+
+/** Whether a service row offers Retry instead, as its row in Services does (F-001). */
+function retries(model: ServiceModel | undefined): boolean {
+  return model?.actions.some((a) => a.id === "retry") ?? false;
+}
+
+/** Start a service that ended in an error again. */
+function RetryButton({ name, onRetry }: { name: string; onRetry: () => Promise<void> }) {
+  return (
+    <Button
+      variant="secondary"
+      size="sm"
+      onClick={onRetry}
+      aria-label={`Retry ${name}`}
+      data-testid="oc-row-retry"
+    >
+      Retry
+    </Button>
   );
 }

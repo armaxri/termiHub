@@ -175,6 +175,8 @@ export interface ServiceContext {
   portUsers?: ReadonlyMap<number, { id: string; name: string }>;
   /** Which service of this computer has a port open now. */
   portHolders?: ReadonlyMap<number, { id: string; name: string }>;
+  /** An agent machine's address on its network, when it said it (#6086). */
+  agentNetworks?: Readonly<Record<string, string>>;
 }
 
 /** The part of a chained pair that a tunnel is (#2597). */
@@ -416,7 +418,8 @@ function listenerOn(host: HostChoice, context: ServiceContext): Listener {
   return {
     on: "there",
     name: agent?.name ?? host.agentId,
-    host: agent?.config?.host || undefined,
+    // Its own address on its network, else how it is reached from here.
+    host: context.agentNetworks?.[host.agentId] || agent?.config?.host || undefined,
     shown: true,
   };
 }
@@ -672,7 +675,10 @@ export function fileServerModel(
     addressStep:
       address && !address.open && config.serverType === "tftp"
         ? { id: "letReach", label: t("service.next.letReach") }
-        : undefined,
+        : // A folder shared for now that only this computer reaches is for nobody yet (F-004).
+          address && !address.open && config.temporary
+          ? { id: "letReach", label: t("service.next.letOthersReach") }
+          : undefined,
     counters: stats && {
       sent: stats.bytesSent,
       received: stats.bytesReceived,

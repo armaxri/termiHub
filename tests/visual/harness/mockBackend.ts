@@ -42,6 +42,8 @@ export interface VisualScenario {
   serviceData?: { tunnels: unknown; services: unknown };
   /** Answer `list_network_interfaces` with these instead of one LAN address. */
   networkInterfaces?: { name: string; addr: string }[];
+  /** The lab agent lists its machine's addresses (`hostAddresses`, #6086). */
+  agentAddresses?: boolean;
   /** Answer `get_embedded_server_activity` with this. */
   serverActivity?: unknown;
   /** Answer `get_service_events` with these, by service id (#6028, slice 9). */
@@ -64,6 +66,8 @@ export interface VisualScenario {
    * with an update whose preview carries an access diff (#4418).
    */
   pluginUpdate?: boolean;
+  /** Offer the SSH connection type, so an SSH connection's editor shows its type (#6117). */
+  sshType?: boolean;
   /** Answer these commands with these values (#6056, #6057). */
   answers?: Record<string, unknown>;
   /** The allowed programs (#6057). */
@@ -951,6 +955,14 @@ function regionView(region: string, populated: boolean): unknown {
   }
   if (region === "agents") {
     if (!populated) return {};
+    if (window.__VISUAL_SCENARIO__?.agentAddresses) {
+      return {
+        ...AGENTS_VIEW,
+        agents: AGENTS_VIEW.agents.map((a) =>
+          a.id === "agent-lab" ? { ...a, capabilities: { hostAddresses: true } } : a
+        ),
+      };
+    }
     if (window.__VISUAL_SCENARIO__?.oldAgent) {
       const old = { connectionTypes: [], maxSessions: 4 };
       return {
@@ -1125,6 +1137,14 @@ export function handleCommand(cmd: string, args: Args): unknown {
           { name: "en0", addr: "192.168.1.20" },
         ]
       );
+    case "list_agent_addresses":
+      return {
+        supported: true,
+        addresses: [
+          { name: "eth0", addr: "192.168.20.14" },
+          { name: "wlan0", addr: "10.4.0.22" },
+        ],
+      };
     case "get_service_events":
       return scenario.serviceEvents?.[String(args?.serviceId)] ?? [];
     case "get_embedded_server_activity":
@@ -1198,6 +1218,7 @@ export function handleCommand(cmd: string, args: Args): unknown {
     case "get_connection_types":
       if (scenario.storedSecrets) return STORED_SECRET_TYPES;
       if (scenario.choiceHelp) return CHOICE_HELP_TYPES;
+      if (scenario.sshType) return STORED_SECRET_TYPES.slice(0, 1);
       return scenario.fileListing ? [LOCAL_BROWSABLE_TYPE] : [];
     case "list_stored_field_secret_keys":
       return STORED_SECRET_KEYS[String(args?.connectionId ?? "")] ?? { fields: [], hops: [] };

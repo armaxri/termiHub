@@ -7900,6 +7900,7 @@ dependencies = [
  "chrono",
  "dirs 6.0.0",
  "hex",
+ "if-addrs",
  "jsonrpsee",
  "libc",
  "nix 0.29.0",

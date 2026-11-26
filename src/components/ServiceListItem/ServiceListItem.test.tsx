@@ -209,6 +209,15 @@ describe("what the row says", () => {
     }
   });
 
+  it("keeps the address on one line, never broken inside the host, Copy beside it (#6117, F-006)", () => {
+    render(tunnelIn("connected"));
+    const code = q("tunnel-address-t")!.querySelector("code")!;
+    expect(code.getAttribute("title")).toBe("localhost:5432");
+    expect(code.querySelector(".middle-ellipsis")).not.toBeNull();
+    expect(code.querySelector("wbr")).toBeNull();
+    expect(code.nextElementSibling?.getAttribute("data-testid")).toBe("tunnel-copy-address-t");
+  });
+
   it("who reaches it, and says so when a copied address works only there", async () => {
     render(serverIn("running", { host: { kind: "agent", agentId: "edge" } }));
     expect(q("server-address-s")?.textContent).toBe("http://localhost:8080only on that machine");

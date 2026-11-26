@@ -644,6 +644,7 @@ fn connection(
             connection_description: false,
             serial_port_rescan: false,
             file_truncate: false,
+            host_addresses: false,
             agent_version: String::new(),
         }
         .into(),

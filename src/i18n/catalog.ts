@@ -883,8 +883,26 @@ const en = {
   "service.next.usePort": "Use {port}",
   "service.next.edit": "Edit",
   "service.next.connectAgent": "Connect agent",
+  "monitor.next.setUpAgain": "Set it up again",
+  "monitor.state.up": "Running",
+  "monitor.state.checking": "Checking",
+  "monitor.state.agentOffline": "Agent offline",
+  "monitor.state.notStarted": "Not started",
+  "monitor.last.status": "last check HTTP {status}, {age}",
+  "monitor.last.unexpected": "last check HTTP {status}, expected {expected}, {age}",
+  "monitor.last.error": "last check failed: {error}, {age}",
+  "monitor.where.here": "This computer",
+  "monitor.row.here": "on this computer",
+  "monitor.row.onAgent": "on {machine}",
+  "monitor.row.whereUnknown": "where it runs is unknown",
+  "monitor.where.unknown": "Location unknown",
+  "monitor.repair.title": "Set up {name} again",
+  "monitor.repair.chooseWhere": "Choose where it runs",
+  "monitor.repair.choose": "Choose…",
+  "monitor.repair.saveAndStart": "Save and start",
   "service.next.keepRunning": "Keep running",
   "service.next.letReach": "Let devices reach it",
+  "service.next.letOthersReach": "Let others reach it",
   "service.next.checkAgain": "Check again",
   "service.next.chooseMachine": "Choose machine",
   "service.next.unlock": "Unlock",
@@ -925,13 +943,23 @@ const en = {
   "service.stopAll": "Stop all services",
   "service.openConnections": "Open connections",
   "service.stopAll.failed": "Not every service could be stopped",
-  "service.confirm.drops.one": "1 connection is open now. It will be dropped.",
-  "service.confirm.drops": "{count} connections are open now. They will be dropped.",
+  // Who a stop cuts off (#6117, F-002): "connected", never "connections", which
+  // names the saved SSH connections everywhere else.
+  "service.confirm.inUse.stop.one": "Someone is connected to it now. Stopping cuts them off.",
+  "service.confirm.inUse.stop": "{count} are connected to it now. Stopping cuts them all off.",
+  "service.confirm.inUse.restart.one":
+    "Someone is connected to it now. Restarting cuts them off; they can connect again.",
+  "service.confirm.inUse.restart":
+    "{count} are connected to it now. Restarting cuts them all off; they can connect again.",
+  "service.confirm.inUse.stopAll.one": "{list} is in use. Stopping cuts off who is connected.",
+  "service.confirm.inUse.stopAll": "{list} are in use. Stopping cuts off everyone connected.",
+  "service.confirm.inUse.item": "{name} ({count} connected)",
   "service.delete.title": 'Delete "{name}"?',
   "service.delete.running": "It is running. Deleting stops it.",
-  "service.delete.running.one": "It is running. Deleting stops it and breaks 1 open connection.",
+  "service.delete.running.one":
+    "It is running and someone is connected. Deleting stops it and cuts them off.",
   "service.delete.running.more":
-    "It is running. Deleting stops it and breaks {count} open connections.",
+    "It is running and {count} are connected. Deleting stops it and cuts them all off.",
   "service.delete.idle": "It is not running.",
   "service.delete.notReachable":
     "It may still run on its agent, which is offline. It will be stopped when the agent is back.",
@@ -944,7 +972,7 @@ const en = {
   "service.palette.show": "Show services",
   "service.palette.start": "Start service: {name}",
   "service.palette.stop": "Stop service: {name}",
-  "service.palette.stop.open": "Stop service: {name} ({count} open connections)",
+  "service.palette.stop.open": "Stop service: {name} ({count} connected)",
   "service.palette.new": "New service: {what} · {technical}",
   "service.new": "New service",
   "service.actions": "Service actions",
@@ -956,10 +984,12 @@ const en = {
     'No service matches "{query}". Search finds names, types, machines, folders and ports.',
   "service.group.tunnels": "SSH tunnels",
   "service.group.fileServers": "File servers",
-  "service.agent.stopping": "Offline. {services} will be stopped when it is back.",
+  // In one reading (#6117, F-007).
+  "service.agent.stopping": "Offline. {services} will stop when the agent is back.",
   "service.agent.keepAll": "Keep all running",
   "service.agent.keepFailed": "Failed to keep them running",
-  "service.agent.offline": "Offline. {services} run there or may; termiHub cannot tell.",
+  "service.agent.offline":
+    "Offline. {services} may still run there; termiHub will know when the agent is back.",
   "service.agent.tunnel": "1 tunnel",
   "service.agent.tunnels": "{count} tunnels",
   "service.agent.server": "1 file server",
@@ -1021,6 +1051,20 @@ const en = {
     "Set this address as the SOCKS5 proxy of your browser or program.",
   "service.activity.use.http":
     "Open this address in a browser, here or on a device that reaches it.",
+  // The how-to follows where it can be reached (#6117, F-003).
+  "service.activity.use.http.here": "Open it in a browser on this computer.",
+  "service.activity.use.http.network": "Open it in a browser on any device on your network.",
+  "service.activity.use.http.there":
+    "It works only on {machine}: open it in a browser there, not here.",
+  "service.activity.use.ftp.here": "Connect an FTP program on this computer to this address.",
+  "service.activity.use.ftp.network":
+    "Connect an FTP program on any device on your network to this address.",
+  "service.activity.use.ftp.there":
+    "It works only on {machine}: connect an FTP program there, not here.",
+  "service.activity.use.local.there":
+    "It works only on {machine}: programs there use this address instead of the target, not programs here.",
+  "service.activity.use.dynamic.there":
+    "It works only on {machine}: set it as the SOCKS5 proxy of a browser or program there, not here.",
   "service.activity.use.ftp": "Connect an FTP program to this address.",
   "service.activity.use.tftp": "Point the TFTP client of the device at this address.",
   "service.editor.settings": "Settings",
@@ -1044,12 +1088,22 @@ const en = {
   "server.editor.copyHint":
     "A copy does not get the password. Enter it here, or the copy cannot start.",
   "server.editor.runOn": "Run on",
+  "server.editor.address.offline":
+    "{agent} is not connected, so termiHub cannot list its addresses. Type one, or connect it.",
+  "server.editor.address.old":
+    "Update agent {agent} to choose from its addresses. Type one meanwhile.",
+  "server.editor.address.failed": "{agent} did not say its addresses. Type one.",
   // The file server dialog (#6063).
   "service.editor.new": "New service · {technical}",
   "service.editor.changeType": "Change what it is for",
   "service.editor.afterRestart": "Changes apply when it restarts.",
   "service.editor.portTaken": 'Port {port} is used by "{name}".',
   "service.editor.save": "Save",
+  // While it runs, Save keeps it running as it is (#6117, F-013).
+  "service.editor.saveLater": "Save, apply later",
+  "service.editor.unsavedRunning": "It keeps running unchanged.",
+  "service.editor.running": "{technical} · Running. Changes apply when it restarts.",
+
   "service.editor.saveAndStart": "Save and start",
   "service.editor.saveAndRestart": "Save and restart",
   "server.editor.folder": "Folder to share",
@@ -1092,6 +1146,7 @@ const en = {
   "server.editor.description.placeholder": "One short line for the sidebar",
   "server.editor.autoStart": "Start when termiHub starts",
   "server.editor.temporary": "Only until termiHub closes",
+  "server.editor.share.title": "Share {name} for now",
   "server.temporary": "Until termiHub closes",
   "server.editor.error.folder": "Choose the folder to share.",
   "server.editor.error.name": "Name is required.",
@@ -1128,6 +1183,7 @@ const en = {
   "monitor.tooltip.lastDown": "Last check failed {age}",
   "monitor.tooltip.lastDownError": "Last check failed {age}: {error}",
   "monitor.marker.down": "Down",
+  "monitor.tooltip.runsOn": "Checks from {machine}",
   "monitor.marker.overdue": "Overdue",
   "monitor.marker.paused": "Paused",
   "monitor.marker.stopped": "Stopped",

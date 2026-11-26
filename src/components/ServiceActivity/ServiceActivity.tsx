@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { MiddleEllipsis } from "@/components/ServiceListItem/MiddleEllipsis";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ActionIcon } from "@/components/ServiceListItem";
@@ -11,6 +12,7 @@ import { fireAndForget } from "@/utils/frontendLog";
 import { hostChoice } from "@/utils/hostChoice";
 import { isAgentHost } from "@/utils/runLocation";
 import { TunnelDiagram } from "@/components/TunnelEditor/TunnelDiagram";
+import { useProjectedConnections } from "@/store/useProjectedConnections";
 import type {
   ServiceAction,
   ServiceActionId,
@@ -126,8 +128,13 @@ function ServiceActivity({
       {model.failing && path}
       {address?.copy && (
         <div className="service-activity__address">
-          <code className="service-activity__url" data-testid="service-activity-address">
-            {address.copy}
+          {/* One line, never broken inside the host (#6117, F-006). */}
+          <code
+            className="service-activity__url"
+            title={address.copy}
+            data-testid="service-activity-address"
+          >
+            <MiddleEllipsis text={address.copy} />
           </code>
           {offered.filter(({ id }) => id === "copyAddress" || id === "openInBrowser").map(button)}
           <p className="service-activity__muted" data-testid="service-activity-reach">
@@ -204,6 +211,10 @@ export function ServiceActivityView({
     kind === "tunnel" ? s.tunnels.find((item) => item.id === id) : undefined
   );
   const { remoteAgents } = useProjectedAgents();
+  const { connections } = useProjectedConnections();
+  const serverName = tunnel
+    ? connections.find((c) => c.id === tunnel.sshConnectionId)?.name
+    : undefined;
   if (!model) return null;
   const tunnelHost = tunnel ? hostChoice(tunnel.host) : undefined;
   const agentName =
@@ -223,6 +234,7 @@ export function ServiceActivityView({
               tunnelType={tunnel.tunnelType}
               agentName={agentName}
               failing={model.failing}
+              serverName={serverName}
             />
           )
         }

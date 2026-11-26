@@ -166,7 +166,7 @@ describe("OpenConnectionsModal — agent session-list and kill-all errors (#4377
     await render([agent("a1", "build-box"), agent("a2", "nas")]);
 
     const killAll = document.querySelector(
-      '[aria-label="Kill All Agent Connections"]'
+      '[aria-label="Stop all Agent Connections"]'
     ) as HTMLButtonElement;
     expect(killAll).toBeTruthy();
     await act(async () => killAll.click());

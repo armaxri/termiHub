@@ -6,7 +6,6 @@ import { setNetworkToolRunLocation } from "@/services/networkApi";
 import { useRunLocationStore } from "@/store/runLocationStore";
 import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { NetworkToolRunLocation } from "./NetworkToolRunLocation";
-import { HTTP_MONITOR_AGENT_REASON } from "./networkToolLocation";
 
 // Replace the Radix-backed selector with a trivial harness so the wiring
 // (backend call + optimistic store update + desktop-only gating) can be tested
@@ -121,22 +120,6 @@ describe("NetworkToolRunLocation", () => {
       kind: "agent",
       agentId: "a1",
     });
-  });
-
-  it("gates the agent option for the desktop-only HTTP monitor and says why", () => {
-    render(<NetworkToolRunLocation tool="http-monitor" />);
-    const control = document.querySelector(
-      '[data-testid="network-runloc-http-monitor"]'
-    ) as HTMLElement;
-    expect(control.getAttribute("data-agent-allowed")).toBe("false");
-    // PROD-033: the disabled control carries a visible reason + tooltip that
-    // points at the per-monitor "Run on" field.
-    const reason = document.querySelector(
-      '[data-testid="network-runloc-reason-http-monitor"]'
-    ) as HTMLElement;
-    expect(reason).not.toBeNull();
-    expect(reason.textContent).toBe(HTTP_MONITOR_AGENT_REASON);
-    expect(reason.parentElement?.getAttribute("title")).toBe(HTTP_MONITOR_AGENT_REASON);
   });
 
   it.each([

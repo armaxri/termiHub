@@ -339,6 +339,7 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 | Desktop Version | Agent Version | Compatible?                                                                                                                           |
 | --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.24.0          | 0.46.0        | Yes (the desktop requests 0.24.0; `hostAddresses` offers the agent host's addresses for a file server)                                |
 | 0.24.0          | 0.45.0        | Yes (the desktop requests 0.24.0; `replay_id` marks where a re-sent session buffer starts)                                            |
 | 0.24.0          | 0.44.0        | Yes (the desktop requests 0.24.0; `connection.sshAlgorithms` names the cipher and key exchange in the SSH security popover)           |
 | 0.24.0          | 0.43.0        | Yes (the desktop requests 0.24.0; definitions report when a session was last created from them as `last_used_at`)                     |
@@ -428,6 +429,8 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 | 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                            |
 | 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                                  |
 | 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                                   |
+
+**0.46.0 (additive, minor)** — adds [`host.addresses`](#hostaddresses) (#6086): the agent host's IPv4 addresses, loopback excluded, so the file server editor offers them to choose from when a server on that agent opens on one address. The `initialize` result gains `capabilities.hostAddresses: true`. Negotiation is by **capability**: the desktop calls the method only on an agent that advertises the flag and lets the address be typed for an older one. An older desktop never calls it. The desktop still requests `0.24.0`.
 
 **0.45.0 (additive, minor)** — [`connection.output`](#connectionoutput) carries an optional **`replay_id`** (#5990) on the first chunk of the buffer an attach sends again, and the [`session.getBuffer`](#sessiongetbuffer) result optional **`replay_id`** / **`end_position`**: where the buffer ends in what was sent since that replay. No request changes and no capability: an older desktop ignores the keys. From an older agent the desktop cannot tell the re-sent buffer from new output, so a tab that repaints after a Reclaim, a Take over or a transport reconnect may show the earlier history twice, and a repaint shows only what the desktop received; nothing is lost.
 
@@ -612,6 +615,7 @@ On a successful `initialize`, the agent records the client (`client`, `client_ve
 | `capabilities.definitionIconStyle`        | `boolean`              | Saved connection definitions store `icon_color` / `icon_emoji` (0.33.0+; absent = `false`, the desktop hides the icon colour / emoji controls)                                                         |
 | `capabilities.connectionDescription`      | `boolean`              | Saved connection definitions store a one-line `description` (0.42.0+; absent = `false`, the desktop hides the Description field)                                                                       |
 | `capabilities.serialPortRescan`           | `boolean`              | [`serial.list_ports`](#seriallist_ports) re-enumerates the host's serial ports on demand (0.34.0+; absent = `false`, the desktop keeps the `availableSerialPorts` snapshot)                            |
+| `capabilities.hostAddresses`              | `boolean`              | [`host.addresses`](#hostaddresses) lists the host's IPv4 addresses (0.46.0+; absent = `false`, the desktop lets the address of a file server be typed)                                                 |
 | `capabilities.fileTruncate`               | `boolean`              | [`connection.files.truncate`](#connectionfilestruncate) shortens a file so a crashed upload resumes from its checkpoint (0.41.0+; absent = `false`)                                                    |
 | `capabilities.fileCreateNew`              | `boolean`              | [`write_range`](#connectionfileswrite_range) honors `create_new` as an exclusive create on the agent host's own file system (0.30.0+; absent = `false`, never send the flag)                           |
 
@@ -4228,6 +4232,39 @@ No params (any given are ignored).
 | `ports`      | `string[]` | The host's serial port paths / names in natural order; empty when it has none |
 
 **Errors:** `-32007` before `initialize`. A pre-0.34.0 agent answers `-32601`, which the desktop treats as "keep the connect-time snapshot".
+
+### `host.addresses`
+
+List the **agent host's** IPv4 network addresses (#6086, protocol 0.46.0), loopback excluded, in the order the system lists them. The file server editor offers them when a server on this agent should open on one address only, and uses the first for the address it previews for a server open to the host's network. Read-only; called only on an agent advertising `capabilities.hostAddresses`.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "host.addresses",
+  "params": {},
+  "id": 58
+}
+```
+
+No params (any given are ignored).
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": { "addresses": [{ "name": "eth0", "addr": "192.168.1.30" }] },
+  "id": 58
+}
+```
+
+| Result Field | Type                               | Description                                             |
+| ------------ | ---------------------------------- | ------------------------------------------------------- |
+| `addresses`  | `{ name: string, addr: string }[]` | Interface name and IPv4 address; empty when it has none |
+
+**Errors:** `-32007` before `initialize`. A pre-0.46.0 agent answers `-32601`, which the desktop treats as "type the address".
 
 ---
 
