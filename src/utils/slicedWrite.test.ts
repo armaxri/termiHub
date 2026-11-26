@@ -97,7 +97,7 @@ describe("writeSliced", () => {
   it("writes a whole scrollback in slices and says once when all of it is parsed (#6087)", () => {
     const t = target();
     const done = vi.fn();
-    writeAllSliced(t, "é".repeat(WRITE_SLICE_BYTES), done);
+    writeAllSliced(t, bytes(2 * WRITE_SLICE_BYTES), done);
     expect(t.writes.map((w) => w.length)).toEqual([WRITE_SLICE_BYTES, WRITE_SLICE_BYTES]);
     t.callbacks[0]();
     expect(done).not.toHaveBeenCalled();
@@ -107,6 +107,22 @@ describe("writeSliced", () => {
     expect(done).toHaveBeenCalledTimes(1);
     t.callbacks[2]();
     expect(done).toHaveBeenCalledTimes(2);
+  });
+
+  it("slices a text scrollback, never inside a character (#6087)", async () => {
+    const xterm = new Terminal({ cols: 80, rows: 24, allowProposedApi: true });
+    const writes: string[] = [];
+    const target = {
+      write: (data: Uint8Array | string, done?: () => void) => {
+        writes.push(data as string);
+        xterm.write(data, done);
+      },
+    };
+    const text = "ab\ud83d\ude00cd";
+    await new Promise<void>((resolve) => writeAllSliced(target, text, resolve, 3));
+    expect(writes).toEqual(["ab", "\ud83d\ude00c", "d"]);
+    expect(xterm.buffer.active.getLine(0)!.translateToString(true)).toBe(text);
+    xterm.dispose();
   });
 
   it("throws what the terminal refused a scrollback with, as one write did (#6087)", () => {

@@ -26,6 +26,7 @@ import {
 } from "@/plugins/sandbox/pluginSandboxHost";
 import type { HostToWorkerMessage, WorkerToHostMessage } from "@/plugins/sandbox/protocol";
 import { FLOW_HIGH_WATERMARK } from "@/utils/terminalFlowControl";
+import { WRITE_SLICE_BYTES } from "@/utils/slicedWrite";
 
 /** The terminals the component made: a fake view on a real buffer and parser. */
 const terminals = vi.hoisted(() => ({ list: [] as unknown[], block: false }));
@@ -404,13 +405,14 @@ describe("Continue sees a prompt that has arrived (#6070)", () => {
     lose();
     regain();
     pressContinue();
-    terminals.block = true;
+    const { write } = engine();
+    write.mockClear();
     const repaint = encoder.encode(`${"x".repeat(60_000)}\r\n${PROMPT}`);
     await act(async () => shown({ data: repaint, endOffset: streamed, epoch: 1 }));
-    // The repaint is several writes, and nothing decides before the last one.
-    expect(engine().queued.length).toBeGreaterThan(2);
-    expect(state.result).toBeUndefined();
-    engine().unblock();
+    await settle();
+    const sizes = write.mock.calls.map((call) => (call[0] as Uint8Array | string).length);
+    expect(sizes.filter((n) => n > 0).length).toBeGreaterThan(2);
+    expect(Math.max(...sizes)).toBeLessThanOrEqual(WRITE_SLICE_BYTES);
     await heldBack(state);
   });
 

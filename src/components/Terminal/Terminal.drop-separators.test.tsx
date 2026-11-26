@@ -279,7 +279,13 @@ describe("Terminal — reconnected marker (#5660)", () => {
       const xterm = xtermInstances[xtermInstances.length - 1];
       const sizes = xterm.write.mock.calls.map((call) => (call[0] as Uint8Array | string).length);
       expect(Math.max(...sizes)).toBeLessThanOrEqual(WRITE_SLICE_BYTES);
-      expect(written()).toMatch(new RegExp(`^${scrollback.text}[^]*reconnected`));
+      const text = xterm.write.mock.calls
+        .map((call) =>
+          typeof call[0] === "string" ? call[0] : decoder.decode(call[0] as Uint8Array)
+        )
+        .join("");
+      expect(text.startsWith(scrollback.text)).toBe(true);
+      expect(written()).toMatch(/z\r\n[^]*reconnected/);
     } finally {
       scrollback.text = "old scrollback\r\n";
     }
