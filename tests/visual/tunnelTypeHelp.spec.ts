@@ -48,6 +48,23 @@ async function hover(page: Page, target: Locator): Promise<void> {
 }
 
 /** Boot the seeded app on the Tunnels sidebar in `theme`. */
+/**
+ * Wait until Radix has placed `content`. Until then its wrapper sits off the page
+ * at `translate(0, -200%)` (above the window, where nobody sees it) while it is
+ * measured; its box there is not where it will show.
+ */
+async function placed(content: Locator): Promise<void> {
+  await expect
+    .poll(() =>
+      content.evaluate(
+        (el) =>
+          (el.closest("[data-radix-popper-content-wrapper]") as HTMLElement | null)?.style
+            .transform ?? ""
+      )
+    )
+    .not.toContain("-200%");
+}
+
 async function boot(page: Page, theme: string): Promise<void> {
   await page.addInitScript(() => {
     window.__VISUAL_SCENARIO__ = { populated: true };
@@ -208,6 +225,7 @@ for (const viewport of [
         const next = page.locator(id("tunnel-name-tun-socks"));
         await hover(page, page.locator(id("tunnel-name-tun-db")));
         await expect(tooltip("tun-db")).toBeVisible();
+        await placed(tooltip("tun-db"));
         const shown = (await tooltip("tun-db").boundingBox())!;
         const row = (await page.locator(id("tunnel-item-tun-db")).boundingBox())!;
         expect(shown.x).toBeGreaterThanOrEqual(row.x + row.width);
