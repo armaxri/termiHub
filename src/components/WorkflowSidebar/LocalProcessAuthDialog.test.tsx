@@ -242,5 +242,7 @@ describe("the terminal that asks (#6132)", () => {
   it("is left out where none is known", () => {
     openPrompt("make", []);
     expect(query("local-process-auth-terminals")).toBeNull();
+    openPrompt("make", [], "make", { terminals: [] });
+    expect(query("local-process-auth-terminals")).toBeNull();
   });
 });
