@@ -10,7 +10,7 @@ use crate::embedded_servers::server_manager::{
 use crate::utils::errors::TerminalError;
 
 /// A network interface with its bound IP address, for the bind-address dropdown.
-#[derive(serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 pub struct NetworkInterface {

@@ -260,7 +260,11 @@ use termihub_core::monitoring::{
 /// result, where the buffer ends in what was sent since. An older desktop
 /// ignores the keys; from an older agent the desktop may keep a re-sent buffer
 /// twice in a repaint and repaints only what it received.
-const AGENT_PROTOCOL_VERSION: &str = "0.45.0";
+/// Bumped to 0.46.0 for the additive `host.addresses` method and its
+/// `capabilities.hostAddresses` flag (#6086): the file server editor offers
+/// the agent host's addresses to choose from. An older agent is never asked;
+/// its address is typed.
+const AGENT_PROTOCOL_VERSION: &str = "0.46.0";
 
 /// The chmod / chown / symlink operations the agent host's own file system
 /// performs (#4601) — exactly what [`LocalFileBrowser`] answers, which backs
@@ -959,6 +963,7 @@ fn register_all(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<(
     agent_logs::register(module)?;
     register_docker_list_containers(module)?;
     register_serial_list_ports(module)?;
+    register_host_addresses(module)?;
     Ok(())
 }
 
@@ -1143,6 +1148,7 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
                 definition_icon_style: true,
                 connection_description: true,
                 serial_port_rescan: true,
+                host_addresses: true,
                 file_truncate: true,
             },
         };
@@ -3364,6 +3370,40 @@ fn register_serial_list_ports(module: &mut RpcModule<Mutex<HandlerState>>) -> an
     Ok(())
 }
 
+/// `host.addresses` (#6086, protocol 0.46.0): the agent host's IPv4 addresses,
+/// loopback excluded, for choosing where a file server on it opens.
+fn register_host_addresses(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method(pm::HOST_ADDRESSES, |_params, ctx, _ext| async move {
+        if !ctx.lock().await.initialized {
+            return Err(not_initialized());
+        }
+        let addresses = tokio::task::spawn_blocking(host_addresses)
+            .await
+            .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))?;
+        to_result_value(&pm::HostAddressesResult { addresses })
+    })?;
+    Ok(())
+}
+
+/// The IPv4 addresses of this host's interfaces, loopback excluded.
+fn host_addresses() -> Vec<pm::HostAddress> {
+    if_addrs::get_if_addrs()
+        .map(|interfaces| {
+            interfaces
+                .into_iter()
+                .filter(|iface| !iface.is_loopback())
+                .filter_map(|iface| match iface.addr.ip() {
+                    std::net::IpAddr::V4(ip) => Some(pm::HostAddress {
+                        name: iface.name,
+                        addr: ip.to_string(),
+                    }),
+                    std::net::IpAddr::V6(_) => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Wrap an enumeration into the `serial.list_ports` reply.
 fn serial_list_reply(ports: Vec<String>) -> Result<Value, ErrorObjectOwned> {
     to_result_value(&pm::SerialListPortsResult { ports })
@@ -4125,10 +4165,11 @@ mod tests {
     /// and 0.43.0 the definition `last_used_at` (#5940), and 0.44.0
     /// `connection.sshAlgorithms` (#5896), and 0.45.0 the optional
     /// `replay_id` of `connection.output` and the end position of
-    /// `session.getBuffer` (#5990).
+    /// `session.getBuffer` (#5990), and 0.46.0 `host.addresses` with its
+    /// `hostAddresses` capability (#6086).
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.45.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.46.0");
     }
 
     /// #3051: a 0.24.0+ client gets the camelCase `initialize` envelope and
@@ -7550,6 +7591,9 @@ mod tests {
 
     /// `serial.list_ports` — init gate, reply, capability (#5069).
     mod serial_list_tests;
+
+    /// `host.addresses` — init gate, reply, capability (#6086).
+    mod host_addresses_tests;
 
     /// Update-RPC auth token + matched-downgrade pin (AGT-003 / SEC-006, #3213).
     mod update_auth_tests;

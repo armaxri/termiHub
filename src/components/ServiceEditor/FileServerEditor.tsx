@@ -52,6 +52,7 @@ import {
 import { editorSubtitle, ServiceEditorShell, ServiceEditorWarning } from "./ServiceEditorShell";
 import { freePort, portTaken, PortTakenNote, tftpPortNote } from "./PortNote";
 import { WhoCanOpen } from "./WhoCanOpen";
+import { useAgentAddresses } from "./useAgentAddresses";
 import { useEditorTab } from "./useEditorTab";
 
 interface FileServerEditorProps {
@@ -188,7 +189,29 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
       };
   const warning = openWarning(form);
 
-  const context = useServiceContext(isWideBind(form.bindHost));
+  // The agent machine's own addresses (#6086): chosen from, and the preview's.
+  const hostAgent = isAgentHost(form.host)
+    ? remoteAgents.find((agent) => agent.id === (isAgentHost(form.host) ? form.host.agentId : ""))
+    : undefined;
+  const agentAddresses = useAgentAddresses(hostAgent);
+  const there = {
+    addresses: agentAddresses?.known ? agentAddresses.addresses : undefined,
+    note:
+      agentAddresses && !agentAddresses.known
+        ? tf(`server.editor.address.${agentAddresses.why}`, { agent: agentName ?? "" })
+        : undefined,
+  };
+  const ownContext = useServiceContext(isWideBind(form.bindHost));
+  const context = useMemo(
+    () =>
+      hostAgent && agentAddresses?.known && agentAddresses.addresses[0]
+        ? {
+            ...ownContext,
+            agentNetworks: { [hostAgent.id]: agentAddresses.addresses[0].addr },
+          }
+        : ownContext,
+    [ownContext, hostAgent, agentAddresses]
+  );
   const taken = onAgent ? undefined : portTaken(form.port, existing?.id, context);
   const preview =
     form.bindHost.trim() !== "" && form.port !== ""
@@ -420,6 +443,7 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
         labels={whoLabels}
         here="127.0.0.1"
         onThisComputer={!onAgent}
+        there={onAgent ? there : undefined}
         error={errors.bindHost}
       />
       {warning.length > 0 && (

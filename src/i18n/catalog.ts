@@ -997,6 +997,11 @@ const en = {
   "server.editor.copyHint":
     "A copy does not get the password. Enter it here, or the copy cannot start.",
   "server.editor.runOn": "Run on",
+  "server.editor.address.offline":
+    "{agent} is not connected, so termiHub cannot list its addresses. Type one, or connect it.",
+  "server.editor.address.old":
+    "Update agent {agent} to choose from its addresses. Type one meanwhile.",
+  "server.editor.address.failed": "{agent} did not say its addresses. Type one.",
   // The file server dialog (#6063).
   "service.editor.new": "New service · {technical}",
   "service.editor.changeType": "Change what it is for",

@@ -265,6 +265,8 @@ fn agent_fixture() -> Value {
             "serialPortRescan": true,
             // Crashed uploads trim their remote partial (#5736).
             "fileTruncate": true,
+            // The host's addresses for a file server on it (#6086).
+            "hostAddresses": true,
             "agentVersion": "1.4.2"
         }),
     );
