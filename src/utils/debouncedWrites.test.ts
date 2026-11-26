@@ -50,12 +50,11 @@ describe("debounced writes (#6094)", () => {
   });
 
   it("swallows a write that fails later, in its timer and in a flush", async () => {
-    vi.useFakeTimers();
     const failed = vi.fn();
     process.on("unhandledRejection", failed);
     try {
       debounceWrite("a", 1, () => Promise.reject(new Error("later")));
-      vi.advanceTimersByTime(1);
+      await new Promise((resolve) => setTimeout(resolve, 5));
       debounceWrite("a", 1, () => Promise.reject(new Error("later")));
       await flushDebouncedWrites();
       await new Promise((resolve) => setImmediate(resolve));
