@@ -8,7 +8,7 @@
  *
  * The real dispatcher, output flow, sandbox host and xterm parser run here.
  */
-import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi, type Mock } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { Terminal as RealTerminal } from "@xterm/xterm";
@@ -27,6 +27,11 @@ import {
 import type { HostToWorkerMessage, WorkerToHostMessage } from "@/plugins/sandbox/protocol";
 import { FLOW_HIGH_WATERMARK } from "@/utils/terminalFlowControl";
 import { WRITE_SLICE_BYTES } from "@/utils/slicedWrite";
+
+/** What the PTY says about hidden input (#6014); `null`: it cannot tell. */
+const hiddenInput = vi.hoisted(() =>
+  vi.fn((..._args: unknown[]) => Promise.resolve(null as boolean | null))
+);
 
 /** The terminals the component made: a fake view on a real buffer and parser. */
 const terminals = vi.hoisted(() => ({ list: [] as unknown[], block: false }));
@@ -129,6 +134,7 @@ vi.mock("@/services/api", () => ({
   }),
   replaySessionScrollback: mockReplay,
   sessionGetCapabilities: vi.fn().mockResolvedValue({}),
+  sessionInputHidden: (...args: unknown[]) => hiddenInput(...args),
 }));
 vi.mock("@/services/keybindings", () => ({
   processKeyEvent: vi.fn(() => null),
@@ -381,6 +387,21 @@ describe("Continue sees a prompt that has arrived (#6070)", () => {
     expect(write).toHaveBeenCalledOnce();
   });
 
+  it("asks the PTY whether input is hidden, at a prompt no word list knows (#6014)", async () => {
+    hiddenInput.mockResolvedValue(true);
+    try {
+      const state = startWait();
+      arrive("Enter code: ");
+      pressContinue();
+      await settle(60);
+      expect(hiddenInput).toHaveBeenCalledWith(SID);
+      expect(state.result).toBeUndefined();
+      expect(wait()?.stillAsking).toBe(true);
+    } finally {
+      hiddenInput.mockResolvedValue(null);
+    }
+  });
+
   it("not of a terminal that is gone", () => {
     expect(promptOfTerminal(tabId)).toBeDefined();
     act(() => root.unmount());
@@ -604,6 +625,12 @@ describe("Continue sees a prompt that has arrived (#6070)", () => {
     const thrown = vi.fn(() => {
       throw new Error("a reader that fails");
     });
+    // What the reader throws stays in the guard: it escapes nowhere, also not after
+    // the PTY was asked whether input is hidden (#6014).
+    const escaped: unknown[] = [];
+    const onEscape = (reason: unknown) => escaped.push(reason);
+    process.on("unhandledRejection", onEscape);
+    onTestFinished(() => void process.off("unhandledRejection", onEscape));
     behind();
     arrive("one ");
     act(() => promptOfTerminal(tabId)!.read(thrown));
@@ -617,6 +644,28 @@ describe("Continue sees a prompt that has arrived (#6070)", () => {
     await settle();
     expect(thrown).toHaveBeenCalled();
     expect(line()).toBe("one two three");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(escaped).toEqual([]);
+  });
+
+  it("keeps what a reader throws in the guard when the PTY cannot be asked (#6014)", async () => {
+    hiddenInput.mockRejectedValueOnce(new Error("no session"));
+    const escaped: unknown[] = [];
+    const onEscape = (reason: unknown) => escaped.push(reason);
+    process.on("unhandledRejection", onEscape);
+    onTestFinished(() => void process.off("unhandledRejection", onEscape));
+    const thrown = vi.fn(() => {
+      throw new Error("a reader that fails");
+    });
+    arrive("one ");
+    act(() => promptOfTerminal(tabId)!.read(thrown));
+    await settle();
+    arrive("two");
+    await settle();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(thrown).toHaveBeenCalledWith("one ", null);
+    expect(line()).toBe("one two");
+    expect(escaped).toEqual([]);
   });
 
   it("asks when it cannot tell in time, and an insisting press goes on", async () => {

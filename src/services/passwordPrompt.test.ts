@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isPasswordPrompt, textBeforeCursor } from "./passwordPrompt";
+import { isPasswordPrompt, isSecretPrompt, textBeforeCursor } from "./passwordPrompt";
 
 describe("isPasswordPrompt", () => {
   it.each([
@@ -50,5 +50,17 @@ describe("textBeforeCursor", () => {
       ["key: ", true],
     ];
     expect(textBeforeCursor(buffer(rows, 5, 2))).toBe("Enter passphrase for key: ");
+  });
+});
+
+describe("isSecretPrompt (#6014)", () => {
+  it("is a prompt with echo off, whatever its words, or one whose words say so", () => {
+    expect(isSecretPrompt("Enter code: ", true)).toBe(true);
+    expect(isSecretPrompt("Enter code: ", false)).toBe(false);
+    expect(isSecretPrompt("Enter code: ", null)).toBe(false);
+    expect(isSecretPrompt("Enter code: ")).toBe(false);
+    // A program that shows its own stars reads in raw mode: the words still count.
+    expect(isSecretPrompt("Password: ", false)).toBe(true);
+    expect(isSecretPrompt("Password: ", null)).toBe(true);
   });
 });

@@ -44,6 +44,7 @@ from termihub_harness.product_run.automation_sidebar_grades import (
     migrated_layout_problems,
     row_layout_problems,
     row_text_problems,
+    section_split_problems,
     side_by_side_problems,
 )
 from termihub_harness.product_run.automation_steps import AutomationPhaseUi
@@ -115,6 +116,31 @@ def test_grade_side_by_side():
         running=["B"], asked=True, stopped={"status": "cancelled"}, stopped_by="Third"
     )
     assert len(bad) == 3, bad
+
+
+def _split(list_height: float, content: float, section_height: float, row_end: float):
+    return section_split_problems(
+        listed={
+            "rect": _box(48, 120, 260, list_height),
+            "clientHeight": list_height,
+            "scrollHeight": content,
+        },
+        section=_box(48, 120 + list_height, 260, section_height),
+        first_rows=[_box(48, 124, 260, 50), _box(48, 174, 260, row_end - 174)],
+    )
+
+
+def test_grade_section_split_passes():
+    # Half each, and a short list that gives the section the rest (#6115).
+    assert _split(215, 600, 215, 300) == []
+    assert _split(80, 80, 350, 170) == []
+
+
+def test_grade_section_split_fails():
+    # The review's 1280x800 shape: ~100px for the list, its second row cut.
+    problems = _split(100, 600, 500, 300)
+    assert any("gets 100px" in p for p in problems), problems
+    assert any("row 2 is cut" in p for p in problems), problems
 
 
 def test_grade_row_layout_passes():
@@ -228,6 +254,26 @@ class TestProductRunAutomationSidebar(
                 "opacity", f"automation-more-group-{aid}"
             ),
         }
+
+    def _split_problems(self, section: str) -> list[str]:
+        """How the list and the open ``section`` share the sidebar (#6115)."""
+        listed = self.driver.measure_element("automation-list")
+        rows = [
+            self.driver.measure_element(f"automation-item-{aid}")["rect"]
+            for aid in set(self.ids.values())
+            if isinstance(aid, str) and self.driver.exists(f"automation-item-{aid}")
+        ]
+        # The rows that start in the list as it shows, top first.
+        top = listed["rect"]["y"]
+        rows = [r for r in rows if r["y"] >= top - 1]
+        rows.sort(key=lambda r: r["y"])
+        measured = {
+            "listed": listed,
+            "section": self.driver.measure_element(section)["rect"],
+            "first_rows": rows[:2],
+        }
+        self.evidence(f"{section} open: {measured}")
+        return section_split_problems(**measured)
 
     def _menu_entries(self, aid: str) -> list[str]:
         """The entries of a row's open "…" menu, then close it."""
@@ -521,14 +567,16 @@ class TestProductRunAutomationSidebar(
             self.open_automation_schedules()
             row = f"schedule-item-{self.ids['schedule']}"
             self.wait(lambda: self.driver.exists(row), what="the schedule's row")
+            # Open, it shares the room fairly with the list (#6115).
+            problems = self._split_problems("schedules-section")
+            assert not problems, problems
             self.open_automation_history()
             self.wait(lambda: self.driver.exists("automation-history-list"), what="the history")
             # The open one takes the room (#6045).
             self.wait(lambda: not self.driver.exists(row), what="Schedules to close")
-            pane = self.driver.measure_element("automation-list")["rect"]
-            self.evidence(f"list {pane} with a section open")
+            problems = self._split_problems("automation-history")
             self.shot(label="sections")
-            assert pane["height"] >= 90, f"the sections leave the list {pane['height']:.0f}px"
+            assert not problems, problems
             self.close_automation_schedules()
 
     def _restart_with_hidden_views(self, hidden: list[str]) -> list[str]:

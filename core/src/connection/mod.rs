@@ -495,6 +495,16 @@ pub trait ConnectionType: Send + Sync {
         None
     }
 
+    /// Whether a program in the session now reads a line with its echo off, a
+    /// password or a code (#6014), asked on demand. The local shell reads it
+    /// from its PTY on Unix. `None`, the default, means the backend cannot tell:
+    /// Windows ConPTY has no echo flag to ask, and a remote session's echo is
+    /// decided on the far host (SSH's own channel modes say nothing about what
+    /// a program there does later), so the frontend reads the prompt's words.
+    fn hidden_input(&self) -> Option<bool> {
+        None
+    }
+
     /// Whether [`prompt_probe`](Self::prompt_probe) never reports a startup
     /// question as the prompt, so the initial command waits for it without a
     /// cap (#5455): typing on a timeout could only answer such a question.
