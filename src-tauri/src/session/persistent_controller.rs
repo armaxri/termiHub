@@ -55,16 +55,38 @@ const CATCH_UP_TIMEOUT: Duration = Duration::from_secs(2);
 /// How often the wait looks.
 const CATCH_UP_POLL: Duration = Duration::from_millis(5);
 
-/// Borrowing facade exposing the manager's persistent-session operations.
-///
-/// Holds only a borrow of the [`SessionManager`], so it carries no state of its
-/// own; the manager constructs one on demand via
-/// [`SessionManager::persistent`](super::manager::SessionManager). Each method
-/// mirrors the persistent-session operation that previously lived inline on the
-/// manager and delegates back to the manager for the shared session-lifecycle
-/// primitives (`create_connection`, `close_session`, `run_output_reader`).
 /// The re-creations in progress, keyed by session id (#6033).
 pub(super) type Recreations = Arc<StdMutex<HashMap<String, Arc<Mutex<()>>>>>;
+
+/// Remove `session_id`'s entry when `lock` is it and only the map and one more
+/// handle hold it: nobody else waits. A waiter takes its clone under the same
+/// lock, so it cannot appear in between.
+fn remove_if_unwaited(recreations: &Recreations, session_id: &str, lock: &Arc<Mutex<()>>) {
+    let mut recreations = recreations
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let unwaited = recreations
+        .get(session_id)
+        .is_some_and(|held| Arc::ptr_eq(held, lock) && Arc::strong_count(held) == 2);
+    if unwaited {
+        recreations.remove(session_id);
+    }
+}
+
+/// A wait for a re-creation in progress; given up, it removes the entry it
+/// would have left behind (#6110).
+struct Waiting<'a> {
+    recreations: &'a Recreations,
+    session_id: &'a str,
+    lock: Arc<Mutex<()>>,
+}
+
+impl Drop for Waiting<'_> {
+    fn drop(&mut self) {
+        // Once the lock is taken its guard holds it too: this removes nothing.
+        remove_if_unwaited(self.recreations, self.session_id, &self.lock);
+    }
+}
 
 /// Holds the re-creation of one persistent session; the entry goes when nobody
 /// else waits for it.
@@ -83,31 +105,38 @@ impl Recreating {
             .entry(session_id.to_string())
             .or_default()
             .clone();
+        let _waiting = Waiting {
+            recreations,
+            session_id,
+            lock: lock.clone(),
+        };
+        let guard = lock.lock_owned().await;
         Self {
             recreations: recreations.clone(),
             session_id: session_id.to_string(),
-            guard: lock.lock_owned().await,
+            guard,
         }
     }
 }
 
 impl Drop for Recreating {
     fn drop(&mut self) {
-        let mut recreations = self
-            .recreations
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        // The map and this guard hold it: nobody else waits. A waiter takes its
-        // clone under the same lock, so it cannot appear in between.
-        let unwaited = recreations.get(&self.session_id).is_some_and(|lock| {
-            Arc::ptr_eq(lock, OwnedMutexGuard::mutex(&self.guard)) && Arc::strong_count(lock) == 2
-        });
-        if unwaited {
-            recreations.remove(&self.session_id);
-        }
+        remove_if_unwaited(
+            &self.recreations,
+            &self.session_id,
+            OwnedMutexGuard::mutex(&self.guard),
+        );
     }
 }
 
+/// Borrowing facade exposing the manager's persistent-session operations.
+///
+/// Holds only a borrow of the [`SessionManager`], so it carries no state of its
+/// own; the manager constructs one on demand via
+/// [`SessionManager::persistent`](super::manager::SessionManager). Each method
+/// mirrors the persistent-session operation that previously lived inline on the
+/// manager and delegates back to the manager for the shared session-lifecycle
+/// primitives (`create_connection`, `close_session`, `run_output_reader`).
 pub(super) struct PersistentController<'a> {
     manager: &'a SessionManager,
 }
