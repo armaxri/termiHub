@@ -165,3 +165,29 @@ async fn every_attach_of_a_held_session_says_it_is_held() {
         .expect("after the reclaim");
     assert!(!after.held_by_peer);
 }
+
+/// A held session that ended and is re-created without a peer is not held any
+/// more, for its later attaches either (#6110).
+#[tokio::test]
+async fn a_re_creation_without_a_peer_is_not_held() {
+    let spy = Arc::new(spy_agent().always("send_request", Step::Reply(serde_json::json!({}))));
+    spy.held_by_peer.store(true, Ordering::SeqCst);
+    let manager = SessionManager::new(ConnectionTypeRegistry::new(), spy.clone());
+    let emitter = MockEventEmitter::new();
+    persistent_session(&manager).await;
+    let held = manager
+        .attach_persistent_tab("conn-1", "tab-1", emitter.clone())
+        .await
+        .expect("held");
+    assert!(held.held_by_peer);
+    manager.close_session("sess-1").await.expect("close");
+
+    spy.held_by_peer.store(false, Ordering::SeqCst);
+    for tab in ["tab-2", "tab-3"] {
+        let attach = manager
+            .attach_persistent_tab("conn-1", tab, emitter.clone())
+            .await
+            .expect("attach");
+        assert!(!attach.held_by_peer, "{tab}");
+    }
+}
