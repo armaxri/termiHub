@@ -151,3 +151,36 @@ def migrated_layout_problems(before: Sequence[str], after: Sequence[str]) -> lis
                 kept.append(merged)
         want = kept
     return [] if list(after) == want else [f"hidden views {list(after)}, want {want}"]
+
+
+#: Slack for the split, in CSS pixels: the list's padding and rounding.
+SPLIT_SLACK = 24.0
+
+
+def section_split_problems(
+    *,
+    listed: Mapping[str, Any],
+    section: Mapping[str, float],
+    first_rows: Sequence[Mapping[str, float]],
+) -> list[str]:
+    """How the automation list and an open section share the sidebar (#6115).
+
+    ``listed`` is the list's measure (``rect``, ``clientHeight``,
+    ``scrollHeight``), ``section`` the open section's box, ``first_rows`` the
+    boxes of the rows that start in the list, top first. The list gets half of
+    what the two share, or all it needs when that is less; its first two rows
+    show whole.
+    """
+    problems: list[str] = []
+    box = listed["rect"]
+    shared = box["height"] + section["height"]
+    needs = min(float(listed["scrollHeight"]), shared / 2)
+    if float(listed["clientHeight"]) < needs - SPLIT_SLACK:
+        problems.append(
+            f"the list gets {box['height']:.0f}px of {shared:.0f}px; it needs {needs:.0f}px"
+        )
+    bottom = box["y"] + box["height"]
+    for n, row in enumerate(first_rows[:2], start=1):
+        if row["y"] + row["height"] > bottom + 0.5:
+            problems.append(f"row {n} is cut at {bottom - row['y']:.0f}px of {row['height']:.0f}px")
+    return problems
