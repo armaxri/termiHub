@@ -251,7 +251,11 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
       </Button>
     );
   };
-  const saveButton = button("close", t("service.editor.save"), "server-dialog-save");
+  const saveButton = button(
+    "close",
+    t(active ? "service.editor.saveLater" : "service.editor.save"),
+    "server-dialog-save"
+  );
   const runButton = button(
     "run",
     t(active ? "service.editor.saveAndRestart" : "service.editor.saveAndStart"),
@@ -305,17 +309,15 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
             ? tf("server.editor.share.title", { name: serverName(form) || "this folder" })
             : t(`service.new.${form.serverType}`)
       }
-      subtitle={editorSubtitle(!existing, t(`service.new.${form.serverType}.technical`))}
+      subtitle={editorSubtitle(
+        !existing,
+        t(`service.new.${form.serverType}.technical`),
+        active && !moves
+      )}
       onChangeType={choosing ? undefined : () => setChoosing(true)}
       rootProps={rootProps}
       onKeyDown={onKeyDown}
-      note={
-        canSave
-          ? active && isDirty && !moves
-            ? t("service.editor.afterRestart")
-            : undefined
-          : missingText(allErrors)
-      }
+      note={canSave ? undefined : missingText(allErrors)}
       actions={
         <>
           <Button variant="secondary" onClick={tab.cancel} data-testid="server-dialog-cancel">
@@ -566,6 +568,7 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
         open={tab.asking}
         subject="file server"
         name={form.name.trim() || undefined}
+        note={active ? t("service.editor.unsavedRunning") : undefined}
         onCancel={tab.stopAsking}
         onJustClose={() => {
           tab.stopAsking();

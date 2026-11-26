@@ -3,7 +3,7 @@ import { Copy, Trash2 } from "lucide-react";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import { Button, EmptyState, SearchInput, toast } from "@/components/ui";
 import { useEmbeddedServerActivity } from "@/hooks/useEmbeddedServerActivity";
-import { formatBytes, formatClockTime } from "@/utils/formatters";
+import { formatBytes, formatServiceClock } from "@/utils/formatters";
 import { errorMessage } from "@/utils/errorMessage";
 import { t, tf } from "@/i18n/catalog";
 import { itemMatchesQuery } from "@/hooks/useListFilter";
@@ -97,7 +97,7 @@ export function entryToTsv(entry: AccessLogEntry): string {
 const TSV_HEADER = "time\tclient\tuser\tmethod\tpath\tstatus\tbytes\tduration_ms\tdetail";
 
 function timeOf(timestamp: string): string {
-  return formatClockTime(timestamp) || timestamp;
+  return formatServiceClock(timestamp) || timestamp;
 }
 
 function StatsGrid({ stats, dropped }: { stats: DetailedServerStats; dropped: number }) {

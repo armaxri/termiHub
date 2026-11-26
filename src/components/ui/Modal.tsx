@@ -436,6 +436,8 @@ export interface UnsavedChangesDialogProps {
    * the {@link Modal} dismiss guard), only Cancel and "Discard changes" are offered.
    */
   onSaveAndClose?: () => void | Promise<void>;
+  /** A sentence after the question, e.g. that a running service keeps running unchanged. */
+  note?: string;
 }
 
 /** The message for a subject, optionally naming the item. */
@@ -464,8 +466,9 @@ export function UnsavedChangesDialog({
   onCancel,
   onJustClose,
   onSaveAndClose,
+  note,
 }: UnsavedChangesDialogProps): React.ReactElement {
-  const message = unsavedChangesMessage(subject, name);
+  const message = [unsavedChangesMessage(subject, name), note].filter(Boolean).join(" ");
   return (
     <Modal
       open={open}

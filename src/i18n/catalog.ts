@@ -967,10 +967,12 @@ const en = {
     'No service matches "{query}". Search finds names, types, machines, folders and ports.',
   "service.group.tunnels": "SSH tunnels",
   "service.group.fileServers": "File servers",
-  "service.agent.stopping": "Offline. {services} will be stopped when it is back.",
+  // In one reading (#6117, F-007).
+  "service.agent.stopping": "Offline. {services} will stop when the agent is back.",
   "service.agent.keepAll": "Keep all running",
   "service.agent.keepFailed": "Failed to keep them running",
-  "service.agent.offline": "Offline. {services} run there or may; termiHub cannot tell.",
+  "service.agent.offline":
+    "Offline. {services} may still run there; termiHub will know when the agent is back.",
   "service.agent.tunnel": "1 tunnel",
   "service.agent.tunnels": "{count} tunnels",
   "service.agent.server": "1 file server",
@@ -1075,6 +1077,11 @@ const en = {
   "service.editor.afterRestart": "Changes apply when it restarts.",
   "service.editor.portTaken": 'Port {port} is used by "{name}".',
   "service.editor.save": "Save",
+  // While it runs, Save keeps it running as it is (#6117, F-013).
+  "service.editor.saveLater": "Save, apply later",
+  "service.editor.unsavedRunning": "It keeps running unchanged.",
+  "service.editor.running": "{technical} · Running. Changes apply when it restarts.",
+
   "service.editor.saveAndStart": "Save and start",
   "service.editor.saveAndRestart": "Save and restart",
   "server.editor.folder": "Folder to share",

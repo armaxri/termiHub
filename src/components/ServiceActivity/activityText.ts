@@ -6,7 +6,7 @@ import { t, tf, type MessageId } from "@/i18n/catalog";
 import type { ServiceEvent } from "@/types/generated/ServiceEvent";
 import type { ServerStatus } from "@/types/embeddedServer";
 import type { TunnelStatus } from "@/types/tunnel";
-import { formatBytes, formatClockTime } from "@/utils/formatters";
+import { formatBytes, formatServiceClock } from "@/utils/formatters";
 import type { ServiceActionId, ServiceKind, ServiceModel } from "@/utils/serviceModel";
 import {
   serverServiceState,
@@ -53,7 +53,7 @@ export function eventLines(kind: ServiceKind, events: readonly ServiceEvent[]): 
       const state = eventState(kind, event.status);
       return {
         key: `${event.atMs}-${index}`,
-        time: formatClockTime(event.atMs),
+        time: formatServiceClock(event.atMs),
         label: serviceStateLabel(state),
         reason: event.reason,
         dot: serviceStateDot(state),
@@ -69,7 +69,7 @@ export function sinceOf(
 ): string | undefined {
   const last = events[events.length - 1];
   if (!last || eventState(model.kind, last.status) !== model.state) return undefined;
-  return tf("service.activity.since", { time: formatClockTime(last.atMs) });
+  return tf("service.activity.since", { time: formatServiceClock(last.atMs) });
 }
 
 const HOW_TO_USE: Record<ServiceModel["type"], MessageId> = {

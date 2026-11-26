@@ -569,7 +569,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
       data-invalid={!canSave || undefined}
       data-testid="tunnel-editor-save"
     >
-      {t("service.editor.save")}
+      {t(active ? "service.editor.saveLater" : "service.editor.save")}
     </Button>
   );
 
@@ -715,17 +715,15 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
       view={view}
       onView={(next) => existingTunnel && showIn(existingTunnel.id, next)}
       title={existingTunnel ? existingTunnel.name : t(`service.new.${tunnelType.type}`)}
-      subtitle={editorSubtitle(!existingTunnel, t(`service.new.${tunnelType.type}.technical`))}
+      subtitle={editorSubtitle(
+        !existingTunnel,
+        t(`service.new.${tunnelType.type}.technical`),
+        active && !movesRunning
+      )}
       onChangeType={choosing ? undefined : () => setChoosing(true)}
       rootProps={rootProps}
       onKeyDown={handleKeyDown}
-      note={
-        canSave
-          ? active && isDirty && !movesRunning
-            ? t("service.editor.afterRestart")
-            : undefined
-          : missingText(tunnelType, allFormErrors)
-      }
+      note={canSave ? undefined : missingText(tunnelType, allFormErrors)}
       actions={
         <>
           <Button variant="secondary" onClick={tab.cancel} data-testid="tunnel-editor-cancel">
@@ -1006,6 +1004,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
         open={tab.asking}
         subject="tunnel"
         name={form.name.trim() || undefined}
+        note={active ? t("service.editor.unsavedRunning") : undefined}
         onCancel={tab.stopAsking}
         onJustClose={() => {
           tab.stopAsking();
