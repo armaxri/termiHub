@@ -109,15 +109,17 @@ export function ServiceActivity({
         <p className="service-activity__reason" role="status" data-testid="service-activity-reason">
           {model.reason}
           {model.nextSteps.map((step) => (
-            <Button
+            <button
               key={step.id}
-              variant="ghost"
-              size="xs"
-              onClick={() => onNextStep(step)}
+              type="button"
+              className="service-activity__next"
+              onClick={() =>
+                fireAndForget(Promise.resolve(onNextStep(step)), `${step.id} ${model.id}`)
+              }
               data-testid={`service-activity-next-${step.id}`}
             >
               {step.label}
-            </Button>
+            </button>
           ))}
         </p>
       )}

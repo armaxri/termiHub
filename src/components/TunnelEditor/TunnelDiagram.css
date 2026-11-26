@@ -65,13 +65,6 @@
   white-space: nowrap;
 }
 
-/* One box and the arrow before it, side by side as before. */
-.tunnel-diagram__part {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-}
-
 /* The part of the path that failed (#6028, slice 10). */
 .tunnel-diagram__box--failing {
   border-color: var(--color-error);

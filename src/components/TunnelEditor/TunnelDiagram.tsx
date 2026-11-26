@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import { t } from "@/i18n/catalog";
 import { TunnelType } from "@/types/tunnel";
 import type { TunnelPart } from "@/utils/serviceModel";
@@ -119,7 +120,7 @@ export function TunnelDiagram({ tunnelType, agentName, failing }: TunnelDiagramP
           fails ? "tunnel-diagram__box--failing" : "",
         ].filter(Boolean);
         return (
-          <div key={box.part} className="tunnel-diagram__part">
+          <Fragment key={box.part}>
             {index > 0 && (
               <div className="tunnel-diagram__arrow">
                 <span className="tunnel-diagram__arrow-line">{arrows[index - 1].line}</span>
@@ -135,7 +136,7 @@ export function TunnelDiagram({ tunnelType, agentName, failing }: TunnelDiagramP
                 </span>
               )}
             </div>
-          </div>
+          </Fragment>
         );
       })}
     </div>
