@@ -143,6 +143,9 @@ describe("a running tunnel", () => {
   it("stops at once while nobody is connected, and copies the address", async () => {
     tunnelIn("connected");
     await render("tunnel", "db");
+    // The first action is the one that stands out, the rest are quiet.
+    expect(q("service-activity-action-stop")!.className).toContain("ui-btn--secondary");
+    expect(q("service-activity-action-restart")!.className).toContain("ui-btn--ghost");
     await click("service-activity-action-stop");
     expect(actions.stopTunnel).toHaveBeenCalledWith("db");
     await click("service-activity-action-copyAddress");
