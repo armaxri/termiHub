@@ -1528,6 +1528,17 @@ pub struct SessionCapabilities {
     pub processes: bool,
 }
 
+/// Whether a program in the session now reads a line with its echo off: a
+/// password or a code (#6014). `null` when the backend cannot tell, as for a
+/// remote session or on Windows; the frontend then reads the prompt's words.
+#[tauri::command]
+pub async fn session_input_hidden(
+    session_id: String,
+    manager: State<'_, SessionManager>,
+) -> Result<Option<bool>, TerminalError> {
+    Ok(manager.session_hidden_input(&session_id).await)
+}
+
 /// Return the capabilities of an active session.
 #[tauri::command]
 pub async fn session_get_capabilities(

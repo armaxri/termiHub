@@ -23,12 +23,25 @@ export function isPasswordPrompt(beforeCursor: string): boolean {
 }
 
 /**
+ * Whether what is typed now is a secret (#6014): the program reads with its echo
+ * off, as the local PTY says (`hidden`, `null` where it cannot tell: remote
+ * sessions, Windows), or the prompt's words say so. The words still count where
+ * the PTY says "echo on": a program that shows its own stars reads in raw mode.
+ */
+export function isSecretPrompt(beforeCursor: string, hidden?: boolean | null): boolean {
+  return hidden === true || isPasswordPrompt(beforeCursor);
+}
+
+/**
  * Reads the text in front of a terminal's cursor ({@link textBeforeCursor}) as it is
  * once all output that has arrived by now is in the buffer, and none that comes later
  * (#6070). Calls back at once when nothing is on its way, with `null` when there is no
- * terminal to read, and never when output was lost, so that it cannot be told.
+ * terminal to read, and never when output was lost, so that it cannot be told. `hidden`
+ * says whether the program reads with its echo off, where the session can tell (#6014).
  */
-export type PromptReader = (then: (beforeCursor: string | null) => void) => void;
+export type PromptReader = (
+  then: (beforeCursor: string | null, hidden?: boolean | null) => void
+) => void;
 
 /** The line a prompt was seen on. */
 export interface PromptPin {
