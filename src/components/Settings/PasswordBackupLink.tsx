@@ -2,18 +2,23 @@ import { DatabaseBackup } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import type { CredentialStorageMode } from "@/types/credential";
 import { Button } from "@/components/ui";
+import { credentialStorageOffText } from "@/utils/credentialStorageCopy";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
-/** Where the saved passwords are, in the words of the chosen store (#5860, R-052). */
-export function passwordBackupText(mode: CredentialStorageMode): string {
-  switch (mode) {
-    case "os_keychain":
-      return "Passwords saved in the OS Keychain are backed up with your other data: Back up… in Backup & restore includes them, and Restore… brings them back.";
-    case "master_password":
-      return "Passwords in your master-password vault are backed up with your other data: Back up… in Backup & restore includes them, and Restore… brings them back.";
-    default:
-      return "Passwords are not saved, so there are none to back up.";
-  }
+/**
+ * Where the saved passwords are, in the words of the chosen store (#5860, R-052),
+ * or `null` while passwords are not saved.
+ */
+export function passwordBackupText(mode: CredentialStorageMode): string | null {
+  const where =
+    mode === "os_keychain"
+      ? "Passwords saved in the OS Keychain"
+      : mode === "master_password"
+        ? "Passwords in your master-password vault"
+        : null;
+  return where === null
+    ? null
+    : `${where} are backed up with your other data: Back up… in Backup & restore includes them, and Restore… brings them back.`;
 }
 
 /**
@@ -24,7 +29,8 @@ export function passwordBackupText(mode: CredentialStorageMode): string {
 export function PasswordBackupLink() {
   const mode: CredentialStorageMode = useAppStore((s) => s.credentialStoreStatus?.mode) ?? "none";
   const openSettingsTab = useAppStore((s) => s.openSettingsTab);
-  const storageOff = mode === "none";
+  const text = passwordBackupText(mode);
+  const storageOff = text === null;
 
   return (
     <div
@@ -33,9 +39,16 @@ export function PasswordBackupLink() {
       data-collapsed={storageOff ? "true" : undefined}
     >
       <SettingsSectionHeading>Back up saved passwords</SettingsSectionHeading>
-      <p className="settings-panel__description" data-testid="password-backup-text">
-        {passwordBackupText(mode)}
-      </p>
+      {/* With passwords not saved the section is its heading and the storage-off line (#5875). */}
+      {storageOff ? (
+        <p className="settings-panel__description" data-testid="password-backup-unavailable">
+          {credentialStorageOffText("back up saved passwords")}
+        </p>
+      ) : (
+        <p className="settings-panel__description" data-testid="password-backup-description">
+          {text}
+        </p>
+      )}
       {!storageOff && (
         <div>
           <Button

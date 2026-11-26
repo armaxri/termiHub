@@ -43,7 +43,7 @@ describe("PasswordBackupLink (#5860)", () => {
 
   it("names the master-password vault when that is the store", () => {
     render("master_password");
-    expect(query("password-backup-text")?.textContent).toContain("master-password vault");
+    expect(query("password-backup-description")?.textContent).toContain("master-password vault");
   });
 
   it("goes to Backup & restore", () => {
@@ -59,5 +59,8 @@ describe("PasswordBackupLink (#5860)", () => {
     expect(section.dataset.collapsed).toBe("true");
     expect(query("password-backup-open")).toBeNull();
     expect(section.querySelectorAll("p")).toHaveLength(1);
+    expect(query("password-backup-unavailable")?.textContent).toMatch(
+      /^Credential storage is off — choose .* above to back up saved passwords\.$/
+    );
   });
 });
