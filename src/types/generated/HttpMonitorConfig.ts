@@ -34,4 +34,10 @@ description?: string, url: string, intervalMs: number, method: string, expectedS
  * (deny-internal) so the SSRF guard is safe by default; `#[serde(default)]`
  * keeps configs stored before this field deserializing.
  */
-allowPrivateNetwork?: boolean, };
+allowPrivateNetwork?: boolean, 
+/**
+ * The machine this monitor checks from (#6039): absent is this computer.
+ * Kept verbatim when this build cannot read it, and the monitor is then
+ * not checked at all. The desktop's own field: an agent is not sent it.
+ */
+host?: import("./RunLocation").RunLocation, };

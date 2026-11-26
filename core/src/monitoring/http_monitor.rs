@@ -43,6 +43,7 @@ use crate::service::{
     ServiceRegistry, ServiceStatus,
 };
 use crate::util::entry_extra::{EntryExtra, StoreEntry};
+use crate::util::service_host::ServiceHost;
 
 /// Machine-readable service id used in the [`ServiceRegistry`] and run-location
 /// routing.
@@ -128,6 +129,12 @@ pub struct HttpMonitorConfig {
     #[serde(default)]
     #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub allow_private_network: bool,
+    /// The machine this monitor checks from (#6039): absent is this computer.
+    /// Kept verbatim when this build cannot read it, and the monitor is then
+    /// not checked at all. The desktop's own field: an agent is not sent it.
+    #[serde(default, skip_serializing_if = "ServiceHost::is_absent")]
+    #[cfg_attr(test, ts(optional, type = "import(\"./RunLocation\").RunLocation"))]
+    pub host: ServiceHost,
     /// Unknown fields of this entry in `http-monitors.json`, kept verbatim so
     /// an older build's save does not erase them (#3951). Not part of the
     /// generated TS type; see [`crate::util::entry_extra`].
@@ -180,6 +187,45 @@ pub struct HttpMonitorState {
     pub paused: bool,
     #[cfg_attr(test, ts(optional = nullable))]
     pub last_result: Option<HttpCheckResult>,
+    /// What the row says, in the words of a service (#6052): a monitor on an
+    /// agent is not running while its agent is gone.
+    #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<HttpMonitorStatus>", optional))]
+    pub status: HttpMonitorStatus,
+    /// Why it is in that status, when the row should say it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub reason: Option<String>,
+}
+
+/// The status of a monitor as its row shows it (#6052): the states of a
+/// service, so both read the same.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[serde(rename_all = "camelCase")]
+pub enum HttpMonitorStatus {
+    #[default]
+    Stopped,
+    Starting,
+    Running,
+    /// Stopped by the user; its agent has not confirmed it yet.
+    Stopping,
+    /// It did not start; the reason says why.
+    Error,
+    /// Its agent is offline or does not answer: it may still check there.
+    NotReachable,
+}
+
+impl HttpMonitorStatus {
+    /// What a monitor on this computer is: running or not.
+    pub fn of_loop(running: bool) -> Self {
+        if running {
+            Self::Running
+        } else {
+            Self::Stopped
+        }
+    }
 }
 
 impl HttpMonitorConfig {
@@ -204,6 +250,7 @@ impl HttpMonitorConfig {
             expected_status,
             timeout_ms,
             allow_private_network: false,
+            host: ServiceHost::default(),
             extra: EntryExtra::new(),
         }
     }
@@ -490,6 +537,8 @@ impl HttpMonitorService {
             // A stopped loop can't be paused; only report paused while alive.
             paused: running && self.is_paused(),
             last_result: self.last_result(),
+            status: HttpMonitorStatus::of_loop(running),
+            reason: None,
         })
     }
 }

@@ -31,7 +31,6 @@
 pub mod events;
 pub mod hosted;
 
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -471,126 +470,6 @@ impl Default for AgentStatusPoller {
     }
 }
 
-/// A service instance hosted on a remote agent, as tracked by the desktop.
-///
-/// The three agent-hosted managers (embedded servers, HTTP monitors, SSH tunnels)
-/// each keep a per-instance handle whose contents differ, but every one records
-/// **which agent hosts the instance** — the one field the shared tracker needs to
-/// target the `*.status` poll and the teardown RPC. Implementing this lets
-/// [`AgentInstances`] read the hosting agent without knowing the handle type
-/// (#2884).
-pub trait AgentHosted {
-    /// The id of the agent hosting this instance.
-    fn agent_id(&self) -> &str;
-}
-
-/// The shared agent-hosted-instance tracking map (DUP-020 follow-up, #2884).
-///
-/// Each of the three managers kept an identical
-/// `Arc<Mutex<HashMap<instance_id, Handle>>>` plus the same hand-rolled
-/// `ids` / `clear` / `agent_id` and status-poll-target
-/// helpers around it, differing only in the per-protocol handle type. This wraps
-/// that map once, keyed by instance id and generic over the handle `H`.
-///
-/// `Clone` shares the same underlying map (it clones the inner `Arc`), so a status
-/// poller delegate can hold its own handle to the manager's live instances without
-/// a `&self` reference — exactly the `Arc::clone` the delegates did by hand.
-///
-/// **Poison policy.** The convenience readers/mutators here
-/// ([`ids`](Self::ids), [`clear`](Self::clear),
-/// [`agent_id_of`](Self::agent_id_of),
-/// [`snapshot_targets_where`](Self::snapshot_targets_where)) treat a poisoned lock as
-/// "empty/absent/no-op", matching what every teardown, lookup and poll-snapshot
-/// site already did. The guarded *start* paths (the double-start check and the
-/// insert) instead surface a poisoned lock as the manager's own error, so they use
-/// [`lock`](Self::lock), which returns the std [`LockResult`](std::sync::LockResult)
-/// for the caller to map.
-pub struct AgentInstances<H> {
-    map: Arc<Mutex<HashMap<String, H>>>,
-}
-
-impl<H> AgentInstances<H> {
-    /// Create an empty tracker.
-    pub fn new() -> Self {
-        Self {
-            map: Arc::new(Mutex::new(HashMap::new())),
-        }
-    }
-
-    /// Lock the underlying map, returning the std
-    /// [`LockResult`](std::sync::LockResult) so a caller on a start path can map a
-    /// poisoned lock to its own manager error (the double-start guard and the
-    /// insert), and a mutator/list path can read/write handles directly.
-    /// Poison-tolerant callers should prefer the convenience methods below.
-    #[allow(clippy::type_complexity)]
-    pub fn lock(&self) -> std::sync::LockResult<std::sync::MutexGuard<'_, HashMap<String, H>>> {
-        self.map.lock()
-    }
-
-    /// A snapshot of every tracked instance id. A poisoned lock returns empty.
-    /// Used by each manager's `stop_all` teardown loop.
-    pub fn ids(&self) -> Vec<String> {
-        self.map
-            .lock()
-            .map(|m| m.keys().cloned().collect())
-            .unwrap_or_default()
-    }
-
-    /// Drop every tracked instance. A poisoned lock is a no-op.
-    pub fn clear(&self) {
-        if let Ok(mut m) = self.map.lock() {
-            m.clear();
-        }
-    }
-}
-
-impl<H: AgentHosted> AgentInstances<H> {
-    /// The agent hosting `id`, if it is tracked. A poisoned lock returns `None`.
-    pub fn agent_id_of(&self, id: &str) -> Option<String> {
-        self.map
-            .lock()
-            .ok()?
-            .get(id)
-            .map(|h| h.agent_id().to_string())
-    }
-
-    /// Snapshot the `(instance_id, agent_id)` targets of the instances matching
-    /// `include`, plus whether **any** instance remains at all, so an
-    /// excluded-but-listed instance (e.g. a paused monitor) keeps the poller alive
-    /// instead of stopping it. A poisoned lock returns `(empty, false)`, stopping
-    /// the poller.
-    pub fn snapshot_targets_where(
-        &self,
-        include: impl Fn(&H) -> bool,
-    ) -> (Vec<(String, String)>, bool) {
-        match self.map.lock() {
-            Ok(map) => {
-                let targets = map
-                    .iter()
-                    .filter(|(_, h)| include(h))
-                    .map(|(id, h)| (id.clone(), h.agent_id().to_string()))
-                    .collect();
-                (targets, !map.is_empty())
-            }
-            Err(_) => (Vec::new(), false),
-        }
-    }
-}
-
-impl<H> Clone for AgentInstances<H> {
-    fn clone(&self) -> Self {
-        Self {
-            map: Arc::clone(&self.map),
-        }
-    }
-}
-
-impl<H> Default for AgentInstances<H> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -911,25 +790,6 @@ mod tests {
         assert!(calls.load(Ordering::SeqCst) > 5);
     }
 
-    /// A minimal [`AgentHosted`] handle for the tracker tests.
-    struct Handle {
-        agent_id: String,
-        paused: bool,
-    }
-
-    impl AgentHosted for Handle {
-        fn agent_id(&self) -> &str {
-            &self.agent_id
-        }
-    }
-
-    fn handle(agent: &str, paused: bool) -> Handle {
-        Handle {
-            agent_id: agent.to_string(),
-            paused,
-        }
-    }
-
     #[test]
     fn an_agent_that_did_not_start_it_says_what_about() {
         use termihub_core::errors::{ConnectFailureKind, SessionError};
@@ -963,55 +823,5 @@ mod tests {
             reason.text,
             "Not started: its agent could not start it: Remote agent error: disk full"
         );
-    }
-
-    #[test]
-    fn agent_instances_insert_ids_clear() {
-        let instances = AgentInstances::<Handle>::new();
-        instances
-            .lock()
-            .unwrap()
-            .insert("a".into(), handle("h1", false));
-        instances
-            .lock()
-            .unwrap()
-            .insert("b".into(), handle("h2", false));
-
-        let mut ids = instances.ids();
-        ids.sort();
-        assert_eq!(ids, vec!["a".to_string(), "b".to_string()]);
-
-        instances.clear();
-        assert!(instances.ids().is_empty());
-    }
-
-    #[test]
-    fn agent_instances_agent_id_of() {
-        let instances = AgentInstances::<Handle>::new();
-        instances
-            .lock()
-            .unwrap()
-            .insert("m".into(), handle("edge", false));
-        assert_eq!(instances.agent_id_of("m").as_deref(), Some("edge"));
-        assert_eq!(instances.agent_id_of("missing"), None);
-    }
-
-    #[test]
-    fn agent_instances_snapshot_targets_where_excludes_but_keeps_alive() {
-        let instances = AgentInstances::<Handle>::new();
-        instances
-            .lock()
-            .unwrap()
-            .insert("live".into(), handle("h1", false));
-        instances
-            .lock()
-            .unwrap()
-            .insert("paused".into(), handle("h2", true));
-
-        // A paused instance is excluded from the poll targets, but `any_remaining`
-        // still reflects it so the poller is kept alive rather than stopped.
-        let (targets, any_remaining) = instances.snapshot_targets_where(|h| !h.paused);
-        assert_eq!(targets, vec![("live".to_string(), "h1".to_string())]);
-        assert!(any_remaining);
     }
 }

@@ -11,7 +11,7 @@ import type { HostChoice } from "@/utils/hostChoice";
 /** Props for the shared {@link RunLocationSelect} control. */
 export interface RunLocationSelectProps {
   /** The item's current run-location. */
-  value: HostChoice;
+  value: HostChoice | null;
   /** Agents offered as run targets ("This computer" is always offered). */
   agents: RemoteAgentDefinition[];
   /** Called with the newly chosen run-location. */
@@ -28,6 +28,8 @@ export interface RunLocationSelectProps {
   "aria-label"?: string;
   /** Test hook forwarded to the trigger. */
   "data-testid"?: string;
+  /** Shown while `value` is `null`: nothing is chosen yet. */
+  placeholder?: string;
 }
 
 /**
@@ -47,17 +49,21 @@ export function RunLocationSelect({
   onChange,
   agentAllowed = true,
   disabled,
+  placeholder,
   ...rest
 }: RunLocationSelectProps) {
-  const options = runLocationOptions(agents, agentAllowed, value);
+  const options = runLocationOptions(agents, agentAllowed, value ?? undefined);
   // With no agent to offer, "This computer" is the only choice — disable the
   // control so it reads as a fixed vantage rather than an interactive no-op.
-  const singleChoice = options.length === 1;
+  // Not while nothing is chosen: then it is still the answer to give.
+  const singleChoice = options.length === 1 && value !== null;
 
   return (
     <Select
-      value={encodeRunLocation(value)}
-      onChange={(v) => onChange(decodeRunLocation(v))}
+      value={value ? encodeRunLocation(value) : undefined}
+      placeholder={placeholder}
+      // An empty value is the select clearing itself, not a choice.
+      onChange={(v) => v && onChange(decodeRunLocation(v))}
       options={options}
       disabled={disabled || singleChoice}
       aria-label={rest["aria-label"] ?? "Run on"}

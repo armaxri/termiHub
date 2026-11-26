@@ -3178,6 +3178,17 @@ kept an agent choice in memory only, so it cannot be recovered: the user has to 
 An older build that opens the file keeps the field but does not read it, and starts the server on
 this computer.
 
+**HTTP monitors** follow the same rule (#6039, #6052). A monitor stores its `host` in
+`http-monitors.json` (the same `ServiceHost`, kept verbatim when unreadable, kept by a restore whose
+backup has none) and is checked from there or not at all. One on an agent is a record of
+`HostedServices` (`src-tauri/src/network/agent_monitors.rs`): not reachable while its agent is gone,
+a start without an answer may still check there, a stop its agent did not get is owed and kept in
+`http_monitors_owed_stops.json`, and after a restart its agent is asked whether it still checks.
+Pause and resume stay the monitor's own. `HttpMonitorState.status` and `reason` carry the states of
+a service, which the rows word with `monitorServiceState`; the monitor commands run off the window's
+thread, and `network-http-monitor-changed` tells the windows when a row changed more than its
+numbers.
+
 ### What a Service's Row Says (#6028)
 
 `HostedServices` (`src-tauri/src/agent_service/hosted.rs`) is the one record of what the desktop

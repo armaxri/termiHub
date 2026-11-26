@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { HttpMonitorPanel } from "./HttpMonitorPanel";
+import { leaveField } from "@/test/leaveField";
 import { withTooltip } from "@/test/tooltip";
 
 vi.mock("@/services/networkApi", () => ({
@@ -20,6 +21,7 @@ vi.mock("@/services/networkApi", () => ({
   networkHttpMonitorResume: vi.fn(() => Promise.resolve()),
   networkHttpMonitorList: vi.fn(() => Promise.resolve([])),
   onHttpMonitorCheck: vi.fn(() => Promise.resolve(() => {})),
+  onHttpMonitorChanged: vi.fn(() => Promise.resolve(() => {})),
 }));
 
 vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn() }));
@@ -79,10 +81,20 @@ describe("HttpMonitorPanel — URL validation", () => {
     expect(startButton().disabled).toBe(true);
   });
 
-  it("flags invalid input inline and blocks Start", async () => {
+  it("says nothing about the URL before it was typed (F-009)", async () => {
+    await render();
+    expect(container.textContent).not.toContain("Enter a valid http(s) URL");
+    // Leaving the bare "https://" it starts with is not a wrong answer either.
+    leaveField(urlInput());
+    expect(container.textContent).not.toContain("Enter a valid http(s) URL");
+  });
+
+  it("flags invalid input once the field is left, and blocks Start", async () => {
     await render();
     await act(async () => setInputValue(urlInput(), "not-a-url"));
     expect(startButton().disabled).toBe(true);
+    expect(container.textContent).not.toContain("Enter a valid http(s) URL");
+    leaveField(urlInput());
     expect(container.textContent).toContain("Enter a valid http(s) URL");
   });
 
