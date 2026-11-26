@@ -381,3 +381,57 @@ fn an_end_announced_right_after_the_session_was_dropped_is_seen() {
     announcing.expect("asked").join().unwrap();
     assert_eq!(end, ShellEnd::Exited(1));
 }
+
+/// #6123 made a Win32-OpenSSH PTY shell end as `shell_exited` with no code,
+/// since the server's 0 is not the shell's. The setup's shell then still ended
+/// on its own: the watch must say so, not "no status" (a lost link), or every
+/// setup that did not install reads "may not have finished" (#5992).
+#[test]
+fn a_shell_that_exited_without_a_status_still_ended() {
+    let app = tauri::test::mock_app();
+    let watch = SessionEndWatch::start(app.handle(), "s1");
+    app.emit(
+        "terminal-exit",
+        serde_json::json!({ "session_id": "s1", "exit_code": null, "end_cause": "shell_exited" }),
+    )
+    .unwrap();
+    assert_eq!(
+        watch.wait(Duration::from_secs(5), || true),
+        ShellEnd::ExitedWithoutStatus
+    );
+    // A lost link is still no status.
+    let lost = SessionEndWatch::start(app.handle(), "s2");
+    app.emit(
+        "terminal-exit",
+        serde_json::json!({ "session_id": "s2", "exit_code": null, "end_cause": "io_error" }),
+    )
+    .unwrap();
+    assert_eq!(
+        lost.wait(Duration::from_secs(5), || true),
+        ShellEnd::NoStatus
+    );
+}
+
+#[test]
+fn a_windows_setup_whose_shell_ended_without_a_status_reads_like_one_that_exited() {
+    let end = ShellEnd::ExitedWithoutStatus;
+    assert_eq!(
+        windows_setup_outcome(end, &Ok(HostCheck::Installed)),
+        SetupOutcome::Installed
+    );
+    for check in [
+        HostCheck::Absent,
+        HostCheck::OtherBinary,
+        HostCheck::PreviousRuns,
+    ] {
+        assert!(
+            is_failed(&windows_setup_outcome(end, &Ok(check))),
+            "{check:?}"
+        );
+    }
+    // Without a usable check its end proves nothing: no code says it failed.
+    assert!(is_unknown(&windows_setup_outcome(
+        end,
+        &Ok(HostCheck::Busy)
+    )));
+}
