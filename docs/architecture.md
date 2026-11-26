@@ -2129,6 +2129,13 @@ step:
   would land in the shell) is a **fatal** outcome: `executeStepWithPolicy` neither retries nor
   tolerates it, at any level. Runs nobody watches are refused before they type anything
   (`reachesWaitForUser`): scheduled ones as skipped, triggered ones as a failed run in the History.
+  Whether it asks for a secret is `isSecretPrompt` (#6014): the prompt's words, or the session's
+  own answer to `session_input_hidden`. A local shell on Unix reads its PTY master
+  (`hidden_input_reading`, `core/src/backends/pty_unix_io.rs`): canonical mode without `ECHO` is a
+  program reading a hidden line (`read -s`, `getpass`, `stty -echo`); a line editor at the prompt
+  reads raw and never counts. It is asked only when the recorder or a Continue reads the prompt,
+  never polled. Remote sessions (SSH, telnet, serial, agent) and Windows ConPTY answer `null`: the
+  echo is decided on the far host, and ConPTY has no echo flag, so there the words are all there is.
   What the terminal asks is read through `promptOfTerminal` (`services/passwordPrompt.ts`, #6070):
   its `read` answers once all output that had arrived at the call is in xterm's buffer
   (`TerminalOutputFlow.whenShown`, behind a plugin's parser and a repaint in progress), and never when
