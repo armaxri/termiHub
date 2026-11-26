@@ -242,47 +242,85 @@ async fn setup_outcome(want: WindowsDeployShell) {
     assert_failed_but_kept(&outcome, "a setup that never ran");
 
     // ── 7. An execution policy of AllSigned from group policy (#6001).
-    if set_user_policy(&fixture, Some("AllSigned")).await {
+    {
+        let _policy = MachinePolicy::set("AllSigned");
+        let seen = over_ssh(&fixture, |session| {
+            run_remote_command(
+                session,
+                &powershell_encoded_command("(Get-ExecutionPolicy).ToString()"),
+            )
+        })
+        .await
+        .unwrap_or_else(|e| format!("{e}"));
+        assert_eq!(
+            seen.trim(),
+            "AllSigned",
+            "the fixture user's PowerShell must run under the AllSigned machine policy"
+        );
         let outcome = run_setup(&fixture, &lines, Some(old.clone()), &old).await;
-        set_user_policy(&fixture, None).await;
         assert_eq!(
             outcome,
             SetupOutcome::Installed,
             "a host whose policy is AllSigned installs the agent"
         );
-        assert_host_runs(&fixture, &old, "installed under AllSigned").await;
+    }
+    assert_host_runs(&fixture, &old, "installed under AllSigned").await;
+}
+
+/// The machine's execution policy as group policy sets it
+/// (`HKLM\SOFTWARE\Policies\Microsoft\Windows\PowerShell`), which wins over
+/// `-ExecutionPolicy` for every user, the fixture user's SSH sessions too
+/// (#6001). Written from this process, which the lane runs elevated; put back
+/// when dropped, also when the step fails.
+struct MachinePolicy;
+
+const POLICY_KEY: &str = r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell";
+
+impl MachinePolicy {
+    fn set(policy: &str) -> Self {
+        run_local_powershell(&format!(
+            "New-Item -Force -Path '{POLICY_KEY}' | Out-Null; \
+             Set-ItemProperty -Path '{POLICY_KEY}' -Name EnableScripts -Value 1 -Type DWord; \
+             Set-ItemProperty -Path '{POLICY_KEY}' -Name ExecutionPolicy -Value '{policy}'"
+        ))
+        .unwrap_or_else(|e| panic!("could not set the machine policy {policy} (#6001): {e}"));
+        Self
     }
 }
 
-/// Set (or with `None` remove) the fixture user's execution policy as group
-/// policy sets it (`HKCU\Software\Policies\…\PowerShell`), which wins over
-/// `-ExecutionPolicy`. `false` when the user may not write it: the step is
-/// skipped and says so.
-async fn set_user_policy(fixture: &Fixture, policy: Option<&str>) -> bool {
-    let key = r"HKCU:\Software\Policies\Microsoft\Windows\PowerShell";
-    let script = match policy {
-        Some(policy) => format!(
-            "New-Item -Force -Path '{key}' | Out-Null; \
-             Set-ItemProperty -Path '{key}' -Name EnableScripts -Value 1 -Type DWord; \
-             Set-ItemProperty -Path '{key}' -Name ExecutionPolicy -Value '{policy}'; \
-             (Get-ExecutionPolicy -Scope UserPolicy).ToString()"
-        ),
-        None => format!(
-            "Remove-Item -Force -Recurse -Path '{key}' -ErrorAction SilentlyContinue; 'removed'"
-        ),
-    };
-    let command = powershell_encoded_command(&script);
-    let out = over_ssh(fixture, move |session| {
-        run_remote_command(session, &command)
-    })
-    .await
-    .unwrap_or_else(|e| format!("{e}"));
-    match policy {
-        Some(policy) if out.trim() != policy => {
-            eprintln!("SKIPPED: the fixture user cannot set a UserPolicy of {policy}: {out:?}");
-            false
+impl Drop for MachinePolicy {
+    fn drop(&mut self) {
+        let removed = run_local_powershell(&format!(
+            "Remove-ItemProperty -Path '{POLICY_KEY}' -Name EnableScripts, ExecutionPolicy \
+             -ErrorAction SilentlyContinue"
+        ));
+        if let Err(e) = removed {
+            eprintln!("could not remove the machine execution policy: {e}");
         }
-        _ => true,
+    }
+}
+
+/// Run `script` in this machine's Windows PowerShell; its output, or why not.
+fn run_local_powershell(script: &str) -> Result<String, String> {
+    let out = std::process::Command::new("powershell.exe")
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            script,
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    if out.status.success() && out.stderr.is_empty() {
+        Ok(text)
+    } else {
+        Err(text)
     }
 }
 
