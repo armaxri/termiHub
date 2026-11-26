@@ -59,6 +59,7 @@ fn attach(
 async fn two_attaches(
     held: &'static str,
     then: Step,
+    peer_holds: bool,
 ) -> (
     Arc<SessionManager>,
     MockEventEmitter,
@@ -68,6 +69,7 @@ async fn two_attaches(
     let gate = Gate::new();
     let _open = gate.open_on_drop();
     let spy = held_at(held, &gate, then);
+    spy.held_by_peer.store(peer_holds, Ordering::SeqCst);
     let manager = Arc::new(SessionManager::new(
         ConnectionTypeRegistry::new(),
         spy.clone(),
@@ -89,7 +91,7 @@ async fn two_attaches(
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn two_attaches_at_once_end_in_one_stream_its_entry_owns() {
     for held in ["register_session_output", "attach_session"] {
-        let (manager, emitter, spy, [first, second]) = two_attaches(held, Step::Ok).await;
+        let (manager, emitter, spy, [first, second]) = two_attaches(held, Step::Ok, false).await;
         let (first, second) = (first.expect("first"), second.expect("second"));
         assert_eq!(first.session_id, "sess-1");
         assert_eq!(second.session_id, "sess-1");
@@ -133,9 +135,59 @@ async fn two_attaches_at_once_end_in_one_stream_its_entry_owns() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_failed_re_creation_lets_the_attach_waiting_for_it_try() {
     let (manager, _emitter, spy, [first, second]) =
-        two_attaches("attach_session", Step::fail("Agent connection lost")).await;
+        two_attaches("attach_session", Step::fail("Agent connection lost"), false).await;
     assert!(first.is_err());
     assert_eq!(second.expect("second").session_id, "sess-1");
     assert_eq!(spy.calls_to("attach_session").len(), 2);
     assert!(manager.sessions.lock().await.contains_key("sess-1"));
+}
+
+/// Another desktop holds the session: every attach of it says so, the one that
+/// waited for the re-creation and a later one too (#6110), until a Reclaim.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn every_attach_of_a_held_session_says_it_is_held() {
+    let (manager, emitter, spy, [first, second]) =
+        two_attaches("register_session_output", Step::Ok, true).await;
+    assert!(first.expect("first").held_by_peer);
+    assert!(second.expect("second").held_by_peer);
+    let later = manager
+        .attach_persistent_tab("conn-1", "tab-3", emitter.clone())
+        .await
+        .expect("later");
+    assert!(later.held_by_peer);
+
+    // From the tab that waited: it is folded Evicted too, so it offers Reclaim.
+    manager.reclaim_session("tab-2").await.expect("reclaim");
+    assert_eq!(spy.calls_to("reclaim_session").len(), 1);
+    let after = manager
+        .attach_persistent_tab("conn-1", "tab-4", emitter.clone())
+        .await
+        .expect("after the reclaim");
+    assert!(!after.held_by_peer);
+}
+
+/// A held session that ended and is re-created without a peer is not held any
+/// more, for its later attaches either (#6110).
+#[tokio::test]
+async fn a_re_creation_without_a_peer_is_not_held() {
+    let spy = Arc::new(spy_agent().always("send_request", Step::Reply(serde_json::json!({}))));
+    spy.held_by_peer.store(true, Ordering::SeqCst);
+    let manager = SessionManager::new(ConnectionTypeRegistry::new(), spy.clone());
+    let emitter = MockEventEmitter::new();
+    persistent_session(&manager).await;
+    let held = manager
+        .attach_persistent_tab("conn-1", "tab-1", emitter.clone())
+        .await
+        .expect("held");
+    assert!(held.held_by_peer);
+    manager.close_session("sess-1").await.expect("close");
+
+    spy.held_by_peer.store(false, Ordering::SeqCst);
+    for tab in ["tab-2", "tab-3"] {
+        let attach = manager
+            .attach_persistent_tab("conn-1", tab, emitter.clone())
+            .await
+            .expect("attach");
+        assert!(!attach.held_by_peer, "{tab}");
+    }
 }

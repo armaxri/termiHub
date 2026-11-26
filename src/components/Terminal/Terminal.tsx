@@ -550,6 +550,11 @@ export function Terminal({
         // Where the scrollback this tab repainted ends in the session's output
         // stream (#5990): live output before it is on screen already.
         let replayEnd = NO_REPLAY;
+        /**
+         * The stream a re-attach snapshot was taken of, also when it held nothing
+         * to repaint (#6110): the exit of an older one does not end this tab.
+         */
+        let snapshotEpoch = 0;
         // Set by a resumed session's repaint, see `ResumedRepaint`.
         let takeTyped: () => string[] = () => [];
         let beforeFirstOutput: (() => void) | null = null;
@@ -693,6 +698,7 @@ export function Terminal({
             try {
               const { data: buffer, ...end } = await getAgentSessionBuffer(sessionId);
               if (isCanceled()) return;
+              snapshotEpoch = end.epoch;
               if (buffer.length > 0) {
                 // Drop the reattaching flag BEFORE writing the buffer.
                 // SplitView swaps TerminalSlot for TerminalConnectionOverlay
@@ -745,6 +751,7 @@ export function Terminal({
             try {
               const { data: buffer, ...end } = await replaySessionScrollback(sessionId);
               if (isCanceled()) return;
+              snapshotEpoch = end.epoch;
               if (buffer.length > 0) {
                 useAppStore.getState().setTerminalReattaching(tabId, false);
                 await waitForUsableDimensions(xterm, fitAddon, isCanceled);
@@ -1307,9 +1314,10 @@ export function Terminal({
 
         // Subscribe to exit events via singleton dispatcher
         frontendLog("disconnect", `subscribed exit for session=${sessionId} tab=${tabId}`);
-        // The stream the tab repainted: an exit of an older one does not end it
-        // (#6032). Once output of a newer one arrived, the dispatcher knows it too.
-        const shownStream = () => replayEnd.epoch;
+        // The stream the tab re-attached to: an exit of an older one does not end
+        // it (#6032), also when its snapshot was empty (#6110). Once output of a
+        // newer one arrived, the dispatcher knows it too.
+        const shownStream = () => Math.max(replayEnd.epoch, snapshotEpoch);
         const unsubExit = terminalDispatcher.subscribeExit(
           sessionId,
           (exitCode, endCause) => {

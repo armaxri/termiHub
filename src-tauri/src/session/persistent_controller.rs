@@ -55,16 +55,38 @@ const CATCH_UP_TIMEOUT: Duration = Duration::from_secs(2);
 /// How often the wait looks.
 const CATCH_UP_POLL: Duration = Duration::from_millis(5);
 
-/// Borrowing facade exposing the manager's persistent-session operations.
-///
-/// Holds only a borrow of the [`SessionManager`], so it carries no state of its
-/// own; the manager constructs one on demand via
-/// [`SessionManager::persistent`](super::manager::SessionManager). Each method
-/// mirrors the persistent-session operation that previously lived inline on the
-/// manager and delegates back to the manager for the shared session-lifecycle
-/// primitives (`create_connection`, `close_session`, `run_output_reader`).
 /// The re-creations in progress, keyed by session id (#6033).
 pub(super) type Recreations = Arc<StdMutex<HashMap<String, Arc<Mutex<()>>>>>;
+
+/// Remove `session_id`'s entry when `lock` is it and only the map and one more
+/// handle hold it: nobody else waits. A waiter takes its clone under the same
+/// lock, so it cannot appear in between.
+fn remove_if_unwaited(recreations: &Recreations, session_id: &str, lock: &Arc<Mutex<()>>) {
+    let mut recreations = recreations
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let unwaited = recreations
+        .get(session_id)
+        .is_some_and(|held| Arc::ptr_eq(held, lock) && Arc::strong_count(held) == 2);
+    if unwaited {
+        recreations.remove(session_id);
+    }
+}
+
+/// A wait for a re-creation in progress; given up, it removes the entry it
+/// would have left behind (#6110).
+struct Waiting<'a> {
+    recreations: &'a Recreations,
+    session_id: &'a str,
+    lock: Arc<Mutex<()>>,
+}
+
+impl Drop for Waiting<'_> {
+    fn drop(&mut self) {
+        // Once the lock is taken its guard holds it too: this removes nothing.
+        remove_if_unwaited(self.recreations, self.session_id, &self.lock);
+    }
+}
 
 /// Holds the re-creation of one persistent session; the entry goes when nobody
 /// else waits for it.
@@ -83,31 +105,38 @@ impl Recreating {
             .entry(session_id.to_string())
             .or_default()
             .clone();
+        let _waiting = Waiting {
+            recreations,
+            session_id,
+            lock: lock.clone(),
+        };
+        let guard = lock.lock_owned().await;
         Self {
             recreations: recreations.clone(),
             session_id: session_id.to_string(),
-            guard: lock.lock_owned().await,
+            guard,
         }
     }
 }
 
 impl Drop for Recreating {
     fn drop(&mut self) {
-        let mut recreations = self
-            .recreations
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        // The map and this guard hold it: nobody else waits. A waiter takes its
-        // clone under the same lock, so it cannot appear in between.
-        let unwaited = recreations.get(&self.session_id).is_some_and(|lock| {
-            Arc::ptr_eq(lock, OwnedMutexGuard::mutex(&self.guard)) && Arc::strong_count(lock) == 2
-        });
-        if unwaited {
-            recreations.remove(&self.session_id);
-        }
+        remove_if_unwaited(
+            &self.recreations,
+            &self.session_id,
+            OwnedMutexGuard::mutex(&self.guard),
+        );
     }
 }
 
+/// Borrowing facade exposing the manager's persistent-session operations.
+///
+/// Holds only a borrow of the [`SessionManager`], so it carries no state of its
+/// own; the manager constructs one on demand via
+/// [`SessionManager::persistent`](super::manager::SessionManager). Each method
+/// mirrors the persistent-session operation that previously lived inline on the
+/// manager and delegates back to the manager for the shared session-lifecycle
+/// primitives (`create_connection`, `close_session`, `run_output_reader`).
 pub(super) struct PersistentController<'a> {
     manager: &'a SessionManager,
 }
@@ -340,7 +369,14 @@ impl<'a> PersistentController<'a> {
         let _recreating =
             Recreating::begin(&self.manager.persistent_recreations, &session_id).await;
         let session_alive = self.manager.sessions.lock().await.contains_key(&session_id);
-        let mut held_by_peer = false;
+        // A live session keeps what its re-creation learned (#6110).
+        let mut held_by_peer = session_alive
+            && self
+                .manager
+                .held_persistent
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .contains(&session_id);
         if !session_alive {
             match (opt_agent_id, opt_remote_sid) {
                 (Some(agent_id), Some(remote_sid)) => {
@@ -361,6 +397,18 @@ impl<'a> PersistentController<'a> {
                     .map_err(|e| TerminalError::SpawnFailed(format!("spawn_blocking join: {e}")))?
                     .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
                     held_by_peer = outcome == ReattachOutcome::HeldByPeer;
+                    {
+                        let mut held = self
+                            .manager
+                            .held_persistent
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        if held_by_peer {
+                            held.insert(session_id.clone());
+                        } else {
+                            held.remove(&session_id);
+                        }
+                    }
 
                     let output_rx = proxy.subscribe_output();
 
@@ -853,6 +901,23 @@ mod buffer_place_tests {
         drop(second);
 
         drop(Recreating::begin(&recreations, "sess-1").await);
+        assert!(recreations.lock().unwrap().is_empty());
+    }
+
+    /// A waiter that gives up after the holder let go leaves no entry behind (#6110).
+    #[tokio::test]
+    async fn a_waiter_that_gives_up_leaves_nothing_behind() {
+        let recreations = Recreations::default();
+        let first = Recreating::begin(&recreations, "sess-1").await;
+        let second = tokio::spawn({
+            let recreations = recreations.clone();
+            async move { Recreating::begin(&recreations, "sess-1").await }
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        // Let go and give up before the waiter runs again.
+        drop(first);
+        second.abort();
+        assert!(second.await.is_err_and(|e| e.is_cancelled()));
         assert!(recreations.lock().unwrap().is_empty());
     }
 }
