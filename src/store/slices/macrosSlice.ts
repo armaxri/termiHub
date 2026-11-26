@@ -319,7 +319,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
         startedAt: outcome.queued ? now : (outcome.startedAt ?? startedAt),
         endedAt: outcome.queued ? now : (outcome.endedAt ?? now),
         status,
-        stepsPlayed: outcome.queued ? 0 : outcome.stepsPlayed,
+        stepsPlayed: outcome.stepsPlayed,
         targetLabels: [targetLabels[targets.indexOf(outcome.tabId)]],
         origin: opts?.origin ?? "manual",
         error: outcome.queued
