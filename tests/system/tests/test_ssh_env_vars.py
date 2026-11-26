@@ -49,7 +49,10 @@ class TestSshEnvVars(ConnectionsUi, PasswordPromptUi, SystemTest):
         assert saved is not None
         # The literal ${env:…} token is preserved in the stored config (PR #68).
         assert "${env:" in str(saved.get("config", {}))
-        # Connecting must not hang/crash; clear any prompt and assert responsive.
-        if self.password_prompt_open():
-            self.cancel_password_prompt()
+        # Connecting must not hang/crash: its password prompt comes (the port takes
+        # passwords and none is stored), and is canceled, so no connect is left
+        # waiting for the next test (#6079).
+        self.wait(self.password_prompt_open, what="the connect's password prompt")
+        self.cancel_password_prompt()
+        self.wait(lambda: not self.password_prompt_open(), what="the prompt to close")
         assert isinstance(self.driver.get_state(), dict)

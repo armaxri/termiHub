@@ -157,6 +157,26 @@ class PromptCanceledError extends Error {
   }
 }
 
+/**
+ * A failure of Save and connect the handler has already told the user about, so
+ * the click's catch-all does not say it twice (#6079).
+ */
+class AlreadyReportedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AlreadyReportedError";
+  }
+}
+
+/** The page of the editor a top-level field is on. */
+const TOP_LEVEL_FIELD_PAGE: Record<string, { page: EditorCategory; label: string }> = {
+  iconColor: { page: "appearance", label: "Appearance" },
+  iconEmoji: { page: "appearance", label: "Appearance" },
+  icon: { page: "appearance", label: "Appearance" },
+  terminalOptions: { page: "terminal", label: "Terminal" },
+  agentSettings: { page: "agent", label: "Agent" },
+};
+
 const EDITOR_CATEGORIES = [
   { id: "connection", label: "Connection" },
   { id: "terminal", label: "Terminal" },
@@ -872,6 +892,14 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   /** Whether the connection can be saved: named, unique, valid form + jump hosts. */
   const canSave = topLevelValidity.valid && schemaValid && jumpHostValidation.errors.length === 0;
 
+  // What blocks a save, for the click handlers above its definition (#6079).
+  const saveBlockerRef = useRef<{ message: string; page: EditorCategory } | null>(null);
+  // Shown once a click was blocked, until nothing blocks any more.
+  const [blockedShown, setBlockedShown] = useState(false);
+  useEffect(() => {
+    if (canSave) setBlockedShown(false);
+  }, [canSave]);
+
   // Category navigation
   const [activeCategory, setActiveCategory] = useState<EditorCategory>("connection");
   const [isCompact, setIsCompact] = useState(false);
@@ -901,6 +929,39 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     () => findSchema(effectiveRegistry, selectedType),
     [effectiveRegistry, selectedType]
   );
+
+  /**
+   * What keeps it from being saved, in words, and the page that has it (#6079): a
+   * click on Save, Save and connect or Test then says so, even when that page does
+   * not show.
+   */
+  const saveBlocker = useMemo((): { message: string; page: EditorCategory } | null => {
+    if (canSave) return null;
+    if (nameError) return { message: `Name: ${nameError}`, page: "connection" };
+    const [fieldKey, fieldIssue] = Object.entries(schemaErrors)[0] ?? [];
+    if (fieldKey) {
+      const field = currentTypeInfo?.schema.groups
+        .flatMap((g) => g.fields)
+        .find((f) => f.key === fieldKey);
+      return { message: `${field?.label ?? fieldKey}: ${fieldIssue}`, page: "connection" };
+    }
+    if (jumpHostValidation.errors.length > 0) {
+      return { message: jumpHostValidation.errors[0], page: "connection" };
+    }
+    for (const [key, issue] of Object.entries(topLevelValidity.errors)) {
+      const where = TOP_LEVEL_FIELD_PAGE[key];
+      if (where) return { message: `${where.label}: ${issue}`, page: where.page };
+    }
+    return { message: "Check the marked fields.", page: "connection" };
+  }, [
+    canSave,
+    nameError,
+    schemaErrors,
+    currentTypeInfo,
+    jumpHostValidation,
+    topLevelValidity.errors,
+  ]);
+  saveBlockerRef.current = saveBlocker;
 
   // Track whether a credential is actually stored for this connection.
   // Prevents the hint from showing when savePassword=true but no credential was ever saved.
@@ -982,7 +1043,9 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
    */
   const focusFirstInvalidField = useCallback(() => {
     setSaveAttempted(true);
-    setActiveCategory("connection");
+    setBlockedShown(true);
+    const page = saveBlockerRef.current?.page ?? "connection";
+    setActiveCategory(page);
     // Defer until the Connection tab content is mounted/visible.
     requestAnimationFrame(() => {
       const root = containerRef.current;
@@ -1311,7 +1374,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     }
   }, [handleSaveOnly, setPendingCloseRequest, closeThisTab]);
 
-  const handleSaveAndConnect = useCallback(async () => {
+  const saveAndConnect = useCallback(async () => {
     if (!canSave) {
       focusFirstInvalidField();
       return;
@@ -1325,7 +1388,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         toast.error("Failed to save agent connection", {
           description: errorMessage(err),
         });
-        throw err;
+        throw new AlreadyReportedError(errorMessage(err));
       }
       if (isAgentTunnelledGraphicalType(selectedType)) {
         // VNC/RDP under an agent runs here and tunnels through the agent (#3241).
@@ -1487,6 +1550,22 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     canSave,
     focusFirstInvalidField,
   ]);
+
+  // The Button shows no error of its own (`errorToast={false}`): a failure the
+  // handler did not report is said here, so a click never ends in nothing (#6079).
+  const handleSaveAndConnect = useCallback(async () => {
+    try {
+      await saveAndConnect();
+    } catch (err) {
+      if (!(err instanceof PromptCanceledError) && !(err instanceof AlreadyReportedError)) {
+        frontendLog("connection_editor", `Save and connect failed: ${errorMessage(err)}`);
+        toast.error(`Could not connect “${name.trim() || "the connection"}”`, {
+          description: errorMessage(err),
+        });
+      }
+      throw err;
+    }
+  }, [saveAndConnect, name]);
 
   // ── Test Connection (UX-007) ─────────────────────────────────────
   // Validate the current form's connection without saving it or opening a tab:
@@ -2338,6 +2417,12 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
               Cancel test
             </Button>
           )}
+          {/* Why a click did not save (#6079), beside the actions. */}
+          <InlineStatus
+            kind="info"
+            message={blockedShown && saveBlocker ? `Not saved: ${saveBlocker.message}` : null}
+            testId="connection-editor-blocked"
+          />
           {/* The test's result shows beside its button, not in a toast (#5859). */}
           <InlineStatus
             kind={testOutcome === "success" ? "success" : "info"}
