@@ -4,6 +4,6 @@
  * Why a session's link ended on its own.
  *
  * Serialised `snake_case` (`"remote_closed"`, `"io_error"`, `"timeout"`,
- * `"device_gone"`) for the `terminal-exit` event.
+ * `"device_gone"`, `"shell_exited"`) for the `terminal-exit` event.
  */
-export type SessionEndCause = "remote_closed" | "io_error" | "timeout" | "device_gone";
+export type SessionEndCause = "remote_closed" | "io_error" | "timeout" | "device_gone" | "shell_exited";

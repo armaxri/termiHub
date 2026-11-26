@@ -50,6 +50,7 @@ export function dropTransportOf(identity: DropIdentity | undefined): DropTranspo
 export type DisconnectCause =
   | "user"
   | "ended"
+  | "shellEnded"
   | "exited"
   | "server"
   | "timeout"
@@ -90,6 +91,8 @@ export interface DisconnectCauseInput {
 export function disconnectCauseOf(input: DisconnectCauseInput): DisconnectCause | undefined {
   const { transport, exit, endCause } = input;
   if (exit?.reason === "killed") return "user";
+  // The shell ended, with no status termiHub can trust (#5995): never "normally".
+  if (endCause === "shell_exited" && (exit?.code ?? null) === null) return "shellEnded";
   if (exit && exit.code !== null) {
     return exit.reason === "clean" && exit.code === 0 ? "ended" : "exited";
   }
@@ -118,6 +121,8 @@ export function disconnectCauseLine(
       return details.code === null || details.code === undefined
         ? t("drop.cause.ended")
         : tf("drop.cause.endedCode", { code: details.code });
+    case "shellEnded":
+      return t("drop.cause.shellEnded");
     case "exited":
       return tf("drop.cause.exited", { code: details.code ?? "?" });
     case "server":
@@ -208,6 +213,8 @@ export function sessionEndSeparator(input: {
   if (reason === "killed" && exitCode === null && transport !== "other") {
     return tf("drop.separator.user", { time: formatClock(at) });
   }
+  // The shell ended, with no status termiHub can trust (#5995).
+  if (endCause === "shell_exited" && exitCode === null) return "[Process exited]";
   if (reason === "dropped" && exitCode === null && transport !== "other") {
     const time = formatClock(at);
     // A serial device on a remote agent that is gone for good (#5783).
@@ -310,6 +317,7 @@ export function sessionEndNoticeFor(
         action: local ? "restart" : "reconnect",
       };
     case "ended":
+    case "shellEnded":
       return {
         kind: "ended",
         heading: t("drop.end.ended"),

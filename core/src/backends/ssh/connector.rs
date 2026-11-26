@@ -870,7 +870,13 @@ impl SshConnector for RusshSshConnector {
         let refused_task = shell_refused.clone();
         let end_cause = EndCauseSlot::new();
         let end_cause_task = end_cause.clone();
-        let exit_status = ShellExitSlot::new();
+        // Win32-OpenSSH reports 0 for a PTY shell whatever it exited with
+        // (#5995): its status is not kept, only that the shell exited.
+        let exit_status = if win32_openssh {
+            ShellExitSlot::distrusting()
+        } else {
+            ShellExitSlot::new()
+        };
         let exit_status_task = exit_status.clone();
         tokio::spawn(async move {
             // Why the channel ended on its own; `None` for a local close.
@@ -1041,7 +1047,7 @@ impl SshConnector for RusshSshConnector {
                 refused_task.store(true, Ordering::SeqCst);
             }
             // Record the cause before the reader can see the end (#5696).
-            if let Some(cause) = ended_by {
+            if let Some(cause) = shell_exit::shell_end_cause(ended_by, &exit_status_task) {
                 end_cause_task.record(cause);
             }
             // Signal EOF to the reader (an empty chunk is the sentinel). Never

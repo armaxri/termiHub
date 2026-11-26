@@ -1469,8 +1469,10 @@ async fn server_shell_exit_status(sshd: &common::NativeSshd, line: &str) -> Opti
 /// #5801: a shell the user exits with a status reports it from `exit_code`,
 /// once the session's output ended — OpenSSH sends it after the EOF. On a
 /// Win32-OpenSSH host the reported status is the server's own: it runs a PTY
-/// shell under `conhost.exe --headless` and sends what that returned (`0`), so
-/// the expected value is read off a plain channel there, not assumed.
+/// shell under `conhost.exe --headless` and sends what that returned (`0`)
+/// whatever the shell exited with, so there the session reports no status and
+/// ends as a shell that exited (#5995). Its exec channel's status is the
+/// command's (`native_04`, `exit 7`).
 #[tokio::test]
 async fn native_05m_exit_reports_the_remote_shell_status() {
     let sshd = require_native_sshd!();
@@ -1496,16 +1498,25 @@ async fn native_05m_exit_reports_the_remote_shell_status() {
 
     let sent = server_shell_exit_status(&sshd, line).await;
     eprintln!("[5801] the server sent exit-status {sent:?} for {line:?}");
-    if !cfg!(windows) {
+    if cfg!(windows) {
+        // #5995: Win32-OpenSSH sends its own status for a PTY shell, not the
+        // shell's: the session reports none, and ends as a shell that exited.
+        assert_eq!(ssh.exit_code(), None, "no status that is not the shell's");
+        assert_eq!(
+            ssh.end_cause(),
+            Some(SessionEndCause::ShellExited),
+            "the shell exited, its status unknown"
+        );
+    } else {
         assert_eq!(sent, Some(5), "the server's exit-status for `exit 5`");
+        let sent = sent.expect("the server sends an exit-status") as i32;
+        assert_eq!(ssh.exit_code(), Some(sent), "the remote shell's status");
+        assert_eq!(
+            ssh.end_cause(),
+            Some(SessionEndCause::RemoteClosed),
+            "the server closed the shell channel"
+        );
     }
-    let sent = sent.expect("the server sends an exit-status") as i32;
-    assert_eq!(ssh.exit_code(), Some(sent), "the remote shell's status");
-    assert_eq!(
-        ssh.end_cause(),
-        Some(SessionEndCause::RemoteClosed),
-        "the server closed the shell channel"
-    );
     ssh.disconnect().await.expect("disconnect cleanly");
     assert_eq!(ssh.exit_code(), None, "a disconnect drops the status");
 }

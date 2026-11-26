@@ -535,11 +535,7 @@ pub fn rdp_settings_schema() -> SettingsSchema {
             },
             SettingsField {
                 default: Some(serde_json::json!("auto")),
-                description: Some(
-                    "How the session is secured. NLA (CredSSP) is recommended; legacy RDP \
-                     security is insecure and offered only for old servers."
-                        .to_string(),
-                ),
+                description: Some("Will not connect? Try Auto, then TLS.".to_string()),
                 ..field(
                     "securityMode",
                     "Security",
@@ -547,7 +543,7 @@ pub fn rdp_settings_schema() -> SettingsSchema {
                         options: vec![
                             SelectOption {
                                 value: "auto".to_string(),
-                                label: "Auto (negotiate)".to_string(),
+                                label: "Auto (recommended)".to_string(),
                             },
                             SelectOption {
                                 value: "nla".to_string(),

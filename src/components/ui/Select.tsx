@@ -12,6 +12,11 @@ export interface SelectOption {
   label: string;
   /** Disable this individual option. */
   disabled?: boolean;
+  /**
+   * A short line under the label in the list, saying what the option means
+   * (#6036). The trigger shows the label alone.
+   */
+  description?: string;
 }
 
 /**
@@ -57,6 +62,8 @@ export interface SelectItemProps extends Omit<
   value: string;
   disabled?: boolean;
   children: React.ReactNode;
+  /** A line under the label in the list only; the trigger shows `children`. */
+  description?: React.ReactNode;
 }
 
 /**
@@ -70,17 +77,24 @@ export interface SelectItemProps extends Omit<
 export const SelectItem = React.forwardRef<
   React.ElementRef<typeof RadixSelect.Item>,
   SelectItemProps
->(function SelectItem({ value, disabled, children, ...rest }, ref) {
+>(function SelectItem({ value, disabled, children, description, ...rest }, ref) {
   return (
     <RadixSelect.Item
       ref={ref}
-      className="ui-select__item"
+      className={description ? "ui-select__item ui-select__item--described" : "ui-select__item"}
       value={value}
       disabled={disabled}
       data-value={value}
       {...rest}
     >
-      <RadixSelect.ItemText>{children}</RadixSelect.ItemText>
+      {description ? (
+        <span className="ui-select__item-body">
+          <RadixSelect.ItemText>{children}</RadixSelect.ItemText>
+          <span className="ui-select__item-desc">{description}</span>
+        </span>
+      ) : (
+        <RadixSelect.ItemText>{children}</RadixSelect.ItemText>
+      )}
       <RadixSelect.ItemIndicator className="ui-select__item-indicator">
         <Check width={14} height={14} aria-hidden="true" />
       </RadixSelect.ItemIndicator>
@@ -174,7 +188,12 @@ export function Select({
           <RadixSelect.Viewport>
             {children ??
               options?.map((opt) => (
-                <SelectItem key={opt.value} value={opt.value} disabled={opt.disabled}>
+                <SelectItem
+                  key={opt.value}
+                  value={opt.value}
+                  disabled={opt.disabled}
+                  description={opt.description}
+                >
                   {opt.label}
                 </SelectItem>
               ))}
