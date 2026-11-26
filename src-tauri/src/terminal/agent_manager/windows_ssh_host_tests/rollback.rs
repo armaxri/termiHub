@@ -468,7 +468,10 @@ fn cmd_bare_if_step_finds_an_if_that_swallows_the_rest() {
         cmd_bare_if_step(r#"if exist "a" del "a" >nul 2>&1 & echo DONE"#).as_deref(),
         Some(r#"if exist "a" del "a" >nul 2>&1 "#)
     );
-    assert_eq!(cmd_bare_if_step(r#"(if exist "a" del "a") & echo DONE"#), None);
+    assert_eq!(
+        cmd_bare_if_step(r#"(if exist "a" del "a") & echo DONE"#),
+        None
+    );
     assert_eq!(cmd_bare_if_step(r#"echo "if x & y" & echo DONE"#), None);
 }
 
@@ -483,7 +486,10 @@ fn every_cmd_chain_runs_each_step() {
         plan.backup_command.clone(),
         plan.discard_backup_command.clone(),
         windows_cleanup_stale_command(WindowsShell::Cmd),
-        format!("{} & echo NEXT", windows_cleanup_stale_command(WindowsShell::Cmd)),
+        format!(
+            "{} & echo NEXT",
+            windows_cleanup_stale_command(WindowsShell::Cmd)
+        ),
     ] {
         assert_eq!(cmd_bare_if_step(&line), None, "{line}");
     }
