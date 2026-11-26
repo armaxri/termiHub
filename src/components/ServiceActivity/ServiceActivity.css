@@ -47,8 +47,10 @@
 }
 
 .service-activity__url {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
   font-family: var(--font-mono);
-  overflow-wrap: anywhere;
 }
 
 .service-activity__address p {

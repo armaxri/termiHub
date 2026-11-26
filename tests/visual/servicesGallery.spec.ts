@@ -140,6 +140,11 @@ type State = keyof typeof STATES;
 
 const EDGE = "Edge gateway in the Frankfurt datacenter rack";
 const ON_EDGE = { kind: "agent", agentId: "agent-edge" };
+/**
+ * The agent that is online: what runs on an agent runs here, what cannot tell
+ * waits on the offline gateway, so no picture shows one agent both ways (#6117).
+ */
+const ON_LAB = { kind: "agent", agentId: "agent-lab" };
 const STATS = { bytesSent: 2048, bytesReceived: 8192, activeConnections: 1, totalConnections: 3 };
 
 /** The sentences the backend writes (src-tauri/src/agent_service.rs). */
@@ -294,7 +299,7 @@ function mixed(index: number, running: string, stopped: string): Partial<Row> {
     case 8:
       return { status: "notReachable", error: WHY.away, over: { host: ON_EDGE }, state: AGENT };
     case 11:
-      return { status: running, over: { host: ON_EDGE } };
+      return { status: running, over: { host: ON_LAB } };
     default:
       return { status: index % 3 === 1 ? stopped : running };
   }
@@ -314,12 +319,19 @@ const MIXED_TUNNELS: Row[] = MIXED_NAMES.map((name, index) => {
     },
   };
 });
-const MIXED_SERVERS: Row[] = MIXED_NAMES.map((name, index) => {
+/** File servers are named for what they share, by kind: no "Kibana · TFTP" (#6117). */
+const MIXED_SERVER_NAMES: Record<string, string[]> = {
+  http: ["Release builds", "Manuals", "Screenshots", "Test reports", "Logs"],
+  ftp: ["Scanner inbox", "Camera uploads", "Partner drop", "Printer jobs", "Old NAS"],
+  tftp: ["Switch firmware", "Phone configs", "PXE boot", "Router backups", "Access points"],
+};
+const MIXED_SERVERS: Row[] = MIXED_NAMES.map((_, index) => {
   const row = mixed(index, "running", "stopped");
+  const type = ["http", "ftp", "tftp"][index % 3];
   return {
     id: `m${index}`,
-    name,
-    type: ["http", "ftp", "tftp"][index % 3],
+    name: MIXED_SERVER_NAMES[type][Math.floor(index / 3)],
+    type,
     status: "stopped",
     ...row,
     over: { port: 15000 + index, ...row.over },
@@ -395,7 +407,10 @@ const TUNNEL_ROWS: Partial<Record<State, Row[]>> = {
       state: PORT,
     },
   ],
-  "tunnels--needs-connection": tunnelsIn("missingConnection"),
+  // Through a connection that is gone, not through Build Box, which the sidebar lists (#6117).
+  "tunnels--needs-connection": tunnelsIn("missingConnection", undefined, {
+    sshConnectionId: "Work/Old jump host",
+  }),
   "tunnels--not-reachable": [
     ...tunnelsIn("notReachable", WHY.away, { host: ON_EDGE }, AGENT).slice(0, 2),
     {
@@ -410,16 +425,16 @@ const TUNNEL_ROWS: Partial<Record<State, Row[]>> = {
   "tunnels--on-agent": [
     {
       id: "there",
-      name: "Only on the gateway",
+      name: "Only on the lab Pi",
       status: "connected",
-      over: { host: ON_EDGE },
+      over: { host: ON_LAB },
       state: { boundAddress: "127.0.0.1:15432", reachableFrom: "agentOnly" },
     },
     {
       id: "lan",
       name: "For its network",
       status: "connected",
-      over: { host: ON_EDGE },
+      over: { host: ON_LAB },
       state: { boundAddress: "0.0.0.0:15432", reachableFrom: "agentLan" },
     },
     { id: "here", name: "On this computer", status: "connected", over: onPort(15433) },
@@ -429,7 +444,7 @@ const TUNNEL_ROWS: Partial<Record<State, Row[]>> = {
       id: "parent",
       name: "Shop database",
       status: "connected",
-      over: { host: ON_EDGE },
+      over: { host: ON_LAB },
     },
     {
       id: "hop",
@@ -441,7 +456,7 @@ const TUNNEL_ROWS: Partial<Record<State, Row[]>> = {
     },
   ],
   "tunnels--chained-working": [
-    { id: "parent", name: "Shop database", status: "connected", over: { host: ON_EDGE } },
+    { id: "parent", name: "Shop database", status: "connected", over: { host: ON_LAB } },
     {
       id: "hop",
       name: "Shop database (hop on this computer)",
@@ -469,7 +484,7 @@ const TUNNEL_ROWS: Partial<Record<State, Row[]>> = {
       id: "l1",
       name: LONG,
       status: "connected",
-      over: { host: ON_EDGE, description: "Read only" },
+      over: { host: ON_LAB, description: "Read only" },
     },
     {
       id: "l2",
@@ -501,7 +516,7 @@ const SERVER_ROWS: Partial<Record<State, Row[]>> = {
       status: "error",
       error:
         "Not started: its agent could not start it: Remote agent error: The folder ~/firmware does not exist.",
-      over: { host: ON_EDGE },
+      over: { host: ON_LAB },
       state: { cause: "folderMissing" },
     },
     {
@@ -511,7 +526,7 @@ const SERVER_ROWS: Partial<Record<State, Row[]>> = {
       status: "error",
       error:
         "Not started: its agent could not start it: Remote agent error: Port 2121 is already in use. Choose another one, or stop what uses it.",
-      over: { host: ON_EDGE },
+      over: { host: ON_LAB },
       state: { cause: "portInUse" },
     },
   ],
@@ -571,7 +586,7 @@ const SERVER_ROWS: Partial<Record<State, Row[]>> = {
       name: "Switch backup",
       type: "tftp",
       status: "running",
-      over: { bindHost: "0.0.0.0", readOnly: false, host: ON_EDGE },
+      over: { bindHost: "0.0.0.0", readOnly: false, host: ON_LAB },
     },
   ],
   "servers--open-unknown": [
@@ -608,12 +623,12 @@ const SERVER_ROWS: Partial<Record<State, Row[]>> = {
     },
   ],
   "servers--on-agent": [
-    { id: "there", name: "Only on the gateway", status: "running", over: { host: ON_EDGE } },
+    { id: "there", name: "Only on the lab Pi", status: "running", over: { host: ON_LAB } },
     {
       id: "lan",
       name: "For its network",
       status: "running",
-      over: { host: ON_EDGE, bindHost: "0.0.0.0" },
+      over: { host: ON_LAB, bindHost: "0.0.0.0" },
     },
     { id: "here", name: "On this computer", status: "running", over: { port: 8081 } },
   ],
@@ -622,7 +637,7 @@ const SERVER_ROWS: Partial<Record<State, Row[]>> = {
   "servers--stop": serversIn("running"),
   "servers--delete": serversIn("running"),
   "servers--narrow": [
-    { id: "l1", name: LONG, status: "running", over: { host: ON_EDGE, description: "Read only" } },
+    { id: "l1", name: LONG, status: "running", over: { host: ON_LAB, description: "Read only" } },
     {
       id: "l2",
       name: LONG,
@@ -639,7 +654,8 @@ const SERVER_ROWS: Partial<Record<State, Row[]>> = {
 
 const request = (seq: number, client: string, path: string, bytes: number, status = "200") => ({
   seq,
-  timestamp: `2026-11-25T10:0${seq}:12Z`,
+  // After it started at 14:20 that day (#6117: no request before the start).
+  timestamp: new Date(2026, 10, 26, 14, 21 + seq, 12).toISOString(),
   client,
   method: "GET",
   path,
@@ -698,7 +714,7 @@ const REQUESTS = {
         client: "192.168.1.44",
         path: "/termiHub-0.1.0.dmg",
         bytes: 13_000_000,
-        startedAt: "2026-11-25T10:04:40Z",
+        startedAt: new Date(2026, 10, 26, 14, 25, 40).toISOString(),
       },
     ],
   },
@@ -706,7 +722,7 @@ const REQUESTS = {
 const BOTH: { tunnels: Row[]; servers: Row[] } = {
   tunnels: [
     ...MIXED_TUNNELS.slice(0, 7),
-    { id: "chain", name: "Shop database", status: "connected", over: { host: ON_EDGE } },
+    { id: "chain", name: "Shop database", status: "connected", over: { host: ON_LAB } },
     {
       id: "hop",
       name: "Shop database (hop on this computer)",
@@ -787,11 +803,29 @@ const ACTIVITY_ROWS: Partial<Record<State, { tunnels: Row[]; servers: Row[] }>> 
     servers: [],
   },
   "activity--tunnel-stopped": { tunnels: tunnelsIn("disconnected").slice(0, 1), servers: [] },
+  // The counters say what the request log says (#6117).
   "activity--server": {
     tunnels: [],
-    servers: serversIn("running", undefined, { bindHost: "0.0.0.0" }).slice(0, 1),
+    servers: serversIn(
+      "running",
+      undefined,
+      { bindHost: "0.0.0.0" },
+      {
+        stats: {
+          bytesSent: 61_000_000,
+          bytesReceived: 0,
+          activeConnections: 1,
+          totalConnections: 5,
+        },
+      }
+    ).slice(0, 1),
   },
-  "activity--server-nobody": { tunnels: [], servers: serversIn("running").slice(0, 1) },
+  "activity--server-nobody": {
+    tunnels: [],
+    servers: serversIn("running", undefined, undefined, {
+      stats: { bytesSent: 0, bytesReceived: 0, activeConnections: 0, totalConnections: 0 },
+    }).slice(0, 1),
+  },
   "activity--server-unavailable": { tunnels: [], servers: serversIn("running").slice(0, 1) },
   "activity--log-full": { tunnels: tunnelsIn("connected").slice(0, 1), servers: [] },
   "activity--path": {
@@ -866,6 +900,9 @@ const ANSWERS: Partial<Record<State, Partial<VisualScenario>>> = {
   "activity--server": { serverActivity: REQUESTS },
   "activity--server-nobody": { serverActivity: NO_REQUESTS },
   "activity--old-agent": { oldAgent: true },
+  // Build Box is an SSH connection: its editor says so (#6117: no empty Type).
+  "connection--tunnels": { sshType: true },
+  "connection--tunnels-empty": { sshType: true },
 };
 
 async function settle(page: Page): Promise<void> {
@@ -1209,7 +1246,8 @@ for (const viewport of WINDOWS) {
               await page.keyboard.press("Enter");
               await page.locator(id("server-editor")).waitFor();
               if (state === "server-editor--unsaved") {
-                await field("name").fill("Release builds 2");
+                // A change a user makes: a clearer name (#6117: not "Release builds 2").
+                await field("name").fill("Release builds for testers");
                 await field("cancel").click();
                 await page.locator("[role=alertdialog], [role=dialog]").waitFor();
               }

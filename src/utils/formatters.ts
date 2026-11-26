@@ -244,6 +244,17 @@ export function formatClockTime(value: DateInput): string {
   return date ? date.toLocaleTimeString(resolveUiLocale()) : "";
 }
 
+/**
+ * The time of day of `value` as `HH:MM:SS`: the clock of the Services, which the
+ * backend's "Try 3 of 10 at 14:32:08" uses too, so one line has one clock (#6117, F-008).
+ */
+export function formatServiceClock(value: DateInput): string {
+  const date = toValidDate(value);
+  if (!date) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
 /** The time of day of `value` as `HH:MM`, as {@link formatDayTime} writes it. */
 export function formatTimeOfDay(value: DateInput): string {
   const date = toValidDate(value);

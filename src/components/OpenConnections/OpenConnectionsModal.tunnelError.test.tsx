@@ -143,7 +143,20 @@ describe("OpenConnectionsModal — errored tunnels (#1240)", () => {
     expect(rows[0].textContent).toContain("expose-web");
   });
 
-  it("force-Stop on an errored tunnel dispatches a tunnel.stop intent", async () => {
+  it("focuses Close, never Stop all…, so Enter stops nothing (#6117, F-001)", async () => {
+    useAppStore.setState({
+      tunnels: [tunnelConfig("t1", "expose-web")],
+      tunnelStates: { t1: { ...erroredState("t1", ""), status: "connected", error: undefined } },
+    });
+    await renderModal();
+    const close = document.querySelector("[data-testid='open-connections-close']");
+    expect(document.activeElement).toBe(close);
+    const stopAll = document.querySelector<HTMLElement>(".oc-section__kill-all");
+    expect(stopAll?.textContent).toBe("Stop all…");
+    expect(document.activeElement).not.toBe(stopAll);
+  });
+
+  it("offers Retry, not Stop, on an errored tunnel, as its row in Services does (#6117)", async () => {
     useAppStore.setState({
       tunnels: [tunnelConfig("t1", "expose-web")],
       tunnelStates: { t1: erroredState("t1", "SSH session closed by peer") },
@@ -151,17 +164,30 @@ describe("OpenConnectionsModal — errored tunnels (#1240)", () => {
 
     await renderModal();
 
-    const killBtn = tunnelRows()[0].querySelector<HTMLButtonElement>(".oc-row__kill");
-    expect(killBtn).not.toBeNull();
+    expect(tunnelRows()[0].querySelector(".oc-row__kill")).toBeNull();
+    const retry = tunnelRows()[0].querySelector<HTMLButtonElement>("[data-testid='oc-row-retry']");
+    expect(retry?.textContent).toBe("Retry");
     await act(async () => {
-      killBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      retry!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    expect(dispatchMock).toHaveBeenCalledTimes(1);
     expect(dispatchMock.mock.calls[0][0]).toMatchObject({
-      kind: "tunnel.stop",
+      kind: "tunnel.start",
       payload: { id: "t1" },
     });
+  });
+
+  it("shows the whole reason on its own line, with the state word (#6117)", async () => {
+    useAppStore.setState({
+      tunnels: [tunnelConfig("t1", "expose-web")],
+      tunnelStates: { t1: erroredState("t1", "SSH session closed by peer") },
+    });
+    await renderModal();
+    const row = tunnelRows()[0];
+    const reason = row.querySelector<HTMLElement>("[data-testid='oc-row-reason']");
+    expect(reason?.textContent).toBeTruthy();
+    expect(reason?.getAttribute("title")).toBe(reason?.textContent);
+    expect(row.querySelector(".oc-row__badge")?.textContent).toBe("Error");
   });
 
   it("offers the same remedy as the tunnel's row (#6028, slice 10)", async () => {

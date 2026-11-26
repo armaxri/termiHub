@@ -250,7 +250,7 @@ describe("OpenConnectionsModal — kill / cancel paths (COV-015)", () => {
       expect(rowsMatching("app-server")).toHaveLength(1);
       expect(rowsMatching("db-server")).toHaveLength(1);
 
-      await bulkAndConfirm("Kill all Connecting");
+      await bulkAndConfirm("Stop all Connecting");
 
       expect(cancelConnecting).toHaveBeenCalledWith("tab-1");
       expect(cancelConnecting).toHaveBeenCalledWith("tab-2");
@@ -267,7 +267,7 @@ describe("OpenConnectionsModal — kill / cancel paths (COV-015)", () => {
       );
       await renderModal();
 
-      await bulkAndConfirm("Kill all Connecting");
+      await bulkAndConfirm("Stop all Connecting");
 
       expect(cancelConnecting).toHaveBeenCalledTimes(2);
       expect(closeTab).toHaveBeenCalledTimes(2);
@@ -285,7 +285,7 @@ describe("OpenConnectionsModal — kill / cancel paths (COV-015)", () => {
       cancelConnecting.mockRejectedValue(new Error("down"));
       await renderModal();
 
-      await bulkAndConfirm("Kill all Connecting");
+      await bulkAndConfirm("Stop all Connecting");
 
       expect(toastError).toHaveBeenCalledWith("Failed to cancel 2 connections");
       expect(frontendErrorMock).toHaveBeenCalledTimes(2);
@@ -408,10 +408,10 @@ describe("OpenConnectionsModal — kill / cancel paths (COV-015)", () => {
       expect(rowsMatching("Bad Proxy")).toHaveLength(1);
     });
 
-    it("Kill all kills every proxy session and drops the section", async () => {
+    it("Stop all kills every proxy session and drops the section", async () => {
       await renderProxy();
 
-      await bulkAndConfirm("Kill all Connections via build-box");
+      await bulkAndConfirm("Stop all Connections via build-box");
 
       expect(closeTerminal).toHaveBeenCalledWith("p-ok", true);
       expect(closeTerminal).toHaveBeenCalledWith("p-bad", true);
@@ -425,13 +425,13 @@ describe("OpenConnectionsModal — kill / cancel paths (COV-015)", () => {
       expect(toastError).not.toHaveBeenCalled();
     });
 
-    it("Kill all keeps only the session whose kill failed", async () => {
+    it("Stop all keeps only the session whose kill failed", async () => {
       closeTerminal.mockImplementation((id) =>
         id === "p-bad" ? Promise.reject(new Error("stuck")) : Promise.resolve()
       );
       await renderProxy();
 
-      await bulkAndConfirm("Kill all Connections via build-box");
+      await bulkAndConfirm("Stop all Connections via build-box");
 
       expect(rowsMatching("Good Proxy")).toHaveLength(0);
       expect(rowsMatching("Bad Proxy")).toHaveLength(1);
@@ -513,10 +513,10 @@ describe("OpenConnectionsModal — kill / cancel paths (COV-015)", () => {
       );
     });
 
-    it("Kill all closes every agent session and drops the section", async () => {
+    it("Stop all closes every agent session and drops the section", async () => {
       await renderAgentSessions();
 
-      await bulkAndConfirm("Kill all Sessions on build-box");
+      await bulkAndConfirm("Stop all Sessions on build-box");
 
       expect(closeAgentSession).toHaveBeenCalledWith("a1", "s-ok");
       expect(closeAgentSession).toHaveBeenCalledWith("a1", "s-bad");
@@ -524,13 +524,13 @@ describe("OpenConnectionsModal — kill / cancel paths (COV-015)", () => {
       expect(toastError).not.toHaveBeenCalled();
     });
 
-    it("Kill all keeps only the session whose close failed", async () => {
+    it("Stop all keeps only the session whose close failed", async () => {
       closeAgentSession.mockImplementation((_agentId, sessionId) =>
         sessionId === "s-bad" ? Promise.reject(new Error("busy")) : Promise.resolve()
       );
       await renderAgentSessions();
 
-      await bulkAndConfirm("Kill all Sessions on build-box");
+      await bulkAndConfirm("Stop all Sessions on build-box");
 
       expect(rowsMatching("bash ok")).toHaveLength(0);
       expect(rowsMatching("bash bad")).toHaveLength(1);
@@ -542,11 +542,11 @@ describe("OpenConnectionsModal — kill / cancel paths (COV-015)", () => {
       );
     });
 
-    it("Kill all pluralises the toast when every close fails", async () => {
+    it("Stop all pluralises the toast when every close fails", async () => {
       closeAgentSession.mockRejectedValue(new Error("busy"));
       await renderAgentSessions();
 
-      await bulkAndConfirm("Kill all Sessions on build-box");
+      await bulkAndConfirm("Stop all Sessions on build-box");
 
       expect(rowsMatching("bash ok")).toHaveLength(1);
       expect(rowsMatching("bash bad")).toHaveLength(1);

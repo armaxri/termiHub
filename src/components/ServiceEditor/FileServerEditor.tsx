@@ -45,6 +45,7 @@ import {
   hasUploads,
   missingText,
   newForm,
+  serverName,
   shareForm,
   openWarning,
   savedSignIn,
@@ -152,7 +153,8 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
   // ── What it is for ─────────────────────────────────────────────────────────
   const [choosing, setChoosing] = useState(false);
   // Whether who can open it is still what a new server of this kind starts with.
-  const [presetWho, setPresetWho] = useState(!existing && !original);
+  // A share asks who from the start (F-004): no preset to follow the kind.
+  const [presetWho, setPresetWho] = useState(!existing && !original && !meta.folder);
   const changeType = (type: ServerType) => {
     const next = withType(getValues(), type, presetWho, free);
     for (const [key, value] of Object.entries(next)) {
@@ -249,7 +251,11 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
       </Button>
     );
   };
-  const saveButton = button("close", t("service.editor.save"), "server-dialog-save");
+  const saveButton = button(
+    "close",
+    t(active ? "service.editor.saveLater" : "service.editor.save"),
+    "server-dialog-save"
+  );
   const runButton = button(
     "run",
     t(active ? "service.editor.saveAndRestart" : "service.editor.saveAndStart"),
@@ -296,18 +302,22 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
       }
       view={view}
       onView={(next) => existing && showIn(existing.id, next)}
-      title={existing ? existing.name : t(`service.new.${form.serverType}`)}
-      subtitle={editorSubtitle(!existing, t(`service.new.${form.serverType}.technical`))}
+      title={
+        existing
+          ? existing.name
+          : meta.folder
+            ? tf("server.editor.share.title", { name: serverName(form) || "this folder" })
+            : t(`service.new.${form.serverType}`)
+      }
+      subtitle={editorSubtitle(
+        !existing,
+        t(`service.new.${form.serverType}.technical`),
+        active && !moves
+      )}
       onChangeType={choosing ? undefined : () => setChoosing(true)}
       rootProps={rootProps}
       onKeyDown={onKeyDown}
-      note={
-        canSave
-          ? active && isDirty && !moves
-            ? t("service.editor.afterRestart")
-            : undefined
-          : missingText(allErrors)
-      }
+      note={canSave ? undefined : missingText(allErrors)}
       actions={
         <>
           <Button variant="secondary" onClick={tab.cancel} data-testid="server-dialog-cancel">
@@ -558,6 +568,7 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
         open={tab.asking}
         subject="file server"
         name={form.name.trim() || undefined}
+        note={active ? t("service.editor.unsavedRunning") : undefined}
         onCancel={tab.stopAsking}
         onJustClose={() => {
           tab.stopAsking();

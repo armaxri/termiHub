@@ -142,7 +142,7 @@ describe("Services, tunnels — stop/reconnect confirmation (UX-021)", () => {
     );
     const dialog = document.querySelector('[data-testid="confirm-service-lifecycle-dialog"]')!;
     expect(dialog.textContent).toContain('Stop "Busy"?');
-    expect(dialog.textContent).toContain("2 connections are open now. They will be dropped.");
+    expect(dialog.textContent).toContain("2 are connected to it now. Stopping cuts them all off.");
   });
 
   it("aborts the stop when the dialog is cancelled", async () => {

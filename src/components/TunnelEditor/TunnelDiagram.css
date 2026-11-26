@@ -37,10 +37,11 @@
 }
 
 .tunnel-diagram__box-detail {
+  display: flex;
+  justify-content: center;
+  max-width: 100%;
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
-  text-align: center;
-  overflow-wrap: anywhere;
 }
 
 .tunnel-diagram__arrow {

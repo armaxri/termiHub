@@ -267,12 +267,12 @@ describe("OpenConnectionsModal — monitoring row actions reach the backend (COV
     expect(document.querySelector(`[data-testid="monitor-kill-${OTHER}"]`)).not.toBeNull();
   });
 
-  it("Kill All closes every monitor's backend session", async () => {
+  it("Stop all closes every monitor's backend session", async () => {
     seed([monitorEntry(KEY), monitorEntry(OTHER)]);
     await renderModal();
 
     const killAll = document.querySelector(
-      '[aria-label="Kill All Monitoring"]'
+      '[aria-label="Stop all Monitoring"]'
     ) as HTMLButtonElement;
     expect(killAll).not.toBeNull();
     await act(async () => killAll.click());

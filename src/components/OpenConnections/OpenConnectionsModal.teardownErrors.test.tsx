@@ -159,9 +159,9 @@ describe("OpenConnectionsModal — swallowed teardown failures are surfaced", ()
     );
     await renderModal();
 
-    // "Kill all" for the Local sessions section, then confirm the dialog.
+    // "Stop all" for the Local sessions section, then confirm the dialog.
     const killAll = Array.from(document.querySelectorAll("button")).find(
-      (b) => b.getAttribute("aria-label") === "Kill all Local sessions"
+      (b) => b.getAttribute("aria-label") === "Stop all Local sessions"
     ) as HTMLButtonElement;
     expect(killAll).not.toBeNull();
     await act(async () => killAll.click());

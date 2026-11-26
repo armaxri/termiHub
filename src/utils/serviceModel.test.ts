@@ -522,6 +522,19 @@ describe("state, reason and next step", () => {
     expect(web.addressStep).toBeUndefined();
   });
 
+  it("a folder shared for now that only this computer reaches offers to let others (#6117, F-004)", () => {
+    const share = (bindHost: string) =>
+      fileServerModel(server({ bindHost, temporary: true }), serverIn("running"), {
+        ...CONTEXT,
+        networkAddress: "192.168.1.20",
+      });
+    expect(share("127.0.0.1").addressStep).toEqual({
+      id: "letReach",
+      label: "Let others reach it",
+    });
+    expect(share("0.0.0.0").addressStep).toBeUndefined();
+  });
+
   it("under its agent's line a pending stop says what will happen (#6076)", () => {
     const pending = tunnelModel(
       tunnel({ host: EDGE }),

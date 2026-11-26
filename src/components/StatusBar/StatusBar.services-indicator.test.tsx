@@ -98,6 +98,23 @@ describe("StatusBar — services indicator (#4498, #5858)", () => {
     expect(setSidebarView).toHaveBeenCalledWith("services");
   });
 
+  it("says a tunnel reconnects, also when nothing else runs (#6117, F-005)", async () => {
+    seedSettings({ experimentalFeaturesEnabled: false });
+    useAppStore.setState({
+      embeddedServers: [],
+      embeddedServerStates: {},
+      tunnels: [{ ...tunnel("Shop database"), reconnectOnDisconnect: true }],
+      tunnelStates: {
+        "Shop database": { status: "reconnecting", stats: STATS } as never,
+      },
+    });
+    act(() => renderStatusBar(root));
+    await flushAsync();
+    const item = indicator();
+    expect(item?.textContent).toBe("1 reconnecting");
+    expect(item?.getAttribute("aria-label")).toMatch(/^Shop database.* — click to open Services$/);
+  });
+
   it("counts tunnels, too (#6063)", async () => {
     seedSettings({ experimentalFeaturesEnabled: false });
     const at = (status: string) => ({ status, stats: STATS });
