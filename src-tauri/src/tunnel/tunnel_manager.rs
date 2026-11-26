@@ -522,6 +522,8 @@ impl<R: Runtime> TunnelManager<R> {
     pub fn from_loaded(app_handle: &AppHandle<R>, loaded: LoadedTunnels) -> Self {
         let LoadedTunnels { storage, store, .. } = loaded;
         let tasks = AppTasks::for_app(app_handle);
+        // Stops agents owed before the app ended are sent again (#6051).
+        let hosted = HostedServices::stored(storage.owed_stops_path());
 
         Self {
             tunnel_configs: Mutex::new(store),
@@ -530,7 +532,7 @@ impl<R: Runtime> TunnelManager<R> {
             last_errors: Arc::new(Mutex::new(HashMap::new())),
             reconnecting: Arc::new(Mutex::new(HashMap::new())),
             connecting: ConnectingTracker::new(),
-            hosted: HostedServices::default(),
+            hosted,
             endpoint_pool: RefPool::new(),
             app_handle: app_handle.clone(),
             stats_emitter: Arc::new(Mutex::new(None)),
@@ -1215,9 +1217,19 @@ impl<R: Runtime> TunnelManager<R> {
         }
 
         let agent = agent_id.to_string();
-        match client.send_request(agent_id, TUNNEL_START, params) {
+        let reply = match client.send_request(agent_id, TUNNEL_START, params) {
+            // It still runs there from before an app restart (#6051): it is
+            // that one, and the poller reads what it binds.
+            Err(e) if already_runs_there(&e) => Ok(serde_json::Value::Null),
+            reply => reply,
+        };
+        match reply {
             Ok(result) => {
-                let state = HostedTunnel::from_start_reply(result);
+                let state = if result.is_null() {
+                    HostedTunnel::default()
+                } else {
+                    HostedTunnel::from_start_reply(result)
+                };
                 tracing::info!(
                     "Tunnel {} started on agent {} (bound {} on the agent, reachable from {:?})",
                     tunnel_id,
@@ -1817,6 +1829,15 @@ impl<R: Runtime> TunnelManager<R> {
             }
         };
 
+        // What still runs on an agent after the app ended is taken over (#6051).
+        for tunnel in &tunnels {
+            if let HostChoice::Agent(agent_id) = tunnel.host.choice() {
+                self.hosted.expect(&tunnel.id, agent_id);
+            }
+        }
+        if self.hosted.any() {
+            self.ensure_status_poller();
+        }
         for tunnel in tunnels {
             if tunnel.auto_start {
                 if let Err(e) = self.start(&tunnel.id, StartedBy::Itself) {
@@ -2251,6 +2272,14 @@ fn start_reason(tunnel: &TunnelType, server: &str, direct: bool, error: &Termina
             _ => plain_reason(error).into(),
         },
     }
+}
+
+/// Whether an agent refused a start because the tunnel already runs there, as an
+/// agent that outlived the app says (#6051).
+fn already_runs_there(error: &TerminalError) -> bool {
+    error
+        .display_message()
+        .contains("is already running on this agent")
 }
 
 /// Whether the machine answered that nothing listens there. By the number the
