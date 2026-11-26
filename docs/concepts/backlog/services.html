@@ -592,7 +592,7 @@
       <header class="concept-header">
         <h1>Services: one view for SSH tunnels and file servers</h1>
         <div class="concept-meta">
-          <span class="concept-status">Backlog · slices 1 to 12 of 14 implemented</span
+          <span class="concept-status">Backlog · slices 1 to 13 of 14 implemented</span
           ><span
             >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/6028">#6028</a></span
           ><span><code>docs/concepts/backlog/services.html</code></span>
@@ -4487,8 +4487,13 @@ flowchart LR
           server's gone folder says so with Choose folder, here and on an agent; an agent's refusal
           to start is read for its cause; Show path and Activity mark the failing part; Open
           connections offers the same steps and Activity. "Review key" starts again, which shows the
-          host key prompt with the key to compare. Slices 13 and 14 are not started. Step 0 of
-          <a href="https://github.com/armaxri/termiHub/issues/6028">#6028</a>.
+          host key prompt with the key to compare. Slice 13 (port forwarding and cleanup) is
+          implemented: the SSH connection editor's section, now titled "SSH tunnels", lists the
+          tunnels through the connection on the Services rows with their actions and dialogs; only
+          "Start when a session opens" is its own; New tunnel opens the editor with the connection
+          chosen and Show in Services opens the view. The old panel, its classes and exports are
+          gone, and README, copy-style and comments use the new words. Slice 14 is not started. Step
+          0 of <a href="https://github.com/armaxri/termiHub/issues/6028">#6028</a>.
         </p>
         <p>
           The maintainer followed the three recommendations of section 8 (comment on
