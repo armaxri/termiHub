@@ -20,8 +20,8 @@ three and a half minutes:
 
 The schedule is authored like a user would: a local-shell connection opened
 from the sidebar, a one-step automation, its row menu's Schedule… entry, then
-Settings -> Schedules to enable (with the first-enable confirmation) and to
-pause/resume. Experimental features stay off; none of this needs them.
+the Automations sidebar's Schedules list (the one list since #5860) to enable
+(with the first-enable confirmation) and to pause/resume. Experimental features stay off; none of this needs them.
 """
 
 from __future__ import annotations
@@ -78,7 +78,7 @@ class TestScheduledRuns(
         # 1-minute schedule still enabled — which would fire into the rerun's
         # terminal and make its runs skip as "another scheduled run".
         self.dismiss_modals(EDITOR, CONFIRM, "automation-editor-dialog")
-        self._open_schedules_settings()
+        self._open_schedules()
         for s in self._schedules():
             if s.get("enabled"):
                 self.driver.click(f"schedule-enable-{s['id']}")
@@ -104,10 +104,10 @@ class TestScheduledRuns(
         return bool(self.driver.get_state("schedulesPaused"))
 
     # ── authoring ────────────────────────────────────────────────────────────
-    def _open_schedules_settings(self) -> None:
-        self.close_automation_schedules()  # its rows share Settings' testIds
-        self.open_settings_category("schedules")
-        self.wait(lambda: self.driver.exists("schedules-settings"), what="Settings -> Schedules")
+    def _open_schedules(self) -> None:
+        """The one schedules list: the Automations sidebar's Schedules section (#5860)."""
+        self.open_automation_schedules()
+        self.wait(lambda: self.driver.exists("schedules-section"), what="the Schedules list")
 
     def _set_paused(self, paused: bool) -> None:
         """Flip the "Pause all" switch like a user and wait for the backend."""
@@ -155,7 +155,7 @@ class TestScheduledRuns(
 
     def _enable_with_confirmation(self, schedule_id: str) -> None:
         """First enable: the target-host confirmation must come up and be accepted."""
-        self._open_schedules_settings()
+        self._open_schedules()
         toggle = f"schedule-enable-{schedule_id}"
         self.wait(lambda: self.driver.exists(toggle), what="the schedule's enable switch")
         self.driver.click(toggle)

@@ -125,11 +125,11 @@ describe("Terminal ▸ Syntax highlighting (#5900)", () => {
 });
 
 describe("Monitoring (#5900)", () => {
-  it("keeps the local-shell hint short with Power monitoring behind the help tip", async () => {
+  it("keeps the local-shell hint short with Host monitoring behind the help tip", async () => {
     seedSettings({ ...SETTINGS });
     await render(<MonitoringSettingsFields />);
     expectShortHintsWithHelp(["settings-monitor-local-shells"]);
-    expect(helpText("settings-monitor-local-shells-help")).toContain("Power monitoring");
+    expect(helpText("settings-monitor-local-shells-help")).toContain("Host monitoring");
     expect(text("settings-status-bar-metrics-hint").length).toBeLessThanOrEqual(MAX_HINT_CHARS);
   });
 });

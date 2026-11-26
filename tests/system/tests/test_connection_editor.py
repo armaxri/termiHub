@@ -122,10 +122,10 @@ class TestConnectionEditor(
         Waiting for each field to reach the region forces the re-render that
         refreshes the prop, so the next ``type`` spreads a current snapshot.
         """
-        self.open_settings_category("general")
+        self.open_settings_category("connection-defaults")
         self.wait(
             lambda: self.driver.exists("settings-default-user"),
-            what="the General settings fields",
+            what="the Connection defaults settings fields",
         )
         self.driver.type("settings-default-user", user)
         self.wait(

@@ -46,11 +46,13 @@ export function importSummary(result: VaultImportResult): string {
   if (result.overwrittenCount > 0) parts.push(`${result.overwrittenCount} overwritten`);
   if (result.skippedCount > 0) parts.push(`${result.skippedCount} kept as-is`);
   if (result.unchangedCount > 0) parts.push(`${result.unchangedCount} already up to date`);
-  return `Credential vault imported: ${parts.join(", ")}.`;
+  return `Passwords restored: ${parts.join(", ")}.`;
 }
 
 /**
- * Import an encrypted credential-vault file into the current store (PROD-063).
+ * Restore the passwords of an encrypted export an older termiHub made (its
+ * Export vault, PROD-063) into the current store. Opened from Backup & restore
+ * (#5860); the words follow the chosen store, not "vault".
  *
  * Two steps: pick the file + enter its passphrase → preview (counts and
  * conflicts, nothing written) → choose skip/overwrite → import. The backend
@@ -83,7 +85,7 @@ export function CredentialVaultImportDialog({
     const selected = await openFileDialog({
       multiple: false,
       directory: false,
-      filters: [{ name: "termiHub credential vault", extensions: ["json"] }],
+      filters: [{ name: "termiHub password export", extensions: ["json"] }],
     });
     if (typeof selected !== "string") return;
     try {
@@ -98,9 +100,9 @@ export function CredentialVaultImportDialog({
 
   const handlePreview = useCallback(async () => {
     const validationError = !fileContent
-      ? "Choose a vault export file first."
+      ? "Choose the export file first."
       : !passphrase
-        ? "Enter the passphrase the vault was exported with."
+        ? "Enter the passphrase the file was exported with."
         : null;
     if (validationError) {
       setError(validationError);
@@ -138,10 +140,10 @@ export function CredentialVaultImportDialog({
           variant="primary"
           onClick={handleImport}
           errorToast={false}
-          pendingLabel="Importing…"
+          pendingLabel="Restoring…"
           data-testid="vault-import-submit"
         >
-          Import
+          Restore
         </Button>
       ) : (
         <Button
@@ -163,14 +165,14 @@ export function CredentialVaultImportDialog({
     <Modal
       open={open}
       onOpenChange={onOpenChange}
-      title={<span data-testid="vault-import-title">Import credential vault</span>}
+      title={<span data-testid="vault-import-title">Restore passwords from an older export</span>}
       footer={footer}
     >
       {!preview ? (
         <form id="vault-import-form" className="credential-vault__form">
           <p className="credential-vault__note">
-            Credentials are imported into your current store ({modeLabel}). Nothing is changed until
-            you confirm the import.
+            The passwords are restored into your current store ({modeLabel}). Nothing is changed
+            until you confirm.
           </p>
           <div className="credential-vault__file-row">
             <Button
@@ -187,8 +189,8 @@ export function CredentialVaultImportDialog({
             className="ui-input"
             value={passphrase}
             onChange={(e) => setPassphrase(e.target.value)}
-            placeholder="Vault passphrase"
-            aria-label="Vault passphrase"
+            placeholder="Export passphrase"
+            aria-label="Export passphrase"
             data-testid="vault-import-passphrase"
           />
         </form>

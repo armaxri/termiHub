@@ -116,6 +116,20 @@ export function SchedulesSection({ showTitle = true, collapse }: SchedulesSectio
     return () => window.clearTimeout(timer);
   }, [justSaved, rowExists, open]);
 
+  // Opened from Settings or the status bar: the section takes the focus and is
+  // marked for a moment, so the user sees what changed (#5860, G-009).
+  const revealed = useAutomationSections((s) => s.schedulesRevealed);
+  const [shownReveal, setShownReveal] = useState(revealed);
+  const revealing = collapse !== undefined && revealed > shownReveal;
+  const sectionRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!revealing || !open) return;
+    sectionRef.current?.scrollIntoView?.({ block: "nearest" });
+    sectionRef.current?.focus({ preventScroll: true });
+    const timer = window.setTimeout(() => setShownReveal(revealed), AUTOMATION_JUST_SAVED_MS);
+    return () => window.clearTimeout(timer);
+  }, [revealing, open, revealed]);
+
   // Neither a closed section nor the fold hides a schedule that needs attention.
   const concerns = schedules.map(lastRunAttention);
   const failed = concerns.filter((c) => c === "error").length;
@@ -153,8 +167,11 @@ export function SchedulesSection({ showTitle = true, collapse }: SchedulesSectio
 
   return (
     <section
-      className={`schedules ${showTitle ? "" : "schedules--page"}`}
+      ref={sectionRef}
+      tabIndex={-1}
+      className={`schedules ${showTitle ? "" : "schedules--page"} ${revealing && open ? "schedules--revealed" : ""}`}
       data-open={open ? "true" : "false"}
+      data-revealed={revealing && open ? "true" : undefined}
       data-testid="schedules-section"
       aria-label="Schedules"
     >

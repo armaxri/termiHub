@@ -128,8 +128,10 @@ export function ExternalFilesSettings() {
                 />
               }
               onClick={handleReload}
-              disabled={reloading}
+              // Nothing to reload without a file (#5860, G-011).
+              disabled={reloading || (settings.externalConnectionFiles ?? []).length === 0}
               title="Reload all external files"
+              data-testid="external-files-reload"
             >
               {reloading && reducedMotion ? "Reloading…" : "Reload"}
             </Button>

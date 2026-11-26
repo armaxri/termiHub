@@ -96,7 +96,7 @@ describe("Settings icon controls tooltip adoption", () => {
       await renderInput();
       const browse = btn("field-keyPath-key-path-browse");
       expect(browse, "browse button should render").toBeTruthy();
-      expect(browse?.getAttribute("aria-label")).toBe("Browse");
+      expect(browse?.getAttribute("aria-label")).toBe("Choose key file…");
       expect(browse?.hasAttribute("title")).toBe(false);
     });
 

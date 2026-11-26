@@ -132,10 +132,18 @@ describe("settingsRegistry", () => {
       }
     });
 
-    it("files the File browser default under General with the new-connection defaults (#5786)", () => {
-      expect(categoryOf("fileBrowser")).toBe("general");
-      // The old home's words (External files ▸ Advanced) and the new ones all find it.
-      for (const query of ["file browser", "sftp", "advanced", "external", "new connection"]) {
+    it("files the File browser default with the connection defaults (#5786, #5860)", () => {
+      expect(categoryOf("fileBrowser")).toBe("connection-defaults");
+      // The old homes' words (External files ▸ Advanced, General) and the new ones all find it.
+      for (const query of [
+        "file browser",
+        "sftp",
+        "advanced",
+        "external",
+        "general",
+        "new connection",
+        "connection defaults",
+      ]) {
         expect(
           filterSettings(query).some((s) => s.id === "fileBrowser"),
           query
@@ -197,18 +205,71 @@ describe("settingsRegistry", () => {
       );
     });
 
-    it("keeps only connection/shell/SSH defaults (incl. File browser, #5786), the diagnostics controls, and the experimental flag in General", () => {
+    it("keeps the default shell, the diagnostics controls, and the experimental flag in General", () => {
       const general = SETTINGS_REGISTRY.filter((s) => s.category === "general").map((s) => s.id);
       expect(general).toEqual([
-        "defaultUser",
-        "defaultSshKeyPath",
         "defaultShell",
-        "defaultX11Forwarding",
-        "fileBrowser",
         "fileLogLevel",
         "showCrashReportNotice",
         "experimentalFeaturesEnabled",
       ]);
+    });
+  });
+
+  describe("settings grouped by object (#5860)", () => {
+    const categoryOf = (id: string) => SETTINGS_REGISTRY.find((s) => s.id === id)?.category;
+    /** Each moved setting, where it was, and where it is. */
+    const MOVED: [id: string, was: string, now: string][] = [
+      ["defaultUser", "general", "connection-defaults"],
+      ["defaultSshKeyPath", "general", "connection-defaults"],
+      ["defaultX11Forwarding", "general", "connection-defaults"],
+      ["fileBrowser", "general", "connection-defaults"],
+    ];
+
+    it.each(MOVED)("files %s under %s's successor %s", (id, _was, now) => {
+      expect(categoryOf(id)).toBe(now);
+    });
+
+    it.each(MOVED)("finds %s by its old category word %s and its new one", (id, was, now) => {
+      for (const query of [was, now, "connections"]) {
+        expect(
+          filterSettings(query).some((s) => s.id === id),
+          query
+        ).toBe(true);
+      }
+    });
+
+    it("finds what was in the folded Advanced group by that word, and by its own", () => {
+      for (const [id, own] of [
+        ["schedules", "schedules"],
+        ["pluginSettings", "plugins"],
+        ["importSshConfig", "import"],
+        ["portableMode", "portable"],
+        ["provideXServerAutomatically", "x server"],
+      ]) {
+        for (const query of ["advanced", own]) {
+          expect(
+            filterSettings(query).some((s) => s.id === id),
+            `${id}: ${query}`
+          ).toBe(true);
+        }
+      }
+    });
+
+    it("finds the master-password store, which its card calls a vault (G-012)", () => {
+      expect(filterSettings("vault").map((s) => s.id)).toContain("credentialStorageMode");
+    });
+
+    it("finds Host monitoring by its old name (G-011)", () => {
+      expect(filterSettings("power monitoring").map((s) => s.id)).toContain("powerMonitoring");
+    });
+
+    it("finds the one password backup by its old name and actions", () => {
+      for (const query of ["credential vault backup", "export vault", "import vault"]) {
+        const ids = filterSettings(query).map((s) => s.id);
+        expect(ids, query).toContain("credentialVaultBackup");
+        expect(ids, query).toContain("backupRestore");
+      }
     });
   });
 

@@ -96,7 +96,10 @@ pub fn seal(
     })
 }
 
-/// Serialize a sealed export to the JSON text written to the export file.
+/// Serialize a sealed export to the JSON text an older termiHub wrote to its
+/// export file (Export vault, removed from the UI by #5860; the tests write such
+/// files).
+#[cfg(test)]
 pub fn to_json(file: &VaultExportFile) -> Result<String, VaultError> {
     serde_json::to_string_pretty(file)
         .map_err(|e| VaultError::other(format!("Failed to serialize the export: {e}")))
