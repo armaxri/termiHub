@@ -13,25 +13,67 @@ const CMD: WindowsDeployShell = WindowsDeployShell::Native(WindowsShell::Cmd);
 const POWERSHELL: WindowsDeployShell = WindowsDeployShell::Native(WindowsShell::PowerShell);
 const ENCODED: WindowsDeployShell = WindowsDeployShell::EncodedPowerShell;
 
+/// What an `-EncodedCommand` line runs.
+fn decoded(line: &str) -> String {
+    use base64::Engine;
+    let b64 = line
+        .split_whitespace()
+        .skip_while(|w| *w != "-EncodedCommand")
+        .nth(1)
+        .unwrap_or_else(|| panic!("no -EncodedCommand in {line}"));
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .unwrap();
+    let units: Vec<u16> = bytes
+        .chunks(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    String::from_utf16(&units).unwrap()
+}
+
 #[test]
 fn every_shell_types_one_line_that_runs_the_script_and_ends_the_shell() {
-    let run = |profile: &str| {
-        format!(
-            "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass \
-             -File \"{profile}\\termihub-agent-setup.ps1\""
-        )
-    };
-    for (shell, want) in [
-        (CMD, format!("{} & exit", run("%USERPROFILE%"))),
-        (
-            POWERSHELL,
-            format!("{}; exit $LASTEXITCODE", run("$env:USERPROFILE")),
-        ),
-        (ENCODED, format!("{}; exit $?", run("$USERPROFILE"))),
+    for (shell, exit) in [
+        (CMD, " & exit"),
+        (POWERSHELL, "; exit $LASTEXITCODE"),
+        (ENCODED, "; exit $?"),
     ] {
-        assert_eq!(windows_setup_lines(shell), std::slice::from_ref(&want));
+        let lines = windows_setup_lines(shell);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        let line = &lines[0];
+        assert!(
+            line.starts_with("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand "),
+            "{line}"
+        );
+        assert!(line.ends_with(exit), "{line}");
         // CR is Enter: LF leaves the line unfinished in PSReadLine (#5992).
-        assert_eq!(windows_setup_input(shell), [format!("{want}\r")]);
+        assert_eq!(windows_setup_input(shell), [format!("{line}\r")]);
+    }
+}
+
+/// #6001: an execution policy of AllSigned set by group policy wins over
+/// `-ExecutionPolicy Bypass` and refuses an unsigned script *file*. The line
+/// runs no script file: it reads the uploaded script and runs its text, which
+/// no execution policy checks. Its spelling is the same from every shell.
+#[test]
+fn the_setup_runs_no_script_file_an_execution_policy_could_refuse() {
+    let lines: Vec<String> = [CMD, POWERSHELL, ENCODED]
+        .into_iter()
+        .flat_map(windows_setup_lines)
+        .collect();
+    for line in &lines {
+        assert!(!line.contains("-File"), "{line}");
+        assert!(!line.contains("-ExecutionPolicy"), "{line}");
+        assert!(!line.contains(".ps1"), "{line}");
+    }
+    let run = decoded(&lines[0]);
+    assert!(run.contains("[scriptblock]::Create"), "{run}");
+    assert!(run.contains("ReadAllText"), "{run}");
+    assert!(run.contains("$env:USERPROFILE"), "{run}");
+    assert!(run.contains(WINDOWS_SETUP_SCRIPT_NAME), "{run}");
+    assert!(run.is_ascii(), "{run}");
+    for line in &lines[1..] {
+        assert_eq!(decoded(line), run, "one command for every shell");
     }
 }
 
@@ -277,6 +319,36 @@ mod executed {
         } else {
             NEW
         }
+    }
+
+    #[test]
+    fn the_typed_line_runs_the_uploaded_script_and_passes_its_status_on() {
+        let Some(pwsh) = pwsh() else { return };
+        // A POSIX login shell (Git Bash) types the line as the setup does.
+        let line = windows_setup_lines(ENCODED).remove(0);
+        let script = windows_setup_script();
+        let script_path = |host: &Host| host.path("home").join(WINDOWS_SETUP_SCRIPT_NAME);
+
+        let host = Host::update(&pwsh, NEW);
+        std::fs::write(script_path(&host), &script).unwrap();
+        let (code, out) = host.sh(&line);
+        assert_eq!(code, Some(0), "{out}");
+        assert!(out.contains("Agent installed."), "{out}");
+        host.assert_only(NEW, "installed through the typed line");
+
+        let host = Host::update(&pwsh, BROKEN);
+        std::fs::write(script_path(&host), &script).unwrap();
+        let (code, out) = host.sh(&line);
+        assert_eq!(
+            code,
+            Some(1),
+            "a failed setup ends the shell with its failure: {out}"
+        );
+        assert_eq!(
+            host.read("termihub-agent.exe").as_deref(),
+            Some(OLD),
+            "{out}"
+        );
     }
 
     #[test]

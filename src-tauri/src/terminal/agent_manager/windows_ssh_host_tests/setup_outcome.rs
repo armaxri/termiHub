@@ -219,6 +219,50 @@ async fn setup_outcome(want: WindowsDeployShell) {
     let exit = ["exit\r".to_string()];
     let outcome = run_setup(&fixture, &exit, None, &old).await;
     assert_failed_but_kept(&outcome, "a setup that never ran");
+
+    // ── 7. An execution policy of AllSigned from group policy (#6001).
+    if set_user_policy(&fixture, Some("AllSigned")).await {
+        let outcome = run_setup(&fixture, &lines, Some(old.clone()), &old).await;
+        set_user_policy(&fixture, None).await;
+        assert_eq!(
+            outcome,
+            SetupOutcome::Installed,
+            "a host whose policy is AllSigned installs the agent"
+        );
+        assert_host_runs(&fixture, &old, "installed under AllSigned").await;
+    }
+}
+
+/// Set (or with `None` remove) the fixture user's execution policy as group
+/// policy sets it (`HKCU\Software\Policies\…\PowerShell`), which wins over
+/// `-ExecutionPolicy`. `false` when the user may not write it: the step is
+/// skipped and says so.
+async fn set_user_policy(fixture: &Fixture, policy: Option<&str>) -> bool {
+    let key = r"HKCU:\Software\Policies\Microsoft\Windows\PowerShell";
+    let script = match policy {
+        Some(policy) => format!(
+            "New-Item -Force -Path '{key}' | Out-Null; \
+             Set-ItemProperty -Path '{key}' -Name EnableScripts -Value 1 -Type DWord; \
+             Set-ItemProperty -Path '{key}' -Name ExecutionPolicy -Value '{policy}'; \
+             (Get-ExecutionPolicy -Scope UserPolicy).ToString()"
+        ),
+        None => format!(
+            "Remove-Item -Force -Recurse -Path '{key}' -ErrorAction SilentlyContinue; 'removed'"
+        ),
+    };
+    let command = powershell_encoded_command(&script);
+    let out = over_ssh(fixture, move |session| {
+        run_remote_command(session, &command)
+    })
+    .await
+    .unwrap_or_else(|e| format!("{e}"));
+    match policy {
+        Some(policy) if out.trim() != policy => {
+            eprintln!("SKIPPED: the fixture user cannot set a UserPolicy of {policy}: {out:?}");
+            false
+        }
+        _ => true,
+    }
 }
 
 /// #5992 / #5996 with the OpenSSH `DefaultShell` left at `cmd.exe`.
