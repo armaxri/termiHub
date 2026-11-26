@@ -2151,6 +2151,17 @@ step:
   automation ids is passed down the call stack: a call back into the chain fails with the path
   (`"A" → "B" → "A"`), and nesting is capped at `MAX_AUTOMATION_DEPTH` (10).
 
+What a run types is marked in the terminal (#6021, R-068). Both engines wrap the injector seam
+with `markAutomationInput` (`services/automationTypingMarks.ts`), which tells the terminal of the
+tab each time the run starts a line there: its first input, and the first after an Enter or a
+newline. The terminal hangs a tint under that row (xterm's bottom decoration layer, below the text)
+and a badge at its right end on one xterm marker (`automationMarkDecorations.ts`). The badge's title
+names the automation, what started it and when, and a click opens its runs in History. Nothing is
+written into the output, so copy, paste, search, the recorder and the session log see only what was
+typed; the user's own typing never goes through the seam and is never marked. The marks move with
+the line through scrolling and reflow, and go with it when the scrollback drops it; a terminal that
+repaints its scrollback in a new xterm (moved to another window, re-attached) does not rebuild them.
+
 `src/services/automationRunner.ts` adds two things. `runAutomation` checks for cycles before any
 step runs, so a cyclic automation types nothing. `runAutomationOnTargets` runs one automation on
 several terminals as independent runs, at most 8 at once or one after another. This replaces the
