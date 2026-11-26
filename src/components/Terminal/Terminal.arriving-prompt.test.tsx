@@ -648,6 +648,26 @@ describe("Continue sees a prompt that has arrived (#6070)", () => {
     expect(escaped).toEqual([]);
   });
 
+  it("keeps what a reader throws in the guard when the PTY cannot be asked (#6014)", async () => {
+    hiddenInput.mockRejectedValueOnce(new Error("no session"));
+    const escaped: unknown[] = [];
+    const onEscape = (reason: unknown) => escaped.push(reason);
+    process.on("unhandledRejection", onEscape);
+    onTestFinished(() => void process.off("unhandledRejection", onEscape));
+    const thrown = vi.fn(() => {
+      throw new Error("a reader that fails");
+    });
+    arrive("one ");
+    act(() => promptOfTerminal(tabId)!.read(thrown));
+    await settle();
+    arrive("two");
+    await settle();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(thrown).toHaveBeenCalledWith("one ", null);
+    expect(line()).toBe("one two");
+    expect(escaped).toEqual([]);
+  });
+
   it("asks when it cannot tell in time, and an insisting press goes on", async () => {
     const state = startWait();
     terminals.block = true;
