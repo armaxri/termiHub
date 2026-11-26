@@ -150,7 +150,9 @@ for (const viewport of WINDOWS) {
 
       /** Open the help of a schema select's chosen value and check it. */
       async function choiceHelpOf(page: Page, field: string): Promise<void> {
-        await page.locator(id(`field-${field}-choice-about`)).focus();
+        const about = page.locator(id(`field-${field}-choice-about`));
+        await about.scrollIntoViewIfNeeded();
+        await hover(page, about);
         const help = page.locator(id(`field-${field}-choice-help`));
         await help.waitFor();
         await placed(help);
