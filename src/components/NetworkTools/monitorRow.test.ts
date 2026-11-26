@@ -143,6 +143,9 @@ describe("the last check, in a few words (F-009 round 2)", () => {
       "last check failed: timed out, just now"
     );
     expect(monitorLastResult(monitor({ lastResult: undefined }), NOW)).toBeUndefined();
+    const odd = monitor({ lastResult: { ...at, statusCode: 200 } });
+    odd.config.expectedStatus = 204;
+    expect(monitorLastResult(odd, NOW)).toBe("last check HTTP 200, expected 204, just now");
   });
 
   it("a failing one reads Down", () => {
