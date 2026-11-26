@@ -213,3 +213,34 @@ describe("LocalProcessAuthDialog", () => {
     ]);
   });
 });
+
+describe("the terminal that asks (#6132)", () => {
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    render();
+  });
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    useAppStore.setState({ localProcessPrompt: null });
+  });
+
+  it("is named", () => {
+    openPrompt("make", [], "make", { terminals: ["web-1"] });
+    expect(query("local-process-auth-terminals")?.textContent).toBe("Terminalweb-1");
+  });
+
+  it("are all named when one answer is for several", () => {
+    openPrompt("make", [], "make", { terminals: ["web-1", "web-2"] });
+    expect(query("local-process-auth-terminals")?.textContent).toBe(
+      "Terminalsweb-1, web-2 (one answer for all of them)"
+    );
+  });
+
+  it("is left out where none is known", () => {
+    openPrompt("make", []);
+    expect(query("local-process-auth-terminals")).toBeNull();
+  });
+});

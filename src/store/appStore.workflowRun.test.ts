@@ -800,7 +800,8 @@ describe("appStore — workflow run slice (#1852)", () => {
         "an approval (%s) starts the file the user was shown",
         async (decision) => {
           const prompt = await runsOnce(decision);
-          expect(prompt).toMatchObject({ program: "make", path: "/bin/make" });
+          // It names the terminal whose run asks (#6132).
+          expect(prompt).toMatchObject({ program: "make", path: "/bin/make", terminals: ["term"] });
           expect(invokeRunLocalProcess.mock.calls[0][0]).toMatchObject({
             program: "make",
             approvedPath: "/bin/make",
@@ -2151,10 +2152,13 @@ describe("appStore — workflow run slice (#1852)", () => {
 
       const done = useAppStore.getState().runWorkflow("w1", { targetTabIds: ["tab-a", "tab-b"] });
       await vi.waitFor(() => expect(useAppStore.getState().localProcessPrompt).not.toBeNull());
+      // One answer for all of them: it names every terminal it is for (#6132).
+      const terminals = useAppStore.getState().localProcessPrompt?.terminals;
       useAppStore.getState().resolveLocalProcessPrompt("once");
       await done;
 
       expect(useAppStore.getState().localProcessPrompt).toBeNull();
+      expect(terminals).toEqual(["web-1", "web-2"]);
       expect(invokeRunLocalProcess).toHaveBeenCalledTimes(2);
       const statuses = vi.mocked(apiRecordWorkflowRun).mock.calls.map(([r]) => r.status);
       expect(statuses).toEqual(["completed", "completed"]);
