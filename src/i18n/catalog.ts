@@ -602,6 +602,8 @@ const en = {
   "drop.cause.user": "You disconnected this session.",
   "drop.cause.ended": "The session ended normally.",
   "drop.cause.endedCode": "The session ended normally (exit code {code}).",
+  // Its server sent no status that is the shell's (#5995): no "normally".
+  "drop.cause.shellEnded": "The session ended.",
   "drop.cause.exited": "The process exited with code {code}.",
   "drop.cause.server": "The server closed the connection.",
   "drop.cause.timeout": "The connection timed out.",
