@@ -13,6 +13,9 @@ vi.mock("@/services/embeddedServerApi", () => ({
       { name: "en0", addr: "192.168.1.20" },
     ])
   ),
+  listAgentAddresses: vi.fn(() =>
+    Promise.resolve({ supported: true, addresses: [{ name: "eth0", addr: "10.1.2.3" }] })
+  ),
 }));
 vi.mock("@/components/RunLocationSelect", () => ({
   RunLocationSelect: (props: {
@@ -36,7 +39,7 @@ vi.mock("@/components/RunLocationSelect", () => ({
 }));
 
 import { toast } from "@/components/ui";
-import { listNetworkInterfaces } from "@/services/embeddedServerApi";
+import { listAgentAddresses, listNetworkInterfaces } from "@/services/embeddedServerApi";
 import { useAppStore } from "@/store/appStore";
 import { seedAgentsRegion, setupAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { checkA11y } from "@/test/axe";
@@ -365,6 +368,61 @@ describe("who can open it", () => {
       bindHost: "10.0.0.5",
       host: { kind: "agent", agentId: "a1" },
     });
+  });
+});
+
+describe("the addresses of an agent machine (#6086)", () => {
+  const agent = (over: object) =>
+    seedAgentsRegion({
+      remoteAgents: [{ id: "a1", name: "Build server", config: {}, ...over } as never],
+    });
+  const toAgent = async () => {
+    await render();
+    type("root", "/srv/docs");
+    await act(async () => byTestId("pick-agent")!.click());
+    await flushAsync();
+  };
+
+  it("a connected agent that lists them: chosen, and the preview uses its network address", async () => {
+    agent({ connectionState: "connected", capabilities: { hostAddresses: true } });
+    await toAgent();
+    expect(listAgentAddresses).toHaveBeenCalledWith("a1");
+    await press("bind-address");
+    const address = field("address")!;
+    expect(address.tagName).not.toBe("INPUT");
+    expect(address.textContent).toContain("10.1.2.3 (eth0)");
+    expect(field("address-note")).toBeNull();
+    await press("bind-network");
+    expect(field("address-preview")?.textContent).toContain("http://10.1.2.3:");
+  });
+
+  it("an agent that is not connected: typed, and the note says why", async () => {
+    agent({ connectionState: "disconnected" });
+    await toAgent();
+    await press("bind-address");
+    expect(field("address")?.tagName).toBe("INPUT");
+    expect(field("address-note")?.textContent).toBe(
+      "Build server is not connected, so termiHub cannot list its addresses. Type one, or connect it."
+    );
+    expect(listAgentAddresses).not.toHaveBeenCalled();
+  });
+
+  it("an agent too old to list them: typed, and the note says to update it", async () => {
+    agent({ connectionState: "connected", capabilities: { hostAddresses: false } });
+    await toAgent();
+    await press("bind-address");
+    expect(field("address")?.tagName).toBe("INPUT");
+    expect(field("address-note")?.textContent).toContain("Update agent Build server");
+    expect(listAgentAddresses).not.toHaveBeenCalled();
+  });
+
+  it("an agent that says it cannot: typed", async () => {
+    vi.mocked(listAgentAddresses).mockResolvedValueOnce({ supported: false, addresses: [] });
+    agent({ connectionState: "connected", capabilities: { hostAddresses: true } });
+    await toAgent();
+    await press("bind-address");
+    expect(field("address")?.tagName).toBe("INPUT");
+    expect(field("address-note")?.textContent).toContain("Update agent Build server");
   });
 });
 

@@ -116,6 +116,12 @@ serialPortRescan?: boolean,
  */
 fileTruncate?: boolean, 
 /**
+ * Whether the agent lists its host's network addresses (`host.addresses`,
+ * protocol 0.46.0, #6086), which the file server editor offers to choose
+ * from. `false` for older agents, for which the address is typed.
+ */
+hostAddresses?: boolean, 
+/**
  * Agent binary version string, e.g. "1.4.2".
  */
 agentVersion?: string, };

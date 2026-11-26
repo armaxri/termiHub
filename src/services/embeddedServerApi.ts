@@ -3,6 +3,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
+import type { AgentAddressesResult } from "@/types/generated/AgentAddressesResult";
 import { EmbeddedServerConfig, NetworkInterface, ServerActivity } from "@/types/embeddedServer";
 
 /** Add or update an embedded server configuration. */
@@ -54,6 +55,11 @@ export async function restoreEmbeddedServer(serverId: string): Promise<void> {
 /** Take back the stop of a server that its agent has not got yet. */
 export async function keepEmbeddedServerRunning(serverId: string): Promise<void> {
   await invoke("keep_embedded_server_running", { serverId });
+}
+
+/** The network addresses of a connected agent's machine (#6086). */
+export async function listAgentAddresses(agentId: string): Promise<AgentAddressesResult> {
+  return await invoke<AgentAddressesResult>("list_agent_addresses", { agentId });
 }
 
 /** Ask the agents about the servers they run, now. */

@@ -175,6 +175,8 @@ export interface ServiceContext {
   portUsers?: ReadonlyMap<number, { id: string; name: string }>;
   /** Which service of this computer has a port open now. */
   portHolders?: ReadonlyMap<number, { id: string; name: string }>;
+  /** An agent machine's address on its network, when it said it (#6086). */
+  agentNetworks?: Readonly<Record<string, string>>;
 }
 
 /** The part of a chained pair that a tunnel is (#2597). */
@@ -416,7 +418,8 @@ function listenerOn(host: HostChoice, context: ServiceContext): Listener {
   return {
     on: "there",
     name: agent?.name ?? host.agentId,
-    host: agent?.config?.host || undefined,
+    // Its own address on its network, else how it is reached from here.
+    host: context.agentNetworks?.[host.agentId] || agent?.config?.host || undefined,
     shown: true,
   };
 }
