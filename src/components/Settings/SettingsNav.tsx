@@ -79,12 +79,15 @@ export function SettingsNav<T extends string = string>({
     const Icon: LucideIcon = iconMap[cat.id as T];
     const isActive = cat.id === activeCategory;
     const isHighlighted = highlightedCategories ? highlightedCategories.has(cat.id as T) : true;
+    // During a search the matches are what stands out, not the page shown before
+    // it: a kept selection read as "your result is here" (#5860, G-001).
+    const showsActive = isActive && !highlightedCategories;
     return (
       <button
         key={cat.id}
         role="tab"
         aria-selected={isActive}
-        className={`settings-nav__item ${isActive ? "settings-nav__item--active" : ""} ${!isHighlighted ? "settings-nav__item--dimmed" : ""}`}
+        className={`settings-nav__item ${showsActive ? "settings-nav__item--active" : ""} ${!isHighlighted ? "settings-nav__item--dimmed" : ""}`}
         onClick={() => onCategoryChange(cat.id as T)}
         tabIndex={isActive ? 0 : -1}
         data-testid={`settings-nav-${cat.id}`}
@@ -158,7 +161,18 @@ export function SettingsNav<T extends string = string>({
                   aria-hidden="true"
                   className={`settings-nav__group-chevron ${open ? "settings-nav__group-chevron--open" : ""}`}
                 />
-                {group.label}
+                <span className="settings-nav__group-name">
+                  {group.label}
+                  {/* Folded, it says what it holds (#5860, G-007). */}
+                  {!open && (
+                    <span
+                      className="settings-nav__group-contents"
+                      data-testid={`settings-navgroup-${group.id}-contents`}
+                    >
+                      {items.map((c) => c.label).join(", ")}
+                    </span>
+                  )}
+                </span>
               </button>
             ) : (
               <div

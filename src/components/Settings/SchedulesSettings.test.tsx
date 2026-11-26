@@ -1,30 +1,23 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
-import { flushAsync } from "@/test/flushAsync";
 import { useAppStore } from "@/store/appStore";
 import { checkA11y } from "@/test/axe";
-import { seedConnectionsRegion, setupConnectionsRegion } from "@/test/connectionsHarness";
-import { withTooltip } from "@/test/tooltip";
-import { chooseFrom } from "@/test/automationEditorHarness";
+import { useAutomationSections } from "@/components/AutomationSidebar/automationSections";
 import type { ScheduleView } from "@/types/schedule";
-import { SchedulesSettings } from "./SchedulesSettings";
+import { SchedulesSettings, schedulesSummary, schedulesTroubleText } from "./SchedulesSettings";
 
 /**
- * Settings → Schedules (#4623): the always-available schedules panel, usable
- * with experimental features (and so the Workflows sidebar) off. It lists the
- * schedules, pauses/resumes them (per schedule and globally), deletes them and
- * creates new ones (#5633); editing stays in the Workflows sidebar.
+ * Settings ▸ Automation ▸ Schedules (#5860, R-018): schedules have one list, in
+ * the Automations sidebar. This page says so, counts them and opens that list;
+ * it does not show a second list with other controls.
  */
 
 vi.mock("@/themes", () => ({ applyTheme: vi.fn(), onThemeChange: vi.fn() }));
 
-setupConnectionsRegion();
-
 let container: HTMLDivElement;
 let root: Root;
-const query = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
-const flush = () => act(async () => await Promise.resolve());
+const query = (id: string) => container.querySelector<HTMLElement>(`[data-testid="${id}"]`);
 
 function view(over: Partial<ScheduleView> = {}): ScheduleView {
   return {
@@ -43,38 +36,19 @@ function view(over: Partial<ScheduleView> = {}): ScheduleView {
   };
 }
 
-let setScheduleEnabled: ReturnType<typeof vi.fn>;
-let setSchedulesPaused: ReturnType<typeof vi.fn>;
-let deleteSchedule: ReturnType<typeof vi.fn>;
-let openScheduleEditor: ReturnType<typeof vi.fn>;
-
-async function render(schedules: ScheduleView[], paused = false) {
+function render(schedules: ScheduleView[], paused = false) {
   act(() => {
-    useAppStore.setState({
-      schedules,
-      schedulesPaused: paused,
-      setScheduleEnabled,
-      setSchedulesPaused,
-      deleteSchedule,
-      openScheduleEditor,
-    } as never);
+    useAppStore.setState({ schedules, schedulesPaused: paused } as never);
   });
-  await act(async () => root.render(withTooltip(<SchedulesSettings />)));
-  await flushAsync();
+  act(() => root.render(<SchedulesSettings />));
 }
 
-describe("SchedulesSettings (#4623)", () => {
+describe("SchedulesSettings (#5860)", () => {
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
-    setScheduleEnabled = vi.fn(() => Promise.resolve());
-    setSchedulesPaused = vi.fn(() => Promise.resolve());
-    deleteSchedule = vi.fn(() => Promise.resolve());
-    openScheduleEditor = vi.fn();
-    seedConnectionsRegion({
-      connections: [{ id: "c1", name: "db-1", config: {} as never, folderId: null }],
-    });
+    useAutomationSections.setState({ schedulesOpen: false, historyOpen: false });
   });
 
   afterEach(() => {
@@ -83,75 +57,73 @@ describe("SchedulesSettings (#4623)", () => {
     useAppStore.setState(useAppStore.getInitialState());
   });
 
-  it("shows an empty state with a New schedule button (#5633)", async () => {
-    await render([]);
-    expect(query("schedules-settings")).not.toBeNull();
-    expect(query("schedules-empty")).not.toBeNull();
-    const create = query("schedules-empty-new-btn");
-    expect(create?.textContent).toBe("New schedule");
-    act(() => create!.click());
-    expect(openScheduleEditor).toHaveBeenCalledWith();
+  it("says where the schedules are and how many there are, without a second list", () => {
+    render([view(), view({ id: "s2", name: "Health", enabled: false })]);
+    expect(query("schedules-settings")?.textContent).toContain("Automations sidebar");
+    expect(query("schedules-settings-summary")?.textContent).toBe("2 schedules, 1 on.");
+    expect(query("schedule-item-s1")).toBeNull();
+    expect(query("schedules-new-btn")).toBeNull();
   });
 
-  it("does not repeat the page title as a section header (#5633)", async () => {
-    await render([]);
-    expect(query("schedules-header")).toBeNull();
-    const titles = Array.from(container.querySelectorAll("h3, h4, [role='heading']")).map((h) =>
-      h.textContent?.trim().toLowerCase()
-    );
-    expect(titles.filter((t) => t === "schedules")).toHaveLength(1);
-    // Nothing to pause without a schedule (R-135); a pause left on stays reachable.
-    expect(query("schedules-pause-toggle")).toBeNull();
-    await render([], true);
-    expect(query("schedules-pause-toggle")).not.toBeNull();
+  it("opens the one list: the Automations view with its Schedules section", () => {
+    useAppStore.setState({ sidebarView: "connections", sidebarCollapsed: true } as never);
+    render([]);
+    act(() => query("schedules-settings-open")!.click());
+    expect(useAppStore.getState().sidebarView).toBe("automations");
+    expect(useAppStore.getState().sidebarCollapsed).toBe(false);
+    expect(useAutomationSections.getState().schedulesOpen).toBe(true);
   });
 
-  it("lists every schedule with its rule and targets; creates and edits them (R-017)", async () => {
-    await render([view(), view({ id: "s2", name: "Health", enabled: false })]);
-    expect(query("schedule-item-s1")).not.toBeNull();
-    expect(query("schedule-item-s2")).not.toBeNull();
-    // The rows answer when, what and where (#6024).
-    expect(query("schedule-rule-s1")!.textContent).toBe("Every 30 minutes");
-    expect(query("schedule-what-s1")!.textContent).toContain("on db-1");
-    expect(query("schedule-status-s2")!.textContent).toBe("Off");
-    act(() => query("schedule-edit-s1")!.click());
-    expect(openScheduleEditor).toHaveBeenLastCalledWith({ scheduleId: "s1" });
-    act(() => query("schedules-new-btn")!.click());
-    expect(openScheduleEditor).toHaveBeenCalledWith();
+  it.each([
+    [0, 0, false, "No schedules yet."],
+    [1, 1, false, "1 schedule, on."],
+    [1, 0, false, "1 schedule, off."],
+    [3, 3, false, "3 schedules, all on."],
+    [3, 0, false, "3 schedules, none on."],
+    [3, 2, true, "3 schedules, 2 on; all paused."],
+  ])("counts %i schedules with %i on (paused %s)", (total, on, paused, text) => {
+    expect(schedulesSummary(total, on, paused)).toBe(text);
   });
 
-  it("pauses (disables) and resumes (re-enables) a single schedule", async () => {
-    await render([view()]);
-    await act(async () => query("schedule-enable-s1")!.click());
-    expect(setScheduleEnabled).toHaveBeenLastCalledWith("s1", false, false);
-
-    await render([view({ enabled: false })]);
-    await act(async () => query("schedule-enable-s1")!.click());
-    expect(setScheduleEnabled).toHaveBeenLastCalledWith("s1", true, false);
+  it("says what needs fixing, as the status bar does, and offers the fix (G-003)", () => {
+    render([
+      view({
+        lastResult: {
+          at: "2026-10-02T00:00:00Z",
+          outcome: "failed",
+          message: "Connection refused",
+        },
+      } as Partial<ScheduleView>),
+    ]);
+    expect(query("schedules-settings-summary")?.textContent).toBe("1 schedule, on.");
+    expect(query("schedules-settings-trouble")?.textContent).toBe("1 failed.");
+    expect(query("schedules-settings-open")?.textContent).toBe("Fix in automations");
   });
 
-  it("pauses and resumes all schedules with the global switch", async () => {
-    await render([view()]);
-    await act(async () => query("schedules-pause-toggle")!.click());
-    expect(setSchedulesPaused).toHaveBeenLastCalledWith(true);
-
-    await render([view()], true);
-    expect(query("schedule-status-s1")!.textContent).toBe("Paused");
-    await act(async () => query("schedules-pause-toggle")!.click());
-    expect(setSchedulesPaused).toHaveBeenLastCalledWith(false);
+  it("offers no fix while nothing needs one", () => {
+    render([view()]);
+    expect(query("schedules-settings-trouble")).toBeNull();
+    expect(query("schedules-settings-open")?.textContent).toBe("Open schedules");
   });
 
-  it("deletes a schedule after confirmation", async () => {
-    await render([view()]);
-    await chooseFrom("schedule-more-s1", "schedule-menu-delete-s1");
-    expect(deleteSchedule).not.toHaveBeenCalled();
-    await act(async () => query("confirm-delete-confirm")!.click());
-    await flush();
-    expect(deleteSchedule).toHaveBeenCalledWith("s1");
+  it.each([
+    [0, "", ""],
+    [1, "", "1 will not run"],
+    [1, "1 failed", "1 will not run · 1 failed"],
+    [0, "2 not run", "2 not run"],
+  ])("names %i that will not run and %j", (blocked, concern, text) => {
+    expect(schedulesTroubleText(blocked, concern)).toBe(text);
+  });
+
+  it("marks the list it opens, so the user sees what changed (G-009)", () => {
+    const before = useAutomationSections.getState().schedulesRevealed;
+    render([]);
+    act(() => query("schedules-settings-open")!.click());
+    expect(useAutomationSections.getState().schedulesRevealed).toBe(before + 1);
   });
 
   it("has no a11y violations", async () => {
-    await render([view(), view({ id: "s2", name: "Health", enabled: false })]);
+    render([view()]);
     expect(await checkA11y()).toHaveNoViolations();
   });
 });

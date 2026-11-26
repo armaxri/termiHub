@@ -330,15 +330,18 @@ export function ShellIntegrationSettings() {
         />
       </SettingsField>
 
-      <label className="shell-integration__toggle-row">
+      {/* Label left, switch right, like every other setting (#5860, G-011). */}
+      <SettingsField
+        label="Always open a new window"
+        hint="Instead of a tab in the running instance."
+      >
         <Toggle
           checked={si.openInNewWindow}
           onCheckedChange={(v) => void persist({ ...si, openInNewWindow: v })}
           aria-label="Always open spawned sessions in a new window"
           data-testid="shell-integration-new-window"
         />
-        <span>Always open a new window (instead of the running instance)</span>
-      </label>
+      </SettingsField>
 
       {/* Linux per-file-manager toggles */}
       {platform === "linux" && (

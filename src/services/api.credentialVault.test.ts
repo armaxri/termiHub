@@ -1,26 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import {
-  exportCredentialVault,
-  importCredentialVault,
-  isVaultError,
-  previewCredentialVaultImport,
-} from "./api";
+import { importCredentialVault, isVaultError, previewCredentialVaultImport } from "./api";
 
 const mockedInvoke = vi.mocked(invoke);
 
 describe("credential vault api", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-  });
-
-  it("exportCredentialVault sends the master password and export passphrase", async () => {
-    mockedInvoke.mockResolvedValue("{}");
-    await expect(exportCredentialVault("mp", "export-passphrase")).resolves.toBe("{}");
-    expect(mockedInvoke).toHaveBeenCalledWith("export_credential_vault", {
-      masterPassword: "mp",
-      exportPassphrase: "export-passphrase",
-    });
   });
 
   it("previewCredentialVaultImport sends the file text and passphrase", async () => {

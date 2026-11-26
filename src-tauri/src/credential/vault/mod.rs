@@ -44,7 +44,9 @@ use super::{CredentialManager, CredentialStore};
 mod export;
 mod import;
 
-pub use export::{collect_entries, seal, to_json};
+#[cfg(test)]
+pub use export::to_json;
+pub use export::{collect_entries, seal};
 pub use import::{apply_import, open as open_file, open_json, plan_import, select_import};
 
 /// Format identifier stamped on every vault export file.

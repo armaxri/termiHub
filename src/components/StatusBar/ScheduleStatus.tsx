@@ -1,8 +1,7 @@
 import { CalendarClock } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { Tooltip } from "@/components/ui";
-import { concernText, lastRunAttention } from "@/components/Schedules/scheduleStatus";
-import { useScheduleLabels } from "@/components/Schedules/useScheduleLabels";
+import { useScheduleTrouble } from "@/components/Schedules/useScheduleTrouble";
 import { showSchedulesInSidebar } from "@/components/AutomationSidebar/automationSections";
 
 /**
@@ -13,19 +12,9 @@ import { showSchedulesInSidebar } from "@/components/AutomationSidebar/automatio
  * the Automations sidebar, where the schedules are managed. Renders nothing when no schedule is enabled.
  */
 export function ScheduleStatus() {
-  const schedules = useAppStore((s) => s.schedules);
-  const { automations, connections, blockedShort } = useScheduleLabels();
-  const on = schedules.filter((x) => x.enabled);
-  const enabled = on.length;
   // One that will not run is on, but nothing starts (B-016).
-  const concerns = on.map(lastRunAttention);
-  const concern = concernText(
-    concerns.filter((c) => c === "error").length,
-    concerns.filter((c) => c === "warning").length
-  );
-  // Not before the library and the connections have loaded.
-  const loaded = automations.length > 0 && connections.length > 0;
-  const blocked = loaded ? on.filter((x) => blockedShort(x) !== null).length : 0;
+  const { on, blocked, concern } = useScheduleTrouble();
+  const enabled = on.length;
   const running = useAppStore((s) => s.schedules.some((x) => x.running));
   const paused = useAppStore((s) => s.schedulesPaused);
 

@@ -133,7 +133,9 @@ describe("CredentialStorageChooser (#5187)", () => {
     expect(query("credential-storage-chooser-options")?.textContent).toContain(
       "unlocked with your login"
     );
-    expect(query("credential-storage-chooser-options")?.textContent).toContain("Portable");
+    expect(query("credential-storage-chooser-options")?.textContent).toContain(
+      "Backup & restore moves it to another computer."
+    );
     expect(query("credential-storage-chooser-change-later")?.textContent).toContain(
       "Settings ▸ Security"
     );

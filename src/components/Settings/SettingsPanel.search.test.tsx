@@ -88,6 +88,8 @@ describe("SettingsPanel — search surfaces every settings section (#3308)", () 
       if (cmd === "get_app_info") return Promise.resolve({ version: "0.0.0", gitHash: "abc" });
       // The Security trust lists (#5365 tests open that category).
       if (cmd === "rdp_trust_list" || cmd === "ssh_trust_list") return Promise.resolve([]);
+      // The Plugins lists: "advanced" finds Plugins, folded under Advanced until #5860.
+      if (cmd.startsWith("list_")) return Promise.resolve([]);
       return Promise.resolve(undefined);
     });
   });
@@ -142,12 +144,16 @@ describe("SettingsPanel — search surfaces every settings section (#3308)", () 
     expect(container.querySelector("[data-testid='toggle-power-monitoring']")).toBeNull();
   });
 
-  it("shows the File browser toggle under General, not External files (#5786)", async () => {
+  it("shows the File browser toggle under Connection defaults, not External files (#5786, #5860)", async () => {
     await render();
     act(() => navItem("external-files")!.click());
     expect(container.querySelector("[data-testid='external-files-add']")).not.toBeNull();
     expect(container.querySelector("[data-testid='toggle-file-browser']")).toBeNull();
     await act(async () => navItem("general")!.click());
+    expect(container.querySelector("[data-testid='toggle-file-browser']")).toBeNull();
+    expect(container.querySelector("[data-testid='settings-default-user']")).toBeNull();
+    await act(async () => navItem("connection-defaults")!.click());
+    expect(container.querySelector("[data-testid='settings-default-user']")).not.toBeNull();
     const toggle = container.querySelector("[data-testid='toggle-file-browser']");
     expect(toggle).not.toBeNull();
     expect(
@@ -157,10 +163,20 @@ describe("SettingsPanel — search surfaces every settings section (#3308)", () 
 
   it("finds the File browser toggle by its old and new search words (#5786)", async () => {
     await render();
-    for (const query of ["file browser", "sftp", "advanced", "external", "new connection"]) {
+    for (const query of [
+      "file browser",
+      "sftp",
+      "advanced",
+      "external",
+      "new connection",
+      "general",
+      "connection defaults",
+    ]) {
       await searchSettled(query);
       expect(container.querySelector("[data-testid='toggle-file-browser']"), query).not.toBeNull();
-      expect(navItem("general")?.className, query).not.toContain("settings-nav__item--dimmed");
+      expect(navItem("connection-defaults")?.className, query).not.toContain(
+        "settings-nav__item--dimmed"
+      );
     }
   });
 
@@ -183,6 +199,69 @@ describe("SettingsPanel — search surfaces every settings section (#3308)", () 
     expect(navItem("schedules")?.className).not.toContain("settings-nav__item--dimmed");
     search("pause");
     expect(container.querySelector("[data-testid='schedules-settings']")).not.toBeNull();
+    // Its old home's word (#5860).
+    search("advanced");
+    expect(container.querySelector("[data-testid='schedules-settings']")).not.toBeNull();
+  });
+
+  it("says which page each result is on, and goes there (#5860, G-002)", async () => {
+    await render();
+    await searchSettled("default user");
+    const path = container.querySelector(
+      "[data-testid='settings-result-path-connection-defaults']"
+    );
+    expect(path?.textContent).toContain("Connections ▸ Connection defaults");
+    const show = container.querySelector<HTMLElement>(
+      "[data-testid='settings-result-show-connection-defaults']"
+    )!;
+    expect(show.textContent).toBe("Show in Connection defaults");
+    await act(async () => show.click());
+    expect(container.querySelector(".settings-search input")).toHaveProperty("value", "");
+    expect(navItem("connection-defaults")?.getAttribute("aria-selected")).toBe("true");
+    expect(container.querySelector("[data-testid^='settings-result-path-']")).toBeNull();
+  });
+
+  it("opens Plugins with the installed plugins, then browsing, then the gates (G-008)", async () => {
+    await render();
+    await act(async () => navItem("plugins")!.click());
+    const headings = Array.from(
+      container.querySelectorAll(
+        "[data-testid='settings-panel-content'] h3, [data-testid='settings-panel-content'] h2"
+      )
+    ).map((h) => h.textContent?.trim());
+    expect(headings.slice(0, 2)).toEqual(["Installed plugins", "Browse plugins"]);
+  });
+
+  it("ends a search when a page is chosen in the nav (#5860)", async () => {
+    await render();
+    await searchSettled("vault");
+    await act(async () => navItem("backup")!.click());
+    expect(container.querySelector(".settings-search input")).toHaveProperty("value", "");
+    expect(container.querySelector("[data-testid='backup-restore-settings']")).not.toBeNull();
+    expect(container.querySelector("[data-testid='password-backup']")).toBeNull();
+  });
+
+  it("lands every old deep link on a page that exists (#5860)", async () => {
+    await render();
+    for (const category of [
+      "general",
+      "keyboard",
+      "plugins",
+      "import",
+      "backup",
+      "security",
+      "schedules",
+      "monitoring",
+      "x-server",
+      "portable",
+      "external-files",
+      "shell-integration",
+    ]) {
+      await act(async () => {
+        useAppStore.setState({ pendingSettingsCategory: category });
+      });
+      expect(navItem(category)?.getAttribute("aria-selected"), category).toBe("true");
+    }
   });
 
   it("still reports no results for a query nothing matches", async () => {

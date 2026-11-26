@@ -13,6 +13,7 @@ import { useAppStore } from "@/store/appStore";
 import { AppSettings } from "@/types/connection";
 import { TooltipProvider } from "@/components/ui";
 import { GeneralSettings } from "./GeneralSettings";
+import { ConnectionDefaultsSettings } from "./ConnectionDefaultsSettings";
 import { TerminalSettings } from "./TerminalSettings";
 
 vi.mock("@/utils/shell-detection", () => ({
@@ -81,9 +82,9 @@ afterEach(() => {
   container.remove();
 });
 
-describe("General ▸ New connection defaults ▸ File browser (R-030)", () => {
+describe("Connections ▸ Connection defaults ▸ File browser (R-030, #5860)", () => {
   it("says SSH connections, not SSH agent sessions", async () => {
-    await render(<GeneralSettings settings={SETTINGS} onChange={vi.fn()} />);
+    await render(<ConnectionDefaultsSettings settings={SETTINGS} onChange={vi.fn()} />);
     const hint = text("settings-file-browser-hint");
     expect(hint).toBe(
       "Show the file browser for SSH connections. Each connection can override it."
@@ -93,7 +94,7 @@ describe("General ▸ New connection defaults ▸ File browser (R-030)", () => {
   });
 
   it("says what turning it off does, without claiming sessions disconnect", async () => {
-    await render(<GeneralSettings settings={SETTINGS} onChange={vi.fn()} />);
+    await render(<ConnectionDefaultsSettings settings={SETTINGS} onChange={vi.fn()} />);
     const help = helpText("settings-file-browser-help");
     expect(help).toContain("closes the file browser");
     expect(help).toContain("terminals stay connected");
@@ -102,20 +103,25 @@ describe("General ▸ New connection defaults ▸ File browser (R-030)", () => {
 
   it("flips without a confirmation, because nothing disconnects", async () => {
     const onChange = vi.fn();
-    await render(<GeneralSettings settings={SETTINGS} onChange={onChange} />);
+    await render(<ConnectionDefaultsSettings settings={SETTINGS} onChange={onChange} />);
     act(() => container.querySelector<HTMLElement>("[data-testid='toggle-file-browser']")!.click());
     expect(onChange).toHaveBeenCalledTimes(1);
     expect(document.querySelector("[role='alertdialog'], [role='dialog']")).toBeNull();
   });
 
+  it("keeps every connection-default hint touched by #5900 to one short line with a help tip", async () => {
+    await render(<ConnectionDefaultsSettings settings={SETTINGS} onChange={vi.fn()} />);
+    for (const id of ["settings-default-x11-forwarding", "settings-file-browser"]) {
+      const hint = text(`${id}-hint`);
+      expect(hint.length, id).toBeGreaterThan(0);
+      expect(hint.length, hint).toBeLessThanOrEqual(MAX_HINT_CHARS);
+      expect(helpText(`${id}-help`).length, id).toBeGreaterThan(0);
+    }
+  });
+
   it("keeps every General hint touched by #5900 to one short line with a help tip", async () => {
     await render(<GeneralSettings settings={SETTINGS} onChange={vi.fn()} />);
-    for (const id of [
-      "settings-default-x11-forwarding",
-      "settings-file-browser",
-      "settings-file-log-level",
-      "settings-copy-debug-info",
-    ]) {
+    for (const id of ["settings-file-log-level", "settings-copy-debug-info"]) {
       const hint = text(`${id}-hint`);
       expect(hint.length, id).toBeGreaterThan(0);
       expect(hint.length, hint).toBeLessThanOrEqual(MAX_HINT_CHARS);

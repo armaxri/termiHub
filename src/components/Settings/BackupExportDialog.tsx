@@ -13,7 +13,7 @@ import { MIN_EXPORT_PASSPHRASE_LENGTH, ratePassphrase } from "@/utils/passphrase
 import { errorMessage } from "@/utils/errorMessage";
 import { getBasename, parentDir } from "@/utils/paths";
 import { fileManagerActionLabel } from "@/utils/platform";
-import { keychainExportReason } from "./CredentialVaultBackup";
+import { keychainExportReason } from "./keychainExport";
 import {
   BACKUP_EXPORT_STEP_NAMES,
   backupExportSteps,

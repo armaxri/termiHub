@@ -48,12 +48,15 @@ HINTS: dict[str, tuple[str, ...]] = {
     ),
     # General and Terminal hints moved behind the "?" by #5846 / #5900.
     "general": (
-        "settings-default-x11-forwarding-hint",
-        "settings-file-browser-hint",
         "settings-file-log-level-hint",
         "settings-copy-debug-info-hint",
         "settings-show-crash-report-notice-hint",
         "settings-export-diagnostics-hint",
+    ),
+    # Under General until #5860.
+    "connection-defaults": (
+        "settings-default-x11-forwarding-hint",
+        "settings-file-browser-hint",
     ),
     "terminal": (
         "settings-scrollback-buffer-hint",
