@@ -143,4 +143,12 @@ describe("appStore — imported workspace confirmations (#4434)", () => {
     expect(tab.pendingConnectionChanged).toBeUndefined();
     expect(allowlist()).toContain(await savedConnectionKey(LOCAL_CONFIG));
   });
+
+  it("a tab opened to wait for a confirmation does not connect (#6065)", () => {
+    const id = layoutState().addTab("Build", "local", LOCAL_CONFIG, { heldUntilConfirmed: true });
+    expect(useAppStore.getState().tabContent[id]).toMatchObject({
+      pendingImportedConnection: true,
+      pendingConnectionChanged: true,
+    });
+  });
 });

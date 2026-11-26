@@ -11,7 +11,10 @@ import type { SavedConnection } from "@/types/connection";
 import type { WorkspaceTabGroupDef } from "@/types/workspace";
 import { resolveImportTrust, type TrustedTabDef } from "./workspaceImportTrust";
 import {
+  confirmOnceSaved,
   confirmSavedConnection,
+  confirmedWithoutWaiting,
+  resetSavedConnectionTrustForTest,
   ensureSavedConnectionBaseline,
   isSavedConnectionConfirmed,
   savedConnectionKey,
@@ -36,6 +39,7 @@ const ssh = (over: Record<string, unknown> = {}): SavedConnection => ({
 });
 
 beforeEach(() => {
+  resetSavedConnectionTrustForTest();
   vi.mocked(invoke).mockImplementation(() => Promise.resolve(null));
   seedSettings({ workspaceImportAllowlist: [] });
 });
@@ -58,6 +62,16 @@ describe("what a saved connection runs by itself (#6065)", () => {
     ]) {
       expect(await savedConnectionKey(ssh(changed).config), JSON.stringify(changed)).not.toBe(key);
     }
+  });
+
+  it("counts an empty or switched-off setting as none, and the type as what runs", async () => {
+    const key = await savedConnectionKey(ssh().config);
+    expect(
+      await savedConnectionKey(ssh({ forwardAgent: false, initialCommand: "", env: null }).config)
+    ).toBe(key);
+    expect(
+      await savedConnectionKey({ type: "telnet", config: { ...ssh().config.config } })
+    ).not.toBe(key);
   });
 
   it("says what would run", () => {
@@ -89,6 +103,28 @@ describe("confirmed on this machine (#6065)", () => {
     seedConnectionsRegion({ connections: [ssh({ host: "evil.example" })] });
     await ensureSavedConnectionBaseline();
     expect(await isSavedConnectionConfirmed(ssh({ host: "evil.example" }))).toBe(false);
+  });
+
+  it("writes the settings only for something new, and knows it at once afterwards", async () => {
+    await confirmSavedConnection(ssh({ host: "a.example" }).config);
+    const writes = () => vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "save_settings");
+    const before = writes().length;
+    await confirmSavedConnection(ssh({ host: "a.example" }).config);
+    expect(writes().length).toBe(before);
+    resetSavedConnectionTrustForTest();
+    expect(confirmedWithoutWaiting(ssh({ host: "a.example" }))).toBe(false);
+    expect(await isSavedConnectionConfirmed(ssh({ host: "a.example" }))).toBe(true);
+    expect(confirmedWithoutWaiting(ssh({ host: "a.example" }))).toBe(true);
+  });
+
+  it("confirms a connection saved in the editor as the backend keeps it", async () => {
+    const stored = ssh({ host: "kept.example", port: 22 });
+    seedConnectionsRegion({ connections: [stored] });
+    await confirmOnceSaved(
+      Promise.resolve("Prod"),
+      ssh({ host: "kept.example", port: 2200 }).config
+    );
+    expect(await isSavedConnectionConfirmed(stored)).toBe(true);
   });
 
   it("is what the user confirmed, kept where no file can write it", async () => {
