@@ -221,19 +221,28 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
   const setTabSessionId = useAppStore((s) => s.setTabSessionId);
 
   /** Apply one lifecycle event to this tab's state. */
-  const applyState = useCallback((payload: RemoteDesktopStatePayload) => {
-    setState(payload.state);
-    setReconnectAttempt(payload.reconnect_attempt);
-    setMessage(payload.message ?? null);
-    // A failure state carries the typed envelope code (#5380): a refused /
-    // unreachable / unresolvable / timed-out host gets the terminal's heading
-    // and hint, with `message` as the Details. An `authFailed` state is always
-    // an auth failure, even from an older backend that sends no code.
-    setErrorKind(
-      payload.state === "authFailed" ? "auth" : connectionErrorKindFromCode(payload.code)
-    );
-    setAborted(false);
-  }, []);
+  const applyState = useCallback(
+    (payload: RemoteDesktopStatePayload) => {
+      // Only a session that is in accepted the password (#5197, #6062): the RDP
+      // helper still dials and signs in after the connect returned.
+      if (payload.state === "active") graphicalConnectSucceeded(tabId);
+      else if (payload.state === "authFailed" || payload.state === "connectFailed") {
+        graphicalConnectFailed(tabId);
+      }
+      setState(payload.state);
+      setReconnectAttempt(payload.reconnect_attempt);
+      setMessage(payload.message ?? null);
+      // A failure state carries the typed envelope code (#5380): a refused /
+      // unreachable / unresolvable / timed-out host gets the terminal's heading
+      // and hint, with `message` as the Details. An `authFailed` state is always
+      // an auth failure, even from an older backend that sends no code.
+      setErrorKind(
+        payload.state === "authFailed" ? "auth" : connectionErrorKindFromCode(payload.code)
+      );
+      setAborted(false);
+    },
+    [tabId]
+  );
 
   // Config is read once per (re)connect; it is stable for the tab's lifetime.
   const readTab = useCallback(
@@ -317,16 +326,12 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
         sessionIdRef.current = id;
         setSessionId(id);
         setTabSessionId(tabId, id);
-        // The connect only resolves once the backend marked the session active;
-        // that event (and anything after it) fired before the id was known.
+        // The events of this connect fired before the id was known (#4017). The
+        // RDP helper may still dial or sign in (#6062): its state is the tab's
+        // until it says active. A backend too old to send any is active.
         const early = earlyStatesRef.current.get(id);
         earlyStatesRef.current.clear();
-        const superseded =
-          !early || early.state === "connecting" || early.state === "authenticating";
-        applyState(superseded ? { session_id: id, state: "active", reconnect_attempt: 0 } : early);
-        // The connect resolved, so the password was accepted: only now does a
-        // typed one with Save ticked reach the credential store (#5197).
-        graphicalConnectSucceeded(tabId);
+        applyState(early ?? { session_id: id, state: "active", reconnect_attempt: 0 });
         frontendLog("remote_desktop", `session ${id} opened for tab ${tabId}`);
       } catch (err) {
         settle();
@@ -628,7 +633,19 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
 
   const cancelConnect = useCallback(() => {
     const attempt = connectAttemptRef.current;
-    if (!attempt) return;
+    if (!attempt) {
+      // The connect returned, but the helper still dials or signs in (#6062).
+      const id = sessionIdRef.current;
+      if (!id || (state !== "connecting" && state !== "authenticating")) return;
+      graphicalConnectFailed(tabId);
+      sessionIdRef.current = null;
+      setState("closed");
+      setAborted(true);
+      setMessage(null);
+      fireAndForget(remoteDesktopDisconnect(id), `abort remote-desktop session ${id}`);
+      setTabSessionId(tabId, null);
+      return;
+    }
     attempt.userCancelled = true;
     connectAttemptRef.current = null;
     // A canceled connect never saves the typed password it was given (#5197).
@@ -641,7 +658,7 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
       remoteDesktopCancelConnect(attempt.connectId),
       `cancel connecting remote-desktop attempt ${attempt.connectId}`
     );
-  }, [tabId]);
+  }, [tabId, state, setTabSessionId]);
 
   const cancelReconnect = useCallback(() => {
     // Disconnecting aborts the backend's reconnect loop (and any pending
