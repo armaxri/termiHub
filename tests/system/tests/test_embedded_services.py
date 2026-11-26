@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import json
 import shutil
-import tempfile
 import urllib.request
 from pathlib import Path
 
@@ -36,6 +35,7 @@ from termihub_harness import (
     TerminalUi,
     unique_name,
 )
+from termihub_harness.ui.embedded_services import served_folder
 from termihub_harness.transfers import (
     TftpUnavailable,
     ftp_download,
@@ -82,14 +82,9 @@ class TestEmbeddedServices(
 
     # ── helpers ──────────────────────────────────────────────────────────────
     def _serve_dir(self, filename: str, content: str) -> Path:
-        """Make a temp dir holding one file, removed in the per-test teardown.
-
-        The path is canonicalized (``resolve()``) because the server canonicalizes
-        its root for the traversal check, and macOS temp dirs live under the
-        ``/var → /private/var`` symlink — an unresolved root would mismatch.
-        """
-        root = Path(tempfile.mkdtemp(prefix="thub-svc-")).resolve()
-        (root / filename).write_text(content, encoding="utf-8")
+        """A served folder holding one file (:func:`served_folder`), removed in the
+        per-test teardown."""
+        root = served_folder(filename, content)
         self._tmpdirs.append(root)
         return root
 

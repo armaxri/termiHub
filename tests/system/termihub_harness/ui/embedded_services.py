@@ -9,10 +9,39 @@ the live ``data-testid``s for interactions.
 
 from __future__ import annotations
 
+import atexit
+import shutil
 import socket
+import tempfile
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 from .base import HarnessMixin
+
+#: The folders served in this run, removed when it ends.
+_SERVED: list[Path] = []
+
+
+def _remove_served() -> None:
+    for folder in _SERVED:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+atexit.register(_remove_served)
+
+
+def served_folder(filename: Optional[str] = None, content: str = "") -> Path:
+    """A fresh folder to serve, in this platform's temp dir (#6140), optionally with a file.
+
+    Never a fixed POSIX path: ``/tmp`` does not exist on Windows. The path is
+    canonicalized (``resolve()``) because the server canonicalizes its root for
+    the traversal check, and macOS temp dirs live under ``/var → /private/var``.
+    """
+    folder = Path(tempfile.mkdtemp(prefix="thub-svc-")).resolve()
+    _SERVED.append(folder)
+    if filename is not None:
+        (folder / filename).write_text(content, encoding="utf-8")
+    return folder
 
 
 class EmbeddedServicesUi(HarnessMixin):
@@ -92,11 +121,15 @@ class EmbeddedServicesUi(HarnessMixin):
         self,
         name: str,
         *,
-        root: str = "/tmp",
+        root: Optional[str] = None,
         port: Optional[int] = None,
         description: Optional[str] = None,
     ) -> None:
-        """Fill the (already-open) file server editor. Does not submit."""
+        """Fill the (already-open) file server editor. Does not submit.
+
+        ``root`` defaults to a fresh served folder (:func:`served_folder`).
+        """
+        root = root if root is not None else str(served_folder())
         self.driver.type(self.DIALOG_NAME, name)
         if description is not None:
             self.driver.type("server-dialog-description", description)
@@ -112,7 +145,7 @@ class EmbeddedServicesUi(HarnessMixin):
         name: str,
         *,
         proto: str = "http",
-        root: str = "/tmp",
+        root: Optional[str] = None,
         port: Optional[int] = None,
         description: Optional[str] = None,
     ) -> dict[str, Any]:
