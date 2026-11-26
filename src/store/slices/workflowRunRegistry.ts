@@ -15,7 +15,11 @@ export interface ActiveWorkflowRun {
 /** A run on several terminals, whose queued targets have no run yet (#5984). */
 interface ActiveFanout {
   tabIds: readonly string[];
-  handle: Pick<AutomationFanoutHandle, "cancel" | "cancelAll">;
+  handle: {
+    /** Stop one target; `reason` is what its History says, also if it never started. */
+    cancel: (index: number, reason?: string) => void;
+    cancelAll: AutomationFanoutHandle["cancelAll"];
+  };
 }
 
 const runs = new Map<string, ActiveWorkflowRun>();
@@ -69,7 +73,7 @@ export function stopWorkflowRunsOn(tabIds: readonly string[], reason: string): v
   for (const run of runs.values()) if (here.has(run.tabId)) run.stop(reason);
   for (const fanout of fanouts) {
     fanout.tabIds.forEach((tabId, index) => {
-      if (here.has(tabId)) fanout.handle.cancel(index);
+      if (here.has(tabId)) fanout.handle.cancel(index, reason);
     });
   }
 }

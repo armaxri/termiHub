@@ -1857,6 +1857,42 @@ describe("appStore — workflow run slice (#1852)", () => {
         await fan;
         expect(sentOn(sends, "tab-a")).toEqual(["hold\n", "after\n"]);
         expect(sentOn(sends, "tab-b")).toEqual(["w2cmd\n"]);
+        // Its History says it never started, and why (#6133).
+        const notRun = recordedRuns.find((r) => r.automationId === "w1" && r.tabId === "tab-b");
+        expect(notRun).toMatchObject({
+          status: "cancelled",
+          stepsCompleted: 0,
+          error: "Not run: “Workflow w2” was started in this terminal",
+        });
+        expect(notRun?.startedAt).toBe(notRun?.endedAt);
+        // It was never shown as started.
+        const shownOn = transport.dispatched
+          .filter((i) => i.kind === "workflow.runStarted")
+          .map((i) => [
+            (i.payload as { workflowId: string }).workflowId,
+            (i.payload as { tabId: string }).tabId,
+          ]);
+        expect(shownOn).not.toContainEqual(["w1", "tab-b"]);
+      });
+
+      it("a queued target that Stop all stopped says it never started (#6133)", async () => {
+        seedTwoTerminals();
+        const { release, waiting } = holdingSends();
+        const fan = useAppStore
+          .getState()
+          .runWorkflow("w1", { targetTabIds: ["tab-a", "tab-b"], concurrency: 1 });
+        await waiting.a;
+        useAppStore.getState().cancelWorkflowRun();
+        release();
+        await fan;
+        const runs = recordedRuns.map((r) => [r.tabId, r.status, r.stepsCompleted, r.error]);
+        expect(runs).toContainEqual(["tab-a", "cancelled", 1, undefined]);
+        expect(runs).toContainEqual([
+          "tab-b",
+          "cancelled",
+          0,
+          "Not run: it was stopped before its turn",
+        ]);
       });
 
       it("a run whose seam throws ends failed, recorded, and frees the way (#6042)", async () => {
@@ -2069,8 +2105,13 @@ describe("appStore — workflow run slice (#1852)", () => {
       expect(inj.sends.filter(([, d]) => d === "after\n")).toEqual([]);
       expect(inj.sends).toHaveLength(WORKFLOW_FANOUT_CONCURRENCY);
       expect(regionView().runs).toEqual([]);
-      const statuses = vi.mocked(apiRecordWorkflowRun).mock.calls.map(([r]) => r.status);
-      expect(statuses).toEqual(Array(WORKFLOW_FANOUT_CONCURRENCY).fill("cancelled"));
+      const recorded = vi.mocked(apiRecordWorkflowRun).mock.calls.map(([r]) => [r.status, r.error]);
+      // The queued two say in the History that they never started (#6133).
+      expect(recorded).toEqual([
+        ...Array(WORKFLOW_FANOUT_CONCURRENCY).fill(["cancelled", undefined]),
+        ["cancelled", "Not run: it was stopped before its turn"],
+        ["cancelled", "Not run: it was stopped before its turn"],
+      ]);
       expect(toast.info).toHaveBeenCalledWith(
         "“Workflow w1” stopped",
         expect.objectContaining({ description: expect.stringContaining("10 not finished") })

@@ -81,7 +81,7 @@ import { failedRunActions } from "./automationRunActions";
 import { automationForRun, recordAutomationRun } from "./automationStoreState";
 import { collectNestedRun, nestedRunRecord, workflowToAutomation } from "./automationViews";
 import type { LocalProcessAuthDecision, WorkflowRunOutputLine } from "./workflowsSlice";
-import { stepProgress } from "@/utils/runProgress";
+import { notRunBecause, stepProgress } from "@/utils/runProgress";
 import { activeWorkflowRunCount, forgetWorkflowRun, holdWorkflowRun } from "./workflowRunRegistry";
 
 /**
@@ -290,6 +290,8 @@ export interface WorkflowTarget {
   hooks: WorkflowRunHooks;
   /** Record and say how it ended; the result carries its History record's id. */
   settle: (result: WorkflowRunResult) => Promise<WorkflowRunResult>;
+  /** Record that it was stopped before its turn, with what stopped it (#6133). */
+  notRun: (reason?: string) => WorkflowRunResult;
 }
 
 /**
@@ -845,5 +847,27 @@ export function workflowTarget(run: WorkflowTargetRun, cancel: () => void): Work
     return { ...result, historyRunId: runRecord.id };
   };
 
-  return { automation, start, hooks, settle };
+  const notRun = (reason?: string): WorkflowRunResult => {
+    // Stopped while it waited for its turn (#6133): recorded, never shown as started.
+    const at = new Date().toISOString();
+    const error = notRunBecause(reason);
+    const record: AutomationRun = {
+      id: newId("workflow-run"),
+      automationId: workflowId,
+      automationName: workflow.name,
+      startedAt: at,
+      endedAt: at,
+      status: "cancelled",
+      stepsCompleted: 0,
+      total,
+      error,
+      tabId: targetTabId,
+      targetLabel: targetLabel || undefined,
+      origin: triggeredBy,
+    };
+    recordAutomationRun(set, record, "workflow");
+    return { status: "cancelled", stepsCompleted: 0, historyRunId: record.id };
+  };
+
+  return { automation, start, hooks, settle, notRun };
 }

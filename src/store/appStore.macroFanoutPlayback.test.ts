@@ -48,6 +48,7 @@ vi.mock("@/services/automationApi", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { recordAutomationRun } from "@/services/automationApi";
 import { seedLayoutState } from "@/test/layoutState";
 import { registerTerminalInputInjector } from "@/services/macroPlayback";
 import { toast } from "@/components/ui";
@@ -389,6 +390,60 @@ describe("appStore — multi-target macro playback (PROD-042)", () => {
     await vi.advanceTimersByTimeAsync(500);
     await expect(done).resolves.toBe("cancelled");
     expect(injected.map(([id]) => id)).toEqual(["a", "a"]);
+  });
+
+  it("a stopped queued terminal says in its History that it never started, and why (#6133)", async () => {
+    vi.useFakeTimers();
+    seedFleet();
+    const recorded = vi.mocked(recordAutomationRun);
+    recorded.mockClear();
+    useAppStore.setState({
+      macros: [
+        macro("m1", [
+          { data: "one", delayMs: 0 },
+          { data: "two", delayMs: 100 },
+        ]),
+      ],
+    });
+    const done = useAppStore
+      .getState()
+      .playMacro("m1", { targetTabIds: ["a", "b"], parallel: false });
+    await vi.advanceTimersByTimeAsync(0);
+    useAppStore.getState().cancelMacroPlaybackOnTab("b", "“Deploy” was started in this terminal");
+    await vi.advanceTimersByTimeAsync(500);
+    await done;
+    const runs = recorded.mock.calls.map(([run]) => [run.status, run.stepsCompleted, run.error]);
+    expect(runs).toEqual([
+      ["completed", 2, undefined],
+      ["cancelled", 0, "Not run: “Deploy” was started in this terminal"],
+    ]);
+  });
+
+  it("a queued terminal that Stop all stopped says it never started (#6133)", async () => {
+    vi.useFakeTimers();
+    seedFleet();
+    const recorded = vi.mocked(recordAutomationRun);
+    recorded.mockClear();
+    useAppStore.setState({
+      macros: [
+        macro("m1", [
+          { data: "one", delayMs: 0 },
+          { data: "two", delayMs: 100 },
+        ]),
+      ],
+    });
+    const done = useAppStore
+      .getState()
+      .playMacro("m1", { targetTabIds: ["a", "b"], parallel: false });
+    await vi.advanceTimersByTimeAsync(0);
+    useAppStore.getState().cancelMacroPlayback();
+    await vi.advanceTimersByTimeAsync(500);
+    await done;
+    const runs = recorded.mock.calls.map(([run]) => [run.status, run.stepsCompleted, run.error]);
+    expect(runs).toEqual([
+      ["cancelled", 1, undefined],
+      ["cancelled", 0, "Not run: it was stopped before its turn"],
+    ]);
   });
 
   it("replaying the same macro keeps the new run's badges (#5818)", async () => {

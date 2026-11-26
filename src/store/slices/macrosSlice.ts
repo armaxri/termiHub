@@ -32,7 +32,7 @@ import {
   recordMacroRun,
   type PlaybackOrigin,
 } from "./macroRunHistory";
-import { typedProgress } from "@/utils/runProgress";
+import { notRunBecause, typedProgress } from "@/utils/runProgress";
 
 /** UI-facing metadata describing an in-flight macro playback (#1675). */
 export interface MacroPlaybackState {
@@ -317,24 +317,26 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
       toast.error(summary.message, { id: toastId, description: summary.description });
     }
     // One history record per terminal (#5818): each target was its own run, with
-    // its own outcome. A target that never started has no run to record.
-    outcomes
-      .filter((outcome) => outcome.status !== undefined)
-      .forEach((outcome) => {
-        const status = outcome.status ?? "cancelled";
-        const record = buildMacroRun({
-          macro,
-          startedAt: outcome.startedAt ?? startedAt,
-          endedAt: outcome.endedAt ?? new Date(),
-          status,
-          stepsPlayed: outcome.stepsPlayed,
-          targetLabels: [targetLabels[targets.indexOf(outcome.tabId)]],
-          origin: opts?.origin ?? "manual",
-          error: endedBecause(status, handle, outcome.tabId),
-        });
-        recordMacroRun(set, record);
-        opts?.onRecorded?.(record);
+    // its own outcome. One stopped before its turn says it never started, and why
+    // (#6133).
+    outcomes.forEach((outcome) => {
+      const status = outcome.queued ? "cancelled" : (outcome.status ?? "cancelled");
+      const now = new Date();
+      const record = buildMacroRun({
+        macro,
+        startedAt: outcome.queued ? now : (outcome.startedAt ?? startedAt),
+        endedAt: outcome.queued ? now : (outcome.endedAt ?? now),
+        status,
+        stepsPlayed: outcome.stepsPlayed,
+        targetLabels: [targetLabels[targets.indexOf(outcome.tabId)]],
+        origin: opts?.origin ?? "manual",
+        error: outcome.queued
+          ? notRunBecause(stopReasonOf(handle, outcome.tabId))
+          : endedBecause(status, handle, outcome.tabId),
       });
+      recordMacroRun(set, record);
+      opts?.onRecorded?.(record);
+    });
     return tally.status;
   };
 

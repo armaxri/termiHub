@@ -1248,6 +1248,9 @@ const en = {
   // Why a run stopped, in its History (#6042).
   "automation.stoppedBy": "“{name}” was started",
   "automation.stoppedHere": "“{name}” was started in this terminal",
+  // A target stopped while it waited for its turn (#6133).
+  "automation.notRunBecause": "Not run: {why}",
+  "automation.notRun": "Not run: it was stopped before its turn",
   "automation.wait.unattended":
     "It stops to let you type in the terminal, and nobody is there when it starts by itself. Nothing was typed.",
   "terminalToolbar.broadcast.stop": "Stop broadcast",
