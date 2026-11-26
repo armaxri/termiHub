@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { SavedConnection } from "@/types/connection";
 import type { EmbeddedServerConfig } from "@/types/embeddedServer";
 import type { TunnelConfig, TunnelType } from "@/types/tunnel";
-import { formatClockTime } from "@/utils/formatters";
+import { formatServiceClock } from "@/utils/formatters";
 import { fileServerModel, tunnelModel, type ServiceContext } from "@/utils/serviceModel";
 import {
   ACTIVITY_ACTIONS,
@@ -71,7 +71,7 @@ describe("what happened (#6028, slice 9)", () => {
       ["Error", "Build box refused the sign-in."],
       ["Starting", undefined],
     ]);
-    expect(lines[2].time).toBe(formatClockTime(1000));
+    expect(lines[2].time).toBe(formatServiceClock(1000));
     expect(lines[1].dot.tone).toBe("error");
     expect(new Set(lines.map(({ key }) => key)).size).toBe(3);
   });
@@ -86,7 +86,7 @@ describe("what happened (#6028, slice 9)", () => {
 
   it("says since when, only when the last event is the state now", () => {
     expect(sinceOf(running, [{ atMs: 5000, status: "connected" }])).toBe(
-      `Since ${formatClockTime(5000)}`
+      `Since ${formatServiceClock(5000)}`
     );
     expect(sinceOf(running, [{ atMs: 5000, status: "connecting" }])).toBeUndefined();
     expect(sinceOf(running, [])).toBeUndefined();

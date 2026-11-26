@@ -364,7 +364,7 @@ describe("an offline agent", () => {
     await render();
     expect(shown()).toEqual(["service-agent-edge", "tunnel-item-a", "tunnel-item-b"]);
     expect(q("service-agent-edge")?.textContent).toBe(
-      "Edge boxOffline. 2 tunnels run there or may; termiHub cannot tell. Connect agent"
+      "Edge boxOffline. 2 tunnels may still run there; termiHub will know when the agent is back. Connect agent"
     );
     expect(q("service-agent-edge")?.getAttribute("aria-level")).toBe("1");
     for (const id of ["a", "b"]) {
@@ -392,7 +392,9 @@ describe("an offline agent", () => {
     );
     await render();
     expect(shown()).toEqual(["service-agent-edge", "server-item-s", "server-item-t"]);
-    expect(q("service-agent-edge")?.textContent).toContain("Offline. 2 file servers run there");
+    expect(q("service-agent-edge")?.textContent).toContain(
+      "Offline. 2 file servers may still run there"
+    );
     expect(q("server-machine-s")).toBeNull();
     expect(q("server-reason-s")).toBeNull();
     act(() => q("service-agent-edge")!.focus());
@@ -420,7 +422,7 @@ describe("an offline agent", () => {
       "tunnel-item-here",
     ]);
     expect(q("service-agent-edge")?.textContent).toContain(
-      "Offline. 1 tunnel and 1 file server run there or may; termiHub cannot tell."
+      "Offline. 1 tunnel and 1 file server may still run there; termiHub will know when the agent is back."
     );
     expect(q("service-group-tunnels")?.textContent).toContain("1 of 1 running");
     expect(q("tunnel-item-hop")?.getAttribute("aria-level")).toBe("3");
@@ -439,7 +441,7 @@ describe("an offline agent", () => {
     useAppStore.setState({ keepTunnelRunning });
     await render();
     expect(q("service-agent-edge")?.textContent).toContain(
-      "Offline. 2 tunnels and 1 file server will be stopped when it is back. Connect agent · Keep all running"
+      "Offline. 2 tunnels and 1 file server will stop when the agent is back. Connect agent · Keep all running"
     );
     expect(q("tunnel-reason-a")?.textContent).toBe("Keep running");
     await click("service-agent-keep-edge");
@@ -454,7 +456,7 @@ describe("an offline agent", () => {
     ]);
     await render();
     expect(q("service-agent-keep-edge")).toBeNull();
-    expect(q("service-agent-edge")?.textContent).toContain("run there or may");
+    expect(q("service-agent-edge")?.textContent).toContain("may still run there");
   });
 
   it("with one service here is said on its row", async () => {

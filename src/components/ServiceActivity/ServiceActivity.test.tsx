@@ -31,7 +31,7 @@ import { withTooltip } from "@/test/tooltip";
 import type { EmbeddedServerConfig, ServerStatus } from "@/types/embeddedServer";
 import type { ServiceCause } from "@/types/generated/ServiceCause";
 import type { TunnelConfig, TunnelStatus } from "@/types/tunnel";
-import { formatClockTime } from "@/utils/formatters";
+import { formatServiceClock } from "@/utils/formatters";
 import { ServiceActivityView } from "./ServiceActivity";
 
 const DB: TunnelConfig = {
@@ -134,7 +134,7 @@ describe("a running tunnel", () => {
     await render("tunnel", "db");
     expect(getServiceEvents).toHaveBeenCalledWith("db");
     expect(q("service-activity-state")!.textContent).toBe("Running");
-    expect(q("service-activity-since")!.textContent).toBe(`Since ${formatClockTime(2000)}`);
+    expect(q("service-activity-since")!.textContent).toBe(`Since ${formatServiceClock(2000)}`);
     expect(q("service-activity-address")!.textContent).toBe("localhost:15432");
     expect(q("service-activity-use")!.textContent).toContain("Point your program");
     expect(q("service-activity-reach")!.textContent).toBe("Who reaches it: only this computer.");
@@ -142,8 +142,8 @@ describe("a running tunnel", () => {
     expect(q("service-activity-counter-sent")!.textContent).toBe("2.0 KB");
     const events = q("service-activity-events")!.querySelectorAll("li");
     expect([...events].map((li) => li.textContent)).toEqual([
-      `${formatClockTime(2000)}Running`,
-      `${formatClockTime(1000)}Starting`,
+      `${formatServiceClock(2000)}Running`,
+      `${formatServiceClock(1000)}Starting`,
     ]);
     // A file server's requests only.
     expect(container.textContent).not.toContain("Requests");
