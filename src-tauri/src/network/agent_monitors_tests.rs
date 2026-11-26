@@ -216,6 +216,11 @@ fn a_monitor_set_to_an_agent_stays_there_after_a_restart_and_is_not_checked_here
         assert!(started.is_err(), "not started anywhere else");
     }
     let second = manager(dir.path());
+    assert!(second.agent_monitors.has("m"), "listed on its agent");
+    assert!(
+        second.agent_monitors.hosted.any(),
+        "its agent is asked about it"
+    );
     let listed = second.list_http_monitors();
     assert_eq!(listed.len(), 1);
     assert_eq!(
@@ -264,5 +269,23 @@ fn a_host_this_build_cannot_read_is_kept_and_never_checked_here() {
     assert!(
         stored.contains("\"region\":\"eu\""),
         "kept verbatim: {stored}"
+    );
+}
+
+#[test]
+fn a_stop_owed_before_a_restart_shows_as_stopping() {
+    let dir = tempfile::tempdir().unwrap();
+    let doc = json!({"version": "1", "monitors": [serde_json::to_value(on_edge("m")).unwrap()]});
+    std::fs::write(dir.path().join("http-monitors.json"), doc.to_string()).unwrap();
+    let owed = json!([{"agentId": "edge", "id": "m"}]);
+    std::fs::write(
+        dir.path().join("http_monitors_owed_stops.json"),
+        owed.to_string(),
+    )
+    .unwrap();
+    let manager = manager(dir.path());
+    assert_eq!(
+        manager.list_http_monitors()[0].status,
+        HttpMonitorStatus::Stopping
     );
 }

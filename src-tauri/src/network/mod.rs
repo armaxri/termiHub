@@ -863,7 +863,6 @@ impl NetworkManager {
             .map(|monitors| monitors.values().filter_map(|s| s.state()).collect())
             .unwrap_or_default();
         // A monitor on an agent says what is known there (#6052).
-        states.retain(|s| !self.agent_monitors.has(&s.config.id));
         states.extend(self.agent_monitors.states(self.app_handle().as_ref()));
         states
     }

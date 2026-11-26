@@ -155,6 +155,14 @@ describe("NetworkToolsSidebar — monitor rows on SidebarListItem (#5193)", () =
     ["paused", monitor("a", { paused: true }), "neutral", "Paused"],
     ["stopped", monitor("a", { running: false }), "neutral", "Stopped"],
     ["checking", monitor("a", { lastResult: undefined }), "neutral", "Checking"],
+    // On an agent, the states of a service (#6052).
+    [
+      "not reachable",
+      monitor("a", { running: false, status: "notReachable" }),
+      "warning",
+      "Not reachable",
+    ],
+    ["stopping", monitor("a", { running: false, status: "stopping" }), "warning", "Stopping"],
   ])("labels the %s status dot", async (_name, m, tone, label) => {
     await render([m]);
     const dot = q('[data-testid="monitor-status-a"]')!;
