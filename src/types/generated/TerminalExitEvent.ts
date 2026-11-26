@@ -9,4 +9,10 @@ export type TerminalExitEvent = { session_id: string, exit_code: number | null,
  * an I/O error or a timeout. `null` when the backend cannot tell or the
  * session was closed deliberately.
  */
-end_cause: import("./SessionEndCause").SessionEndCause | null, };
+end_cause: import("./SessionEndCause").SessionEndCause | null, 
+/**
+ * Which output stream of the session ended (#6032), as `terminal-output`
+ * carries it: a session created again under the same id has a newer one,
+ * and a tab attached to that ignores this event if it arrives late.
+ */
+epoch: number, };
