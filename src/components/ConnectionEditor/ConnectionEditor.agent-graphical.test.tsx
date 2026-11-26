@@ -10,6 +10,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
+import { toast } from "@/components/ui/Toast";
 import { useAppStore } from "@/store/appStore";
 import { resetRuntimeCache } from "@/hooks/useAvailableRuntimes";
 import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
@@ -240,6 +241,20 @@ describe("ConnectionEditor — VNC/RDP under an agent (#3241)", () => {
       agentId: AGENT_ID,
     });
     expect(options.contentType).toBe("remote-desktop");
+  });
+
+  it("a failed save is said once, not again as a failed connect (#6079)", async () => {
+    useAppStore.setState({ updateAgentDef: vi.fn(() => Promise.reject(new Error("disk full"))) });
+    render("def-vnc");
+    await flush();
+    const btn = byTestId("connection-editor-save-connect") as HTMLButtonElement;
+    await act(async () => {
+      btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await flush();
+    expect(vi.mocked(toast.error).mock.calls).toEqual([
+      ["Failed to save agent connection", { description: "disk full" }],
+    ]);
   });
 
   it("Save and connect prompts when no password is stored, and opens nothing on cancel", async () => {
