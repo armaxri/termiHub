@@ -84,6 +84,9 @@ describe("HttpMonitorPanel — URL validation", () => {
   it("says nothing about the URL before it was typed (F-009)", async () => {
     await render();
     expect(container.textContent).not.toContain("Enter a valid http(s) URL");
+    // Leaving the bare "https://" it starts with is not a wrong answer either.
+    leaveField(urlInput());
+    expect(container.textContent).not.toContain("Enter a valid http(s) URL");
   });
 
   it("flags invalid input once the field is left, and blocks Start", async () => {

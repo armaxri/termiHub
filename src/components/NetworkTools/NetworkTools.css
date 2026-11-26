@@ -279,34 +279,55 @@
 
 .http-monitor-row {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  flex-direction: column;
+  gap: var(--spacing-xxs);
+  padding: var(--spacing-sm) 0;
+  border-bottom: 1px solid var(--border-secondary);
+}
+
+/* The URL and the state word on one line (F-009). */
+.http-monitor-row__head {
+  display: flex;
+  align-items: baseline;
   gap: var(--spacing-sm);
-  padding: var(--spacing-xxs) 0;
+  min-width: 0;
 }
 
 .http-monitor-row__url {
+  flex: 1;
+  min-width: 0;
   font-size: var(--font-size-sm);
   font-family: var(--font-mono);
   color: var(--text-primary);
-  flex: 1;
-  min-width: 40%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.http-monitor-row__meta {
+.http-monitor-row__state {
+  flex-shrink: 0;
   font-size: var(--font-size-sm);
-  color: var(--text-secondary);
-  white-space: nowrap;
+  color: var(--text-primary);
 }
 
-/* Why a monitor on an agent does not check now (#6052). */
+.http-monitor-row__state[data-state="error"],
+.http-monitor-row__reason[data-state="error"] {
+  color: var(--color-error);
+}
+
+.http-monitor-row__meta,
 .http-monitor-row__reason {
-  flex-basis: 100%;
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* Labelled actions on a line of their own: they never wrap between rows. */
+.http-monitor-row__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+  margin-left: calc(-1 * var(--spacing-sm));
 }
 
 /* ===================================================================
@@ -375,6 +396,11 @@
 .sidebar-list-item:hover .network-sidebar__monitor-meta,
 .sidebar-list-item:hover .network-sidebar__monitor-meta > * + *::before {
   color: var(--text-muted-on-selection);
+}
+
+/* Why it does not check, wrapped, never cut (F-009). */
+.network-sidebar__monitor-reason {
+  white-space: normal;
 }
 
 .network-sidebar__monitor-down {

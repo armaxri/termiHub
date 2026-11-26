@@ -883,6 +883,7 @@ const en = {
   "service.next.usePort": "Use {port}",
   "service.next.edit": "Edit",
   "service.next.connectAgent": "Connect agent",
+  "monitor.next.setUpAgain": "Set it up again",
   "service.next.keepRunning": "Keep running",
   "service.next.letReach": "Let devices reach it",
   "service.next.checkAgain": "Check again",

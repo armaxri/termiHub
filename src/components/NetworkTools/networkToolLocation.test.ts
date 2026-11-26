@@ -34,11 +34,13 @@ describe("NETWORK_TOOL_LOCATION", () => {
     expect(desktopOnly).toEqual(["http-monitor"]);
   });
 
-  it("gives every desktop-only tool a reason", () => {
+  it("gives every desktop-only tool a reason, unless it picks a machine per item", () => {
     for (const [tool, info] of Object.entries(NETWORK_TOOL_LOCATION)) {
-      if (!info.agentAllowed) {
+      if (!info.agentAllowed && !info.perItem) {
         expect(info.agentUnavailableReason, tool).toBeTruthy();
       }
     }
+    // The HTTP monitor shows no tab-level selector at all (F-009).
+    expect(NETWORK_TOOL_LOCATION["http-monitor"].perItem).toBe(true);
   });
 });

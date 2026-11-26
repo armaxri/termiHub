@@ -31,6 +31,8 @@ import { THIS_COMPUTER, type RunLocation } from "@/utils/runLocation";
 import { listHttpMonitorChecks } from "@/services/networkHistoryApi";
 import { HttpMonitorChecks } from "./HttpMonitorChecks";
 import { HttpMonitorRow } from "./HttpMonitorRow";
+import { monitorNextSteps, monitorRunActions, type MonitorNextStep } from "./monitorRow";
+import { useConnectAgent } from "@/hooks/useConnectAgent";
 import { exportNetworkResults } from "./exportResults";
 import { httpMonitorChecksToCsv, mergeChecks } from "./httpMonitorHistory";
 import { isValidHttpUrl, validateIntRange } from "@/utils/fieldValidation";
@@ -83,6 +85,9 @@ export function HttpMonitorPanel() {
   // id in the run-location store once the monitor is created.
   const [runLocation, setRunLocation] = useState<RunLocation>(THIS_COMPUTER);
   const { remoteAgents: agents } = useProjectedAgents();
+  const connectAgent = useConnectAgent();
+  // The URL says it is wrong once it was left, not before it was typed (F-009).
+  const [urlLeft, setUrlLeft] = useState(false);
 
   const urlRef = useAutofocusSelect<HTMLInputElement>();
 
@@ -193,7 +198,9 @@ export function HttpMonitorPanel() {
   // Inline validation. A real scheme+host URL check replaces the brittle
   // `url === "https://"` sentinel, and the numeric fields are range-checked.
   const urlValid = isValidHttpUrl(url);
-  const urlError = url.trim() && !urlValid ? "Enter a valid http(s) URL" : null;
+  // The bare "https://" it starts with is not yet an answer to complain about.
+  const urlTyped = url.trim() !== "" && url.trim() !== "https://";
+  const urlError = urlLeft && urlTyped && !urlValid ? "Enter a valid http(s) URL" : null;
   const intervalError = validateIntRange(intervalSecs, { min: 1, max: 86_400, label: "Interval" });
   const timeoutError = validateIntRange(timeoutSecs, { min: 1, max: 3600, label: "Timeout" });
   const statusError = validateIntRange(expectedStatus, {
@@ -353,6 +360,32 @@ export function HttpMonitorPanel() {
     [loadMonitors, clearActiveMonitor]
   );
 
+  /**
+   * A reason's next step (F-009): connect the monitor's agent, or set up again
+   * one whose machine cannot be read: its settings fill the form, where Run on
+   * is chosen, and the old one can then be deleted.
+   */
+  const handleNextStep = useCallback(
+    (step: MonitorNextStep["id"], id: string) => {
+      const m = monitors.find((x) => x.config.id === id);
+      if (!m) return;
+      if (step === "connectAgent") {
+        const host = hostChoice(m.config.host);
+        if (host.kind === "agent") void connectAgent(host.agentId);
+        return;
+      }
+      setUrl(m.config.url);
+      setMethod(m.config.method);
+      setIntervalSecs(Math.round(m.config.intervalMs / 1000));
+      setExpectedStatus(m.config.expectedStatus ?? "");
+      setTimeoutSecs(Math.round(m.config.timeoutMs / 1000));
+      setName(m.config.name ?? "");
+      setDescription(m.config.description ?? "");
+      document.querySelector<HTMLElement>('[data-testid="http-monitor-run-location"]')?.focus();
+    },
+    [monitors, connectAgent]
+  );
+
   // Tear the listener down on unmount.
   useEffect(() => stopListening, [stopListening]);
 
@@ -417,6 +450,7 @@ export function HttpMonitorPanel() {
             id="http-monitor-url"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
+            onBlur={() => setUrlLeft(true)}
             error={!!urlError}
             placeholder="https://example.com"
             data-testid="http-monitor-url"
@@ -555,15 +589,18 @@ export function HttpMonitorPanel() {
           {monitors.map((m) => {
             // Where it runs is stored with it (#6039).
             const location = hostChoice(m.config.host);
+            const agent =
+              location.kind === "agent" ? agents.find((a) => a.id === location.agentId) : undefined;
             return (
               <HttpMonitorRow
                 key={m.config.id}
                 monitor={m}
+                runs={monitorRunActions(m, location)}
+                nextSteps={monitorNextSteps(m, location, agent?.connectionState === "connected")}
+                onNextStep={handleNextStep}
                 runsOn={
                   // An unreadable one says so in its reason line.
-                  location.kind === "agent"
-                    ? (agents.find((a) => a.id === location.agentId)?.name ?? location.agentId)
-                    : undefined
+                  location.kind === "agent" ? (agent?.name ?? location.agentId) : undefined
                 }
                 onShow={(id) => void showMonitor(id)}
                 onPause={handlePauseMonitor}

@@ -35,6 +35,8 @@ const id = (testId: string) => `[data-testid="${testId}"]`;
 const STATES = {
   sidebar: "Which monitors check, from where, and which do not right now?",
   panel: "The monitor panel: where each runs and why one does not check.",
+  "panel--set-up-again":
+    "termiHub cannot read where one runs: set it up again, choosing where it runs.",
 } as const;
 type State = keyof typeof STATES;
 
@@ -168,23 +170,67 @@ for (const viewport of WINDOWS) {
           "Not reachable"
         );
         await expect(page.locator(id("monitor-row-owed"))).toContainText("will be stopped");
+        // Where it runs, the reason with its next step, nothing to run while stopping (F-009).
+        await expect(page.locator(id("monitor-machine-lab"))).toContainText("Raspberry Pi");
+        await expect(page.locator(id("monitor-step-connectAgent-edge"))).toBeVisible();
+        await expect(page.locator(id("monitor-step-setUpAgain-cloud"))).toBeVisible();
+        const owedActions = page.locator(
+          `${id("monitor-row-owed")} .sidebar-list-item__actions button`
+        );
+        await expect(owedActions).toHaveCount(2);
+        // The whole reason is there, on as many lines as it needs.
+        const reason = page.locator(id("monitor-reason-edge"));
+        expect.soft(await reason.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
         await shot(page, "sidebar", id("sidebar"));
       });
 
-      test("panel", async ({ page }) => {
-        await boot(page, theme);
+      async function openPanel(page: Page): Promise<void> {
         await page.evaluate(() => {
           const store = window.__visual.store.getState() as unknown as {
             openNetworkDiagnosticTab(tool: string): void;
           };
           store.openNetworkDiagnosticTab("http-monitor");
         });
+        await page.locator(".http-monitor-row").first().waitFor();
+      }
+
+      test("panel", async ({ page }) => {
+        await boot(page, theme);
+        await openPanel(page);
+        // No tab-level Run on, and no URL error before typing (F-009).
+        await expect(page.locator(".network-diagnostic__runbar")).toHaveCount(0);
+        await expect(page.locator(".network-panel")).not.toContainText("Enter a valid");
         const lab = page.locator(`.http-monitor-row${id("monitor-row-lab")}`);
         await lab.scrollIntoViewIfNeeded();
         await expect(lab).toContainText("on Raspberry Pi in the lab");
-        await expect(page.locator(id("monitor-reason-edge"))).toContainText("offline");
-        await page.locator(id("monitor-reason-cloud")).scrollIntoViewIfNeeded();
+        await expect(page.locator(id("monitor-actions-lab"))).toHaveText(
+          /Show checks\s*Pause\s*Stop\s*Delete/
+        );
+        await expect(page.locator(id("monitor-actions-owed"))).toHaveText(/^Show checks\s*Delete$/);
+        await expect(page.locator(id("monitor-resume-edge"))).toHaveCount(0);
+        // Every action line stays one line: nothing wraps between two rows.
+        for (const monitorId of ["here", "lab", "edge", "owed", "cloud"]) {
+          const actions = page.locator(id(`monitor-actions-${monitorId}`));
+          const height = (await actions.boundingBox())!.height;
+          const button = (await actions.locator("button").first().boundingBox())!.height;
+          expect.soft(height, monitorId).toBeLessThan(button * 1.5);
+        }
+        await expect(page.locator(`.network-panel ${id("monitor-reason-edge")}`)).toContainText(
+          "offline"
+        );
+        await page.locator(`.network-panel ${id("monitor-reason-cloud")}`).scrollIntoViewIfNeeded();
         await shot(page, "panel", ".network-panel");
+      });
+
+      test("panel--set-up-again", async ({ page }) => {
+        await boot(page, theme);
+        await openPanel(page);
+        const step = page.locator(`.network-panel ${id("monitor-step-setUpAgain-cloud")}`);
+        await step.scrollIntoViewIfNeeded();
+        await step.click();
+        await expect(page.locator(id("http-monitor-url"))).toHaveValue("https://status.cloud/");
+        await page.locator(id("http-monitor-run-location")).scrollIntoViewIfNeeded();
+        await shot(page, "panel--set-up-again", ".network-panel");
       });
     });
   }

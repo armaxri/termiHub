@@ -1,5 +1,6 @@
 import { t, tf } from "@/i18n/catalog";
 import type { HttpMonitorState } from "@/types/network";
+import type { HostChoice } from "@/utils/hostChoice";
 import { monitorServiceState, serviceStateLabel } from "@/utils/serviceState";
 import { formatCheckedAgo, isMonitorStale } from "./monitorStaleness";
 
@@ -29,7 +30,8 @@ export function monitorRowMarker(
   // On an agent: not reachable, stopping, starting or failed, and why (#6052).
   const state = monitorServiceState(monitor);
   if (state !== "running" && state !== "stopped") {
-    return { kind: "state", label: monitor.reason ?? serviceStateLabel(state) };
+    // The word; the reason has its own line, with its next step (F-009).
+    return { kind: "state", label: serviceStateLabel(state) };
   }
   if (!running) return { kind: "stopped", label: t("monitor.marker.stopped") };
   if (paused) return { kind: "paused", label: t("monitor.marker.paused") };
@@ -38,6 +40,56 @@ export function monitorRowMarker(
     return { kind: "overdue", label: t("monitor.marker.overdue") };
   }
   return lastResult.ok ? null : { kind: "down", label: t("monitor.marker.down") };
+}
+
+/** What a monitor row offers to run now (F-009), as a Services row does. */
+export interface MonitorRunActions {
+  pause: boolean;
+  /** Start it again: a stopped, paused or failed one. */
+  resume: boolean;
+  stop: boolean;
+}
+
+/**
+ * The run actions of `monitor` on `host`. Stopping offers none (it was
+ * pressed); not reachable only Stop; one whose machine cannot be read never
+ * starts again, it would fail the same way.
+ */
+export function monitorRunActions(monitor: HttpMonitorState, host: HostChoice): MonitorRunActions {
+  const state = monitorServiceState(monitor);
+  const runs = state === "running";
+  return {
+    pause: runs && !monitor.paused,
+    resume:
+      (runs && monitor.paused) ||
+      ((state === "stopped" || state === "error") && host.kind !== "unreadable"),
+    stop: runs || state === "starting" || state === "notReachable",
+  };
+}
+
+/** A next step a monitor's reason comes with. */
+export interface MonitorNextStep {
+  id: "connectAgent" | "setUpAgain";
+  label: string;
+}
+
+/**
+ * What helps with why `monitor` does not check (F-009): connect its agent when
+ * that is offline, or set it up again when termiHub cannot read where it runs.
+ */
+export function monitorNextSteps(
+  monitor: HttpMonitorState,
+  host: HostChoice,
+  agentConnected: boolean
+): MonitorNextStep[] {
+  const state = monitorServiceState(monitor);
+  if (host.kind === "unreadable" && state !== "running") {
+    return [{ id: "setUpAgain", label: t("monitor.next.setUpAgain") }];
+  }
+  if (host.kind === "agent" && state === "notReachable" && !agentConnected) {
+    return [{ id: "connectAgent", label: t("service.next.connectAgent") }];
+  }
+  return [];
 }
 
 /**

@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useId, useState, type MouseEvent } from "react";
 import { monitorServiceState, serviceStateDot } from "@/utils/serviceState";
-import { hostChoice } from "@/utils/hostChoice";
+import { hostChoice, type HostChoice } from "@/utils/hostChoice";
+import { useConnectAgent } from "@/hooks/useConnectAgent";
+import { MiddleEllipsis } from "@/components/ServiceListItem/MiddleEllipsis";
+import "@/components/ServiceListItem/ServiceListItem.css";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import "./NetworkTools.css";
 import {
@@ -12,6 +15,7 @@ import {
   StopCircle,
   Trash2,
   AlertTriangle,
+  HardDrive,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import {
@@ -30,7 +34,14 @@ import { Button, Tooltip, EmptyState, StatusDot, toast } from "@/components/ui";
 import type { StatusTone } from "@/components/ui";
 import { SidebarListItem } from "@/components/SidebarListItem";
 import { isMonitorStale } from "./monitorStaleness";
-import { monitorRowMarker, monitorRowName, monitorRowTooltip } from "./monitorRow";
+import {
+  monitorNextSteps,
+  monitorRowMarker,
+  monitorRowName,
+  monitorRowTooltip,
+  monitorRunActions,
+  type MonitorNextStep,
+} from "./monitorRow";
 import { errorMessage } from "@/utils/errorMessage";
 
 /**
@@ -73,6 +84,11 @@ interface MonitorRowProps {
   onOpen: (id: string) => void;
   /** The machine it checks from, by name; none for this computer (#6039). */
   runsOn?: string;
+  /** Where it runs, as stored (F-009). */
+  host: HostChoice;
+  /** Whether the agent it runs on is connected. */
+  agentConnected: boolean;
+  onNextStep: (step: MonitorNextStep["id"], id: string) => void;
 }
 
 /** Tone and accessible name of a monitor's status dot. */
@@ -111,8 +127,15 @@ function MonitorRow({
   onRemove,
   onOpen,
   runsOn,
+  host,
+  agentConnected,
+  onNextStep,
 }: MonitorRowProps) {
-  const { config, running, paused, lastResult } = monitor;
+  const { config, lastResult } = monitor;
+  // Only what can be done now, and what helps with why it does not check (F-009).
+  const runs = monitorRunActions(monitor, host);
+  const nextSteps = monitorNextSteps(monitor, host, agentConnected);
+  const state = monitorServiceState(monitor);
   const stale = isMonitorStale(lastResult?.timestampMs, config.intervalMs, now);
   const status = monitorStatus(monitor, stale);
   const marker = monitorRowMarker(monitor, now);
@@ -188,7 +211,7 @@ function MonitorRow({
               onClick={act(onOpen)}
             />
           </Tooltip>
-          {running && !paused && (
+          {runs.pause && (
             <Tooltip content="Pause monitor" side="top">
               <Button
                 variant="ghost"
@@ -200,7 +223,7 @@ function MonitorRow({
               />
             </Tooltip>
           )}
-          {(paused || !running) && (
+          {runs.resume && (
             <Tooltip content="Resume monitor" side="top">
               <Button
                 variant="ghost"
@@ -212,7 +235,7 @@ function MonitorRow({
               />
             </Tooltip>
           )}
-          {running && (
+          {runs.stop && (
             <Tooltip content="Stop monitor" side="top">
               <Button
                 variant="ghost"
@@ -237,10 +260,50 @@ function MonitorRow({
         </>
       }
       details={
-        markerEl && (
-          <span className="network-sidebar__monitor-meta" data-testid={`monitor-meta-${config.id}`}>
-            {markerEl}
-          </span>
+        (runsOn || markerEl || monitor.reason || nextSteps.length > 0) && (
+          <>
+            {runsOn && (
+              <Tooltip content={`Checks from ${runsOn}`} side="right">
+                <span className="service-row__machine" data-testid={`monitor-machine-${config.id}`}>
+                  <HardDrive size={11} className="service-row__machine-icon" aria-hidden="true" />
+                  <MiddleEllipsis text={runsOn} />
+                </span>
+              </Tooltip>
+            )}
+            {markerEl && (
+              <span
+                className="network-sidebar__monitor-meta"
+                data-testid={`monitor-meta-${config.id}`}
+              >
+                {markerEl}
+              </span>
+            )}
+            {(monitor.reason || nextSteps.length > 0) && (
+              <span
+                className="service-row__reason network-sidebar__monitor-reason"
+                data-state={state}
+                data-testid={`monitor-reason-${config.id}`}
+              >
+                {monitor.reason}
+                {nextSteps.map((step) => (
+                  <span key={step.id}>
+                    {" "}
+                    <button
+                      type="button"
+                      className="service-row__next"
+                      data-testid={`monitor-step-${step.id}-${config.id}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onNextStep(step.id, config.id);
+                      }}
+                    >
+                      {step.label}
+                    </button>
+                  </span>
+                ))}
+              </span>
+            )}
+          </>
         )
       }
     />
@@ -257,6 +320,7 @@ export function NetworkToolsSidebar() {
   const setHttpMonitors = useAppStore((s) => s.setHttpMonitors);
   const openNetworkDiagnosticTab = useAppStore((s) => s.openNetworkDiagnosticTab);
   const { remoteAgents } = useProjectedAgents();
+  const connectAgent = useConnectAgent();
   /** The machine a monitor checks from, by name; none for this computer (#6039). */
   const runsOnOf = (monitor: HttpMonitorState): string | undefined => {
     const host = hostChoice(monitor.config.host);
@@ -373,6 +437,26 @@ export function NetworkToolsSidebar() {
     [refreshMonitors]
   );
 
+  /** Whether the agent `monitor` runs on is connected. */
+  const agentConnected = (monitor: HttpMonitorState): boolean => {
+    const host = hostChoice(monitor.config.host);
+    return (
+      host.kind === "agent" &&
+      remoteAgents.find((a) => a.id === host.agentId)?.connectionState === "connected"
+    );
+  };
+
+  /** A reason's next step (F-009): connect its agent, or open it to set it up again. */
+  const handleNextStep = (step: MonitorNextStep["id"], id: string) => {
+    const monitor = httpMonitors.find((m) => m.config.id === id);
+    const host = monitor ? hostChoice(monitor.config.host) : undefined;
+    if (step === "connectAgent" && host?.kind === "agent") {
+      void connectAgent(host.agentId);
+      return;
+    }
+    openNetworkDiagnosticTab("http-monitor");
+  };
+
   const handleOpenMonitor = useCallback(
     (_id: string) => {
       openNetworkDiagnosticTab("http-monitor");
@@ -412,6 +496,9 @@ export function NetworkToolsSidebar() {
           <MonitorRow
             key={m.config.id}
             monitor={m}
+            host={hostChoice(m.config.host)}
+            agentConnected={agentConnected(m)}
+            onNextStep={handleNextStep}
             now={now}
             onStop={handleStopMonitor}
             onPause={handlePauseMonitor}

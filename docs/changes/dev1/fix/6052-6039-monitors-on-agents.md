@@ -8,3 +8,7 @@
   "Stopping" and is sent when it is back, also after a restart (#6052).
 - HTTP monitors: starting, stopping, pausing and resuming a monitor no longer holds up the window
   while its agent answers (#6052).
+- HTTP monitors read like Services rows: each says where it runs, its state in words, and why it
+  does not check with a next step ("Connect agent", "Set it up again"); the panel's actions are
+  labelled and offer only what can be done now; the HTTP monitor tab no longer shows a disabled
+  "Run on", and the URL is flagged only once it was typed and left.
