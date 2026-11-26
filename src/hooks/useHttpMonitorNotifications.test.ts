@@ -4,6 +4,7 @@ import { createRoot, Root } from "react-dom/client";
 
 vi.mock("@/services/networkApi", () => ({
   onHttpMonitorCheck: vi.fn(),
+  onHttpMonitorChanged: vi.fn(() => Promise.resolve(() => {})),
 }));
 
 vi.mock("@/components/ui", () => ({

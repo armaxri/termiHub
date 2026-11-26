@@ -373,3 +373,11 @@ export function onTracerouteError(
 export function onHttpMonitorCheck(cb: (payload: HttpCheckResult) => void): Promise<UnlistenFn> {
   return listen<HttpCheckResult>("network-http-monitor-check", (e) => cb(e.payload));
 }
+
+/**
+ * Listen for a monitor whose row says more than fresh numbers: its agent went
+ * or came back, a stop was confirmed (#6052).
+ */
+export function onHttpMonitorChanged(cb: () => void): Promise<UnlistenFn> {
+  return listen("network-http-monitor-changed", () => cb());
+}

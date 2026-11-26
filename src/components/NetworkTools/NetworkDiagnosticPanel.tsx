@@ -9,6 +9,7 @@ import { TraceroutePanel } from "./TraceroutePanel";
 import { WolPanel } from "./WolPanel";
 import { OpenPortsPanel } from "./OpenPortsPanel";
 import { NetworkToolRunLocation } from "./NetworkToolRunLocation";
+import { NETWORK_TOOL_LOCATION } from "./networkToolLocation";
 
 interface NetworkDiagnosticPanelProps {
   meta: NetworkDiagnosticMeta;
@@ -52,9 +53,12 @@ export function NetworkDiagnosticPanel({ meta, isVisible }: NetworkDiagnosticPan
 
   return (
     <div className="network-diagnostic" data-testid={`network-diagnostic-${meta.tool}`}>
-      <div className="network-diagnostic__runbar">
-        <NetworkToolRunLocation tool={meta.tool} />
-      </div>
+      {/* An HTTP monitor chooses its machine per monitor (F-009). */}
+      {!NETWORK_TOOL_LOCATION[meta.tool]?.perItem && (
+        <div className="network-diagnostic__runbar">
+          <NetworkToolRunLocation tool={meta.tool} />
+        </div>
+      )}
       {renderTool(meta)}
     </div>
   );

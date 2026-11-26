@@ -20,7 +20,9 @@ use serde_json::Value;
 use tauri::State;
 use tracing::trace;
 
-use termihub_core::protocol::methods::{SerialListPortsResult, SERIAL_LIST_PORTS};
+use termihub_core::protocol::methods::{
+    HostAddressesResult, SerialListPortsResult, HOST_ADDRESSES, SERIAL_LIST_PORTS,
+};
 
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
@@ -95,6 +97,74 @@ pub async fn list_agent_serial_ports(
     .unwrap_or_else(|e| Err(TerminalError::InternalError(e.to_string())))
 }
 
+/// Result of [`list_agent_addresses`] (#6086).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[serde(rename_all = "camelCase")]
+pub struct AgentAddressesResult {
+    /// `false` when the agent is too old to list them: the address is typed.
+    pub supported: bool,
+    /// The agent host's IPv4 addresses, as a computer's own are listed.
+    pub addresses: Vec<crate::commands::embedded_servers::NetworkInterface>,
+}
+
+/// Ask an agent for its host's addresses through `send` and decode the reply.
+pub fn list_agent_addresses_via(
+    send: impl FnOnce(&str, Value) -> Result<Value, TerminalError>,
+) -> Result<AgentAddressesResult, TerminalError> {
+    match send(HOST_ADDRESSES, Value::Object(Default::default())) {
+        Ok(value) => {
+            let parsed: HostAddressesResult = serde_json::from_value(value).map_err(|e| {
+                TerminalError::RemoteError(format!(
+                    "Invalid {HOST_ADDRESSES} reply from agent: {e}"
+                ))
+            })?;
+            let addresses = parsed
+                .addresses
+                .into_iter()
+                .map(|a| crate::commands::embedded_servers::NetworkInterface {
+                    name: a.name,
+                    addr: a.addr,
+                })
+                .collect();
+            Ok(AgentAddressesResult {
+                supported: true,
+                addresses,
+            })
+        }
+        Err(TerminalError::AgentUnsupported(_)) => Ok(AgentAddressesResult {
+            supported: false,
+            addresses: Vec::new(),
+        }),
+        Err(e) => Err(e),
+    }
+}
+
+/// List the network addresses of a connected agent's host, for the file server
+/// editor's "one address of that machine" (#6086). `supported: false` for an
+/// agent older than protocol 0.46.0; rejects when the agent is not connected or
+/// does not answer in time.
+#[tauri::command]
+pub async fn list_agent_addresses(
+    agent_id: String,
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
+) -> Result<AgentAddressesResult, TerminalError> {
+    let manager = agent_manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if !manager.is_connected(&agent_id) {
+            return Err(TerminalError::RemoteError(format!(
+                "Agent {agent_id} not connected"
+            )));
+        }
+        list_agent_addresses_via(|method, params| {
+            manager.send_request_bounded(&agent_id, method, params, AGENT_SERIAL_LIST_TIMEOUT)
+        })
+    })
+    .await
+    .unwrap_or_else(|e| Err(TerminalError::InternalError(e.to_string())))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -115,6 +185,36 @@ mod tests {
                 supported: true,
                 ports: vec!["/dev/ttyUSB0".into(), "/dev/ttyUSB1".into()],
             }
+        );
+    }
+
+    #[test]
+    fn an_agents_addresses_are_listed_as_this_computers_are() {
+        let mut sent = None;
+        let result = list_agent_addresses_via(|method, params| {
+            sent = Some((method.to_string(), params));
+            Ok(json!({ "addresses": [{ "name": "eth0", "addr": "192.168.1.30" }] }))
+        })
+        .expect("ok");
+        assert_eq!(sent, Some(("host.addresses".to_string(), json!({}))));
+        assert!(result.supported);
+        assert_eq!(result.addresses.len(), 1);
+        assert_eq!(
+            (
+                result.addresses[0].name.as_str(),
+                result.addresses[0].addr.as_str()
+            ),
+            ("eth0", "192.168.1.30")
+        );
+        // An older agent: typed, not an error.
+        let old = list_agent_addresses_via(|_, _| {
+            Err(TerminalError::AgentUnsupported("Method not found".into()))
+        })
+        .expect("unsupported is not an error");
+        assert_eq!((old.supported, old.addresses.len()), (false, 0));
+        // Anything else is the caller's to show.
+        assert!(
+            list_agent_addresses_via(|_, _| Err(TerminalError::RemoteError("x".into()))).is_err()
         );
     }
 

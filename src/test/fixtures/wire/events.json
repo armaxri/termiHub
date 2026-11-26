@@ -25,6 +25,7 @@
     "local-dir-changed",
     "local-file-changed",
     "log-entry",
+    "network-http-monitor-changed",
     "network-http-monitor-check",
     "network-ping-complete",
     "network-ping-error",

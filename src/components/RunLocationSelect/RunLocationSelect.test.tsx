@@ -89,4 +89,20 @@ describe("RunLocationSelect", () => {
     const trigger = document.querySelector('[data-testid="rl"]') as HTMLButtonElement;
     expect(trigger.hasAttribute("disabled")).toBe(true);
   });
+
+  it("with nothing chosen yet, stays open even with only This computer to offer", () => {
+    render(
+      <RunLocationSelect
+        value={null}
+        agents={[]}
+        onChange={vi.fn()}
+        placeholder="Choose…"
+        data-testid="rl"
+      />
+    );
+    const trigger = container.querySelector<HTMLButtonElement>('[data-testid="rl"]')!;
+    expect(trigger.disabled).toBe(false);
+    expect(trigger.getAttribute("data-value")).toBe("");
+    expect(trigger.textContent).toContain("Choose…");
+  });
 });

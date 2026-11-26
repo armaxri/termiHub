@@ -15,27 +15,20 @@ import type { RunLocation } from "@/types/tunnel";
 interface RunLocationState {
   /** Per-network-tool run-location, keyed by the frontend `NetworkTool` id. */
   networkToolLocations: Record<string, RunLocation>;
-  /** Per-HTTP-monitor run-location, keyed by monitor id (#2592). */
-  monitorLocations: Record<string, RunLocation>;
   /** Per-system-monitor run-location, keyed by the monitor key = owning
    * terminal session id (#2593). */
   systemMonitorLocations: Record<string, RunLocation>;
   /** Record a network tool's chosen run-location. */
   setNetworkToolLocation: (tool: string, location: RunLocation) => void;
-  /** Record an HTTP monitor's chosen run-location. */
-  setMonitorLocation: (monitorId: string, location: RunLocation) => void;
   /** Record a system monitor's chosen run-location. */
   setSystemMonitorLocation: (monitorKey: string, location: RunLocation) => void;
 }
 
 export const useRunLocationStore = create<RunLocationState>((set) => ({
   networkToolLocations: {},
-  monitorLocations: {},
   systemMonitorLocations: {},
   setNetworkToolLocation: (tool, location) =>
     set((s) => ({ networkToolLocations: { ...s.networkToolLocations, [tool]: location } })),
-  setMonitorLocation: (monitorId, location) =>
-    set((s) => ({ monitorLocations: { ...s.monitorLocations, [monitorId]: location } })),
   setSystemMonitorLocation: (monitorKey, location) =>
     set((s) => ({
       systemMonitorLocations: { ...s.systemMonitorLocations, [monitorKey]: location },

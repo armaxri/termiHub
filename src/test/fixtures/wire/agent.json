@@ -36,6 +36,7 @@
       "fileCreateNew": true,
       "fileRanges": false,
       "fileTruncate": true,
+      "hostAddresses": true,
       "hostFileAttributeOps": {
         "owner": false,
         "permissions": false,
@@ -68,6 +69,7 @@
       "fileCreateNew": false,
       "fileRanges": false,
       "fileTruncate": false,
+      "hostAddresses": false,
       "maxSessions": 4,
       "monitoringSupported": false,
       "outputFlow": false,
