@@ -206,6 +206,8 @@ pub(crate) struct Supervisor<S: GraphicalEventSink> {
     /// Run when a reconnected generation lifts the session back to `Active`
     /// (#4230), so waiting side-channel transfers can resume.
     pub(crate) on_reactivated: Option<OnReactivated>,
+    /// Why the host gave up on a session that was never established (#6062).
+    pub(crate) establish_failure: crate::session::graphical_manager::EstablishFailure,
     pub(crate) sink: S,
 }
 
@@ -220,6 +222,13 @@ impl<S: GraphicalEventSink> Supervisor<S> {
         let mut retrying = false;
         loop {
             let end = self.run_generation(generation, retrying).await;
+            if !retrying && !self.ever_established().await {
+                // It never got in (#6062): a connect failure, never a dropped session.
+                let (state, message, code) = self.never_established(end).await;
+                warn!(session_id = %self.session_id, ?state, %message, "graphical session ended before it was established");
+                self.rest_coded(state, Some(message), code).await;
+                return;
+            }
             if let Some((state, message, code)) = self.fatal_rest(end, retrying).await {
                 warn!(session_id = %self.session_id, ?state, %message, "graphical session ended with a typed failure; not auto-reconnecting");
                 self.rest_coded(state, Some(message), code).await;
@@ -300,6 +309,40 @@ impl<S: GraphicalEventSink> Supervisor<S> {
             }
             _ => None,
         }
+    }
+
+    /// Whether the session was ever `Active` (#6062).
+    async fn ever_established(&self) -> bool {
+        !matches!(
+            self.state.lock().await.state(),
+            GraphicalState::Connecting | GraphicalState::Authenticating
+        )
+    }
+
+    /// The resting failure of a session that ended before it was established
+    /// (#6062): the host's own reason (it timed out), else the backend's typed one,
+    /// else that the helper ended.
+    async fn never_established(
+        &self,
+        end: PumpEnd,
+    ) -> (GraphicalState, String, Option<IpcErrorCode>) {
+        let given_up = self
+            .establish_failure
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take());
+        if let Some((message, code)) = given_up {
+            return (GraphicalState::ConnectFailed, message, code);
+        }
+        if let Some(rest) = self.fatal_rest(end, false).await {
+            return rest;
+        }
+        let message = self.explain(
+            "The remote desktop helper ended before the session was established. \
+             Retry, or check the connection's host and credentials."
+                .to_string(),
+        );
+        (GraphicalState::ConnectFailed, message, None)
     }
 
     /// One transition of the canonical reconnect engine.
