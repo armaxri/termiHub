@@ -225,8 +225,7 @@ export class InputRecorder {
       if (!this.open?.kept) this.open = { prompt: apart, kept: true };
       return this.open;
     }
-    // Echo off on the PTY: nothing is echoed, so nothing to drop it for (#6014).
-    if (before !== null && hidden !== true) this.dropEchoedRun(before);
+    if (before !== null) this.dropEchoedRun(before);
     // The wait it was typed for is over.
     if (this.open?.kept) this.open = null;
     if (!this.open && before !== null && isSecretPrompt(before, hidden)) {
