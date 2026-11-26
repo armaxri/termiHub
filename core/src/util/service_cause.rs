@@ -19,9 +19,35 @@ pub enum ServiceCause {
     StoreLocked,
     /// Its SSH connection could not be made.
     Connection,
+    /// Its SSH server did not answer in time (#6028, slice 10).
+    ServerSilent,
+    /// Its SSH server refused the sign-in.
+    SignInRefused,
+    /// The host key of its SSH server is not trusted: changed, or turned down.
+    HostKeyUntrusted,
+    /// Its SSH server did not allow the port of a remote tunnel.
+    RemotePortRefused,
+    /// The folder of a file server does not exist.
+    FolderMissing,
     /// A cause of a newer build.
     #[serde(other)]
     Other,
+}
+
+/// The reason to show for a file server whose folder is gone (#6028, slice 10).
+pub fn folder_missing_reason(folder: &str) -> String {
+    format!("The folder {folder} does not exist.")
+}
+
+/// Whether `text`, as an agent relayed it, says that a folder is gone. Only for
+/// what an agent sends, which carries no cause; this computer looks itself.
+pub fn says_folder_missing(text: &str) -> bool {
+    text.contains("The folder ") && text.contains(" does not exist.")
+}
+
+/// Whether `text`, as an agent relayed it, says that a port is taken.
+pub fn says_port_in_use(text: &str) -> bool {
+    text.contains(" is already in use")
 }
 
 /// Whether something else already listens on TCP `host`:`port`.
@@ -70,6 +96,17 @@ mod tests {
     }
 
     #[test]
+    fn what_an_agent_says_is_read_for_its_cause() {
+        assert!(says_folder_missing(&folder_missing_reason("/srv/fw")));
+        assert!(says_folder_missing(
+            "Not started: its agent could not start it: The folder ~/fw does not exist."
+        ));
+        assert!(!says_folder_missing("The folder is fine."));
+        assert!(says_port_in_use(&port_in_use_reason(8080)));
+        assert!(!says_port_in_use("Port 8080 cannot be opened: denied"));
+    }
+
+    #[test]
     fn the_wire_names_are_stable_and_a_newer_cause_still_reads() {
         for (cause, wire) in [
             (ServiceCause::PortInUse, "\"portInUse\""),
@@ -77,6 +114,11 @@ mod tests {
             (ServiceCause::AgentSilent, "\"agentSilent\""),
             (ServiceCause::StoreLocked, "\"storeLocked\""),
             (ServiceCause::Connection, "\"connection\""),
+            (ServiceCause::ServerSilent, "\"serverSilent\""),
+            (ServiceCause::SignInRefused, "\"signInRefused\""),
+            (ServiceCause::HostKeyUntrusted, "\"hostKeyUntrusted\""),
+            (ServiceCause::RemotePortRefused, "\"remotePortRefused\""),
+            (ServiceCause::FolderMissing, "\"folderMissing\""),
         ] {
             assert_eq!(serde_json::to_string(&cause).unwrap(), wire);
             assert_eq!(serde_json::from_str::<ServiceCause>(wire).unwrap(), cause);

@@ -22,4 +22,13 @@ activeConnections: number,
 /**
  * Total connections made since the tunnel started.
  */
-totalConnections: number, };
+totalConnections: number, 
+/**
+ * Connections the target refused or the server could not open since the
+ * tunnel started (#6028, slice 10). The tunnel runs; using it fails.
+ */
+refused?: number, 
+/**
+ * When the last of them was refused, in milliseconds since 1970.
+ */
+lastRefusedMs?: number, };

@@ -204,7 +204,7 @@ impl DynamicForwarder {
         // relay by the handshake timeout would kill every session (#2329).
         let mut channel_stream = match tokio::time::timeout(
             handshake_timeout,
-            Self::socks_handshake(&mut stream, opener),
+            Self::socks_handshake(&mut stream, opener, stats),
         )
         .await
         {
@@ -240,10 +240,11 @@ impl DynamicForwarder {
     async fn socks_handshake<O: ChannelOpener>(
         stream: &mut tokio::net::TcpStream,
         opener: Arc<O>,
+        stats: &ForwarderStats,
     ) -> std::io::Result<Option<O::Stream>> {
         match stream.read_u8().await? {
-            SOCKS5_VERSION => Self::socks5_handshake(stream, opener).await,
-            SOCKS4_VERSION => Self::socks4_handshake(stream, opener).await,
+            SOCKS5_VERSION => Self::socks5_handshake(stream, opener, stats).await,
+            SOCKS4_VERSION => Self::socks4_handshake(stream, opener, stats).await,
             _ => Ok(None),
         }
     }
@@ -254,6 +255,7 @@ impl DynamicForwarder {
     async fn socks4_handshake<O: ChannelOpener>(
         stream: &mut tokio::net::TcpStream,
         opener: Arc<O>,
+        stats: &ForwarderStats,
     ) -> std::io::Result<Option<O::Stream>> {
         let request = match socks4::read_request(stream).await? {
             Ok(request) => request,
@@ -263,13 +265,14 @@ impl DynamicForwarder {
                 return Ok(None);
             }
         };
-        let channel_stream = match Self::open_channel(&*opener, request.host, request.port).await {
-            Ok(ch) => ch,
-            Err(_) => {
-                Self::reject(stream, &socks4::reply(SOCKS4_REP_REJECTED)).await?;
-                return Ok(None);
-            }
-        };
+        let channel_stream =
+            match Self::open_channel(&*opener, request.host, request.port, stats).await {
+                Ok(ch) => ch,
+                Err(_) => {
+                    Self::reject(stream, &socks4::reply(SOCKS4_REP_REJECTED)).await?;
+                    return Ok(None);
+                }
+            };
         stream.write_all(&socks4::reply(SOCKS4_REP_GRANTED)).await?;
         Ok(Some(channel_stream))
     }
@@ -280,11 +283,14 @@ impl DynamicForwarder {
         opener: &O,
         host: String,
         port: u16,
+        stats: &ForwarderStats,
     ) -> std::io::Result<O::Stream> {
         opener
             .open_direct_tcpip(host.clone(), port)
             .await
             .inspect_err(|e| {
+                // The target refused, or the server could not reach it (#6028).
+                stats.note_refused();
                 tracing::debug!(
                     "SOCKS channel_open_direct_tcpip to {}:{} failed: {}",
                     host,
@@ -306,6 +312,7 @@ impl DynamicForwarder {
     async fn socks5_handshake<O: ChannelOpener>(
         stream: &mut tokio::net::TcpStream,
         opener: Arc<O>,
+        stats: &ForwarderStats,
     ) -> std::io::Result<Option<O::Stream>> {
         // Greeting (the version byte was consumed by `socks_handshake`).
         let nmethods = stream.read_u8().await? as usize;
@@ -363,7 +370,7 @@ impl DynamicForwarder {
         stream.read_exact(&mut port_buf).await?;
         let dest_port = u16::from_be_bytes(port_buf);
 
-        let channel_stream = match Self::open_channel(&*opener, dest_host, dest_port).await {
+        let channel_stream = match Self::open_channel(&*opener, dest_host, dest_port, stats).await {
             Ok(ch) => ch,
             Err(e) => {
                 Self::reject(stream, &Self::reply(Self::reply_for_open_error(&e))).await?;
@@ -885,6 +892,8 @@ mod tests {
             vec![("10.0.0.1".to_string(), 80)],
             "target parsed even though the channel open failed"
         );
+        // Counted as refused (#6028, slice 10).
+        assert_eq!(forwarder.get_stats().refused, 1);
         drop(forwarder);
     }
 
