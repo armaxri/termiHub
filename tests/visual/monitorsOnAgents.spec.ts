@@ -167,11 +167,17 @@ for (const viewport of WINDOWS) {
         await boot(page, theme);
         await expect(page.locator(id("monitor-status-edge"))).toHaveAttribute(
           "aria-label",
-          "Not reachable"
+          "Agent offline"
         );
         await expect(page.locator(id("monitor-row-owed"))).toContainText("will be stopped");
         // Where it runs, the reason with its next step, nothing to run while stopping (F-009).
         await expect(page.locator(id("monitor-machine-lab"))).toContainText("Raspberry Pi");
+        // Every row: where it runs and one state word (round 2).
+        await expect(page.locator(id("monitor-machine-here"))).toHaveText("This computer");
+        await expect(page.locator(id("monitor-machine-cloud"))).toHaveText("Location unknown");
+        await expect(page.locator(id("monitor-marker-here"))).toHaveText("Running");
+        await expect(page.locator(id("monitor-marker-edge"))).toHaveText("Agent offline");
+        await expect(page.locator(id("monitor-marker-cloud"))).toHaveText("Not started");
         await expect(page.locator(id("monitor-step-connectAgent-edge"))).toBeVisible();
         await expect(page.locator(id("monitor-step-setUpAgain-cloud"))).toBeVisible();
         const owedActions = page.locator(
@@ -229,6 +235,16 @@ for (const viewport of WINDOWS) {
         await step.scrollIntoViewIfNeeded();
         await step.click();
         await expect(page.locator(id("http-monitor-url"))).toHaveValue("https://status.cloud/");
+        // A repair screen: what it repairs, where it runs still to choose (round 2).
+        await expect(page.locator(id("http-monitor-title"))).toHaveText(
+          "Set up status.cloud again"
+        );
+        await expect(page.locator(id("http-monitor-run-location"))).toHaveAttribute(
+          "data-value",
+          ""
+        );
+        await expect(page.locator(id("http-monitor-start"))).toContainText("Save and start");
+        await expect(page.locator(id("http-monitor-repair-cancel"))).toBeVisible();
         await page.locator(id("http-monitor-run-location")).scrollIntoViewIfNeeded();
         await shot(page, "panel--set-up-again", ".network-panel");
       });

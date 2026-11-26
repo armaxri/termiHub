@@ -93,6 +93,8 @@ describe("a monitor row in the words of Services (F-009)", () => {
       }),
     ]);
     expect(q('[data-testid="monitor-machine-far"]')?.textContent).toBe("Edge gateway");
+    // Cut at its end, never in the middle (F-009 round 2).
+    expect(q('[data-testid="monitor-machine-far"] .network-sidebar__monitor-where')).not.toBeNull();
     expect(q('[data-testid="monitor-machine-here"]')).toBeNull();
   });
 
@@ -103,7 +105,8 @@ describe("a monitor row in the words of Services (F-009)", () => {
       config: { ...monitor("far").config, host: { kind: "agent", agentId: "edge" } } as never,
     });
     await render([far]);
-    expect(q('[data-testid="monitor-marker-far"]')?.textContent).toBe("Not reachable");
+    // About its site, not its agent: "Agent offline" (F-009 round 2).
+    expect(q('[data-testid="monitor-marker-far"]')?.textContent).toBe("Agent offline");
     expect(q('[data-testid="monitor-reason-far"]')?.textContent).toContain(OFFLINE);
     expect(labels("far")).not.toContain("Resume monitor");
     expect(labels("far")).toContain("Stop monitor");
@@ -131,6 +134,8 @@ describe("a monitor row in the words of Services (F-009)", () => {
     });
     await render([odd]);
     expect(q('[data-testid="monitor-reason-odd"]')?.textContent).toContain(UNREADABLE);
+    expect(q('[data-testid="monitor-machine-odd"]')?.textContent).toBe("Location unknown");
+    expect(q('[data-testid="monitor-marker-odd"]')?.textContent).toBe("Not started");
     expect(labels("odd")).not.toContain("Resume monitor");
     const step = q('[data-testid="monitor-step-setUpAgain-odd"]')!;
     expect(step.textContent).toBe("Set it up again");

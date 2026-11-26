@@ -1,7 +1,8 @@
 import { Play, Pause, StopCircle, Trash2, LineChart } from "lucide-react";
 import { Button } from "@/components/ui";
 import type { HttpMonitorState } from "@/types/network";
-import { monitorServiceState, serviceStateLabel } from "@/utils/serviceState";
+import { t, tf } from "@/i18n/catalog";
+import { monitorLastResult, monitorRowMarker } from "./monitorRow";
 import "@/components/ServiceListItem/ServiceListItem.css";
 import type { MonitorNextStep, MonitorRunActions } from "./monitorRow";
 
@@ -9,6 +10,10 @@ interface HttpMonitorRowProps {
   monitor: HttpMonitorState;
   /** The machine it runs on, by name; `undefined` for this computer (#6039). */
   runsOn?: string;
+  /** Whether termiHub cannot read where it runs. */
+  whereUnknown?: boolean;
+  /** Now, for the age of the last check. */
+  now?: number;
   /** What can be run now (F-009). */
   runs: MonitorRunActions;
   /** What helps with its reason (F-009). */
@@ -30,6 +35,8 @@ interface HttpMonitorRowProps {
 export function HttpMonitorRow({
   monitor: m,
   runsOn,
+  whereUnknown = false,
+  now = Date.now(),
   runs,
   nextSteps,
   onNextStep,
@@ -40,8 +47,14 @@ export function HttpMonitorRow({
   onRemove,
 }: HttpMonitorRowProps) {
   const id = m.config.id;
-  const state = monitorServiceState(m);
-  const word = m.paused && state === "running" ? "Paused" : serviceStateLabel(state);
+  // One word for the state of the monitor, about its site (F-009 round 2).
+  const marker = monitorRowMarker(m, now);
+  const last = monitorLastResult(m, now);
+  const where = runsOn
+    ? tf("monitor.row.onAgent", { machine: runsOn })
+    : t(whereUnknown ? "monitor.row.whereUnknown" : "monitor.row.here");
+  // A failed check says why, as a reason line; a good one is in the meta line.
+  const reason = m.reason ?? (marker.kind === "down" && last ? capitalize(last) : undefined);
   return (
     <div className="http-monitor-row" data-testid={`monitor-row-${id}`}>
       <div className="http-monitor-row__head">
@@ -50,18 +63,19 @@ export function HttpMonitorRow({
         </span>
         <span
           className="http-monitor-row__state"
-          data-state={state}
+          data-state={marker.kind}
           data-testid={`monitor-state-${id}`}
         >
-          {word}
+          {marker.label}
         </span>
       </div>
       <span className="http-monitor-row__meta">
-        {m.config.method} · every {m.config.intervalMs / 1000}s{runsOn ? ` · on ${runsOn}` : ""}
+        {m.config.method} · every {m.config.intervalMs / 1000}s · {where}
+        {marker.kind === "up" && last ? ` · ${last}` : ""}
       </span>
-      {(m.reason || nextSteps.length > 0) && (
-        <span className="http-monitor-row__reason" data-state={state}>
-          <span data-testid={`monitor-reason-${id}`}>{m.reason}</span>
+      {(reason || nextSteps.length > 0) && (
+        <span className="http-monitor-row__reason" data-state={marker.kind}>
+          <span data-testid={`monitor-reason-${id}`}>{reason}</span>
           {nextSteps.map((step) => (
             <span key={step.id}>
               {" "}
@@ -135,4 +149,8 @@ export function HttpMonitorRow({
       </div>
     </div>
   );
+}
+
+function capitalize(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }

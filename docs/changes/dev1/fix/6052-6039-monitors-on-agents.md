@@ -12,3 +12,9 @@
   does not check with a next step ("Connect agent", "Set it up again"); the panel's actions are
   labelled and offer only what can be done now; the HTTP monitor tab no longer shows a disabled
   "Run on", and the URL is flagged only once it was typed and left.
+- HTTP monitors: every row says where it runs ("This computer", the agent's name cut at its end, or
+  "Location unknown") and its state in one word; a monitor whose agent is gone reads "Agent offline"
+  with a grey dot instead of "Not reachable", a failing one "Down" with its last check, and a running
+  one shows its last check ("last check HTTP 200, 12s ago").
+- HTTP monitors: "Set it up again" opens a repair screen titled "Set up <name> again" that asks where
+  it runs, and "Save and start" replaces the broken monitor; Cancel leaves it as it was.

@@ -65,7 +65,14 @@ afterEach(() => {
 
 describe("HttpMonitorRow", () => {
   it("names the agent it runs on, and its state in the words of a service", () => {
-    render(monitor({ status: "running" }), "Edge box");
+    render(
+      monitor({
+        status: "running",
+        lastResult: { monitorId: "m", ok: true, statusCode: 200, timestampMs: Date.now() },
+      }),
+      "Edge box"
+    );
+    expect(container.textContent).toContain("last check HTTP 200");
     expect(container.textContent).toContain("on Edge box");
     expect(text("monitor-state-m")).toBe("Running");
   });
@@ -73,14 +80,14 @@ describe("HttpMonitorRow", () => {
   it("says why it does not check now", () => {
     const why = "Its agent is offline. It may still run there; termiHub cannot tell.";
     render(monitor({ running: false, status: "notReachable", reason: why }), "Edge box");
-    expect(text("monitor-state-m")).toBe("Not reachable");
+    expect(text("monitor-state-m")).toBe("Agent offline");
     expect(text("monitor-reason-m")).toBe(why);
   });
 
   it("a paused one says paused, and one here names no machine", () => {
     render(monitor({ paused: true, status: "running" }));
     expect(text("monitor-state-m")).toBe("Paused");
-    expect(container.textContent).not.toContain(" on ");
+    expect(container.textContent).toContain("on this computer");
     expect(text("monitor-reason-m")).toBeUndefined();
   });
 
@@ -114,5 +121,41 @@ describe("HttpMonitorRow", () => {
     expect(step.textContent).toBe("Set it up again");
     act(() => step.click());
     expect(steps).toHaveBeenCalledWith("setUpAgain", "m");
+  });
+
+  it("a failing one reads Down, with the last check as its reason (F-009 round 2)", () => {
+    render(
+      monitor({
+        status: "running",
+        lastResult: { monitorId: "m", ok: false, statusCode: 503, timestampMs: Date.now() },
+      })
+    );
+    expect(text("monitor-state-m")).toBe("Down");
+    expect(text("monitor-reason-m")).toBe("Last check HTTP 503, expected 200, just now");
+    // Said once: not again in the meta line.
+    expect(container.textContent!.split("HTTP 503")).toHaveLength(2);
+  });
+
+  it("one whose machine cannot be read says so where the machine would be", () => {
+    act(() =>
+      root.render(
+        withTooltip(
+          <HttpMonitorRow
+            monitor={monitor({ status: "error", running: false })}
+            whereUnknown
+            runs={{ pause: false, resume: false, stop: false }}
+            nextSteps={[]}
+            onNextStep={vi.fn()}
+            onShow={vi.fn()}
+            onPause={vi.fn()}
+            onResume={vi.fn()}
+            onStop={vi.fn()}
+            onRemove={vi.fn()}
+          />
+        )
+      )
+    );
+    expect(container.textContent).toContain("where it runs is unknown");
+    expect(text("monitor-state-m")).toBe("Not started");
   });
 });

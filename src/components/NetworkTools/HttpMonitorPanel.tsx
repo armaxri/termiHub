@@ -31,7 +31,13 @@ import { THIS_COMPUTER, type RunLocation } from "@/utils/runLocation";
 import { listHttpMonitorChecks } from "@/services/networkHistoryApi";
 import { HttpMonitorChecks } from "./HttpMonitorChecks";
 import { HttpMonitorRow } from "./HttpMonitorRow";
-import { monitorNextSteps, monitorRunActions, type MonitorNextStep } from "./monitorRow";
+import {
+  monitorNextSteps,
+  monitorRowName,
+  monitorRunActions,
+  type MonitorNextStep,
+} from "./monitorRow";
+import { t, tf } from "@/i18n/catalog";
 import { useConnectAgent } from "@/hooks/useConnectAgent";
 import { exportNetworkResults } from "./exportResults";
 import { httpMonitorChecksToCsv, mergeChecks } from "./httpMonitorHistory";
@@ -83,7 +89,11 @@ export function HttpMonitorPanel() {
   // which probes the target from its own vantage and streams the checks back
   // (#2592). Session-only form state; the chosen value is recorded per monitor
   // id in the run-location store once the monitor is created.
-  const [runLocation, setRunLocation] = useState<RunLocation>(THIS_COMPUTER);
+  // `null` while setting up again a monitor whose machine could not be read:
+  // where it runs is the question to answer (F-009 round 2).
+  const [runLocation, setRunLocation] = useState<RunLocation | null>(THIS_COMPUTER);
+  // The monitor being set up again; "Save and start" replaces it.
+  const [repairing, setRepairing] = useState<HttpMonitorState | null>(null);
   const { remoteAgents: agents } = useProjectedAgents();
   const connectAgent = useConnectAgent();
   // The URL says it is wrong once it was left, not before it was typed (F-009).
@@ -209,10 +219,11 @@ export function HttpMonitorPanel() {
     label: "Expected status",
     allowEmpty: true,
   });
-  const canStart = urlValid && !intervalError && !timeoutError && !statusError;
+  const canStart =
+    urlValid && !intervalError && !timeoutError && !statusError && runLocation !== null;
 
   const handleStart = useCallback(async () => {
-    if (!canStart) return;
+    if (!canStart || runLocation === null) return;
     // Reject a re-entrant start while one is already in flight (#1147, GAP #7).
     if (startInFlightRef.current) return;
     startInFlightRef.current = true;
@@ -268,6 +279,11 @@ export function HttpMonitorPanel() {
       for (const result of buffered) {
         if (result.monitorId === monitorId) appendCheck(result);
       }
+      // Set up again: the new one takes the broken one's place.
+      if (repairing) {
+        await networkHttpMonitorRemove(repairing.config.id);
+        setRepairing(null);
+      }
       await loadMonitors();
     } catch (err) {
       stopListening();
@@ -291,6 +307,7 @@ export function HttpMonitorPanel() {
     stopListening,
     appendCheck,
     checkListener,
+    repairing,
   ]);
 
   const handleStop = useCallback(async () => {
@@ -374,6 +391,8 @@ export function HttpMonitorPanel() {
         if (host.kind === "agent") void connectAgent(host.agentId);
         return;
       }
+      setRepairing(m);
+      setRunLocation(null);
       setUrl(m.config.url);
       setMethod(m.config.method);
       setIntervalSecs(Math.round(m.config.intervalMs / 1000));
@@ -381,10 +400,27 @@ export function HttpMonitorPanel() {
       setTimeoutSecs(Math.round(m.config.timeoutMs / 1000));
       setName(m.config.name ?? "");
       setDescription(m.config.description ?? "");
-      document.querySelector<HTMLElement>('[data-testid="http-monitor-run-location"]')?.focus();
+      // After the render that empties Run on: that is the question to answer.
+      requestAnimationFrame(() =>
+        document.querySelector<HTMLElement>('[data-testid="http-monitor-run-location"]')?.focus()
+      );
     },
     [monitors, connectAgent]
   );
+
+  /** Leave "set up again": the form is a new monitor's again. */
+  const cancelRepair = useCallback(() => {
+    setRepairing(null);
+    setRunLocation(THIS_COMPUTER);
+    setUrl("https://");
+    setMethod("GET");
+    setIntervalSecs(30);
+    setExpectedStatus(200);
+    setTimeoutSecs(10);
+    setName("");
+    setDescription("");
+    setUrlLeft(false);
+  }, []);
 
   // Tear the listener down on unmount.
   useEffect(() => stopListening, [stopListening]);
@@ -397,7 +433,11 @@ export function HttpMonitorPanel() {
   return (
     <form className="network-panel" data-testid="http-monitor-panel">
       <div className="network-panel__header">
-        <span className="network-panel__title">HTTP Monitor</span>
+        <span className="network-panel__title" data-testid="http-monitor-title">
+          {repairing
+            ? tf("monitor.repair.title", { name: monitorRowName(repairing).replace(/\/$/, "") })
+            : "HTTP Monitor"}
+        </span>
         <div className="network-panel__actions">
           <Tooltip content="Refresh monitor list" side="bottom">
             <Button
@@ -408,7 +448,17 @@ export function HttpMonitorPanel() {
               aria-label="Refresh monitor list"
             />
           </Tooltip>
-          {activeRunning ? (
+          {repairing && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={cancelRepair}
+              data-testid="http-monitor-repair-cancel"
+            >
+              Cancel
+            </Button>
+          )}
+          {activeRunning && !repairing ? (
             <Button
               variant="danger"
               size="sm"
@@ -432,7 +482,7 @@ export function HttpMonitorPanel() {
               onClick={handleStart}
               data-testid="http-monitor-start"
             >
-              Start
+              {repairing ? t("monitor.repair.saveAndStart") : "Start"}
             </Button>
           )}
         </div>
@@ -518,11 +568,14 @@ export function HttpMonitorPanel() {
           className="network-panel__field network-panel__field--small"
           label="Run on"
           htmlFor="http-monitor-run-location"
+          error={runLocation === null ? t("monitor.repair.chooseWhere") : undefined}
         >
           <RunLocationSelect
             value={runLocation}
             agents={agents}
             onChange={setRunLocation}
+            // Short: the field is narrow; its error line says the whole.
+            placeholder={t("monitor.repair.choose")}
             aria-label="Run HTTP monitor on"
             data-testid="http-monitor-run-location"
           />
@@ -598,6 +651,7 @@ export function HttpMonitorPanel() {
                 runs={monitorRunActions(m, location)}
                 nextSteps={monitorNextSteps(m, location, agent?.connectionState === "connected")}
                 onNextStep={handleNextStep}
+                whereUnknown={location.kind === "unreadable"}
                 runsOn={
                   // An unreadable one says so in its reason line.
                   location.kind === "agent" ? (agent?.name ?? location.agentId) : undefined

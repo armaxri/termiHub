@@ -310,8 +310,10 @@
   color: var(--text-primary);
 }
 
-.http-monitor-row__state[data-state="error"],
-.http-monitor-row__reason[data-state="error"] {
+.http-monitor-row__state[data-state="notStarted"],
+.http-monitor-row__state[data-state="down"],
+.http-monitor-row__reason[data-state="notStarted"],
+.http-monitor-row__reason[data-state="down"] {
   color: var(--color-error);
 }
 
@@ -396,6 +398,14 @@
 .sidebar-list-item:hover .network-sidebar__monitor-meta,
 .sidebar-list-item:hover .network-sidebar__monitor-meta > * + *::before {
   color: var(--text-muted-on-selection);
+}
+
+/* A long machine name is cut at its end, whole in the tooltip (F-009 round 2). */
+.network-sidebar__monitor-where {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Why it does not check, wrapped, never cut (F-009). */

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { HttpMonitorState } from "@/types/network";
 import { monitorServiceState } from "@/utils/serviceState";
 import {
+  monitorLastResult,
   monitorNextSteps,
   monitorRowMarker,
   monitorRowTooltip,
@@ -30,24 +31,24 @@ function monitor(over: Partial<HttpMonitorState> = {}): HttpMonitorState {
 
 describe("a monitor on an agent reads like a service (#6052)", () => {
   it.each([
-    ["notReachable", "Not reachable"],
+    ["notReachable", "Agent offline"],
     ["stopping", "Stopping"],
     ["starting", "Starting"],
-    ["error", "Error"],
+    ["error", "Not started"],
   ] as const)("%s: says so on its row, not running", (status, word) => {
     const row = monitorRowMarker(monitor({ status, running: false }), NOW);
-    expect(row).toEqual({ kind: "state", label: word });
+    expect(row.label).toBe(word);
   });
 
   it("the marker is the state word; the reason has its own line (F-009)", () => {
     const why = "Its agent is offline. It may still run there; termiHub cannot tell.";
-    expect(monitorRowMarker(monitor({ status: "notReachable", reason: why }), NOW)?.label).toBe(
-      "Not reachable"
+    expect(monitorRowMarker(monitor({ status: "notReachable", reason: why }), NOW).label).toBe(
+      "Agent offline"
     );
   });
 
   it("a running or stopped one keeps its own markers", () => {
-    expect(monitorRowMarker(monitor({ status: "running" }), NOW)).toBeNull();
+    expect(monitorRowMarker(monitor({ status: "running" }), NOW).label).toBe("Running");
     expect(monitorRowMarker(monitor({ status: "stopped", running: false }), NOW)?.kind).toBe(
       "stopped"
     );
@@ -125,5 +126,29 @@ describe("the next step a reason comes with (F-009)", () => {
 
   it("a healthy one here has none", () => {
     expect(monitorNextSteps(monitor(), { kind: "thisComputer" }, false)).toEqual([]);
+  });
+});
+
+describe("the last check, in a few words (F-009 round 2)", () => {
+  it("a good one: its status and age", () => {
+    expect(monitorLastResult(monitor(), NOW)).toBe("last check HTTP 200, just now");
+  });
+
+  it("an unexpected status says what was expected; a failed one why", () => {
+    const at = { monitorId: "m", ok: false, timestampMs: NOW };
+    expect(monitorLastResult(monitor({ lastResult: { ...at, statusCode: 503 } }), NOW)).toBe(
+      "last check HTTP 503, expected 200, just now"
+    );
+    expect(monitorLastResult(monitor({ lastResult: { ...at, error: "timed out" } }), NOW)).toBe(
+      "last check failed: timed out, just now"
+    );
+    expect(monitorLastResult(monitor({ lastResult: undefined }), NOW)).toBeUndefined();
+  });
+
+  it("a failing one reads Down", () => {
+    const down = monitor({
+      lastResult: { monitorId: "m", ok: false, statusCode: 503, timestampMs: NOW },
+    });
+    expect(monitorRowMarker(down, NOW).label).toBe("Down");
   });
 });

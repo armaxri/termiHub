@@ -100,8 +100,9 @@ describe("NetworkToolsSidebar — monitor rows on SidebarListItem (#5193)", () =
       "up.example.com/health"
     );
     expect(header.querySelector(".sidebar-list-item__actions")).not.toBeNull();
-    // An up monitor needs no marker: no details line at all (#5789).
-    expect(row.querySelector(".sidebar-list-item__details")).toBeNull();
+    // Every row says where it runs and its state in a word (F-009 round 2).
+    expect(q('[data-testid="monitor-machine-up"]')?.textContent).toBe("This computer");
+    expect(q('[data-testid="monitor-marker-up"]')?.textContent).toBe("Running");
     expect(row.getAttribute("aria-description")).toBe(
       "GET every 30s · expects 200. Last check: 200 in 42 ms, just now"
     );
@@ -139,9 +140,9 @@ describe("NetworkToolsSidebar — monitor rows on SidebarListItem (#5193)", () =
     expect(q('[data-testid="monitor-marker-a"]')?.textContent).toBe(label);
   });
 
-  it("shows no marker while the first check runs", async () => {
+  it("says Checking while the first check runs", async () => {
     await render([monitor("a", { lastResult: undefined })]);
-    expect(q('[data-testid="monitor-meta-a"]')).toBeNull();
+    expect(q('[data-testid="monitor-marker-a"]')?.textContent).toBe("Checking");
   });
 
   it.each([
@@ -157,10 +158,10 @@ describe("NetworkToolsSidebar — monitor rows on SidebarListItem (#5193)", () =
     ["checking", monitor("a", { lastResult: undefined }), "neutral", "Checking"],
     // On an agent, the states of a service (#6052).
     [
-      "not reachable",
+      "agent offline",
       monitor("a", { running: false, status: "notReachable" }),
-      "warning",
-      "Not reachable",
+      "neutral",
+      "Agent offline",
     ],
     ["stopping", monitor("a", { running: false, status: "stopping" }), "warning", "Stopping"],
   ])("labels the %s status dot", async (_name, m, tone, label) => {

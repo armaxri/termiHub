@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useId, useState, type MouseEvent } from "react";
 import { monitorServiceState, serviceStateDot } from "@/utils/serviceState";
+import { t, tf } from "@/i18n/catalog";
 import { hostChoice, type HostChoice } from "@/utils/hostChoice";
 import { useConnectAgent } from "@/hooks/useConnectAgent";
-import { MiddleEllipsis } from "@/components/ServiceListItem/MiddleEllipsis";
 import "@/components/ServiceListItem/ServiceListItem.css";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import "./NetworkTools.css";
@@ -95,10 +95,15 @@ interface MonitorRowProps {
 function monitorStatus(
   monitor: HttpMonitorState,
   stale: boolean
-): { tone: StatusTone; label: string; pulse?: boolean } {
+): { tone: StatusTone; label: string; pulse?: boolean; hollow?: boolean } {
   const { running, paused, lastResult } = monitor;
   // On an agent, the states of a service (#6052).
   const state = monitorServiceState(monitor);
+  // Its agent is gone: nothing is known, grey, unlike Stopping (F-009 round 2).
+  if (state === "notReachable") {
+    return { tone: "neutral", label: t("monitor.state.agentOffline"), hollow: true };
+  }
+  if (state === "error") return { tone: "error", label: t("monitor.state.notStarted") };
   if (state !== "running" && state !== "stopped") {
     const dot = serviceStateDot(state);
     return { tone: dot.tone, label: dot.label, pulse: dot.pulse };
@@ -136,6 +141,8 @@ function MonitorRow({
   const runs = monitorRunActions(monitor, host);
   const nextSteps = monitorNextSteps(monitor, host, agentConnected);
   const state = monitorServiceState(monitor);
+  const where =
+    runsOn ?? t(host.kind === "thisComputer" ? "monitor.where.here" : "monitor.where.unknown");
   const stale = isMonitorStale(lastResult?.timestampMs, config.intervalMs, now);
   const status = monitorStatus(monitor, stale);
   const marker = monitorRowMarker(monitor, now);
@@ -152,7 +159,7 @@ function MonitorRow({
   };
 
   const markerEl =
-    marker === null ? null : marker.kind === "overdue" ? (
+    marker.kind === "overdue" ? (
       <Tooltip
         content={`Overdue: last check was more than 2× the ${Math.round(
           config.intervalMs / 1000
@@ -194,6 +201,7 @@ function MonitorRow({
           tone={status.tone}
           label={status.label}
           pulse={status.pulse}
+          hollow={status.hollow}
           testId={`monitor-status-${config.id}`}
         />
       }
@@ -260,51 +268,43 @@ function MonitorRow({
         </>
       }
       details={
-        (runsOn || markerEl || monitor.reason || nextSteps.length > 0) && (
-          <>
-            {runsOn && (
-              <Tooltip content={`Checks from ${runsOn}`} side="right">
-                <span className="service-row__machine" data-testid={`monitor-machine-${config.id}`}>
-                  <HardDrive size={11} className="service-row__machine-icon" aria-hidden="true" />
-                  <MiddleEllipsis text={runsOn} />
+        <>
+          {/* Where it runs, always; a long name is cut at its end (F-009 round 2). */}
+          <Tooltip content={tf("monitor.tooltip.runsOn", { machine: where })} side="right">
+            <span className="service-row__machine" data-testid={`monitor-machine-${config.id}`}>
+              <HardDrive size={11} className="service-row__machine-icon" aria-hidden="true" />
+              <span className="network-sidebar__monitor-where">{where}</span>
+            </span>
+          </Tooltip>
+          <span className="network-sidebar__monitor-meta" data-testid={`monitor-meta-${config.id}`}>
+            {markerEl}
+          </span>
+          {(monitor.reason || nextSteps.length > 0) && (
+            <span
+              className="service-row__reason network-sidebar__monitor-reason"
+              data-state={state}
+              data-testid={`monitor-reason-${config.id}`}
+            >
+              {monitor.reason}
+              {nextSteps.map((step) => (
+                <span key={step.id}>
+                  {" "}
+                  <button
+                    type="button"
+                    className="service-row__next"
+                    data-testid={`monitor-step-${step.id}-${config.id}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onNextStep(step.id, config.id);
+                    }}
+                  >
+                    {step.label}
+                  </button>
                 </span>
-              </Tooltip>
-            )}
-            {markerEl && (
-              <span
-                className="network-sidebar__monitor-meta"
-                data-testid={`monitor-meta-${config.id}`}
-              >
-                {markerEl}
-              </span>
-            )}
-            {(monitor.reason || nextSteps.length > 0) && (
-              <span
-                className="service-row__reason network-sidebar__monitor-reason"
-                data-state={state}
-                data-testid={`monitor-reason-${config.id}`}
-              >
-                {monitor.reason}
-                {nextSteps.map((step) => (
-                  <span key={step.id}>
-                    {" "}
-                    <button
-                      type="button"
-                      className="service-row__next"
-                      data-testid={`monitor-step-${step.id}-${config.id}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onNextStep(step.id, config.id);
-                      }}
-                    >
-                      {step.label}
-                    </button>
-                  </span>
-                ))}
-              </span>
-            )}
-          </>
-        )
+              ))}
+            </span>
+          )}
+        </>
       }
     />
   );
