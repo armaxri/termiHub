@@ -1,4 +1,5 @@
 import type { Terminal as XTerm } from "@xterm/xterm";
+import { writeAllSlicedAsync } from "@/utils/slicedWrite";
 import { getAgentSessionBuffer, takeResumedAgentSession } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
 import { isBackendDrivenAgentReconnectTabId } from "@/store/reconnectHelpers";
@@ -94,7 +95,7 @@ export async function repaintIfResumed(
     if (data.length > 0) {
       clear();
       typing.beforeReplay();
-      await new Promise<void>((resolve) => xterm.write(data, resolve));
+      await writeAllSlicedAsync(xterm, data);
       repaint.replayEnd = end;
     } else if (coming) {
       repaint.beforeFirstOutput = () => {
