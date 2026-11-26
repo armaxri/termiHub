@@ -1773,6 +1773,106 @@ describe("appStore — workflow run slice (#1852)", () => {
       );
     });
 
+    /** Sends that hold on `hold\n` until `release()`; `held` resolves per tab once held. */
+    function holdingSends() {
+      const sends: [string, string][] = [];
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      const heldTabs = new Map<string, () => void>();
+      const held = (tabId: string) => new Promise<void>((r) => heldTabs.set(tabId, r));
+      const waiting = { a: held("tab-a"), b: held("tab-b") };
+      registerTerminalInputInjector(async (tabId, data) => {
+        sends.push([tabId, data]);
+        if (data === "hold\n") {
+          heldTabs.get(tabId)?.();
+          await gate;
+        }
+        return true;
+      });
+      return { sends, release, waiting };
+    }
+
+    describe("step by step runs side by side (#6042)", () => {
+      beforeEach(() => {
+        recordedRuns.length = 0;
+        useAppStore.setState({
+          workflows: [workflow("w1", [cmd("hold"), cmd("after")]), workflow("w2", [cmd("w2cmd")])],
+        });
+      });
+      const sentOn = (sends: [string, string][], tabId: string) =>
+        sends.filter(([t]) => t === tabId).map(([, data]) => data);
+
+      it("a run on another terminal leaves the running one alone", async () => {
+        seedTwoTerminals();
+        const { sends, release, waiting } = holdingSends();
+        const first = useAppStore.getState().runWorkflow("w1", { targetTabId: "tab-a" });
+        await waiting.a;
+        await useAppStore.getState().runWorkflow("w2", { targetTabId: "tab-b" });
+        release();
+        await first;
+        expect(sentOn(sends, "tab-a")).toEqual(["hold\n", "after\n"]);
+        expect(sentOn(sends, "tab-b")).toEqual(["w2cmd\n"]);
+        expect(recordedRuns.map((r) => r.status)).toEqual(["completed", "completed"]);
+      });
+
+      it("a run in the same terminal stops it, and its History says what did", async () => {
+        seedTwoTerminals();
+        const { sends, release, waiting } = holdingSends();
+        const first = useAppStore.getState().runWorkflow("w1", { targetTabId: "tab-a" });
+        await waiting.a;
+        const second = useAppStore.getState().runWorkflow("w2", { targetTabId: "tab-a" });
+        release();
+        await Promise.all([first, second]);
+        expect(sentOn(sends, "tab-a")).toEqual(["hold\n", "w2cmd\n"]);
+        const stopped = recordedRuns.find((r) => r.automationId === "w1");
+        expect(stopped?.status).toBe("cancelled");
+        expect(stopped?.error).toBe("“Workflow w2” was started in this terminal");
+      });
+
+      it("a fan-out loses only its target in the terminal a new run takes", async () => {
+        seedTwoTerminals();
+        const { sends, release, waiting } = holdingSends();
+        const fan = useAppStore.getState().runWorkflow("w1", { targetTabIds: ["tab-a", "tab-b"] });
+        await Promise.all([waiting.a, waiting.b]);
+        const second = useAppStore.getState().runWorkflow("w2", { targetTabId: "tab-b" });
+        release();
+        await Promise.all([fan, second]);
+        expect(sentOn(sends, "tab-a")).toEqual(["hold\n", "after\n"]);
+        expect(sentOn(sends, "tab-b")).toEqual(["hold\n", "w2cmd\n"]);
+      });
+
+      it("a queued fan-out target does not start in a terminal a new run took (#5984)", async () => {
+        seedTwoTerminals();
+        const { sends, release, waiting } = holdingSends();
+        const fan = useAppStore
+          .getState()
+          .runWorkflow("w1", { targetTabIds: ["tab-a", "tab-b"], concurrency: 1 });
+        await waiting.a;
+        await useAppStore.getState().runWorkflow("w2", { targetTabId: "tab-b" });
+        release();
+        await fan;
+        expect(sentOn(sends, "tab-a")).toEqual(["hold\n", "after\n"]);
+        expect(sentOn(sends, "tab-b")).toEqual(["w2cmd\n"]);
+      });
+
+      it("stop all still stops every run, side by side or not", async () => {
+        seedTwoTerminals();
+        const { sends, release, waiting } = holdingSends();
+        const first = useAppStore.getState().runWorkflow("w1", { targetTabId: "tab-a" });
+        const second = useAppStore.getState().runWorkflow("w1", { targetTabId: "tab-b" });
+        await Promise.all([waiting.a, waiting.b]);
+        useAppStore.getState().cancelWorkflowRun();
+        release();
+        await Promise.all([first, second]);
+        expect(sends.map(([, data]) => data)).not.toContain("after\n");
+        // Stopped by the user: no other run is named.
+        expect(recordedRuns.map((r) => [r.status, r.error])).toEqual([
+          ["cancelled", undefined],
+          ["cancelled", undefined],
+        ]);
+      });
+    });
+
     it("cancel-all stops every target", async () => {
       seedTwoTerminals();
       const sends: [string, string][] = [];

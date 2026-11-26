@@ -470,4 +470,82 @@ describe("runAutomationOnTargets", () => {
     expect(results.map((r) => r?.status)).toEqual(["cancelled", "completed"]);
     expect(g.sentBy[1]).toEqual(["x", "y"]);
   });
+
+  it("a queued target that is cancelled never starts (#5984)", async () => {
+    const g = gatedTargets(3);
+    const started: number[] = [];
+    const run = runAutomationOnTargets(auto, [0, 1, 2], g.depsFor, {
+      parallel: false,
+      onTargetStart: (i) => started.push(i),
+    });
+    await vi.waitFor(() => expect(g.stats().inFlight).toBe(1));
+    run.cancel(1);
+    const drain = setInterval(g.releaseAll, 1);
+    const results = await run.done;
+    clearInterval(drain);
+    expect(started).toEqual([0, 2]);
+    expect(results.map((r) => r?.status)).toEqual(["completed", undefined, "completed"]);
+  });
+
+  it("takes a concurrency, and deps that are made asynchronously (#5984)", async () => {
+    const g = gatedTargets(4);
+    const run = runAutomationOnTargets(
+      auto,
+      [0, 1, 2, 3],
+      async (t, i) => {
+        await Promise.resolve();
+        return g.depsFor(t, i);
+      },
+      { concurrency: 2 }
+    );
+    await vi.waitFor(() => expect(g.stats().inFlight).toBe(2));
+    const drain = setInterval(g.releaseAll, 1);
+    await run.done;
+    clearInterval(drain);
+    expect(g.stats().maxInFlight).toBe(2);
+  });
+
+  it("a target whose deps say it does not run ends with that result, unstarted (#5984)", async () => {
+    const started: number[] = [];
+    const notRun = { status: "failed" as const, stepsCompleted: 0, error: "refused" };
+    const run = runAutomationOnTargets(
+      auto,
+      [0, 1],
+      async (t) => (t === 0 ? { notRun } : { send: async () => true }),
+      { onTargetStart: (i) => started.push(i) }
+    );
+    const results = await run.done;
+    expect(results.map((r) => r?.status)).toEqual(["failed", "completed"]);
+    expect(started).toEqual([1]);
+  });
+
+  it("a target cancelled while its deps are made runs nothing and ends cancelled (#5984)", async () => {
+    let made!: () => void;
+    const making = new Promise<void>((resolve) => (made = resolve));
+    const send = vi.fn(async () => true);
+    const run = runAutomationOnTargets(auto, [0], async () => {
+      await making;
+      return { send };
+    });
+    run.cancel(0);
+    made();
+    const [result] = await run.done;
+    expect(result?.status).toBe("cancelled");
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("settles each target's result before it reports its end (#5984)", async () => {
+    const order: string[] = [];
+    const run = runAutomationOnTargets(auto, [0], () => ({ send: async () => true }), {
+      settle: async (_i, result) => {
+        await Promise.resolve();
+        order.push("settled");
+        return { ...result, historyRunId: "h" };
+      },
+      onTargetEnd: (_i, result) => order.push(`end ${result.historyRunId}`),
+    });
+    const [result] = await run.done;
+    expect(order).toEqual(["settled", "end h"]);
+    expect(result?.historyRunId).toBe("h");
+  });
 });
