@@ -9,7 +9,7 @@ describe("the runs a new one would stop (#6042)", () => {
     useAppStore.setState(useAppStore.getInitialState());
   });
   const replaced = (typesKeys: boolean) =>
-    runsReplacedBy(useAppStore.getState(), typesKeys).map((run) => run.name);
+    runsReplacedBy(useAppStore.getState(), typesKeys, []).map((run) => run.name);
 
   it("are those of its own kind", () => {
     expect([replaced(true), replaced(false)]).toEqual([[], []]);
@@ -29,6 +29,34 @@ describe("the runs a new one would stop (#6042)", () => {
     expect([replaced(true), replaced(false)]).toEqual([["Login"], ["Deploy"]]);
     useAppStore.setState({ macroPlayback: { ...playback, targetTabIds: ["a", "b"] } });
     expect(replaced(true)).toEqual(["Login", "Login"]);
+  });
+
+  it("and those of the other kind in the same terminals (#6042)", () => {
+    setWorkflowRunViewForTest({
+      run: {
+        runId: "r",
+        workflowId: "w",
+        workflowName: "Deploy",
+        tabId: "a",
+        total: 2,
+        completed: 0,
+      },
+      output: null,
+    });
+    const playback = { macroId: "m", macroName: "Login", tabId: "b", total: 2, played: 1 };
+    useAppStore.setState({ macroPlayback: playback });
+    const state = useAppStore.getState();
+    const names = (typesKeys: boolean, targets: string[]) =>
+      runsReplacedBy(state, typesKeys, targets).map((r) => [r.name, r.tabId, r.runId ?? null]);
+    expect(names(true, ["a"])).toEqual([
+      ["Login", "b", null],
+      ["Deploy", "a", "r"],
+    ]);
+    expect(names(true, ["c"])).toEqual([["Login", "b", null]]);
+    expect(names(false, ["b", "c"])).toEqual([
+      ["Deploy", "a", "r"],
+      ["Login", "b", null],
+    ]);
   });
 });
 

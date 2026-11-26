@@ -2198,6 +2198,21 @@ describe("appStore — on-connect trigger dispatch (#1855)", () => {
     setWorkflowRunViewForTest({ run: null, output: null });
   });
 
+  it("does not type where keys of another automation are typed (#6042)", async () => {
+    const error = vi.spyOn(toast, "error");
+    useAppStore.setState({
+      workflows: [onConnectWorkflow("wf-a", ["conn-1"])],
+      macroPlayback: { macroId: "m", macroName: "Login", tabId: "tab-oc", total: 2, played: 1 },
+    });
+    seedUnconnectedTab("conn-1");
+    useAppStore.getState().setTabSessionId("tab-oc", "sess-oc-1");
+    await vi.waitFor(() =>
+      expect(error).toHaveBeenCalledWith(expect.stringMatching(/was not run$/), expect.anything())
+    );
+    expect(injected).toEqual([]);
+    useAppStore.setState({ macroPlayback: null });
+  });
+
   it.each([
     [false, 0],
     [true, 1],

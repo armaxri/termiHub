@@ -488,11 +488,11 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
             workflows: get().workflows,
             run: (workflowId, targetTabId) => {
               // Nobody asked for it, so it never stops a run (#6042).
-              const [running] = runsReplacedBy(get(), false);
+              const [running] = runsReplacedBy(get(), false, [targetTabId]);
               if (running) {
                 const name = get().workflows.find((w) => w.id === workflowId)?.name ?? "";
                 toast.error(`“${name}” was not run`, {
-                  description: `${tf("automation.replace.one", { ...running })}.`,
+                  description: `${tf("automation.replace.one", { name: running.name, where: running.where, progress: running.progress })}.`,
                 });
                 return;
               }
