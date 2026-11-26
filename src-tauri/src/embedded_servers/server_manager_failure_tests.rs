@@ -38,6 +38,19 @@ struct Harness {
 }
 
 fn harness(config_dir: &Path, agent: Option<Arc<FakeAgent>>) -> Harness {
+    harness_with(config_dir, agent, FakeStore::new(UNLOCKED))
+}
+
+/// A harness over `store`, as a restart sees the credential store it left.
+fn harness_with_store(config_dir: &Path, store: Arc<FakeStore>) -> Harness {
+    harness_with(config_dir, None, store)
+}
+
+fn harness_with(
+    config_dir: &Path,
+    agent: Option<Arc<FakeAgent>>,
+    store: Arc<FakeStore>,
+) -> Harness {
     let app = mock_app();
     app.manage(ConfigDirOverride(config_dir.to_path_buf()));
     if let Some(agent) = agent {
@@ -45,7 +58,6 @@ fn harness(config_dir: &Path, agent: Option<Arc<FakeAgent>>) -> Harness {
         app.manage(client);
     }
     let events = watch(&app);
-    let store = FakeStore::new(UNLOCKED);
     let manager = EmbeddedServerManager::new(app.handle(), store.clone())
         .expect("manager builds on the mock runtime");
     let manager = Arc::new(manager);
@@ -411,6 +423,37 @@ fn a_password_comes_back_when_the_store_was_locked_meanwhile() {
     h.manager.sync_secrets();
     assert_eq!(password(&h, "a").as_deref(), Some("pw"));
     h.manager.stop_all();
+}
+
+/// A folder shared for one session (#6028, slice 12) is gone after a restart,
+/// with its password; the others stay.
+#[test]
+fn a_share_for_one_session_is_forgotten_when_termihub_starts() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let h = harness(dir.path(), None);
+    let mut shared = http_on("shared", 0, root.path());
+    shared.temporary = true;
+    h.manager.save_config(shared).unwrap();
+    h.manager
+        .save_config(http_on("kept", 0, root.path()))
+        .unwrap();
+    assert_eq!(ids(&h), ["shared", "kept"]);
+    assert_eq!(password(&h, "shared").as_deref(), Some("pw"));
+    let store = h.store.clone();
+    drop(h);
+    let again = harness_with_store(dir.path(), store.clone());
+    assert_eq!(ids(&again), ["kept"]);
+    assert_eq!(
+        again
+            .store
+            .raw(&credential_key("shared", AuthSlot::HttpBasic)),
+        None
+    );
+    assert_eq!(password(&again, "kept").as_deref(), Some("pw"));
+    // Written, too.
+    let text = std::fs::read_to_string(dir.path().join("embedded_servers.json")).unwrap();
+    assert!(!text.contains("shared"), "{text}");
 }
 
 #[test]

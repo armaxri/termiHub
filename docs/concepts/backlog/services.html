@@ -592,7 +592,8 @@
       <header class="concept-header">
         <h1>Services: one view for SSH tunnels and file servers</h1>
         <div class="concept-meta">
-          <span class="concept-status">Backlog · slices 1 to 5, 7, 8 and 11 of 14 implemented</span
+          <span class="concept-status"
+            >Backlog · slices 1 to 5, 7, 8, 11 and 12 of 14 implemented</span
           ><span
             >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/6028">#6028</a></span
           ><span><code>docs/concepts/backlog/services.html</code></span>
@@ -4464,8 +4465,11 @@ flowchart LR
           stylesheet check. Slice 11 (stop, delete, quit) is implemented: Stop all in the sidebar's
           "…", and quitting (on Windows and Linux also closing the last window) asks only when a
           service has connections open, in the quit dialog, with each service and its agent; the
-          main window asks, once. Stop and delete came with the rounds before. Slices 6, 9, 10, 12
-          to 14 are not started. Step 0 of
+          main window asks, once. Stop and delete came with the rounds before. Slice 12 (share via)
+          is implemented: the file browser's "Share this folder…" entries open the file server tab
+          with the folder, the safer defaults and the same warning, for this session only ("Until
+          termiHub closes", forgotten with its password at the next start); unticking it keeps it.
+          The share's failure is the editor's. Slices 6, 9, 10, 13 and 14 are not started. Step 0 of
           <a href="https://github.com/armaxri/termiHub/issues/6028">#6028</a>.
         </p>
         <p>

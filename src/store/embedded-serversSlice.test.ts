@@ -79,7 +79,6 @@ vi.mock("@/services/embeddedServerApi", () => ({
   restoreEmbeddedServer: vi.fn(() => Promise.resolve()),
   startEmbeddedServer: vi.fn(() => Promise.resolve()),
   stopEmbeddedServer: vi.fn(() => Promise.resolve()),
-  createAndStartServer: vi.fn(() => Promise.resolve("srv-new")),
   listNetworkInterfaces: vi.fn(() => Promise.resolve([])),
 }));
 
@@ -91,7 +90,6 @@ import {
   saveEmbeddedServer as apiSaveEmbeddedServer,
   startEmbeddedServer as apiStartEmbeddedServer,
   stopEmbeddedServer as apiStopEmbeddedServer,
-  createAndStartServer as apiCreateAndStartServer,
 } from "@/services/embeddedServerApi";
 
 function makeServer(id: string, name: string): EmbeddedServerConfig {
@@ -271,32 +269,6 @@ describe("embedded-servers slice (TFE-006)", () => {
       await expect(useAppStore.getState().stopEmbeddedServer("srv-1")).rejects.toThrow(
         "not running"
       );
-    });
-  });
-
-  describe("quickShareServer", () => {
-    it("creates+starts an http share with directory listing on", async () => {
-      vi.mocked(apiCreateAndStartServer).mockResolvedValueOnce("srv-http");
-
-      const id = await useAppStore.getState().quickShareServer("/srv/www", "http");
-
-      expect(id).toBe("srv-http");
-      const config = vi.mocked(apiCreateAndStartServer).mock.calls[0][0];
-      expect(config.serverType).toBe("http");
-      expect(config.port).toBe(8080);
-      expect(config.rootDirectory).toBe("/srv/www");
-      expect(config.directoryListing).toBe(true);
-    });
-
-    it("leaves directoryListing undefined for a non-http (tftp) share", async () => {
-      vi.mocked(apiCreateAndStartServer).mockResolvedValueOnce("srv-tftp");
-
-      await useAppStore.getState().quickShareServer("/boot", "tftp");
-
-      const config = vi.mocked(apiCreateAndStartServer).mock.calls[0][0];
-      expect(config.serverType).toBe("tftp");
-      expect(config.port).toBe(6969);
-      expect(config.directoryListing).toBeUndefined();
     });
   });
 });

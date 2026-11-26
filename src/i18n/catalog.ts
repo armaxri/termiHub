@@ -1038,6 +1038,8 @@ const en = {
   "server.editor.description": "Description (optional)",
   "server.editor.description.placeholder": "One short line for the sidebar",
   "server.editor.autoStart": "Start when termiHub starts",
+  "server.editor.temporary": "Only until termiHub closes",
+  "server.temporary": "Until termiHub closes",
   "server.editor.error.folder": "Choose the folder to share.",
   "server.editor.error.name": "Name is required.",
   "server.editor.error.who": "Choose who can open it.",

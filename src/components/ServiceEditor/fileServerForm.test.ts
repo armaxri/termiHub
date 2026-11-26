@@ -8,6 +8,7 @@ import {
   formOf,
   missingText,
   newForm,
+  shareForm,
   openWarning,
   presetBind,
   savedSignIn,
@@ -70,6 +71,7 @@ describe("the safer defaults", () => {
       description: "",
       autoStart: true,
       host: EDGE,
+      temporary: false,
     });
     expect(formOf({ ...SAVED, bindHost: " " }).bindHost).toBe("127.0.0.1");
     expect(formOf({ ...SAVED, ftpAuth: { type: "anonymous" } }).signIn).toBe(false);
@@ -77,6 +79,33 @@ describe("the safer defaults", () => {
     expect(formOf(http)).toMatchObject({ signIn: false, directoryListing: false });
     const asks = { ...http, httpAuth: { username: "web", password: "" } };
     expect(formOf(asks)).toMatchObject({ signIn: true, username: "web" });
+  });
+});
+
+describe("a folder shared from the file browser (slice 12)", () => {
+  it("has the safer defaults, for this session only, and the folder's name", () => {
+    expect(shareForm("ftp", "/home/ann/Builds/", (port) => port + 1)).toEqual({
+      ...newForm("ftp"),
+      port: 2122,
+      rootDirectory: "/home/ann/Builds/",
+      name: "Builds",
+      temporary: true,
+    });
+    expect(shareForm("tftp", "/").name).toBe("");
+  });
+
+  it("is saved so, and never starts with termiHub", () => {
+    const share = { ...shareForm("http", "/srv/docs"), autoStart: true };
+    expect(configOf(share, "id", undefined, true)).toMatchObject({
+      temporary: true,
+      autoStart: false,
+    });
+    const kept = configOf({ ...share, temporary: false }, "id", undefined, true);
+    expect(kept.autoStart).toBe(true);
+    expect(kept).not.toHaveProperty("temporary", false);
+    expect(kept.temporary).toBeUndefined();
+    expect(formOf({ ...SAVED, temporary: true }).temporary).toBe(true);
+    expect(formOf(SAVED).temporary).toBe(false);
   });
 });
 

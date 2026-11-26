@@ -660,6 +660,7 @@ impl FtpServer {
         let mut service = EmbeddedServerService::new(ServerType::Ftp);
         service
             .start_with(EmbeddedServerConfig {
+                temporary: false,
                 description: None,
                 id: "relaunch-ftp".to_string(),
                 name: "relaunch-ftp".to_string(),

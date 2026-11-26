@@ -151,9 +151,8 @@ pub async fn clear_embedded_server_activity(
 /// address the user handed out. When the port is taken, the start fails with the
 /// shared, recoverable "port already in use" error (see
 /// [`EmbeddedServerService::check_port_config`]) which the sidebar surfaces as a
-/// toast; the user then frees the port or edits the config. This is the
-/// deliberate counterpart to [`create_and_start_server`]'s fallback, which only
-/// applies because quick-share starts from an unchosen default port (SM-018).
+/// toast; the user then frees the port or edits the config (SM-018). The editors
+/// preset a port no service of this computer is set to (#6088).
 #[tauri::command]
 pub async fn start_embedded_server(
     server_id: String,
@@ -200,58 +199,4 @@ pub async fn check_embedded_servers(app_handle: AppHandle) -> Result<(), Termina
         Ok(())
     })
     .await
-}
-
-/// Create a new server configuration and immediately start it.
-///
-/// If the requested port is in use, up to 10 sequential ports are tried. This
-/// fallback is specific to quick-share, which starts from an unchosen default
-/// port (`DEFAULT_PORTS[protocol]`) the user never picked — so stepping to the
-/// next free port and reporting the one actually bound is the right UX. The
-/// manual [`start_embedded_server`] path deliberately does *not* fall back,
-/// because its port is explicit and persisted (SM-018).
-/// Returns the ID of the newly created configuration.
-#[tauri::command]
-pub async fn create_and_start_server(
-    config: EmbeddedServerConfig,
-    app_handle: AppHandle,
-) -> Result<String, TerminalError> {
-    off_main_thread(app_handle, move |manager| create_and_start(manager, config)).await
-}
-
-fn create_and_start(
-    manager: &EmbeddedServerManager,
-    mut config: EmbeddedServerConfig,
-) -> Result<String, TerminalError> {
-    // Generate an ID if none was provided.
-    if config.id.is_empty() {
-        config.id = format!(
-            "srv-{}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis())
-                .unwrap_or(0),
-            &uuid::Uuid::new_v4().to_string()[..8]
-        );
-    }
-
-    // Try the initial port, then up to 9 more.
-    let base_port = config.port;
-    let mut last_err = String::new();
-    for attempt in 0..10u16 {
-        config.port = base_port + attempt;
-        manager.save_config(config.clone())?;
-        match manager.start_server(&config.id) {
-            Ok(()) => return Ok(config.id),
-            Err(e) => {
-                last_err = e.to_string();
-                // Remove the config we just saved and try the next port.
-                let _ = manager.delete_config(&config.id);
-            }
-        }
-    }
-
-    Err(TerminalError::EmbeddedServerError(format!(
-        "Could not start server: {last_err}"
-    )))
 }

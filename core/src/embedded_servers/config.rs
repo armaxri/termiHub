@@ -164,6 +164,11 @@ pub struct EmbeddedServerConfig {
     #[serde(default, skip_serializing_if = "ServiceHost::is_absent")]
     #[cfg_attr(test, ts(optional, type = "import(\"./RunLocation\").RunLocation"))]
     pub host: ServiceHost,
+    /// Shared from the file browser for this session only (#6028, slice 12): it
+    /// is forgotten, with its passwords, when termiHub starts again.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[cfg_attr(test, ts(optional = nullable))]
+    pub temporary: bool,
     /// Unknown fields of this entry in `embedded_servers.json`, kept verbatim
     /// so an older build's save does not erase them (#3951). Not part of the
     /// generated TS type; see [`crate::util::entry_extra`].
@@ -397,6 +402,7 @@ mod tests {
     #[test]
     fn embedded_server_config_serde_round_trip() {
         let config = EmbeddedServerConfig {
+            temporary: false,
             description: None,
             id: "srv-1".to_string(),
             name: "Test HTTP".to_string(),

@@ -6,16 +6,9 @@ import {
   restoreEmbeddedServer as apiRestoreEmbeddedServer,
   startEmbeddedServer as apiStartEmbeddedServer,
   stopEmbeddedServer as apiStopEmbeddedServer,
-  createAndStartServer as apiCreateAndStartServer,
 } from "@/services/embeddedServerApi";
-import {
-  DEFAULT_PORTS,
-  EmbeddedServerConfig,
-  ServerState as EmbeddedServerState,
-  ServerType,
-} from "@/types/embeddedServer";
+import { EmbeddedServerConfig, ServerState as EmbeddedServerState } from "@/types/embeddedServer";
 import { createTransport, ProjectionClient } from "@/services/transport";
-import { THIS_COMPUTER } from "@/types/tunnel";
 import { toast } from "@/components/ui";
 import { showUndoToast } from "@/utils/undoableDelete";
 import { frontendLog } from "@/utils/frontendLog";
@@ -54,7 +47,6 @@ export interface EmbeddedServersSlice {
   stopEmbeddedServer: (serverId: string) => Promise<void>;
   /** Stop a running server and start it again. */
   restartEmbeddedServer: (serverId: string) => Promise<void>;
-  quickShareServer: (path: string, protocol: ServerType) => Promise<string>;
 }
 
 export const createEmbeddedServersSlice: StateCreator<AppState, [], [], EmbeddedServersSlice> = (
@@ -137,21 +129,5 @@ export const createEmbeddedServersSlice: StateCreator<AppState, [], [], Embedded
   restartEmbeddedServer: async (serverId) => {
     await get().stopEmbeddedServer(serverId);
     await get().startEmbeddedServer(serverId);
-  },
-
-  quickShareServer: async (path, protocol) => {
-    const config: EmbeddedServerConfig = {
-      id: "",
-      name: `Quick Share (${protocol.toUpperCase()})`,
-      serverType: protocol,
-      rootDirectory: path,
-      bindHost: "127.0.0.1",
-      port: DEFAULT_PORTS[protocol],
-      autoStart: false,
-      readOnly: false,
-      directoryListing: protocol === "http" ? true : undefined,
-      host: THIS_COMPUTER,
-    };
-    return await apiCreateAndStartServer(config);
   },
 });

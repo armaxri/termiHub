@@ -43,6 +43,7 @@ import {
   hasUploads,
   missingText,
   newForm,
+  shareForm,
   openWarning,
   savedSignIn,
   withType,
@@ -96,7 +97,9 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
           name: tf("server.editor.copyName", { name: original.name }),
           autoStart: false,
         }
-      : newForm(meta.serverType ?? "http", free);
+      : meta.folder
+        ? shareForm(meta.serverType ?? "http", meta.folder, free)
+        : newForm(meta.serverType ?? "http", free);
   };
   // Unsaved values carried in from another window by "Move tabs" (#4500).
   const carried = useCarriedFormDraft<FileServerForm>(tabId, "server-editor");
@@ -511,15 +514,28 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
         maxLength: ITEM_DESCRIPTION_MAX_LENGTH,
       })}
 
-      <label className="service-editor__check">
-        <Checkbox
-          checked={form.autoStart}
-          onCheckedChange={(checked) => setValue("autoStart", checked === true)}
-          aria-label={t("server.editor.autoStart")}
-          data-testid="server-dialog-autostart"
-        />
-        <span>{t("server.editor.autoStart")}</span>
-      </label>
+      {(form.temporary || !existing) && (
+        <label className="service-editor__check">
+          <Checkbox
+            checked={form.temporary}
+            onCheckedChange={(checked) => setValue("temporary", checked === true)}
+            aria-label={t("server.editor.temporary")}
+            data-testid="server-dialog-temporary"
+          />
+          <span>{t("server.editor.temporary")}</span>
+        </label>
+      )}
+      {!form.temporary && (
+        <label className="service-editor__check">
+          <Checkbox
+            checked={form.autoStart}
+            onCheckedChange={(checked) => setValue("autoStart", checked === true)}
+            aria-label={t("server.editor.autoStart")}
+            data-testid="server-dialog-autostart"
+          />
+          <span>{t("server.editor.autoStart")}</span>
+        </label>
+      )}
 
       <UnsavedChangesDialog
         open={tab.asking}

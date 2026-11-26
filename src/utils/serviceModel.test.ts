@@ -530,6 +530,18 @@ describe("state, reason and next step", () => {
     expect(steps(short)).toEqual(["Keep running"]);
   });
 
+  it("a folder shared for this session says so, unless it has a description (slice 12)", () => {
+    const shared = fileServerModel(server({ temporary: true }), undefined, CONTEXT);
+    expect(shared.description).toBe("Until termiHub closes");
+    const own = fileServerModel(
+      server({ temporary: true, description: "Docs" }),
+      undefined,
+      CONTEXT
+    );
+    expect(own.description).toBe("Docs");
+    expect(fileServerModel(server(), undefined, CONTEXT).description).toBeUndefined();
+  });
+
   it("counts only while it runs", () => {
     const counters = { sent: 1, received: 2, active: 3, total: 4 };
     expect(tunnelModel(tunnel(), tunnelIn("connected"), CONTEXT).counters).toEqual(counters);

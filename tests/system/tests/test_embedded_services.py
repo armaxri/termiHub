@@ -206,10 +206,10 @@ class TestEmbeddedServices(
         """Quick-share a fresh local folder via ``proto`` and return the server.
 
         Mirrors the in-app File Browser flow: a local terminal supplies a
-        directory, ``context-file-share-<proto>`` switches to the Services sidebar
-        and creates+starts a server bound to ``127.0.0.1`` on the protocol's
-        default unprivileged port (HTTP 8080 / FTP 2121 / TFTP 6969). Returns the
-        started server's store config.
+        directory, ``context-file-share-<proto>`` opens the editor with the folder
+        for this session, and Save and start starts it on this computer only (on a
+        free port near the protocol's default). Returns the started server's store
+        config.
         """
         # A local terminal gives the file browser a directory to share.
         self.ensure_terminal()
@@ -225,7 +225,13 @@ class TestEmbeddedServices(
         )
         self.driver.click(menu_item)
 
-        # Quick-share switches to the Services sidebar and starts a server.
+        # The share opens the editor (#6028, slice 12): who and what, for this
+        # session; a device server starts with nobody chosen.
+        self.wait(lambda: self.driver.exists(self.DIALOG_NAME), what="the share's editor")
+        assert self.driver.get_attribute("server-dialog-temporary", "aria-checked") == "true"
+        if self.driver.get_attribute(self.BIND_HERE, "aria-checked") != "true":
+            self.driver.click(self.BIND_HERE)
+        self.driver.click("server-dialog-save-start")
         self.wait(lambda: self.driver.exists(self.SIDEBAR), what="the Services sidebar")
         # Select the server just shared by the unique folder it serves — NOT
         # ``servers()[0]``. The per-test teardown is best-effort, so a server
