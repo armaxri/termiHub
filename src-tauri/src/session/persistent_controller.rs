@@ -829,4 +829,30 @@ mod buffer_place_tests {
             );
         }
     }
+
+    /// A re-creation that somebody waits for stays held for them, also against a
+    /// third attach; the entry goes once nobody waits (#6033).
+    #[tokio::test]
+    async fn a_re_creation_is_held_for_whoever_waits_for_it() {
+        let recreations = Recreations::default();
+        let first = Recreating::begin(&recreations, "sess-1").await;
+        let second = tokio::spawn({
+            let recreations = recreations.clone();
+            async move { Recreating::begin(&recreations, "sess-1").await }
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        drop(first);
+        let second = second.await.unwrap();
+
+        let third = tokio::time::timeout(
+            Duration::from_millis(50),
+            Recreating::begin(&recreations, "sess-1"),
+        )
+        .await;
+        assert!(third.is_err(), "a third attach ran beside the second");
+        drop(second);
+
+        drop(Recreating::begin(&recreations, "sess-1").await);
+        assert!(recreations.lock().unwrap().is_empty());
+    }
 }
