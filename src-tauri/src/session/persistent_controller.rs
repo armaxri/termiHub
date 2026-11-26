@@ -340,7 +340,14 @@ impl<'a> PersistentController<'a> {
         let _recreating =
             Recreating::begin(&self.manager.persistent_recreations, &session_id).await;
         let session_alive = self.manager.sessions.lock().await.contains_key(&session_id);
-        let mut held_by_peer = false;
+        // A live session keeps what its re-creation learned (#6110).
+        let mut held_by_peer = session_alive
+            && self
+                .manager
+                .held_persistent
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .contains(&session_id);
         if !session_alive {
             match (opt_agent_id, opt_remote_sid) {
                 (Some(agent_id), Some(remote_sid)) => {
@@ -361,6 +368,18 @@ impl<'a> PersistentController<'a> {
                     .map_err(|e| TerminalError::SpawnFailed(format!("spawn_blocking join: {e}")))?
                     .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
                     held_by_peer = outcome == ReattachOutcome::HeldByPeer;
+                    {
+                        let mut held = self
+                            .manager
+                            .held_persistent
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        if held_by_peer {
+                            held.insert(session_id.clone());
+                        } else {
+                            held.remove(&session_id);
+                        }
+                    }
 
                     let output_rx = proxy.subscribe_output();
 
