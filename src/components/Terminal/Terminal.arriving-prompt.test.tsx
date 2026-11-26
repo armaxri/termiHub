@@ -26,6 +26,7 @@ import {
 } from "@/plugins/sandbox/pluginSandboxHost";
 import type { HostToWorkerMessage, WorkerToHostMessage } from "@/plugins/sandbox/protocol";
 import { FLOW_HIGH_WATERMARK } from "@/utils/terminalFlowControl";
+import { WRITE_SLICE_BYTES } from "@/utils/slicedWrite";
 
 /** The terminals the component made: a fake view on a real buffer and parser. */
 const terminals = vi.hoisted(() => ({ list: [] as unknown[], block: false }));
@@ -400,6 +401,24 @@ describe("Continue sees a prompt that has arrived (#6070)", () => {
     await act(async () =>
       shown({ data: encoder.encode(`$ sudo\r\n${PROMPT}`), endOffset: streamed, epoch: 1 })
     );
+    await heldBack(state);
+  });
+
+  it("behind a large repaint that xterm takes in slices (#6087)", async () => {
+    const state = startWait();
+    let shown = (_: unknown) => {};
+    mockReplay.mockReturnValue(new Promise((resolve) => (shown = resolve)));
+    lose();
+    regain();
+    pressContinue();
+    const { write } = engine();
+    write.mockClear();
+    const repaint = encoder.encode(`${"x".repeat(60_000)}\r\n${PROMPT}`);
+    await act(async () => shown({ data: repaint, endOffset: streamed, epoch: 1 }));
+    await settle();
+    const sizes = write.mock.calls.map((call) => (call[0] as Uint8Array | string).length);
+    expect(sizes.filter((n) => n > 0).length).toBeGreaterThan(2);
+    expect(Math.max(...sizes)).toBeLessThanOrEqual(WRITE_SLICE_BYTES);
     await heldBack(state);
   });
 

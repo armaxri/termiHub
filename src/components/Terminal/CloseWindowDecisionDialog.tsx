@@ -10,6 +10,7 @@ import {
   Network,
   Plug,
   Power,
+  Server,
   Terminal,
   TriangleAlert,
   Trash2,
@@ -30,6 +31,7 @@ import type {
 } from "@/types/window";
 import "./CloseWindowDecisionDialog.css";
 import { joinWords } from "@/utils/joinWords";
+import { servicesAtQuitSentence } from "@/utils/servicesAtQuit";
 
 /**
  * The close-with-live-tabs decision surface (#1903, epic #1899).
@@ -89,6 +91,7 @@ export function CloseWindowDecisionDialog() {
 
   const isQuit = request.mode === "quit";
   const runs = request.runs ?? [];
+  const services = request.services ?? [];
 
   const answerQuit = async (answer: () => Promise<void>) => {
     try {
@@ -172,7 +175,13 @@ export function CloseWindowDecisionDialog() {
       store.closeTab(editor.tabId, located.panelId);
     }
     const remaining = dirtyEditors.filter((e) => e.tabId !== editor.tabId);
-    if (count === 0 && remaining.length === 0 && !recording && runs.length === 0) {
+    if (
+      count === 0 &&
+      remaining.length === 0 &&
+      !recording &&
+      runs.length === 0 &&
+      services.length === 0
+    ) {
       // Nothing is left that closing would lose, so close as asked.
       setRequest(null);
       await getCurrentWindow().destroy();
@@ -205,11 +214,13 @@ export function CloseWindowDecisionDialog() {
       }}
       title={isQuit ? "Quit termiHub?" : "Close this window?"}
       description={
-        count > 0
-          ? `What ${isQuit ? "quitting" : "closing"} does to this window's live sessions.`
-          : `This window has unsaved ${dirtyCount > 0 ? "editors" : "input"} that ${
-              isQuit ? "quitting" : "closing it"
-            } would discard.`
+        count === 0 && dirtyCount === 0 && services.length > 0
+          ? `What ${isQuit ? "quitting" : "closing"} does to the services.`
+          : count > 0
+            ? `What ${isQuit ? "quitting" : "closing"} does to this window's live sessions.`
+            : `This window has unsaved ${dirtyCount > 0 ? "editors" : "input"} that ${
+                isQuit ? "quitting" : "closing it"
+              } would discard.`
       }
       data-testid="close-window-decision-dialog"
       footer={
@@ -226,6 +237,11 @@ export function CloseWindowDecisionDialog() {
               <>
                 <Trash2 className="li close-window-decision__button-icon" aria-hidden="true" />{" "}
                 {isQuit ? "Quit" : "Close"} without saving
+              </>
+            ) : count === 0 && dirtyCount === 0 && services.length > 0 ? (
+              <>
+                <Power className="li close-window-decision__button-icon" aria-hidden="true" />{" "}
+                {isQuit ? "Quit" : "Close"} &amp; stop services
               </>
             ) : count > 0 ? (
               <>
@@ -284,6 +300,12 @@ export function CloseWindowDecisionDialog() {
               {automationCount(runs.length)} will be stopped
               {showMove ? ", also when the tabs move" : ""}.
             </>
+          )}
+          {services.length > 0 && (
+            <span data-testid="close-window-decision-services">
+              {" "}
+              {servicesAtQuitSentence(services)}
+            </span>
           )}
         </p>
       </div>
@@ -354,6 +376,24 @@ export function CloseWindowDecisionDialog() {
             <Zap className="li close-window-decision__row-icon" aria-hidden="true" />
             <span className="close-window-decision__row-name close-window-decision__row-name--wrap">
               “{run.name}” {run.waiting ? "waits for you" : "is running"} in {run.tabTitle}
+            </span>
+            <span className="close-window-decision__pill close-window-decision__pill--terminate">
+              <Ban className="li" aria-hidden="true" /> Will be stopped
+            </span>
+          </div>
+        ))}
+        {services.map((service) => (
+          <div
+            key={service.key}
+            className="close-window-decision__row"
+            data-testid={`close-window-decision-service-${service.key}`}
+          >
+            <Server className="li close-window-decision__row-icon" aria-hidden="true" />
+            <span className="close-window-decision__row-name close-window-decision__row-name--wrap">
+              “{service.name}”{service.agent ? ` on agent ${service.agent}` : ""}
+              {service.open > 0
+                ? ` · ${service.open} open connection${service.open === 1 ? "" : "s"}`
+                : ""}
             </span>
             <span className="close-window-decision__pill close-window-decision__pill--terminate">
               <Ban className="li" aria-hidden="true" /> Will be stopped

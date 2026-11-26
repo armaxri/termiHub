@@ -236,19 +236,19 @@ export function FileMenuItems({
             onSelect={() => onShareVia(entry.path, "http")}
             data-testid={`${testIdPrefix}-share-http`}
           >
-            <Globe size={14} /> Share via HTTP server
+            <Globe size={14} /> Share this folder in a browser…
           </MenuItem>
           <MenuItem
             onSelect={() => onShareVia(entry.path, "ftp")}
             data-testid={`${testIdPrefix}-share-ftp`}
           >
-            <Globe size={14} /> Share via FTP server
+            <Globe size={14} /> Share this folder by FTP…
           </MenuItem>
           <MenuItem
             onSelect={() => onShareVia(entry.path, "tftp")}
             data-testid={`${testIdPrefix}-share-tftp`}
           >
-            <Globe size={14} /> Share via TFTP server
+            <Globe size={14} /> Share this folder by TFTP…
           </MenuItem>
           <MenuSeparator />
         </>
@@ -1210,7 +1210,7 @@ export function FileBrowser() {
   // The copy-cut clipboard is sourced from the authoritative client-scoped
   // file-browser region (#2228).
   const fileClipboard = useProjectedFileBrowsers().clipboard;
-  const quickShareServer = useAppStore((s) => s.quickShareServer);
+  const openServerEditorTab = useAppStore((s) => s.openServerEditorTab);
   const setSidebarView = useAppStore((s) => s.setSidebarView);
   const [newDirName, setNewDirName] = useState<string | null>(null);
   const [newFileName, setNewFileName] = useState<string | null>(null);
@@ -1691,11 +1691,12 @@ export function FileBrowser() {
   );
 
   const handleShareVia = useCallback(
+    // Asks who and what in the editor tab, for this session (#6028, slice 12).
     (path: string, protocol: "http" | "ftp" | "tftp") => {
-      quickShareServer(path, protocol);
+      openServerEditorTab(null, { serverType: protocol, folder: path });
       setSidebarView("services");
     },
-    [quickShareServer, setSidebarView]
+    [openServerEditorTab, setSidebarView]
   );
 
   const handlePaste = useCallback(() => {

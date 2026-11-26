@@ -75,6 +75,7 @@ import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 import { frontendLog } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
+import { flushDebouncedWrites } from "@/utils/debouncedWrites";
 import { flushPendingDeletes } from "@/utils/undoableDelete";
 
 function App() {
@@ -301,6 +302,8 @@ function App() {
       event.preventDefault();
       // Commit deletes still inside their undo window so closing never loses them (#5158).
       await flushPendingDeletes();
+      // The last change of the layout or the session, still waiting (#6094).
+      await flushDebouncedWrites();
       let others: Awaited<ReturnType<typeof listWindows>> = [];
       try {
         others = (await listWindows()).filter((w) => w.label !== win.label);

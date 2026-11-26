@@ -74,6 +74,10 @@ describe("FileMenuItems — Share via (#4498, #5858)", () => {
     expect(container.querySelector('[data-testid="file-menu-open-in-explorer"]')).toBeTruthy();
     act(() => shareItem("http")!.click());
     expect(onShareVia).toHaveBeenCalledWith(dirEntry.path, "http");
+    // In the New menu's words (#6028, slice 12).
+    expect(shareItem("http")?.textContent?.trim()).toBe("Share this folder in a browser…");
+    expect(shareItem("ftp")?.textContent?.trim()).toBe("Share this folder by FTP…");
+    expect(shareItem("tftp")?.textContent?.trim()).toBe("Share this folder by TFTP…");
   });
 
   it("shows every Share via item when experimental features are on", () => {

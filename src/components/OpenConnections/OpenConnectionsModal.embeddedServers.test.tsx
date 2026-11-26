@@ -76,7 +76,7 @@ function serverState(id: string, status: ServerStatus): ServerState {
 
 function serverSection(): HTMLElement | null {
   const title = Array.from(document.querySelectorAll(".oc-section__title")).find(
-    (t) => t.textContent === "Embedded servers"
+    (t) => t.textContent === "Services"
   );
   return (title?.closest("div")?.parentElement as HTMLElement) ?? null;
 }
@@ -196,6 +196,41 @@ describe("OpenConnectionsModal — Embedded servers section", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].querySelector(".oc-row__badge")?.textContent).toBe("not reachable");
     expect(rows[0].querySelector(".oc-row__kill")).not.toBeNull();
+  });
+
+  it("lists file servers and tunnels in one Services section, stopped together (#6028)", async () => {
+    const stopTunnel = vi.fn(() => Promise.resolve());
+    useAppStore.setState({
+      stopTunnel,
+      tunnels: [
+        {
+          id: "t1",
+          name: "DB",
+          sshConnectionId: "c",
+          tunnelType: { type: "dynamic", config: { localHost: "127.0.0.1", localPort: 1080 } },
+        } as never,
+      ],
+      tunnelStates: {
+        t1: {
+          tunnelId: "t1",
+          status: "connected",
+          stats: { bytesSent: 0, bytesReceived: 0, activeConnections: 0, totalConnections: 0 },
+        },
+      },
+      embeddedServers: [config("s1", "Docs HTTP", "http")],
+      embeddedServerStates: { s1: serverState("s1", "running") },
+    });
+    await renderModal();
+    const titles = Array.from(document.querySelectorAll(".oc-section__title")).map(
+      (t) => t.textContent
+    );
+    expect(titles).toContain("Services");
+    expect(titles).not.toContain("SSH tunnels");
+    expect(titles).not.toContain("Embedded servers");
+    expect(
+      document.querySelector('[data-testid="open-connections-services-section"] .oc-section__count')
+        ?.textContent
+    ).toBe("2");
   });
 
   it("renders no Embedded servers section when no server is running", async () => {

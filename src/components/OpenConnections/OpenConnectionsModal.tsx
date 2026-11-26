@@ -723,6 +723,10 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     await Promise.all(activeTunnels.map((t) => stopTunnel(t.id)));
   };
 
+  const handleStopAllServices = async () => {
+    await Promise.all([handleKillAllTunnels(), handleStopAllEmbeddedServers()]);
+  };
+
   const handleCancelTransfer = async (transferId: string) => {
     try {
       await cancelTransfer(transferId);
@@ -1153,13 +1157,15 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
           );
         })}
 
-        {/* SSH Tunnels */}
-        {activeTunnels.length > 0 && (
+        {/* Services: SSH tunnels and file servers in one section (#6028, slice 6). */}
+        {activeTunnels.length + runningEmbeddedServers.length > 0 && (
           <Section
-            title="SSH tunnels"
-            icon={<ArrowLeftRight size={14} />}
-            count={activeTunnels.length}
-            onKillAll={handleKillAllTunnels}
+            title="Services"
+            icon={<Server size={14} />}
+            count={activeTunnels.length + runningEmbeddedServers.length}
+            onKillAll={handleStopAllServices}
+            killAllLabel="Stop all"
+            data-testid="open-connections-services-section"
           >
             {orderTunnelRows(activeTunnels).map(({ tunnel: t, parent }) => {
               const state = tunnelStates[t.id];
@@ -1222,6 +1228,34 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                       : () => handleKillTunnel(t.id)
                   }
                   killLabel={companion ? "Stop pair" : "Stop"}
+                />
+              );
+            })}
+            {runningEmbeddedServers.map((s) => {
+              const status = embeddedServerStates[s.id]?.status;
+              const serverHost = hostChoice(s.host);
+              return (
+                <ConnectionRow
+                  key={s.id}
+                  icon={<Server size={14} />}
+                  title={s.name}
+                  detail={`${PROTOCOL_LABELS[s.serverType]} · ${s.bindHost}:${s.port} · ${tunnelHostMachine(
+                    serverHost,
+                    isAgentHost(serverHost)
+                      ? remoteAgents.find((a) => a.id === serverHost.agentId)?.name
+                      : undefined
+                  )}`}
+                  badge={
+                    status === "running"
+                      ? "up"
+                      : status === "notReachable"
+                        ? "notReachable"
+                        : "connecting"
+                  }
+                  onKill={() => handleStopEmbeddedServer(s.id)}
+                  killLabel="Stop"
+                  data-testid={`open-connections-embedded-server-${s.id}`}
+                  killTestId={`open-connections-embedded-server-stop-${s.id}`}
                 />
               );
             })}
@@ -1310,49 +1344,6 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                 killLabel="Stop"
               />
             ))}
-          </Section>
-        )}
-
-        {/* Embedded Servers — running HTTP/FTP/TFTP servers (SM-017). The
-            Services sidebar owns the live state + stop action; the panel mirrors
-            them so this "kill everything" surface can see and stop them. */}
-        {runningEmbeddedServers.length > 0 && (
-          <Section
-            title="Embedded servers"
-            icon={<Server size={14} />}
-            count={runningEmbeddedServers.length}
-            onKillAll={handleStopAllEmbeddedServers}
-            killAllLabel="Stop all"
-            data-testid="open-connections-embedded-servers-section"
-          >
-            {runningEmbeddedServers.map((s) => {
-              const status = embeddedServerStates[s.id]?.status;
-              const serverHost = hostChoice(s.host);
-              return (
-                <ConnectionRow
-                  key={s.id}
-                  icon={<Server size={14} />}
-                  title={s.name}
-                  detail={`${PROTOCOL_LABELS[s.serverType]} · ${s.bindHost}:${s.port} · ${tunnelHostMachine(
-                    serverHost,
-                    isAgentHost(serverHost)
-                      ? remoteAgents.find((a) => a.id === serverHost.agentId)?.name
-                      : undefined
-                  )}`}
-                  badge={
-                    status === "running"
-                      ? "up"
-                      : status === "notReachable"
-                        ? "notReachable"
-                        : "connecting"
-                  }
-                  onKill={() => handleStopEmbeddedServer(s.id)}
-                  killLabel="Stop"
-                  data-testid={`open-connections-embedded-server-${s.id}`}
-                  killTestId={`open-connections-embedded-server-stop-${s.id}`}
-                />
-              );
-            })}
           </Section>
         )}
 

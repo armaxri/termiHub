@@ -10,6 +10,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { flushAsync } from "@/test/flushAsync";
+import { toast } from "@/components/ui";
+import { useServicesView } from "@/components/ServicesSidebar/servicesView";
 import { useAppStore } from "@/store/appStore";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { getAllLeaves } from "@/utils/panelTree";
@@ -202,6 +204,111 @@ describe("CommandPalette", () => {
       act(() => typeInto("show services"));
       keydown("Enter");
       expect(setSidebarView).toHaveBeenCalledTimes(1);
+    });
+
+    it("starts and stops each service, and says what a stop cuts off (slice 6)", async () => {
+      const stats = (active: number) => ({
+        bytesSent: 0,
+        bytesReceived: 0,
+        activeConnections: active,
+        totalConnections: active,
+      });
+      const startTunnel = vi.fn(() => Promise.resolve());
+      const stopEmbeddedServer = vi.fn(() => Promise.reject(new Error("no")));
+      const error = vi.spyOn(toast, "error");
+      setStore({
+        startTunnel,
+        stopEmbeddedServer,
+        tunnels: [
+          {
+            id: "db",
+            name: "Shop database",
+            sshConnectionId: "c",
+            tunnelType: { type: "dynamic", config: { localHost: "127.0.0.1", localPort: 1080 } },
+            autoStart: false,
+            reconnectOnDisconnect: true,
+          },
+        ],
+        tunnelStates: {},
+        embeddedServers: [
+          {
+            id: "web",
+            name: "Release builds",
+            serverType: "http",
+            rootDirectory: "/srv",
+            bindHost: "127.0.0.1",
+            port: 8080,
+            autoStart: false,
+            readOnly: true,
+          },
+        ],
+        embeddedServerStates: { web: { serverId: "web", status: "running", stats: stats(2) } },
+      });
+      typeInto("start service: shop");
+      expect(activeLabel()).toBe("Start service: Shop database");
+      keydown("Enter");
+      expect(startTunnel).toHaveBeenCalledWith("db");
+      setStore({ commandPaletteOpen: true });
+      typeInto("stop service: release");
+      expect(activeLabel()).toBe("Stop service: Release builds (2 open connections)");
+      keydown("Enter");
+      await act(async () => Promise.resolve());
+      expect(stopEmbeddedServer).toHaveBeenCalledWith("web");
+      expect(error).toHaveBeenCalledWith("Failed to stop Release builds", { description: "no" });
+      error.mockRestore();
+    });
+
+    it("retries what failed and stops what waits, of both kinds (slice 6)", () => {
+      const stats = { bytesSent: 0, bytesReceived: 0, activeConnections: 0, totalConnections: 0 };
+      const startEmbeddedServer = vi.fn(() => Promise.resolve());
+      const stopTunnel = vi.fn(() => Promise.resolve());
+      setStore({
+        startEmbeddedServer,
+        stopTunnel,
+        tunnels: [
+          {
+            id: "db",
+            name: "Shop database",
+            sshConnectionId: "c",
+            tunnelType: { type: "dynamic", config: { localHost: "127.0.0.1", localPort: 1080 } },
+            autoStart: false,
+            reconnectOnDisconnect: true,
+          },
+        ],
+        tunnelStates: { db: { tunnelId: "db", status: "waiting", stats } },
+        embeddedServers: [
+          {
+            id: "web",
+            name: "Release builds",
+            serverType: "http",
+            rootDirectory: "/srv",
+            bindHost: "127.0.0.1",
+            port: 8080,
+            autoStart: false,
+            readOnly: true,
+          },
+        ],
+        embeddedServerStates: { web: { serverId: "web", status: "error", error: "x", stats } },
+      });
+      typeInto("start service: release");
+      expect(activeLabel()).toBe("Start service: Release builds");
+      keydown("Enter");
+      expect(startEmbeddedServer).toHaveBeenCalledWith("web");
+      setStore({ commandPaletteOpen: true });
+      typeInto("stop service: shop");
+      expect(activeLabel()).toBe("Stop service: Shop database");
+      keydown("Enter");
+      expect(stopTunnel).toHaveBeenCalledWith("db");
+    });
+
+    it("stops all of them through the sidebar, which asks first (slice 6)", () => {
+      const setSidebarView = vi.fn();
+      setStore({ setSidebarView, sidebarView: "files", sidebarCollapsed: false });
+      typeInto("stop all services");
+      keydown("Enter");
+      expect(useServicesView.getState().stopAllRequested).toBe(true);
+      expect(setSidebarView).toHaveBeenCalledWith("services");
+      useServicesView.getState().takeStopAll();
     });
 
     it("makes a new one", () => {

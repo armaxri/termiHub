@@ -27,6 +27,8 @@ export interface FileServerForm {
   description: string;
   autoStart: boolean;
   host: HostChoice;
+  /** Forgotten when termiHub starts again (slice 12). */
+  temporary: boolean;
 }
 
 /** A web and an FTP server can ask who wants in; TFTP cannot. */
@@ -66,6 +68,24 @@ export function newForm(
     description: "",
     autoStart: false,
     host: hostChoice(undefined),
+    temporary: false,
+  };
+}
+
+/**
+ * A folder shared from the file browser (#6028, slice 12): the safer defaults, for
+ * this session only, and called like the folder.
+ */
+export function shareForm(
+  type: ServerType,
+  folder: string,
+  free: (port: number) => number = (port) => port
+): FileServerForm {
+  return {
+    ...newForm(type, free),
+    rootDirectory: folder,
+    name: folderName(folder) ?? "",
+    temporary: true,
   };
 }
 
@@ -87,6 +107,7 @@ export function formOf(config: EmbeddedServerConfig): FileServerForm {
     description: config.description ?? "",
     autoStart: config.autoStart,
     host: hostChoice(config.host),
+    temporary: config.temporary ?? false,
   };
 }
 
@@ -125,6 +146,7 @@ export function fileServerSchema(saved: ServerType | undefined) {
       description: z.string(),
       autoStart: z.boolean(),
       host: z.custom<HostChoice>(),
+      temporary: z.boolean(),
     })
     .superRefine((form, ctx) => {
       const wrong = (path: keyof FileServerForm, message: string) =>
@@ -203,7 +225,8 @@ export function configOf(
     rootDirectory: form.rootDirectory,
     bindHost: form.bindHost.trim(),
     port: form.port === "" ? DEFAULT_PORTS[type] : form.port,
-    autoStart: form.autoStart,
+    autoStart: form.temporary ? false : form.autoStart,
+    temporary: form.temporary || undefined,
     // What a web server does not have is not said to be allowed.
     readOnly: form.readOnly || !hasUploads(type),
     directoryListing: type === "http" ? form.directoryListing : undefined,

@@ -87,4 +87,9 @@ maxConcurrentSessions?: number,
  * verbatim when this build cannot read it, and the server is then not
  * started at all. The desktop's own field: an agent is not sent it.
  */
-host?: import("./RunLocation").RunLocation, };
+host?: import("./RunLocation").RunLocation, 
+/**
+ * Shared from the file browser for this session only (#6028, slice 12): it
+ * is forgotten, with its passwords, when termiHub starts again.
+ */
+temporary?: boolean, };

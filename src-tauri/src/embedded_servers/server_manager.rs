@@ -168,7 +168,8 @@ impl<R: Runtime> EmbeddedServerManager<R> {
         let storage = EmbeddedServerStorage::new(app_handle)
             .context("Failed to initialise embedded server storage")?;
         let secrets = ServerSecrets::new(credential_store);
-        let result = load_and_migrate(&storage, &secrets)?;
+        let mut result = load_and_migrate(&storage, &secrets)?;
+        forget_temporary(&storage, &secrets, &mut result.data);
         Ok(Self {
             configs: Mutex::new(result.data),
             storage,
@@ -1131,6 +1132,27 @@ fn remove_local_service(
     }
 }
 
+/// Forget what was shared for one session only (#6028, slice 12), with its
+/// passwords, and write the list without it.
+fn forget_temporary(
+    storage: &EmbeddedServerStorage,
+    secrets: &ServerSecrets,
+    store: &mut EmbeddedServerStore,
+) {
+    let before = store.servers.len();
+    store.servers.retain(|server| {
+        if server.temporary {
+            secrets.forget(&server.id);
+        }
+        !server.temporary
+    });
+    if store.servers.len() != before {
+        if let Err(e) = persist_store(storage, secrets, store) {
+            tracing::warn!("Failed to forget the folders shared for one session: {e}");
+        }
+    }
+}
+
 /// How long a deleted server can be brought back. Longer than the Undo is
 /// offered (`UNDO_WINDOW_MS`), which waits while the pointer is on it.
 const UNDO_KEPT: Duration = Duration::from_secs(120);
@@ -1376,6 +1398,7 @@ mod tests {
 
     fn sample_config() -> EmbeddedServerConfig {
         EmbeddedServerConfig {
+            temporary: false,
             description: None,
             id: "srv-1".to_string(),
             name: "Test HTTP".to_string(),

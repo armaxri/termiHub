@@ -182,6 +182,8 @@ export interface ServerEditorMeta {
   serverType?: ServerType;
   /** For a new one: the server it is a copy of. */
   copyOf?: string;
+  /** For a new one: the folder shared from the file browser, for this session (slice 12). */
+  folder?: string;
 }
 
 export interface WorkspaceEditorMeta {

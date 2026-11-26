@@ -77,6 +77,24 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     configurable: true,
   },
   {
+    action: "show-services",
+    label: "Show services",
+    category: "general",
+    // Ships unbound (#6028): bind it in Settings.
+    macDefault: null,
+    winLinuxDefault: null,
+    configurable: true,
+  },
+  {
+    action: "stop-all-services",
+    label: "Stop all services",
+    category: "general",
+    // Ships unbound (#6028); asks first when a connection is open.
+    macDefault: null,
+    winLinuxDefault: null,
+    configurable: true,
+  },
+  {
     action: "show-shortcuts",
     label: "Show keyboard shortcuts (also from terminal)",
     category: "general",

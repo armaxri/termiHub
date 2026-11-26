@@ -62,15 +62,6 @@ export async function checkEmbeddedServers(): Promise<void> {
 }
 
 /**
- * Create a new server configuration and immediately start it.
- * The backend tries up to 10 sequential ports if the requested port is busy.
- * Returns the ID of the newly created (and started) server.
- */
-export async function createAndStartServer(config: EmbeddedServerConfig): Promise<string> {
-  return await invoke<string>("create_and_start_server", { config });
-}
-
-/**
  * Return all local IPv4 interfaces available as bind addresses.
  * Always includes loopback (127.0.0.1) first and all-interfaces (0.0.0.0) last.
  */

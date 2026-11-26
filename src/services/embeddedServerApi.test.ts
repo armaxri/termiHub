@@ -15,7 +15,6 @@ import {
   checkEmbeddedServers,
   restoreEmbeddedServer,
   keepEmbeddedServerRunning,
-  createAndStartServer,
   listNetworkInterfaces,
   getEmbeddedServerActivity,
   clearEmbeddedServerActivity,
@@ -89,25 +88,6 @@ describe("embeddedServerApi", () => {
     mockedInvoke.mockResolvedValue(undefined);
     await call("s1");
     expect(mockedInvoke).toHaveBeenCalledWith(command, { serverId: "s1" });
-  });
-
-  describe("createAndStartServer", () => {
-    it("invokes create_and_start_server and returns new server ID", async () => {
-      mockedInvoke.mockResolvedValue("srv-new");
-      const config = {
-        id: "srv-new",
-        name: "FTP",
-        type: "ftp",
-        port: 21,
-        bindAddress: "127.0.0.1",
-        enabled: true,
-      };
-
-      const result = await createAndStartServer(config as never);
-
-      expect(mockedInvoke).toHaveBeenCalledWith("create_and_start_server", { config });
-      expect(result).toBe("srv-new");
-    });
   });
 
   describe("listNetworkInterfaces", () => {

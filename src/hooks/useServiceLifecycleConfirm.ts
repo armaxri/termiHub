@@ -3,7 +3,7 @@ import { t, tf, type MessageId } from "@/i18n/catalog";
 import type { ServiceModel } from "@/utils/serviceModel";
 
 /** What a stop and a restart have in common: what is open now is dropped. */
-export type ServiceLifecycle = "stop" | "restart";
+export type ServiceLifecycle = "stop" | "restart" | "stopAll";
 
 interface Pending {
   kind: ServiceLifecycle;
@@ -15,10 +15,12 @@ interface Pending {
 const TITLE: Record<ServiceLifecycle, MessageId> = {
   stop: "service.confirm.stop.title",
   restart: "service.confirm.restart.title",
+  stopAll: "service.confirm.stopAll.title",
 };
 const LABEL: Record<ServiceLifecycle, MessageId> = {
   stop: "service.action.stop",
   restart: "service.action.restart",
+  stopAll: "service.stopAll",
 };
 
 export interface ServiceLifecycleConfirm {

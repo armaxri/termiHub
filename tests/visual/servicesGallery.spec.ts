@@ -47,6 +47,9 @@ const STATES = {
   "services--search": "Find the service that uses port 15003.",
   "services--search-word": 'Search for what it is: "file server".',
   "services--only-errors": "You pressed the errors: what is wrong, and how to see all again?",
+  "services--stop-all": "Stop everything before you leave: what is cut off?",
+  "services--open-connections": "What runs right now, of everything: stop the services?",
+  "services--quit": "You quit while someone downloads: what stops?",
   "services--nothing": "You searched for something that is not there.",
   "services--empty": "There is no service yet: what is this for, and make one.",
   "services--palette": "Find the tunnels from the command palette.",
@@ -74,6 +77,7 @@ const STATES = {
   "tunnels--narrow": "The narrowest sidebar, long names: read everything.",
   "tunnels--hover": "Change, copy or delete a running tunnel.",
   "tunnels--menu": "The same, from its menu.",
+  "servers--shared": "A folder you shared for now: how long does it stay?",
   "servers--stopped": "Find the folder you share and start it.",
   "servers--waiting": "Two servers have not started yet: why, and will they?",
   "servers--starting": "A server was just started: is it there yet?",
@@ -108,6 +112,8 @@ const STATES = {
   "server-editor--ftp": "Share a folder to upload and download files.",
   "server-editor--tftp": "Make a server that gives firmware to a switch.",
   "server-editor--port-taken": "The port you typed is one of your other servers'.",
+  "server-editor--share":
+    "You shared a folder from the file browser: who gets it, and for how long?",
   "server-editor--missing": "Saving did nothing: what is missing?",
   "server-editor--warning": "Others may upload without a password: do you see what that means?",
   "server-editor--sign-in": "Only people with the password may open it.",
@@ -428,6 +434,16 @@ const TUNNEL_ROWS: Partial<Record<State, Row[]>> = {
 };
 const SERVER_ROWS: Partial<Record<State, Row[]>> = {
   "servers--stopped": serversIn("stopped"),
+  "servers--shared": [
+    {
+      id: "shared",
+      name: "Builds",
+      type: "http",
+      status: "running",
+      over: { temporary: true, rootDirectory: "/home/ann/Builds", port: 8081 },
+    },
+    ...serversIn("running").slice(0, 1),
+  ],
   "servers--waiting": [
     ...serversIn("waiting", WHY.agent, { host: ON_EDGE }, AGENT).slice(0, 1),
     { id: "pw", name: "With a password", status: "waiting", error: WHY.store, state: STORE },
@@ -658,6 +674,9 @@ const BOTH_ROWS: Partial<Record<State, { tunnels: Row[]; servers: Row[] }>> = {
   "services--search": BOTH,
   "services--search-word": BOTH,
   "services--only-errors": BOTH,
+  "services--stop-all": BOTH,
+  "services--quit": BOTH,
+  "services--open-connections": BOTH,
   "services--nothing": BOTH,
   "services--palette": BOTH,
   "services--narrow": BOTH,
@@ -931,6 +950,15 @@ for (const viewport of WINDOWS) {
               await open("http");
               await field("port").fill("8080");
               break;
+            case "server-editor--share":
+              await page.evaluate(() => {
+                const store = window.__visual.store.getState() as unknown as {
+                  openServerEditorTab(id: null, options: object): void;
+                };
+                store.openServerEditorTab(null, { serverType: "http", folder: "/home/ann/Builds" });
+              });
+              await page.locator(id("server-editor")).waitFor();
+              break;
             case "server-editor--missing":
               await open("tftp");
               await field("save-start").click({ force: true });
@@ -1021,6 +1049,33 @@ for (const viewport of WINDOWS) {
               await page.locator(id("service-count-error")).click();
               await page.locator(id("services-show-all")).waitFor();
               await page.mouse.move(viewport.width - 20, viewport.height / 2);
+              break;
+            case "services--stop-all":
+              // In the toolbar's "…" while the sidebar is narrow.
+              if (!(await page.locator(id("services-stop-all")).isVisible())) {
+                await page.locator(id("services-more")).click();
+              }
+              await page.locator(id("services-stop-all")).click();
+              await page.locator(id("confirm-service-lifecycle-dialog")).waitFor();
+              over = true;
+              break;
+            case "services--open-connections":
+              if (!(await page.locator(id("services-open-connections")).isVisible())) {
+                await page.locator(id("services-more")).click();
+              }
+              await page.locator(id("services-open-connections")).click();
+              await page.locator(id("open-connections-services-section")).waitFor();
+              over = true;
+              break;
+            case "services--quit":
+              await page.evaluate(() => {
+                const store = window.__visual.store.getState() as unknown as {
+                  prepareAppQuit(owns: boolean): string;
+                };
+                store.prepareAppQuit(true);
+              });
+              await page.locator(id("close-window-decision-dialog")).waitFor();
+              over = true;
               break;
             case "services--nothing":
               await page.locator(id("services-search")).fill("jenkisn");

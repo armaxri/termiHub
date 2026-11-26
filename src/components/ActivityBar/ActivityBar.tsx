@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useServicesView } from "@/components/ServicesSidebar/servicesView";
 import {
   Network,
   FolderOpen,
@@ -70,7 +70,9 @@ interface ActivityBarProps {
 }
 
 export function ActivityBar({ horizontal }: ActivityBarProps) {
-  const [connectionsModalOpen, setConnectionsModalOpen] = useState(false);
+  // The Services sidebar opens it, too (#6028).
+  const connectionsModalOpen = useServicesView((s) => s.openConnections);
+  const setConnectionsModalOpen = useServicesView((s) => s.setOpenConnections);
   const sidebarView = useAppStore((s) => s.sidebarView);
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
   const setSidebarView = useAppStore((s) => s.setSidebarView);

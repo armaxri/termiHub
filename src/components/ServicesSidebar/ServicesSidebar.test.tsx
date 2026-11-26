@@ -13,6 +13,7 @@ vi.mock("@/services/embeddedServerApi", () => ({
   keepEmbeddedServerRunning,
 }));
 
+import { toast } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { seedConnectionsRegion } from "@/test/connectionsHarness";
@@ -275,6 +276,80 @@ describe("both kinds in one list", () => {
     );
     await click("services-search-clear");
     expect(items()).toHaveLength(4);
+  });
+});
+
+describe("around it (#6028, slice 6)", () => {
+  it("opens Open connections from its toolbar", async () => {
+    seed([[tunnel("a"), "connected"]]);
+    await render();
+    await click("services-open-connections");
+    expect(useServicesView.getState().openConnections).toBe(true);
+    useServicesView.getState().setOpenConnections(false);
+  });
+
+  it("takes up a Stop all asked for elsewhere, once", async () => {
+    const stopTunnel = vi.fn(() => Promise.resolve());
+    useAppStore.setState({ stopTunnel });
+    seed([[tunnel("a"), "connected"]]);
+    useServicesView.getState().requestStopAll();
+    await render();
+    expect(stopTunnel).toHaveBeenCalledWith("a");
+    expect(useServicesView.getState().stopAllRequested).toBe(false);
+    await render();
+    expect(stopTunnel).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Stop all (#6028, slice 11)", () => {
+  const stopTunnel = vi.fn(() => Promise.resolve());
+  const stopEmbeddedServer = vi.fn(() => Promise.resolve());
+  const open = { stats: { ...STATS, activeConnections: 2 } };
+  beforeEach(() => useAppStore.setState({ stopTunnel, stopEmbeddedServer }));
+
+  it("stops what runs, starts or waits, and asks first when something is open", async () => {
+    seed(
+      [
+        [tunnel("a"), "connected", open],
+        [tunnel("b"), "waiting"],
+        [tunnel("off"), "disconnected"],
+      ],
+      [[server("s"), "running"]]
+    );
+    await render();
+    await click("services-stop-all");
+    expect(stopTunnel).not.toHaveBeenCalled();
+    expect(q("confirm-service-lifecycle-dialog")?.textContent).toContain("Stop all services?");
+    expect(q("confirm-service-lifecycle-dialog")?.textContent).toContain(
+      "2 connections are open now"
+    );
+    await click("confirm-service-lifecycle-confirm");
+    expect(stopTunnel.mock.calls).toEqual([["a"], ["b"]]);
+    expect(stopEmbeddedServer).toHaveBeenCalledWith("s");
+  });
+
+  it("stops at once when nothing is open, and is off when nothing runs", async () => {
+    seed([[tunnel("a"), "connected"]]);
+    await render();
+    await click("services-stop-all");
+    expect(stopTunnel).toHaveBeenCalledWith("a");
+    act(() => seed([[tunnel("a"), "disconnected"]]));
+    await flushAsync();
+    expect(
+      q("services-stop-all")?.hasAttribute("disabled") ||
+        q("services-stop-all")?.getAttribute("aria-disabled") === "true"
+    ).toBe(true);
+  });
+
+  it("says when not every one could be stopped", async () => {
+    const error = vi.spyOn(toast, "error");
+    stopTunnel.mockRejectedValueOnce(new Error("no"));
+    seed([[tunnel("a"), "connected"]]);
+    await render();
+    await click("services-stop-all");
+    await flushAsync();
+    expect(error).toHaveBeenCalledWith("Not every service could be stopped", { description: "no" });
+    error.mockRestore();
   });
 });
 

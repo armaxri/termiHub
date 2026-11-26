@@ -12,6 +12,7 @@ import {
   OPEN_RUN_AUTOMATION_EVENT,
   TOGGLE_SESSION_LOGGING_EVENT,
 } from "./contextCommands";
+import { useServicesView } from "@/components/ServicesSidebar/servicesView";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import { getActiveTabGroupId } from "@/store/layoutSelectors";
 import { getAllLeaves } from "@/utils/panelTree";
@@ -83,8 +84,21 @@ describe("CONTEXT_COMMANDS registry", () => {
         "jump-next-prompt",
         "select-last-command-output",
         "copy-last-command-output",
+        "show-services",
+        "stop-all-services",
       ].sort()
     );
+  });
+});
+
+describe("the services (#6028, slice 6)", () => {
+  it("shows them, and asks their Stop all", () => {
+    CONTEXT_COMMANDS["show-services"].run();
+    expect(useAppStore.getState().sidebarView).toBe("services");
+    CONTEXT_COMMANDS["stop-all-services"].run();
+    expect(useServicesView.getState().stopAllRequested).toBe(true);
+    expect(CONTEXT_COMMANDS["stop-all-services"].isAvailable()).toBe(true);
+    useServicesView.getState().takeStopAll();
   });
 });
 

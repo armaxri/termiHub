@@ -202,6 +202,37 @@ describe("appStore — closing a window with a recording (#5818)", () => {
   });
 });
 
+describe("appStore — the last window and the services (#6028)", () => {
+  const stats = { bytesSent: 0, bytesReceived: 0, activeConnections: 2, totalConnections: 2 };
+  beforeEach(() => {
+    useAppStore.setState({
+      ...useAppStore.getInitialState(),
+      tunnels: [{ id: "t", name: "DB" } as never],
+      tunnelStates: { t: { tunnelId: "t", status: "connected", stats } },
+    });
+  });
+
+  it("asks when the last window closes on Windows and Linux, as quit does", async () => {
+    // jsdom is neither a Mac nor Windows.
+    expect(await useAppStore.getState().prepareWindowClose([])).toBe("prompt");
+    expect(useAppStore.getState().pendingWindowClose?.services).toEqual([
+      { key: "t", name: "DB", open: 2 },
+    ]);
+  });
+
+  it("does not ask on a Mac, where termiHub stays in the Dock", async () => {
+    const agent = vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Macintosh");
+    expect(await useAppStore.getState().prepareWindowClose([])).toBe("proceed");
+    agent.mockRestore();
+  });
+
+  it("does not ask while another window stays, nor in a window that does not own them", async () => {
+    expect(await useAppStore.getState().prepareWindowClose(OTHERS)).toBe("proceed");
+    expect(useAppStore.getState().prepareAppQuit(false)).toBe("ready");
+    expect(useAppStore.getState().prepareAppQuit()).toBe("prompt");
+  });
+});
+
 describe("appStore — close-with-live-tabs decision (#1903)", () => {
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
