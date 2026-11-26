@@ -181,6 +181,51 @@ pub(super) fn windows_recover_command() -> String {
     powershell_encoded_command(&recover_script())
 }
 
+/// Whether a connect to the agent at `path` that failed with `error` first
+/// puts back an agent a killed setup left aside (#6002).
+///
+/// A setup killed between its two renames, with the desktop gone too, leaves
+/// no agent at the install path: `termihub-agent.previous.exe` is the working
+/// one. Only the agent at the path the setup manages
+/// (`%LOCALAPPDATA%\termiHub\agent\termihub-agent.exe`) can be left so. A
+/// Windows shell reports a missing program with its own status (cmd.exe
+/// 9009, PowerShell 1), so any start that did not answer counts; a host that
+/// did not answer at all (a timeout) does not.
+pub(crate) fn recovers_windows_setup(
+    path: &str,
+    error: &crate::utils::errors::TerminalError,
+) -> bool {
+    let managed = format!(
+        r"\{}\{}",
+        WINDOWS_INSTALL_SUBDIR.to_ascii_lowercase(),
+        WINDOWS_AGENT_EXE
+    );
+    crate::terminal::agent_install::is_windows_path(path)
+        && path
+            .replace('/', "\\")
+            .to_ascii_lowercase()
+            .ends_with(&managed)
+        && !error.is_timeout()
+}
+
+/// Put back an agent a killed setup left aside (#6002): the recovery the
+/// desktop runs after a setup, once, over `session`. It does nothing to an
+/// agent that starts; a failure only leaves the connect's own error.
+pub(crate) async fn recover_windows_setup(
+    session: &termihub_core::backends::ssh::handler::SshSession,
+) {
+    let recovered = crate::utils::remote_exec::run_remote_command_timed(
+        session,
+        &windows_recover_command(),
+        std::time::Duration::from_secs(30),
+    )
+    .await;
+    match recovered {
+        Ok(out) => tracing::info!("Windows agent recovery before reconnecting: {out:?}"),
+        Err(e) => tracing::warn!("Windows agent recovery could not run: {e}"),
+    }
+}
+
 /// What the typed line runs (#6001): the uploaded script's text as a script
 /// block, not the script file. An execution policy of AllSigned from group
 /// policy wins over `-ExecutionPolicy Bypass` and refuses an unsigned script
