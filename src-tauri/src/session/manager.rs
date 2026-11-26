@@ -1957,17 +1957,26 @@ impl SessionManager {
             .map(|(sid, _)| sid.clone())
     }
 
-    /// The agent-hosted session bound to a frontend tab, if any (SM-003): its
-    /// agent id and remote (agent) session id, resolved through the tab-id
-    /// identity bridge (#2431).
+    /// The agent-hosted session of a frontend tab, if any (SM-003): its agent id
+    /// and remote (agent) session id, resolved through the tab-id identity
+    /// bridge (#2431) or the persistent session the tab is attached to (#6110).
+    /// Tests read it; Reclaim resolves the session itself.
+    #[cfg(test)]
     pub async fn agent_session_for_tab(&self, tab_id: &str) -> Option<(String, String)> {
-        let session_id = self.session_of_tab(tab_id)?;
+        self.agent_session_of_tab(tab_id)
+            .await
+            .map(|(_, agent_id, remote_session_id)| (agent_id, remote_session_id))
+    }
+
+    /// The tab's agent-hosted session: its desktop session id, agent id and
+    /// remote (agent) session id (#6110).
+    async fn agent_session_of_tab(&self, tab_id: &str) -> Option<(String, String, String)> {
+        let session_id = self.reclaimable_session_of_tab(tab_id).await?;
         let sessions = self.sessions.lock().await;
         let entry = sessions.get(&session_id)?;
-        Some((
-            entry.info.agent_id.clone()?,
-            entry.remote_session_id.clone()?,
-        ))
+        let agent_id = entry.info.agent_id.clone()?;
+        let remote_session_id = entry.remote_session_id.clone()?;
+        Some((session_id, agent_id, remote_session_id))
     }
 
     /// The agent's own session id of each agent-hosted session among
@@ -1994,20 +2003,10 @@ impl SessionManager {
     /// by the daemon's buffer replay. Never called automatically; only from the
     /// user's Reclaim action, so control cannot ping-pong between desktops.
     pub async fn reclaim_session(&self, tab_id: &str) -> Result<(), TerminalError> {
-        let session_id = self
-            .reclaimable_session_of_tab(tab_id)
+        let (session_id, agent_id, remote_session_id) = self
+            .agent_session_of_tab(tab_id)
             .await
             .ok_or_else(|| TerminalError::SessionNotFound(tab_id.to_string()))?;
-        let (agent_id, remote_session_id) = {
-            let sessions = self.sessions.lock().await;
-            let entry = sessions
-                .get(&session_id)
-                .ok_or_else(|| TerminalError::SessionNotFound(tab_id.to_string()))?;
-            match (&entry.info.agent_id, &entry.remote_session_id) {
-                (Some(agent), Some(remote)) => (agent.clone(), remote.clone()),
-                _ => return Err(TerminalError::SessionNotFound(tab_id.to_string())),
-            }
-        };
         let client = self.agent_manager.clone();
         tokio::task::spawn_blocking(move || client.reclaim_session(&agent_id, &remote_session_id))
             .await
