@@ -20,7 +20,9 @@ fn decoded(line: &str) -> String {
         .split_whitespace()
         .skip_while(|w| *w != "-EncodedCommand")
         .nth(1)
-        .unwrap_or_else(|| panic!("no -EncodedCommand in {line}"));
+        .unwrap_or_else(|| panic!("no -EncodedCommand in {line}"))
+        // PowerShell's own `;` before `exit` follows the command.
+        .trim_end_matches(';');
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(b64)
         .unwrap();
