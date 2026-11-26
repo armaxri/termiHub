@@ -1268,6 +1268,18 @@ for (const viewport of WINDOWS) {
         await shot(page, "schedules--list-room", SIDEBAR);
       });
 
+      test("schedules, below a short list that leaves them its room (#6115)", async ({ page }) => {
+        await bootSchedules(page, SCHEDULES, { automations: LIBRARY.slice(0, 1) });
+        // The list is as tall as its one row (and its padding), not half the sidebar.
+        await expect
+          .poll(async () => {
+            const list = await page.locator(".automation-sidebar__list").first().boundingBox();
+            const row = await page.locator(id("automation-item-keys")).boundingBox();
+            return list && row ? list.height - row.height : Infinity;
+          })
+          .toBeLessThan(40);
+      });
+
       test("schedules, a deleted connection", async ({ page }) => {
         await bootSchedules(page, DELETED);
         await page.locator(id("schedule-blocked-s1")).waitFor();
