@@ -81,9 +81,33 @@ const HOW_TO_USE: Record<ServiceModel["type"], MessageId> = {
   tftp: "service.activity.use.tftp",
 };
 
-/** How to use the address, in one line per type; none while there is none. */
+/** The how-to of each type where it is reached only on another machine (F-003). */
+const HOW_TO_USE_THERE: Partial<Record<ServiceModel["type"], MessageId>> = {
+  local: "service.activity.use.local.there",
+  dynamic: "service.activity.use.dynamic.there",
+  http: "service.activity.use.http.there",
+  ftp: "service.activity.use.ftp.there",
+};
+
+/** The how-to of each type that is said by who reaches it, here or on the network. */
+const HOW_TO_USE_SCOPED: Partial<Record<ServiceModel["type"], [MessageId, MessageId]>> = {
+  http: ["service.activity.use.http.here", "service.activity.use.http.network"],
+  ftp: ["service.activity.use.ftp.here", "service.activity.use.ftp.network"],
+};
+
+/**
+ * How to use the address, in one line per type; none while there is none. It
+ * follows where the address can be reached (#6117, F-003): one that works only on
+ * an agent's machine never says "here".
+ */
 export function howToUse(model: Pick<ServiceModel, "type" | "address">): string | undefined {
-  return model.address?.copy ? t(HOW_TO_USE[model.type]) : undefined;
+  const address = model.address;
+  if (!address?.copy) return undefined;
+  const there = HOW_TO_USE_THERE[model.type];
+  if (address.on && !address.open && there) return tf(there, { machine: address.on });
+  const scoped = HOW_TO_USE_SCOPED[model.type];
+  if (scoped && !address.on) return t(scoped[address.open ? 1 : 0]);
+  return t(HOW_TO_USE[model.type]);
 }
 
 /** One of the four counters. */

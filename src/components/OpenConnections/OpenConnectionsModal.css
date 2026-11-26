@@ -241,3 +241,21 @@
   flex-wrap: wrap;
   gap: var(--spacing-xs);
 }
+
+/* A row whose reason decides the next step: the reason on its own line (#6117, F-001). */
+.oc-row__main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.oc-row__reason {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}

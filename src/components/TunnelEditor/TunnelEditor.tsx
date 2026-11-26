@@ -950,7 +950,12 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
         </button>
         {showsPath && (
           <>
-            <TunnelDiagram tunnelType={tunnelType} agentName={hostAgentName} failing={failing} />
+            <TunnelDiagram
+              tunnelType={tunnelType}
+              agentName={hostAgentName}
+              failing={failing}
+              serverName={sshLabel}
+            />
             <div className="tunnel-editor__endpoints" data-testid="tunnel-editor-endpoints">
               <div className="tunnel-editor__endpoints-host">
                 {isAgentHost(host) ? <Server size={13} /> : <Monitor size={13} />}

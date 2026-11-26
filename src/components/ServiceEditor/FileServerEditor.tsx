@@ -45,6 +45,7 @@ import {
   hasUploads,
   missingText,
   newForm,
+  serverName,
   shareForm,
   openWarning,
   savedSignIn,
@@ -152,7 +153,8 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
   // ── What it is for ─────────────────────────────────────────────────────────
   const [choosing, setChoosing] = useState(false);
   // Whether who can open it is still what a new server of this kind starts with.
-  const [presetWho, setPresetWho] = useState(!existing && !original);
+  // A share asks who from the start (F-004): no preset to follow the kind.
+  const [presetWho, setPresetWho] = useState(!existing && !original && !meta.folder);
   const changeType = (type: ServerType) => {
     const next = withType(getValues(), type, presetWho, free);
     for (const [key, value] of Object.entries(next)) {
@@ -296,7 +298,13 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
       }
       view={view}
       onView={(next) => existing && showIn(existing.id, next)}
-      title={existing ? existing.name : t(`service.new.${form.serverType}`)}
+      title={
+        existing
+          ? existing.name
+          : meta.folder
+            ? tf("server.editor.share.title", { name: serverName(form) || "this folder" })
+            : t(`service.new.${form.serverType}`)
+      }
       subtitle={editorSubtitle(!existing, t(`service.new.${form.serverType}.technical`))}
       onChangeType={choosing ? undefined : () => setChoosing(true)}
       rootProps={rootProps}
