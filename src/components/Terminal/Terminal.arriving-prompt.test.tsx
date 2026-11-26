@@ -28,6 +28,11 @@ import type { HostToWorkerMessage, WorkerToHostMessage } from "@/plugins/sandbox
 import { FLOW_HIGH_WATERMARK } from "@/utils/terminalFlowControl";
 import { WRITE_SLICE_BYTES } from "@/utils/slicedWrite";
 
+/** What the PTY says about hidden input (#6014); `null`: it cannot tell. */
+const hiddenInput = vi.hoisted(() =>
+  vi.fn((..._args: unknown[]) => Promise.resolve(null as boolean | null))
+);
+
 /** The terminals the component made: a fake view on a real buffer and parser. */
 const terminals = vi.hoisted(() => ({ list: [] as unknown[], block: false }));
 vi.mock("@xterm/xterm", async (importOriginal) => {
@@ -129,6 +134,7 @@ vi.mock("@/services/api", () => ({
   }),
   replaySessionScrollback: mockReplay,
   sessionGetCapabilities: vi.fn().mockResolvedValue({}),
+  sessionInputHidden: (...args: unknown[]) => hiddenInput(...args),
 }));
 vi.mock("@/services/keybindings", () => ({
   processKeyEvent: vi.fn(() => null),
@@ -379,6 +385,21 @@ describe("Continue sees a prompt that has arrived (#6070)", () => {
     write.mockClear();
     pressContinue();
     expect(write).toHaveBeenCalledOnce();
+  });
+
+  it("asks the PTY whether input is hidden, at a prompt no word list knows (#6014)", async () => {
+    hiddenInput.mockResolvedValue(true);
+    try {
+      const state = startWait();
+      arrive("Enter code: ");
+      pressContinue();
+      await settle(60);
+      expect(hiddenInput).toHaveBeenCalledWith(SID);
+      expect(state.result).toBeUndefined();
+      expect(wait()?.stillAsking).toBe(true);
+    } finally {
+      hiddenInput.mockResolvedValue(null);
+    }
   });
 
   it("not of a terminal that is gone", () => {
