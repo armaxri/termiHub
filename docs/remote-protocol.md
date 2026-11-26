@@ -4295,7 +4295,11 @@ on the desktop: `remote_closed` when the server ended the connection cleanly (TC
 Telnet, the SSH server closing the shell channel), `io_error` when a read or write on the link
 failed, `timeout` when the link timed out, and (0.40.0+, #5783) `device_gone` when a serial
 session's device is gone for good — its in-place reopen gave up, or the port was lost with
-Auto-Reconnect off. The agent omits it when the backend cannot tell, after
+Auto-Reconnect off. `shell_exited` (#5995) is an SSH shell that ended on its own with a status
+that is not its own: Win32-OpenSSH sends `0` for a PTY shell whatever it exited with, so the
+session reports no `exit_status`; the desktop reads "[Process exited]" and "The session ended."
+and never reconnects. It needs no protocol version: a desktop that does not know it reads it as
+absent. The agent omits it when the backend cannot tell, after
 a [`connection.close`](#connectionclose), and an agent older than 0.38.0 never sends it. A
 desktop reads a value it does not know as absent.
 
@@ -4320,7 +4324,7 @@ the agent link still reads "connection lost" (and reconnects a resilient tab).
 For a daemon-hosted session (SSH and the other persistent types) the session daemon passes the
 cause to the agent worker as an optional fifth byte of its `MSG_EXITED` frame (after the 4-byte
 exit code: `0` = none, `1` = `remote_closed`, `2` = `io_error`, `3` = `timeout`, `4` =
-`device_gone`), followed by an
+`device_gone`, `5` = `shell_exited`), followed by an
 optional sixth byte `1` when the exit code is the process's real status (#5742). A worker that
 predates the bytes reads only the exit code (and no known cause from `0`), and a frame without
 the sixth byte means no status: its code is the `0` every older daemon sent.

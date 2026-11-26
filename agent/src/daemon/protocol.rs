@@ -560,6 +560,8 @@ const END_CAUSE_IO_ERROR: u8 = 2;
 const END_CAUSE_TIMEOUT: u8 = 3;
 /// End-cause byte: the session's device went away (#5783).
 const END_CAUSE_DEVICE_GONE: u8 = 4;
+/// End-cause byte: the shell exited with a status that is not known (#5995).
+const END_CAUSE_SHELL_EXITED: u8 = 5;
 
 /// End-cause byte: no cause (only written ahead of an exit-status byte).
 const END_CAUSE_NONE: u8 = 0;
@@ -584,6 +586,7 @@ pub fn encode_exit(exit_status: Option<i32>, end_cause: Option<SessionEndCause>)
         SessionEndCause::IoError => END_CAUSE_IO_ERROR,
         SessionEndCause::Timeout => END_CAUSE_TIMEOUT,
         SessionEndCause::DeviceGone => END_CAUSE_DEVICE_GONE,
+        SessionEndCause::ShellExited => END_CAUSE_SHELL_EXITED,
     });
     if cause.is_some() || exit_status.is_some() {
         payload.push(cause.unwrap_or(END_CAUSE_NONE));
@@ -613,6 +616,7 @@ pub fn decode_end_cause(payload: &[u8]) -> Option<SessionEndCause> {
         END_CAUSE_IO_ERROR => Some(SessionEndCause::IoError),
         END_CAUSE_TIMEOUT => Some(SessionEndCause::Timeout),
         END_CAUSE_DEVICE_GONE => Some(SessionEndCause::DeviceGone),
+        END_CAUSE_SHELL_EXITED => Some(SessionEndCause::ShellExited),
         _ => None,
     }
 }
