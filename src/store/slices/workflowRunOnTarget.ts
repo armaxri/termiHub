@@ -140,6 +140,8 @@ export interface WorkflowFanoutHooks {
    * once per terminal.
    */
   authDecisions?: Map<string, Promise<LocalProcessDecision>>;
+  /** The terminals its shared local-process answer is for, by title (#6132). */
+  terminals?: string[];
 }
 
 /** Everything {@link runWorkflowOnTarget} needs to run one workflow on one tab. */
@@ -414,6 +416,8 @@ export function workflowTarget(run: WorkflowTargetRun, cancel: () => void): Work
           args,
           goesOn,
           workflowName: workflow.name,
+          // Which run asks: its terminal, or all those one answer is for (#6132).
+          terminals: fanout?.terminals ?? [tabTitle],
           remember,
           imported,
           interpreter,

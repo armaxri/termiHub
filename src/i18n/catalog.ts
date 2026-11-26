@@ -1231,6 +1231,9 @@ const en = {
   "automation.wait.elsewhere":
     "Another window or computer controls this terminal. Take it back first, then press Continue.",
   "automation.wait.note": "Waiting for you",
+  "localProcess.terminal": "Terminal",
+  "localProcess.terminals": "Terminals",
+  "localProcess.terminalsShared": "{terminals} (one answer for all of them)",
   // Why a run stopped, in its History (#6042).
   "automation.stoppedBy": "“{name}” was started",
   "automation.stoppedHere": "“{name}” was started in this terminal",
