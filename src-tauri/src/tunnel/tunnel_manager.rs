@@ -863,6 +863,13 @@ impl<R: Runtime> TunnelManager<R> {
             None => {
                 let started = self.start_desktop_tunnel(tunnel_id, &config);
                 if self.finish(ticket, Outcome::Failed, tunnel_id) {
+                    if let Err(e) = &started {
+                        // The failure was published while the start still
+                        // counted as starting, so the UI kept "connecting"
+                        // (#6139): publish where it rests now.
+                        tracing::warn!("Tunnel {tunnel_id} did not start: {e}");
+                        self.emit_status(tunnel_id, self.resting_status_of(tunnel_id));
+                    }
                     started
                 } else {
                     // A stop pressed while it started.
@@ -870,6 +877,14 @@ impl<R: Runtime> TunnelManager<R> {
                 }
             }
         }
+    }
+
+    /// The status `tunnel_id` rests in now, as the UI is sent it.
+    fn resting_status_of(&self, tunnel_id: &str) -> TunnelStatus {
+        self.get_statuses()
+            .ok()
+            .and_then(|states| states.into_iter().find(|s| s.tunnel_id == tunnel_id))
+            .map_or(TunnelStatus::Disconnected, |state| state.status)
     }
 
     /// What an automatic start of `config` has to wait for, if anything.
