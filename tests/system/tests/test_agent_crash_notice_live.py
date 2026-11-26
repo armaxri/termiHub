@@ -45,7 +45,6 @@ from termihub_harness import (
     SidebarUi,
     SystemTest,
     TabsUi,
-    deployed_agent_path,
     ssh_server_control,
     unique_name,
 )
@@ -124,12 +123,12 @@ class TestAgentCrashNoticeLive(
 
     def _create_and_baseline(self, label: str) -> dict:
         """Create + connect a fresh agent and wait for its baseline check."""
-        agent = self.create_remote_agent(
+        agent = self.create_deployed_agent(
             unique_name(label),
             host=SSH_HOST,
             port=REMOTE_AGENT_PORT,
             username=SSH_USERNAME,
-            agent_path=deployed_agent_path(),
+            password=SSH_PASSWORD,
         )
         self._connect(agent["name"])
         self.wait(

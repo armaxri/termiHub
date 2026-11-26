@@ -20,6 +20,7 @@ vi.mock("@/services/networkApi", () => ({
   networkHttpMonitorList: vi.fn(() => Promise.resolve([])),
   networkHttpMonitorStop: vi.fn(() => Promise.resolve()),
   onHttpMonitorCheck: vi.fn(() => Promise.resolve(() => {})),
+  onHttpMonitorChanged: vi.fn(() => Promise.resolve(() => {})),
 }));
 
 vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn() }));

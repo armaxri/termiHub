@@ -6,6 +6,8 @@
  * The row says what the service *is*, not what termiHub hopes: an agent-hosted
  * service whose agent is gone is "Not reachable", never "Running".
  */
+import type { HttpMonitorState } from "@/types/network";
+import type { HttpMonitorStatus } from "@/types/generated/HttpMonitorStatus";
 import type { StatusTone } from "@/components/ui";
 import { t, type MessageId } from "@/i18n/catalog";
 import type { ServerStatus } from "@/types/embeddedServer";
@@ -115,6 +117,26 @@ export function tunnelServiceState(status: TunnelStatus | undefined): ServiceSta
 /** The state of a file server; one that has none yet is stopped. */
 export function serverServiceState(status: ServerStatus | undefined): ServiceState {
   return status ? SERVER_STATES[status] : "stopped";
+}
+
+const MONITOR_STATES: Record<HttpMonitorStatus, ServiceState> = {
+  stopped: "stopped",
+  starting: "starting",
+  running: "running",
+  stopping: "stopping",
+  error: "error",
+  notReachable: "notReachable",
+};
+
+/**
+ * The state of an HTTP monitor in the words of a service (#6052); one from an
+ * older backend without a status reads from its running flag.
+ */
+export function monitorServiceState(
+  monitor: Pick<HttpMonitorState, "status" | "running">
+): ServiceState {
+  if (monitor.status) return MONITOR_STATES[monitor.status] ?? "stopped";
+  return monitor.running ? "running" : "stopped";
 }
 
 /** The word for `state`: the dot's accessible name and tooltip. */

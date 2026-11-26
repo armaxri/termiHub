@@ -180,6 +180,13 @@ pub const DOCKER_LIST_CONTAINERS: &str = "docker.list_containers";
 /// agent that advertises the flag and keeps the `availableSerialPorts`
 /// snapshot of `initialize` for an older one.
 pub const SERIAL_LIST_PORTS: &str = "serial.list_ports";
+/// List the **agent host's** IPv4 network addresses (#6086), so a file server
+/// on it can be opened on one of them by choosing rather than typing. No
+/// params; result: [`HostAddressesResult`]. Added append-only in protocol
+/// 0.46.0 with the [`Capabilities::host_addresses`] flag: the desktop calls it
+/// only on an agent that advertises the flag and lets the address be typed for
+/// an older one.
+pub const HOST_ADDRESSES: &str = "host.addresses";
 pub const TOOL_LIST: &str = "tool.list";
 pub const TOOL_RUN: &str = "tool.run";
 /// Start a streaming tool run (#3353): returns at once; results arrive as
@@ -428,6 +435,11 @@ pub struct Capabilities {
     /// 0.41.0, #5736). Absent (read as `false`) on older agents, whose
     /// uploads restart from zero instead.
     pub file_truncate: bool,
+    /// Whether the agent serves [`HOST_ADDRESSES`]: its host's network
+    /// addresses, for choosing where a file server on it opens (protocol
+    /// 0.46.0, #6086). Absent (read as `false`) on older agents, for which the
+    /// address is typed.
+    pub host_addresses: bool,
 }
 
 /// One prompt of a [`KbdInteractivePromptNotification`] round.
@@ -2352,6 +2364,25 @@ pub struct SerialListPortsResult {
     pub ports: Vec<String>,
 }
 
+/// One network address of the agent host (#6086).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HostAddress {
+    /// The interface name (`eth0`, `en0`).
+    pub name: String,
+    /// The IPv4 address.
+    pub addr: String,
+}
+
+/// Result of [`HOST_ADDRESSES`]: the agent host's IPv4 addresses, loopback
+/// excluded, in the order the system lists them.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HostAddressesResult {
+    #[serde(default)]
+    pub addresses: Vec<HostAddress>,
+}
+
 // ── connection.exit / connection.error (notification payloads) ─────
 
 /// Notification (agent → desktop): a session reported an error (#3759).
@@ -3072,6 +3103,7 @@ mod tests {
                 connection_description: true,
                 serial_port_rescan: true,
                 file_truncate: true,
+                host_addresses: true,
                 available_shells: vec!["/bin/bash".to_string(), "/bin/zsh".to_string()],
                 available_serial_ports: vec!["/dev/ttyUSB0".to_string()],
                 docker_available: false,
@@ -3113,6 +3145,7 @@ mod tests {
         assert_eq!(v["capabilities"]["connectionDescription"], true);
         // #5069: the agent serves `serial.list_ports`.
         assert_eq!(v["capabilities"]["serialPortRescan"], true);
+        assert_eq!(v["capabilities"]["hostAddresses"], true);
         // #5736: the agent serves `connection.files.truncate`.
         assert_eq!(v["capabilities"]["fileTruncate"], true);
         assert!(v["capabilities"]["availableDockerImages"]
@@ -5193,6 +5226,25 @@ mod tests {
         assert!(r.containers[0].running);
         assert_eq!(r.containers[1].image, "");
         assert!(!r.containers[1].running);
+    }
+
+    /// `host.addresses` (#6086): `{ "addresses": [{ "name", "addr" }] }`, and a
+    /// reply without `addresses` reads as none.
+    #[test]
+    fn host_addresses_wire_shape() {
+        assert_eq!(HOST_ADDRESSES, "host.addresses");
+        let r = HostAddressesResult {
+            addresses: vec![HostAddress {
+                name: "eth0".into(),
+                addr: "192.168.1.30".into(),
+            }],
+        };
+        assert_eq!(
+            serde_json::to_value(&r).unwrap(),
+            json!({ "addresses": [{ "name": "eth0", "addr": "192.168.1.30" }] })
+        );
+        let empty: HostAddressesResult = serde_json::from_value(json!({})).unwrap();
+        assert!(empty.addresses.is_empty());
     }
 
     /// `serial.list_ports` (#5069): the result is `{ "ports": [...] }` in the

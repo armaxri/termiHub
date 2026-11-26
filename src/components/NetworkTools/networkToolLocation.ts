@@ -20,11 +20,12 @@ export interface NetworkToolLocationInfo {
    * desktop-only tool so the disabled control never reads as a silent no-op.
    */
   agentUnavailableReason?: string;
+  /**
+   * Each item of the tool chooses its own machine (the HTTP monitor), so its
+   * tab has no tab-level "Run on" at all (F-009).
+   */
+  perItem?: boolean;
 }
-
-/** Reason shown on the HTTP monitor tab's per-tool "Run on" selector. */
-export const HTTP_MONITOR_AGENT_REASON =
-  'Each HTTP monitor chooses its own run location — use the monitor\'s "Run on" field below.';
 
 /**
  * Maps each frontend {@link NetworkTool} to its run-location behaviour (#2191).
@@ -32,9 +33,9 @@ export const HTTP_MONITOR_AGENT_REASON =
  * Every diagnostic tool can run on an agent (PROD-033): ping, traceroute, port
  * scan, DNS, Wake-on-LAN and open ports proxy to the agent's `network.*`
  * methods, and ping sweep runs through the agent's generic `tool.run`. The HTTP
- * monitor is the one exception on this per-tool selector: a monitor is hosted
- * on an agent **per monitor** (its own "Run on" field, via `service.*`), so the
- * tab-level selector stays on This computer and says why.
+ * monitor is the one exception: a monitor is hosted on an agent **per monitor**
+ * (its own "Run on" field, via `service.*`), so its tab shows no tab-level
+ * selector (F-009).
  */
 export const NETWORK_TOOL_LOCATION: Record<NetworkTool, NetworkToolLocationInfo> = {
   ping: { backendKey: "ping", agentAllowed: true },
@@ -42,11 +43,7 @@ export const NETWORK_TOOL_LOCATION: Record<NetworkTool, NetworkToolLocationInfo>
   "port-scanner": { backendKey: "port_scan", agentAllowed: true },
   "dns-lookup": { backendKey: "dns", agentAllowed: true },
   wol: { backendKey: "wol", agentAllowed: true },
-  "http-monitor": {
-    backendKey: "http_monitor",
-    agentAllowed: false,
-    agentUnavailableReason: HTTP_MONITOR_AGENT_REASON,
-  },
+  "http-monitor": { backendKey: "http_monitor", agentAllowed: false, perItem: true },
   "ping-sweep": { backendKey: "ping_sweep", agentAllowed: true },
   "open-ports": { backendKey: "open_ports", agentAllowed: true },
 };

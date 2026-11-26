@@ -11,6 +11,6 @@
 //! as before; #2592 only *adds* the agent as a run-location choice.
 
 pub use termihub_core::monitoring::http_monitor::{
-    HttpCheckResult, HttpMonitorConfig, HttpMonitorService, HttpMonitorState, CHECK_EVENT_KIND,
-    SERVICE_ID,
+    HttpCheckResult, HttpMonitorConfig, HttpMonitorService, HttpMonitorState, HttpMonitorStatus,
+    CHECK_EVENT_KIND, SERVICE_ID,
 };

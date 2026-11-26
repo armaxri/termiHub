@@ -10,7 +10,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { networkHttpMonitorStart } from "@/services/networkApi";
-import { useRunLocationStore } from "@/store/runLocationStore";
 import { THIS_COMPUTER } from "@/utils/runLocation";
 import { HttpMonitorPanel } from "./HttpMonitorPanel";
 import { withTooltip } from "@/test/tooltip";
@@ -23,6 +22,7 @@ vi.mock("@/services/networkApi", () => ({
   networkHttpMonitorResume: vi.fn(() => Promise.resolve()),
   networkHttpMonitorList: vi.fn(() => Promise.resolve([])),
   onHttpMonitorCheck: vi.fn(() => Promise.resolve(() => {})),
+  onHttpMonitorChanged: vi.fn(() => Promise.resolve(() => {})),
 }));
 
 vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn() }));
@@ -48,7 +48,6 @@ describe("HttpMonitorPanel — run-location", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
-    useRunLocationStore.setState({ monitorLocations: {} });
     vi.mocked(networkHttpMonitorStart).mockClear();
   });
 
@@ -65,7 +64,7 @@ describe("HttpMonitorPanel — run-location", () => {
     expect(container.querySelector('[data-testid="http-monitor-run-location"]')).not.toBeNull();
   });
 
-  it("forwards the run-location to start and records it in the store", async () => {
+  it("forwards the run-location to start, which stores it with the monitor (#6039)", async () => {
     await act(async () => {
       root.render(withTooltip(<HttpMonitorPanel />));
     });
@@ -85,7 +84,5 @@ describe("HttpMonitorPanel — run-location", () => {
     expect(networkHttpMonitorStart).toHaveBeenCalledTimes(1);
     const args = vi.mocked(networkHttpMonitorStart).mock.calls[0];
     expect(args[5]).toEqual(THIS_COMPUTER);
-    // ...and the chosen location is recorded against the created monitor id.
-    expect(useRunLocationStore.getState().monitorLocations["mon-1"]).toEqual(THIS_COMPUTER);
   });
 });

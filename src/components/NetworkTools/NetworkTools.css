@@ -279,25 +279,57 @@
 
 .http-monitor-row {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  gap: var(--spacing-xxs);
+  padding: var(--spacing-sm) 0;
+  border-bottom: 1px solid var(--border-secondary);
+}
+
+/* The URL and the state word on one line (F-009). */
+.http-monitor-row__head {
+  display: flex;
+  align-items: baseline;
   gap: var(--spacing-sm);
-  padding: var(--spacing-xxs) 0;
+  min-width: 0;
 }
 
 .http-monitor-row__url {
+  flex: 1;
+  min-width: 0;
   font-size: var(--font-size-sm);
   font-family: var(--font-mono);
   color: var(--text-primary);
-  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.http-monitor-row__meta {
+.http-monitor-row__state {
+  flex-shrink: 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+}
+
+.http-monitor-row__state[data-state="notStarted"],
+.http-monitor-row__state[data-state="down"],
+.http-monitor-row__reason[data-state="notStarted"],
+.http-monitor-row__reason[data-state="down"] {
+  color: var(--color-error);
+}
+
+.http-monitor-row__meta,
+.http-monitor-row__reason {
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+}
+
+/* Labelled actions on a line of their own: they never wrap between rows. */
+.http-monitor-row__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+  margin-left: calc(-1 * var(--spacing-sm));
 }
 
 /* ===================================================================
@@ -366,6 +398,19 @@
 .sidebar-list-item:hover .network-sidebar__monitor-meta,
 .sidebar-list-item:hover .network-sidebar__monitor-meta > * + *::before {
   color: var(--text-muted-on-selection);
+}
+
+/* A long machine name is cut at its end, whole in the tooltip (F-009 round 2). */
+.network-sidebar__monitor-where {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Why it does not check, wrapped, never cut (F-009). */
+.network-sidebar__monitor-reason {
+  white-space: normal;
 }
 
 .network-sidebar__monitor-down {

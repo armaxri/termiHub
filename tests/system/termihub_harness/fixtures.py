@@ -1153,6 +1153,9 @@ def build_host_test_agent(*, build_timeout: float = 1500.0) -> Path:
 #: Windows host, which the agent definitions must carry (#5511); ``None`` on
 #: macOS, where the app's default ``~/.local/bin/termihub-agent`` is it.
 _native_agent_path: Optional[str] = None
+#: The test agent build :func:`install_native_agent` installed, which the
+#: Windows suites install again through the app's Setup (#5533).
+_native_agent_binary: Optional[Path] = None
 
 
 def install_native_agent(target: "native_ssh.NativeSshTarget") -> str:
@@ -1164,7 +1167,7 @@ def install_native_agent(target: "native_ssh.NativeSshTarget") -> str:
     puts it (#5511), whose path :func:`deployed_agent_path` hands the suites.
     Returns the installed path.
     """
-    global _native_agent_path
+    global _native_agent_path, _native_agent_binary
     binary = build_host_test_agent()
     control = native_ssh.NativeSshServerControl(target)
     if not control.available:
@@ -1177,19 +1180,26 @@ def install_native_agent(target: "native_ssh.NativeSshTarget") -> str:
         raise _native_host_failed(exc) from exc
     if sys.platform == "win32":
         _native_agent_path = installed
+        _native_agent_binary = binary
     return installed
 
 
 def deployed_agent_path() -> Optional[str]:
-    """The ``agentPath`` an agent definition for ``remote_agent_fixtures`` needs.
+    """The managed install path the app stores after setting the agent up.
 
     ``None`` (the app's default ``~/.local/bin/termihub-agent``) for the
     container and the macOS native sshd. On the Windows native sshd the path
     :func:`install_native_agent` installed the ``.exe`` at, in the
-    forward-slash form the app stores after its PowerShell deploy step (#5511).
+    forward-slash form the app stores after its setup there (#5511): the
+    suites set the agent up through the app and check it stored this (#5533).
     Call it after the fixture ran.
     """
     return _native_agent_path
+
+
+def deployed_agent_binary() -> Optional[Path]:
+    """The test agent build the Windows suites install through the app (#5533)."""
+    return _native_agent_binary
 
 
 #: The agent test hook's env (``agent/src/update/test_hook.rs``): arm it with a

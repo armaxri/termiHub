@@ -53,6 +53,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { version = "1", features = ["v4", "serde"] }
 anyhow = "1"
+# The host's network addresses for `host.addresses` (#6086), as the desktop lists its own.
+if-addrs = "0.6"
 thiserror = { workspace = true }
 termihub-core = { path = "../core", features = [
     "local-shell",

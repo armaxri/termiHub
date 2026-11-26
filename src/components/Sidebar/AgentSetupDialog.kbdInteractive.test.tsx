@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { AgentSetupDialog } from "./AgentSetupDialog";
+import { withTooltip } from "@/test/tooltip";
 import type { RemoteArchInfo } from "@/services/api";
 import type { RemoteAgentDefinition } from "@/types/connection";
 import type { RemoteAgentConfig } from "@/types/terminal";
@@ -69,7 +70,7 @@ function makeAgent(authMethod: RemoteAgentConfig["authMethod"]): RemoteAgentDefi
 
 async function renderAndDetect(agent: RemoteAgentDefinition) {
   await act(async () => {
-    root.render(<AgentSetupDialog open={true} onOpenChange={vi.fn()} agent={agent} />);
+    root.render(withTooltip(<AgentSetupDialog open={true} onOpenChange={vi.fn()} agent={agent} />));
   });
   for (let i = 0; i < 5; i++) {
     await act(async () => {

@@ -2129,6 +2129,13 @@ step:
   would land in the shell) is a **fatal** outcome: `executeStepWithPolicy` neither retries nor
   tolerates it, at any level. Runs nobody watches are refused before they type anything
   (`reachesWaitForUser`): scheduled ones as skipped, triggered ones as a failed run in the History.
+  Whether it asks for a secret is `isSecretPrompt` (#6014): the prompt's words, or the session's
+  own answer to `session_input_hidden`. A local shell on Unix reads its PTY master
+  (`hidden_input_reading`, `core/src/backends/pty_unix_io.rs`): canonical mode without `ECHO` is a
+  program reading a hidden line (`read -s`, `getpass`, `stty -echo`); a line editor at the prompt
+  reads raw and never counts. It is asked only when the recorder or a Continue reads the prompt,
+  never polled. Remote sessions (SSH, telnet, serial, agent) and Windows ConPTY answer `null`: the
+  echo is decided on the far host, and ConPTY has no echo flag, so there the words are all there is.
   What the terminal asks is read through `promptOfTerminal` (`services/passwordPrompt.ts`, #6070):
   its `read` answers once all output that had arrived at the call is in xterm's buffer
   (`TerminalOutputFlow.whenShown`, behind a plugin's parser and a repaint in progress), and never when
@@ -3188,6 +3195,17 @@ A server without a `host` runs on this computer, as it did before the field exis
 kept an agent choice in memory only, so it cannot be recovered: the user has to choose it once more.
 An older build that opens the file keeps the field but does not read it, and starts the server on
 this computer.
+
+**HTTP monitors** follow the same rule (#6039, #6052). A monitor stores its `host` in
+`http-monitors.json` (the same `ServiceHost`, kept verbatim when unreadable, kept by a restore whose
+backup has none) and is checked from there or not at all. One on an agent is a record of
+`HostedServices` (`src-tauri/src/network/agent_monitors.rs`): not reachable while its agent is gone,
+a start without an answer may still check there, a stop its agent did not get is owed and kept in
+`http_monitors_owed_stops.json`, and after a restart its agent is asked whether it still checks.
+Pause and resume stay the monitor's own. `HttpMonitorState.status` and `reason` carry the states of
+a service, which the rows word with `monitorServiceState`; the monitor commands run off the window's
+thread, and `network-http-monitor-changed` tells the windows when a row changed more than its
+numbers.
 
 ### What a Service's Row Says (#6028)
 

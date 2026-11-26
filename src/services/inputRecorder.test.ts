@@ -122,6 +122,22 @@ describe("what is typed at a password prompt", () => {
     expect(recorder.finish().secrets).toEqual([{ start: 0, end: 2, prompt: "Deploy" }]);
   });
 
+  it("is flagged when the local PTY reads with echo off, whatever its words (#6014)", () => {
+    const recorder = new InputRecorder(() => 0);
+    // `stty -echo; printf 'Enter code: '; read x`: no word says password.
+    const hidden: PromptReader = (then) => then("Enter code: ", true);
+    for (const key of "s3cret\r") recorder.push(key, hidden);
+    recorder.push("ls\r", (then) => then("$ ", false));
+    expect(recorder.finish().secrets).toEqual([{ start: 0, end: 7, prompt: "Enter code:" }]);
+  });
+
+  it("still goes by the words where the PTY cannot tell (#6014)", () => {
+    const recorder = new InputRecorder(() => 0);
+    recorder.push("x", (then) => then("Enter code: ", null));
+    recorder.push("p", (then) => then("Password: ", null));
+    expect(recorder.finish().secrets).toEqual([{ start: 1, end: 2, prompt: "Password:" }]);
+  });
+
   it("is flagged when the prompt masks it", () => {
     const { at, recorder, type } = setup();
     at.screen = "PIN: ";

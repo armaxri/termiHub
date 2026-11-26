@@ -704,6 +704,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::session::session_vscode_open_remote,
             // Session-based monitoring
             commands::session::session_get_capabilities,
+            commands::session::session_input_hidden,
             commands::session::session_monitoring_open,
             commands::session::session_monitoring_close,
             commands::session::session_monitoring_set_paused,
@@ -814,6 +815,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::agent::list_agent_host_sessions,
             commands::agent_docker::list_agent_docker_containers,
             commands::agent_serial::list_agent_serial_ports,
+            commands::agent_serial::list_agent_addresses,
             commands::agent::take_over_agent_session,
             commands::agent::close_agent_session,
             commands::agent::list_agent_connections,

@@ -1831,6 +1831,20 @@ fn an_agent_device_gone_never_reconnects() {
 }
 
 #[test]
+fn a_shell_that_exited_without_a_status_never_reconnects() {
+    use termihub_core::connection::SessionEndCause;
+    // #5995: a Windows SSH shell the user ended reports no trustworthy code;
+    // reconnecting would start a shell the user ended.
+    for agent_hosted in [false, true] {
+        assert!(!drop_may_reconnect(
+            true,
+            agent_hosted,
+            Some(SessionEndCause::ShellExited)
+        ));
+    }
+}
+
+#[test]
 fn initial_connect_failed_tab_id_folds_only_the_initial_attempt() {
     // Initial attempt (retry 0) of a tab-bearing connect → fold that tab.
     assert_eq!(

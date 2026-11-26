@@ -258,6 +258,7 @@ describe("wire contract: agent connect / definitions", () => {
     expect(result.capabilities.connectionDescription).toBe(true);
     expect(result.capabilities.serialPortRescan).toBe(true);
     expect(result.capabilities.fileTruncate).toBe(true);
+    expect(result.capabilities.hostAddresses).toBe(true);
     expect(result.capabilities.connectionTypes[0]).toMatchObject({
       typeId: "local",
       displayName: "Local shell",
@@ -283,6 +284,7 @@ describe("wire contract: agent connect / definitions", () => {
       "fileCreateNew",
       "fileRanges",
       "fileTruncate",
+      "hostAddresses",
       "maxSessions",
       "monitoringSupported",
       "outputFlow",
@@ -306,6 +308,8 @@ describe("wire contract: agent connect / definitions", () => {
     expect(result.capabilities.serialPortRescan).toBe(false);
     // #5736: an older agent's crashed uploads restart from zero.
     expect(result.capabilities.fileTruncate).toBe(false);
+    // #6086: an older agent's file server address is typed.
+    expect(result.capabilities.hostAddresses).toBe(false);
   });
 
   it("decodes saved definitions with null vs absent optionals", async () => {

@@ -435,10 +435,8 @@ pub fn vnc_settings_schema() -> SettingsSchema {
             },
             SettingsField {
                 default: Some(serde_json::json!("zrle")),
-                description: Some(
-                    "Framebuffer encoding preference. ZRLE is compressed; Raw is uncompressed."
-                        .to_string(),
-                ),
+                // The frontend says what each encoding means (#6036).
+                description: None,
                 ..field(
                     "preferredEncoding",
                     "Encoding",

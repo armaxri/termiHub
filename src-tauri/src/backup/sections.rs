@@ -828,7 +828,7 @@ pub fn keep_current_hosts(spec: &SectionSpec, doc: &mut Value, current: &Value) 
 }
 
 /// The sections whose entries say which machine they run on.
-const HOSTED_SECTIONS: &[&str] = &["tunnels", "embeddedServers"];
+const HOSTED_SECTIONS: &[&str] = &["tunnels", "embeddedServers", "httpMonitors"];
 
 /// For a settings replace: keep this machine's credential-storage keys and the
 /// permissions given on it.

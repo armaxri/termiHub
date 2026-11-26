@@ -2863,6 +2863,15 @@ export async function reorderConnections(connectionIds: string[]): Promise<void>
 
 // --- Session-based monitoring commands ---
 
+/**
+ * Whether a program in the session now reads a line with its echo off, a
+ * password or a code (#6014): read from a local shell's PTY on Unix. `null`
+ * where the backend cannot tell (remote sessions, Windows).
+ */
+export async function sessionInputHidden(sessionId: string): Promise<boolean | null> {
+  return await invoke<boolean | null>("session_input_hidden", { sessionId });
+}
+
 /** Return the capabilities of an active session. */
 export async function sessionGetCapabilities(
   sessionId: string

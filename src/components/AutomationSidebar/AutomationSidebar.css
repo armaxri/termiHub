@@ -21,10 +21,14 @@
   padding: var(--spacing-xs) 0;
 }
 
-/* An open section takes the room; the list keeps a few rows (B-034). */
+/*
+ * An open section and the list share the room fairly (B-034, #6115): half each,
+ * and a short list gives what it does not need to the section. Where max-content
+ * is not understood, the split stays half and half.
+ */
 .automation-sidebar:has(> [data-open="true"]) > .automation-sidebar__list {
-  flex: 0 0 auto;
-  height: 15%;
+  flex: 1 1 0;
+  max-height: max-content;
   min-height: 72px;
 }
 

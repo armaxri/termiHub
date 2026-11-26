@@ -19,6 +19,11 @@ interface WhoCanOpenProps {
   here: string;
   /** Whether this computer opens it: else its addresses are not known, but typed. */
   onThisComputer: boolean;
+  /**
+   * Another machine's addresses, when known (#6086): they are chosen from as
+   * this computer's are. Unknown ones are typed, and the note says why.
+   */
+  there?: { addresses?: NetworkInterface[]; note?: string };
   error?: string;
 }
 
@@ -34,6 +39,7 @@ export function WhoCanOpen({
   labels,
   here,
   onThisComputer,
+  there,
   error,
 }: WhoCanOpenProps) {
   const [interfaces, setInterfaces] = useState<NetworkInterface[]>([]);
@@ -54,7 +60,10 @@ export function WhoCanOpen({
   // One address is chosen before it is known which.
   const [wantsAddress, setWantsAddress] = useState(false);
   const who = wantsAddress ? "address" : whoOf(bind);
-  const addresses = onThisComputer ? ownAddresses(interfaces, bind) : [];
+  // This computer's, or the other machine's when it said them (#6086).
+  const listed = onThisComputer ? interfaces : there?.addresses;
+  const chooses = listed !== undefined;
+  const addresses = listed ? ownAddresses(listed, bind) : [];
   const choose = (next: Who) => {
     setWantsAddress(next === "address");
     if (next === "here") onBind(here);
@@ -62,7 +71,7 @@ export function WhoCanOpen({
     else onBind(addresses[0]?.value ?? "");
   };
   const options = (["here", "network", "address"] as const)
-    .filter((value) => value !== "address" || !onThisComputer || addresses.length > 0)
+    .filter((value) => value !== "address" || !chooses || addresses.length > 0)
     .map((value) => ({
       value,
       label: labels[value],
@@ -91,7 +100,7 @@ export function WhoCanOpen({
           htmlFor={`${id}-address`}
           error={error}
         >
-          {onThisComputer ? (
+          {chooses ? (
             <Select
               id={`${id}-address`}
               value={bind}
@@ -109,6 +118,11 @@ export function WhoCanOpen({
               error={Boolean(error)}
               data-testid={`${testId}-address`}
             />
+          )}
+          {!chooses && there?.note && (
+            <p className="service-editor__hint" data-testid={`${testId}-address-note`}>
+              {there.note}
+            </p>
           )}
         </Field>
       )}
