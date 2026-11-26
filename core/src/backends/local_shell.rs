@@ -191,6 +191,11 @@ impl LocalShellSpawner for NativeLocalShellSpawner {
         let line_editor_reading: Option<Box<dyn Fn() -> bool + Send + Sync>>;
         #[cfg(not(unix))]
         let line_editor_reading: Option<Box<dyn Fn() -> bool + Send + Sync>> = None;
+        #[cfg(unix)]
+        let hidden_input: Option<Box<dyn Fn() -> bool + Send + Sync>>;
+        // ConPTY has no echo flag to ask (#6014): the frontend reads the prompt.
+        #[cfg(not(unix))]
+        let hidden_input: Option<Box<dyn Fn() -> bool + Send + Sync>> = None;
         // The shell's directory, read from the OS (#5009): the PTY's
         // foreground process on Unix, else the shell process itself (on
         // Windows its innermost same-program descendant, #5014).
@@ -215,6 +220,10 @@ impl LocalShellSpawner for NativeLocalShellSpawner {
             let probe_fd = poll_fd.clone();
             line_editor_reading = Some(Box::new(move || {
                 super::pty_unix_io::line_editor_reading(&probe_fd)
+            }));
+            let hidden_fd = poll_fd.clone();
+            hidden_input = Some(Box::new(move || {
+                super::pty_unix_io::hidden_input_reading(&hidden_fd)
             }));
             foreground = Some(poll_fd.clone());
             resize_catch_up = shell_pid.map(|pid| {
@@ -302,6 +311,7 @@ impl LocalShellSpawner for NativeLocalShellSpawner {
                 }
             }),
             line_editor_reading,
+            hidden_input,
             resize_catch_up,
             cwd_probe: Some(Box::new(move || {
                 #[cfg(unix)]
@@ -346,6 +356,8 @@ struct ConnectedState {
     /// Re-sends a resize a running command got to bash at its next prompt
     /// (#5096); only for bash without the shell hook.
     resize_catch_up: Option<Box<dyn Fn() + Send + Sync>>,
+    /// Whether a program reads a line with its echo off (#6014).
+    hidden_input: Option<Box<dyn Fn() -> bool + Send + Sync>>,
 }
 
 impl Drop for ConnectedState {
@@ -920,6 +932,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             writer,
             resize: spawned.resize,
             resize_catch_up,
+            hidden_input: spawned.hidden_input,
             kill: spawned.kill,
             alive,
             disconnected: false,
@@ -1065,6 +1078,14 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
         Some(std::sync::Arc::new(
             crate::monitoring::LocalProcessManager::new(),
         ))
+    }
+
+    fn hidden_input(&self) -> Option<bool> {
+        self.state
+            .as_ref()?
+            .hidden_input
+            .as_ref()
+            .map(|probe| probe())
     }
 
     fn prompt_probe(&self) -> Option<PromptProbe> {
@@ -1373,6 +1394,8 @@ mod tests {
         /// the child process exiting — mirroring a real `exit` or `kill()`.
         /// Sends the exit status the mock child exits with (#5742).
         child_exit: Arc<Mutex<Option<std::sync::mpsc::Sender<i32>>>>,
+        /// What the PTY says about hidden input (#6014); `None`: it cannot tell.
+        hidden: Option<Arc<AtomicBool>>,
     }
 
     impl MockLocalShellSpawner {
@@ -1388,6 +1411,7 @@ mod tests {
                 captured_cwd: Arc::new(Mutex::new(None)),
                 captured_size: Arc::new(Mutex::new(None)),
                 child_exit: Arc::new(Mutex::new(None)),
+                hidden: None,
             }
         }
 
@@ -1454,6 +1478,10 @@ mod tests {
                     // can only end via the watcher's direct signal.
                 }),
                 line_editor_reading: None,
+                hidden_input: self.hidden.clone().map(|hidden| {
+                    Box::new(move || hidden.load(Ordering::SeqCst))
+                        as Box<dyn Fn() -> bool + Send + Sync>
+                }),
                 cwd_probe: None,
                 resize_catch_up: None,
             })
@@ -1712,6 +1740,27 @@ mod tests {
         assert!(result.is_err(), "second connect should fail");
 
         shell.disconnect().await.ok();
+    }
+
+    /// Whether a program reads hidden input is asked of the PTY (#6014): what it
+    /// says now, nothing before the shell runs, and "cannot tell" where the PTY
+    /// has no echo flag to ask.
+    #[tokio::test]
+    async fn hidden_input_is_what_the_pty_says_now() {
+        let hidden = Arc::new(AtomicBool::new(false));
+        let mut shell = LocalShell::with_spawner(MockLocalShellSpawner {
+            hidden: Some(hidden.clone()),
+            ..MockLocalShellSpawner::new()
+        });
+        assert_eq!(shell.hidden_input(), None);
+        shell.connect(valid_settings()).await.expect("connect");
+        assert_eq!(shell.hidden_input(), Some(false));
+        hidden.store(true, Ordering::SeqCst);
+        assert_eq!(shell.hidden_input(), Some(true));
+
+        let mut blind = LocalShell::with_spawner(MockLocalShellSpawner::new());
+        blind.connect(valid_settings()).await.expect("connect");
+        assert_eq!(blind.hidden_input(), None);
     }
 
     /// A pre-cancelled token short-circuits before the shell is spawned and

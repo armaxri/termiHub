@@ -87,6 +87,20 @@ pub(crate) fn line_editor_reading(fd: &OwnedFd) -> bool {
     termios.c_lflag & libc::ICANON == 0
 }
 
+/// Whether a program reads a line the user should not see: the slave is in
+/// canonical mode (`ICANON` on) with `ECHO` off, as `read -s`, `getpass` (sudo,
+/// ssh, passwd) and `stty -echo` leave it (#6014). A line editor at a prompt
+/// switches canonical mode off and echoes itself, so it never reads as hidden.
+/// An error reads as "not hidden".
+pub(crate) fn hidden_input_reading(fd: &OwnedFd) -> bool {
+    // SAFETY: as in `line_editor_reading`: plain data, read only on success.
+    let mut termios: libc::termios = unsafe { std::mem::zeroed() };
+    if unsafe { libc::tcgetattr(fd.as_raw_fd(), &mut termios) } != 0 {
+        return false;
+    }
+    termios.c_lflag & libc::ICANON != 0 && termios.c_lflag & libc::ECHO == 0
+}
+
 /// The PTY's foreground process group (the shell at its prompt, or the job
 /// it runs), from the master; `None` if it cannot be read.
 pub(crate) fn foreground_pgid(fd: &OwnedFd) -> Option<u32> {

@@ -704,6 +704,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::session::session_vscode_open_remote,
             // Session-based monitoring
             commands::session::session_get_capabilities,
+            commands::session::session_input_hidden,
             commands::session::session_monitoring_open,
             commands::session::session_monitoring_close,
             commands::session::session_monitoring_set_paused,

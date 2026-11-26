@@ -2272,6 +2272,17 @@ impl SessionManager {
         connection.ssh_algorithms().await
     }
 
+    /// Whether a program in the session now reads a line with its echo off
+    /// (#6014); `None` when the session is gone or its backend cannot tell
+    /// (remote sessions, Windows ConPTY). Asked on demand, never polled.
+    pub async fn session_hidden_input(&self, session_id: &str) -> Option<bool> {
+        let connection = {
+            let sessions = self.sessions.lock().await;
+            sessions.get(session_id)?.connection.clone()
+        };
+        connection.hidden_input()
+    }
+
     pub async fn session_capabilities(&self, session_id: &str) -> Option<Capabilities> {
         let sessions = self.sessions.lock().await;
         sessions
