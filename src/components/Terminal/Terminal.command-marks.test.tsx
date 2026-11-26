@@ -227,3 +227,31 @@ describe("Terminal OSC 133 command marks (#3415)", () => {
     expect(keyHandler(xterm)(key)).toBe(false);
   });
 });
+
+describe("Terminal marks what an automation types (#6021)", () => {
+  it("decorates the line a run types into, in this tab only, until unmount", async () => {
+    const { markAutomationInput } = await import("@/services/automationTypingMarks");
+    const xterm = renderTerminal() as MockXTerm & {
+      registerMarker?: ReturnType<typeof vi.fn>;
+      registerDecoration?: ReturnType<typeof vi.fn>;
+    };
+    const marker = { line: 0, isDisposed: false, dispose: vi.fn(), onDispose: vi.fn() };
+    const decoration = () => ({
+      dispose: vi.fn(),
+      onRender: vi.fn(() => ({ dispose: vi.fn() })),
+    });
+    xterm.registerMarker = vi.fn(() => marker);
+    xterm.registerDecoration = vi.fn(decoration);
+    const run = { automationId: "a1", name: "Deploy", origin: "hotkey" as const };
+
+    await markAutomationInput(() => true, run)("other-tab", "ls\r");
+    expect(xterm.registerDecoration).not.toHaveBeenCalled();
+    await markAutomationInput(() => true, run)("tab-1", "ls\r");
+    expect(xterm.registerMarker).toHaveBeenCalledTimes(1);
+    expect(xterm.registerDecoration).toHaveBeenCalledTimes(2);
+
+    unmountOnce();
+    await markAutomationInput(() => true, run)("tab-1", "pwd\r");
+    expect(xterm.registerMarker).toHaveBeenCalledTimes(1);
+  });
+});
