@@ -198,9 +198,11 @@ class AutomationPhaseUi(AutomationSidebarUi):
         return texts
 
     def set_schedule_enabled(self, schedule_id: str, enabled: bool) -> None:
-        """Settings -> Schedules: flip the switch (accepting the first-enable confirmation)."""
-        self.close_automation_schedules()  # its rows share Settings' testIds
-        self.open_settings_category("schedules")
+        """The Schedules list: flip the switch (accepting the first-enable confirmation).
+
+        The list is the Automations sidebar's Schedules section, the one list since #5860.
+        """
+        self.open_automation_schedules()
         toggle = f"schedule-enable-{schedule_id}"
         self.wait(lambda: self.driver.exists(toggle), what="the schedule's enable switch")
         if bool((self.schedule(schedule_id) or {}).get("enabled")) == enabled:

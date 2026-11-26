@@ -3,7 +3,8 @@
 The UI review of run ``20261123T215628Z`` found:
 
 1. **R-050** (``security-none``): with "Don't save passwords", Shared credentials
-   and Credential vault backup kept their full description paragraphs next to
+   and Credential vault backup (Back up saved passwords since #5860) kept their
+   full description paragraphs next to
    the "Credential storage is off — choose … above" line.
 2. **R-157** (``touchid-note``): the "Unlock with Touch ID" hint was two lines of
    conditions shown before the unlock was on.
@@ -68,7 +69,7 @@ def _collapsed(**over) -> SectionReading:
 
 
 def test_the_graded_sections_are_the_two_store_dependent_ones():
-    assert [s[0] for s in SECTIONS] == ["shared-credentials", "credential-vault-backup"]
+    assert [s[0] for s in SECTIONS] == ["shared-credentials", "password-backup"]
 
 
 def test_a_collapsed_section_passes():
@@ -172,10 +173,10 @@ class TestProductRunSecurityPage(
     def test_10_sections_collapse_while_passwords_are_not_saved(self):
         with self.step(
             "security-none.collapsed",
-            "With 'Don't save passwords', Shared credentials and Credential vault backup are "
+            "With 'Don't save passwords', Shared credentials and Back up saved passwords are "
             "one muted line each (#5875)",
             expect="#5875: Settings ▸ Security with 'Don't save passwords' selected; Shared "
-            "credentials and Credential vault backup each show only their heading and the "
+            "credentials and Back up saved passwords each show only their heading and the "
             "line 'Credential storage is off — choose OS Keychain or Master password above …'",
         ):
             status = self.wait(self.credential_store_status, what="the credential store status")
@@ -192,7 +193,7 @@ class TestProductRunSecurityPage(
             "security-page.storing",
             "With a master-password vault, both sections keep their description (#5875)",
             expect="Settings ▸ Security with Master password selected; Shared credentials and "
-            "Credential vault backup show their description and actions",
+            "Back up saved passwords show their description and actions",
         ):
             self.setup_master_password_store(MASTER_PASSWORD)
             self.open_settings_category("security")

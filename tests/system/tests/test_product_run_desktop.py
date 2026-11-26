@@ -100,10 +100,10 @@ RDP_USER = "product-run"
 RDP_PASSWORD = "product-run-rdp-pw"
 #: The settings categories (``settingsRegistry.ts`` CATEGORIES).
 SETTINGS_CATEGORIES = (
-    "general", "appearance", "accessibility", "keyboard", "updates", "terminal",
-    "shell-integration", "sessions", "monitoring", "editor", "serial", "external-files",
-    "security", "safety-prompts", "backup", "plugins", "import", "schedules", "portable",
-    "x-server",
+    "general", "appearance", "accessibility", "keyboard", "shell-integration", "plugins",
+    "updates", "terminal", "sessions", "editor", "connection-defaults", "serial", "monitoring",
+    "external-files", "schedules", "security", "safety-prompts", "backup", "import", "x-server",
+    "portable",
 )
 #: Numeric settings and where they live: (category, testid, key, label); ids from #5573.
 NUMERIC_SETTINGS = (
@@ -814,23 +814,27 @@ class TestProductRunSettingsThemes(
 
         with self.step(
             "settings.schedules.empty-create",
-            "Settings ▸ Schedules has no repeated SCHEDULES header and offers New schedule (#5633)",
-            expect="Settings ▸ Schedules: one title, a Pause all switch, and a New schedule button",
+            "Settings ▸ Schedules opens the one schedules list, which offers New schedule "
+            "(#5633, #5860)",
+            expect="Settings ▸ Schedules says the list is in the Automations sidebar; Open "
+            "schedules shows it there with a Pause all switch and a New schedule button",
         ):
             self.open_settings_category("schedules")
-            self.wait(lambda: self.driver.exists("schedules-settings"), what="the schedules list")
+            self.wait(
+                lambda: self.driver.exists("schedules-settings-open"), what="the Open schedules button"
+            )
+            self.close_automation_schedules()
+            self.driver.click("schedules-settings-open")
+            self.wait(lambda: self.driver.exists("schedules-section"), what="the schedules list")
             empty = self.driver.exists("schedules-empty")
             create = "schedules-empty-new-btn" if empty else "schedules-new-btn"
             has_create = self.driver.exists(create)
-            has_header = self.driver.exists("schedules-header")
-            self.evidence(f"empty {empty}; {create} shown {has_create}; header shown {has_header}")
+            self.evidence(f"empty {empty}; {create} shown {has_create}")
             problems = []
             if not has_create:
                 problems.append(f"no New schedule button ({create})")
             elif self.driver.get_text(create).strip() != "New schedule":
                 problems.append(f"{create} reads {self.driver.get_text(create).strip()!r}")
-            if has_header:
-                problems.append("the page repeats its title as a SCHEDULES section header")
             if not self.driver.exists("schedules-pause-toggle"):
                 problems.append("the Pause all button is missing")
             assert not problems, "; ".join(problems)

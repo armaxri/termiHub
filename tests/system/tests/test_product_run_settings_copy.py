@@ -37,7 +37,7 @@ from termihub_harness.product_run.settings_layout import (
     settings_layout_problems,
 )
 
-#: The File browser default (General ▸ New connection defaults).
+#: The File browser default (Connections ▸ Connection defaults since #5860).
 FILE_BROWSER_HINT = "settings-file-browser-hint"
 FILE_BROWSER_HELP = "settings-file-browser-help"
 #: Terminal ▸ Command marks.
@@ -117,16 +117,17 @@ class TestProductRunSettingsCopy(ProductRunUi, SettingsUi, SystemTest):
         with self.step(
             "settings.plain-copy",
             "File browser, Command marks and Updates read in plain words, one line each (#5846)",
-            expect="General: 'Show the file browser for SSH connections…' with a '?'; Terminal: "
+            expect="Connection defaults: 'Show the file browser for SSH connections…' with a '?'; "
+            "Terminal: "
             "command marks 'Works with bash, zsh, fish and PowerShell…', no OSC 133; Updates: "
             "one 'Check for updates automatically' toggle, no radio cards",
         ):
             self.driver.resize_window(1600, 900)
             try:
                 pages = []
-                self._open("general", "toggle-file-browser")
-                self.shot(label="general", expect="settings-panel-content")
-                pages.append(measure_settings_page(self.driver, "general"))
+                self._open("connection-defaults", "toggle-file-browser")
+                self.shot(label="connection-defaults", expect="settings-panel-content")
+                pages.append(measure_settings_page(self.driver, "connection-defaults"))
                 file_browser = {
                     "hint": _text(self.driver, FILE_BROWSER_HINT),
                     "help": self.driver.exists(FILE_BROWSER_HELP),
@@ -186,7 +187,7 @@ def _good() -> dict[str, Any]:
 
 
 def test_the_graded_hints_cover_the_touched_pages():
-    assert FILE_BROWSER_HINT in HINTS["general"]
+    assert FILE_BROWSER_HINT in HINTS["connection-defaults"]
     assert COMMAND_MARKS_HINT in HINTS["terminal"]
     assert "settings-line-ending-hint" in HINTS["terminal"]
     assert "update-auto-check-hint" in HINTS["updates"]
