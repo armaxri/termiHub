@@ -3186,6 +3186,9 @@ arrives as a diff. While a server runs, its traffic is published once a second, 
 view sends nothing. A start that fails stays on the row with its reason until a stop, a save or the
 next start.
 
+A file server shared from the file browser is `temporary`: the manager forgets it, with its passwords,
+when it loads the list at the next start.
+
 A deleted file server is kept in memory for two minutes, with its password, so that its Undo brings back
 everything; the credential store forgets the password at once.
 

@@ -129,6 +129,17 @@ describe("appStore — openServerEditorTab (#6028)", () => {
     expect(leaf?.tabs.filter((t) => t.isActive)).toEqual([ftp]);
   });
 
+  it("has one tab per shared folder (slice 12)", () => {
+    const open = useAppStore.getState().openServerEditorTab;
+    open(null, { serverType: "http", folder: "/a" });
+    open(null, { serverType: "http", folder: "/b" });
+    open(null, { serverType: "http", folder: "/a" });
+    expect(editors().map((t) => t.serverEditorMeta)).toEqual([
+      { serverId: null, serverType: "http", folder: "/a" },
+      { serverId: null, serverType: "http", folder: "/b" },
+    ]);
+  });
+
   it("a saved server's tab has no kind of its own", () => {
     useAppStore.getState().openServerEditorTab("gone", { serverType: "ftp", copyOf: "x" });
     expect(editors()[0].serverEditorMeta).toEqual({ serverId: "gone" });

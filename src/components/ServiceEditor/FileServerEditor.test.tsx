@@ -394,6 +394,11 @@ describe("a folder shared from the file browser (slice 12)", () => {
     expect(saved().autoStart).toBe(true);
   });
 
+  it("can be chosen for a new server, too", async () => {
+    await render({ serverType: "http" });
+    expect(field("temporary")?.getAttribute("aria-checked")).toBe("false");
+  });
+
   it("is not offered for a saved server that is kept", async () => {
     seed([DOCS]);
     await render({ serverId: "srv-1" });
