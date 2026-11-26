@@ -979,8 +979,35 @@ const en = {
   "service.new.ftp.technical": "FTP server",
   "service.new.tftp": "Give files to a device",
   "service.new.tftp.technical": "TFTP server, firmware and network boot",
+  // The Activity of a service, both kinds (#6028, slice 9).
+  "service.activity.label": "Activity of {name}",
+  "service.activity.since": "Since {time}",
+  "service.activity.now": "Connected now",
+  "service.activity.total": "Connections in all",
+  "service.activity.sent": "Sent",
+  "service.activity.received": "Received",
+  "service.activity.reach": "Who reaches it: {reach}.",
+  "service.activity.reachOn": "It opens on {machine}. Who reaches it: {reach}.",
+  "service.activity.events": "What happened",
+  "service.activity.events.none": "Nothing happened to it since termiHub started.",
+  "service.activity.events.note":
+    "Since termiHub started, the last 200. Nothing is written to disk.",
+  "service.activity.events.agent":
+    "What this computer saw since termiHub started, the last 200. The agent may know more.",
+  "service.activity.requests": "Requests",
+  "service.activity.use.local":
+    "Point your program at this address instead of the target. termiHub carries it through the SSH server.",
+  "service.activity.use.remote":
+    "Programs on the server use this address and reach what you chose here.",
+  "service.activity.use.dynamic":
+    "Set this address as the SOCKS5 proxy of your browser or program.",
+  "service.activity.use.http":
+    "Open this address in a browser, here or on a device that reaches it.",
+  "service.activity.use.ftp": "Connect an FTP program to this address.",
+  "service.activity.use.tftp": "Point the TFTP client of the device at this address.",
+  "service.editor.settings": "Settings",
+  "service.editor.views": "Settings or activity",
   // A file server's Activity panel (#6063).
-  "server.activity.close": "Close activity",
   "server.activity.nobody": "Nobody has connected yet.",
   "server.activity.nobody.hint": "Requests and connected devices appear here.",
   "server.activity.now": "Now",

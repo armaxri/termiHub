@@ -124,6 +124,27 @@ class TestEmbeddedServices(
         self.stop_server(server["id"])
         assert not self.server_running(server["id"])
 
+    def test_activity_says_what_happened(self):
+        """The Activity of a server keeps each change, the newest first (#6028, slice 9)."""
+        server = self.create_server(unique_name("http"), proto="http", port=self.free_port())
+        self.start_server(server["id"])
+        self.open_server_activity(server["id"])
+        self.wait(
+            lambda: self.driver.get_text(self.ACTIVITY_STATE).strip() == "Running" or None,
+            what="Activity to say Running",
+        )
+        self.wait(
+            lambda: any("Running" in line for line in self.activity_events()) or None,
+            what="Running in what happened",
+        )
+        self.driver.click("service-activity-action-stop")
+        self.wait(lambda: not self.server_running(server["id"]), what="the server to stop")
+        events = self.wait(
+            lambda: (lambda e: e if e and "Stopped" in e[0] else None)(self.activity_events()),
+            what="Stopped on top of what happened",
+        )
+        assert any("Running" in line for line in events[1:]), events
+
     def test_http_server_serves_a_file(self):
         # Directory listing is on by default. Regression for #961: a listed file
         # must still download (it previously 404'd while the index rendered).

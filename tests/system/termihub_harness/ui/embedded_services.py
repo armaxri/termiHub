@@ -187,6 +187,24 @@ class EmbeddedServicesUi(HarnessMixin):
         self._confirm_delete()
         self.wait(lambda: self.find_server(name) is None, what="the server to be deleted")
 
+    # ── Activity (#6028, slice 9) ────────────────────────────────────────────
+    #: The Activity of a service, the second sub-tab of its editor.
+    ACTIVITY_VIEW = "service-activity"
+    ACTIVITY_STATE = "service-activity-state"
+
+    def open_server_activity(self, server_id: str) -> None:
+        """Open a server's Activity from its context menu and wait for it."""
+        self.open_server_menu(server_id)
+        self.driver.click(f"ctx-activity-{server_id}")
+        self.wait(lambda: self.driver.exists(self.ACTIVITY_VIEW), what="the server's Activity")
+
+    def activity_events(self) -> list[str]:
+        """The lines of what happened, the newest first (empty when none yet)."""
+        lines: list[str] = []
+        while self.driver.exists(f"service-activity-event-{len(lines)}"):
+            lines.append(self.driver.get_text(f"service-activity-event-{len(lines)}").strip())
+        return lines
+
     # ── Cleanup ──────────────────────────────────────────────────────────────
     def cleanup_all_servers(self) -> None:
         """Stop and delete every embedded server (between-test hygiene)."""

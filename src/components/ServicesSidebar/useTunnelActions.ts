@@ -1,3 +1,4 @@
+import { useEditorViews } from "@/components/ServiceEditor/editorView";
 import { useCallback } from "react";
 import { toast } from "@/components/ui";
 import type { ServiceLifecycleConfirm } from "@/hooks/useServiceLifecycleConfirm";
@@ -44,7 +45,22 @@ export function useTunnelActions(
   // (#5158, #5216).
   const { requestDelete, dialogProps: deleteDialogProps } = useTunnelDeleteConfirm();
 
-  const edit = useCallback((id: string) => openTunnelEditorTab(id), [openTunnelEditorTab]);
+  // Its editor, on Settings or on Activity (#6028, slice 9).
+  const showIn = useEditorViews((s) => s.show);
+  const edit = useCallback(
+    (id: string) => {
+      showIn(id, "settings");
+      openTunnelEditorTab(id);
+    },
+    [showIn, openTunnelEditorTab]
+  );
+  const activity = useCallback(
+    (id: string) => {
+      showIn(id, "activity");
+      openTunnelEditorTab(id);
+    },
+    [showIn, openTunnelEditorTab]
+  );
 
   const stop = useCallback(
     (id: string) => requestLifecycle("stop", modelOf(id), () => stopTunnel(id)),
@@ -100,6 +116,7 @@ export function useTunnelActions(
     stop,
     restart,
     edit,
+    activity,
     duplicate,
     usePort,
     remove: requestDelete,

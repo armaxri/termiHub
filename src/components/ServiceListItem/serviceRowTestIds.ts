@@ -137,7 +137,7 @@ function serverTestIds(id: string): ServiceRowTestIds {
       retry: { "data-testid": `server-retry-${id}` },
       copyAddress: { "data-testid": `server-copy-address-${id}` },
       openInBrowser: { "data-testid": `server-open-browser-${id}` },
-      activity: { "data-testid": `server-activity-toggle-${id}` },
+      activity: { "data-testid": `server-open-activity-${id}` },
       edit: { "data-testid": `server-edit-${id}` },
       restart: { "data-testid": `server-restart-${id}` },
       duplicate: { "data-testid": `server-duplicate-${id}` },

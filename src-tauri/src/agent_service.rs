@@ -28,6 +28,7 @@
 //! publish). The per-service start/stop control paths — whose event and error
 //! semantics genuinely diverge — stay in their managers.
 
+pub mod events;
 pub mod hosted;
 
 use std::collections::HashMap;

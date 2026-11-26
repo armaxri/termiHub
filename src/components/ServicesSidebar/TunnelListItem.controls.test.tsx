@@ -97,7 +97,7 @@ describe("TunnelListItem — run control and labelled dot (#5852)", () => {
 
   it("keeps the run control out of the hover group, and Edit and the menu in it", () => {
     render("connected");
-    expect(moreLabels()).toEqual(["Edit", "More"]);
+    expect(moreLabels()).toEqual(["Activity", "Edit", "More"]);
     const row = q('[data-testid="tunnel-item-tun-1"]')!;
     expect(row.classList.contains("sidebar-list-item--primary-action")).toBe(true);
     expect(q('[role="group"]')!.getAttribute("aria-label")).toBe("More actions for Prod DB");
@@ -106,7 +106,7 @@ describe("TunnelListItem — run control and labelled dot (#5852)", () => {
   it("an errored row offers Retry as the run control, and says why on the row", () => {
     render("error");
     expect(primaryLabels()).toEqual(["Retry"]);
-    expect(moreLabels()).toEqual(["Edit", "More"]);
+    expect(moreLabels()).toEqual(["Activity", "Edit", "More"]);
     expect(q('[data-testid="tunnel-reason-tun-1"]')!.textContent).toBe("boom");
   });
 

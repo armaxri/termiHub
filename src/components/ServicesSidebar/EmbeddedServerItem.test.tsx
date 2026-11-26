@@ -31,11 +31,9 @@ vi.mock("@/services/embeddedServerApi", () => ({
   clearEmbeddedServerActivity: vi.fn(() => Promise.resolve()),
 }));
 
-import { EmbeddedServerItem, hostAgentFor } from "./EmbeddedServerItem";
+import { EmbeddedServerItem } from "./EmbeddedServerItem";
 import { NO_CONTEXT } from "@/test/serviceContext";
 import { serviceMenuItem } from "@/test/serviceMenu";
-import type { RemoteAgentDefinition } from "@/types/connection";
-import { THIS_COMPUTER } from "@/utils/runLocation";
 import { TooltipProvider } from "@/components/ui";
 import { EmbeddedServerConfig, ServerState } from "@/types/embeddedServer";
 
@@ -251,65 +249,13 @@ describe("EmbeddedServerItem", () => {
     expect(title).toBe("Failed to restart My HTTP");
   });
 
-  it("toggles the activity panel (access log + stats, PROD-034/036)", async () => {
-    render(<EmbeddedServerItem {...baseProps({ state: runningState })} />);
-    const toggle = container.querySelector('[data-testid="server-activity-toggle-srv-1"]');
-    expect(toggle?.getAttribute("aria-pressed")).toBe("false");
+  it("opens its Activity in the editor, not in the row (#6028, slice 9)", () => {
+    const onActivity = vi.fn();
+    render(<EmbeddedServerItem {...baseProps({ state: runningState, onActivity })} />);
+    const button = container.querySelector('[data-testid="server-open-activity-srv-1"]')!;
+    expect(button.getAttribute("aria-pressed")).toBeNull();
+    click(button);
+    expect(onActivity).toHaveBeenCalledWith("srv-1");
     expect(container.querySelector('[data-testid="server-activity-srv-1"]')).toBeNull();
-
-    click(toggle!);
-    await flush();
-    expect(toggle?.getAttribute("aria-pressed")).toBe("true");
-    expect(container.querySelector('[data-testid="server-activity-srv-1"]')).not.toBeNull();
-
-    click(toggle!);
-    expect(container.querySelector('[data-testid="server-activity-srv-1"]')).toBeNull();
-  });
-
-  it("closes the activity panel from its own heading", async () => {
-    render(<EmbeddedServerItem {...baseProps({ state: runningState })} />);
-    const toggle = container.querySelector('[data-testid="server-activity-toggle-srv-1"]')!;
-    click(toggle);
-    await flush();
-    const close = container.querySelector('[data-testid="server-activity-close-srv-1"]')!;
-    expect(close.getAttribute("aria-label")).toBe("Close activity");
-    click(close);
-    await flush();
-    expect(container.querySelector('[data-testid="server-activity-srv-1"]')).toBeNull();
-    expect(toggle.getAttribute("aria-pressed")).toBe("false");
-  });
-
-  it("tells an old agent apart in the activity panel (#3453)", async () => {
-    const oldAgent = {
-      id: "agent-1",
-      name: "Lab Pi",
-      capabilities: { connectionTypes: [], maxSessions: 1 },
-    } as unknown as RemoteAgentDefinition;
-    render(
-      <EmbeddedServerItem
-        {...baseProps({
-          state: runningState,
-          agents: [oldAgent],
-          config: { ...config, host: { kind: "agent", agentId: "agent-1" } },
-        })}
-      />
-    );
-    click(container.querySelector('[data-testid="server-activity-toggle-srv-1"]')!);
-    await flush();
-    expect(container.textContent).toContain("Update agent Lab Pi to see who uses the server.");
-  });
-
-  it("derives the host agent's access-log support from its capabilities", () => {
-    const agent = (caps?: object) =>
-      ({ id: "a", name: "Pi", capabilities: caps }) as unknown as RemoteAgentDefinition;
-    const loc = { kind: "agent" as const, agentId: "a" };
-    expect(hostAgentFor(THIS_COMPUTER, [agent()])).toBeUndefined();
-    expect(hostAgentFor(loc, [agent({ embeddedServerActivity: true })])).toEqual({
-      name: "Pi",
-      supportsActivity: true,
-    });
-    expect(hostAgentFor(loc, [agent({ maxSessions: 1 })])?.supportsActivity).toBe(false);
-    // Unknown capabilities (agent not connected) are not flagged unsupported.
-    expect(hostAgentFor(loc, [agent()])?.supportsActivity).toBe(true);
   });
 });

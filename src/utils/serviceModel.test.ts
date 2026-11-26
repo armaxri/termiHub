@@ -84,15 +84,15 @@ const TAIL: ServiceActionId[] = ["duplicate", "delete"];
 
 describe("what a tunnel offers in each state (#6028)", () => {
   it.each<[TunnelStatus, ServiceActionId[]]>([
-    ["disconnected", ["start", "edit", ...TAIL]],
-    ["waiting", ["stopWaiting", "edit", ...TAIL]],
-    ["connecting", ["stop", "edit", ...TAIL]],
-    ["connected", ["stop", "restart", "copyAddress", "edit", ...TAIL]],
-    ["reconnecting", ["stop", "edit", ...TAIL]],
-    ["stopping", ["edit", ...TAIL]],
-    ["error", ["retry", "edit", ...TAIL]],
-    ["missingConnection", ["edit", ...TAIL]],
-    ["notReachable", ["stop", "edit", ...TAIL]],
+    ["disconnected", ["start", "activity", "edit", ...TAIL]],
+    ["waiting", ["stopWaiting", "activity", "edit", ...TAIL]],
+    ["connecting", ["stop", "activity", "edit", ...TAIL]],
+    ["connected", ["stop", "restart", "copyAddress", "activity", "edit", ...TAIL]],
+    ["reconnecting", ["stop", "activity", "edit", ...TAIL]],
+    ["stopping", ["activity", "edit", ...TAIL]],
+    ["error", ["retry", "activity", "edit", ...TAIL]],
+    ["missingConnection", ["activity", "edit", ...TAIL]],
+    ["notReachable", ["stop", "activity", "edit", ...TAIL]],
   ])("%s", (status, actions) => {
     expect(ids(tunnelModel(tunnel(), tunnelIn(status), CONTEXT))).toEqual(actions);
   });

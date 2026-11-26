@@ -592,7 +592,7 @@
       <header class="concept-header">
         <h1>Services: one view for SSH tunnels and file servers</h1>
         <div class="concept-meta">
-          <span class="concept-status">Backlog · slices 1 to 8, 11 and 12 of 14 implemented</span
+          <span class="concept-status">Backlog · slices 1 to 9, 11 and 12 of 14 implemented</span
           ><span
             >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/6028">#6028</a></span
           ><span><code>docs/concepts/backlog/services.html</code></span>
@@ -4472,7 +4472,14 @@ flowchart LR
           says what needs attention (errors by that word), Open connections has one "Services"
           section, the palette starts and stops each service and has "Show services" and "Stop all
           services" as actions that ship unbound, and the sidebar's "…" holds Stop all services and
-          Open connections. Slices 9, 10, 13 and 14 are not started. Step 0 of
+          Open connections. Slice 9 (Activity) is implemented: the editor of a saved service has the
+          sub-tabs Settings and Activity, and the row's Activity opens it there, for tunnels too.
+          Activity shows the state and since when, Start/Stop/Retry/Restart, the address with Copy
+          and a "how to use it" line per type, four counters, what happened (a ring of 200 events
+          per service in memory, noted from the views every window gets, so an agent-hosted service
+          shows what this computer saw) and, for a file server, its access log, which left the row.
+          "Started by" and "stopped by whom" are not recorded yet: the events carry the state and
+          its reason. Slices 10, 13 and 14 are not started. Step 0 of
           <a href="https://github.com/armaxri/termiHub/issues/6028">#6028</a>.
         </p>
         <p>

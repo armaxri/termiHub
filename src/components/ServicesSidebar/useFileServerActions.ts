@@ -1,3 +1,4 @@
+import { useEditorViews } from "@/components/ServiceEditor/editorView";
 import { useCallback } from "react";
 import { toast } from "@/components/ui";
 import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
@@ -35,7 +36,22 @@ export function useFileServerActions(
   const stopEmbeddedServer = useAppStore((s) => s.stopEmbeddedServer);
   const restartEmbeddedServer = useAppStore((s) => s.restartEmbeddedServer);
   const openServerEditorTab = useAppStore((s) => s.openServerEditorTab);
-  const edit = useCallback((id: string) => openServerEditorTab(id), [openServerEditorTab]);
+  // Its editor, on Settings or on Activity (#6028, slice 9).
+  const showIn = useEditorViews((s) => s.show);
+  const edit = useCallback(
+    (id: string) => {
+      showIn(id, "settings");
+      openServerEditorTab(id);
+    },
+    [showIn, openServerEditorTab]
+  );
+  const activity = useCallback(
+    (id: string) => {
+      showIn(id, "activity");
+      openServerEditorTab(id);
+    },
+    [showIn, openServerEditorTab]
+  );
 
   const duplicate = useCallback(
     async (id: string) => {
@@ -127,6 +143,7 @@ export function useFileServerActions(
     stop,
     restart,
     edit,
+    activity,
     duplicate,
     usePort,
     remove,

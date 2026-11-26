@@ -1,10 +1,9 @@
-/* ─── Per-server activity panel: stats + requests (PROD-034/036) ────────── */
+/* ─── The access log of a file server, in its Activity (PROD-034/036) ───── */
 
 .server-activity {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-xs);
-  margin-top: var(--spacing-xs);
   padding: var(--spacing-xs) var(--spacing-sm);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-sm);
@@ -13,18 +12,6 @@
      (base01, 4.39:1), so this surface uses the stronger muted token. */
   --text-muted: var(--text-muted-on-selection);
   cursor: default;
-}
-
-.server-activity__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.server-activity__title {
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-primary);
 }
 
 .server-activity__stats {
