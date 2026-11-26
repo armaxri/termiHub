@@ -66,6 +66,11 @@ export interface RadioGroupProps {
   options?: RadioGroupOption[];
   /** Visual skin; `cards` renders `options` as selectable cards. */
   variant?: RadioGroupVariant;
+  /**
+   * Where a card's help tooltip opens (default `top`). Beside the cards keeps
+   * the options being compared in view (#6036).
+   */
+  helpSide?: "top" | "right" | "bottom" | "left";
   /** Custom item tree; overrides `options` for full control. */
   children?: React.ReactNode;
   /** Disable the whole group. */
@@ -158,6 +163,7 @@ interface RadioCardProps {
   option: RadioGroupOption;
   /** Stable id prefix used to wire the label/description to the radio. */
   idPrefix: string;
+  helpSide: "top" | "right" | "bottom" | "left";
 }
 
 /**
@@ -167,7 +173,7 @@ interface RadioCardProps {
  * description (plus the help, when there is one) describes it, so screen
  * readers announce them separately.
  */
-function RadioCard({ option, idPrefix }: RadioCardProps): React.ReactElement {
+function RadioCard({ option, idPrefix, helpSide }: RadioCardProps): React.ReactElement {
   const labelId = `${idPrefix}-label`;
   const descId = `${idPrefix}-desc`;
   const helpId = `${idPrefix}-help`;
@@ -201,7 +207,7 @@ function RadioCard({ option, idPrefix }: RadioCardProps): React.ReactElement {
     <>
       <Tooltip
         content={<TooltipLines lines={help} />}
-        side="top"
+        side={helpSide}
         data-testid={option["data-testid"] && `${option["data-testid"]}-help`}
       >
         {card}
@@ -228,6 +234,7 @@ export function RadioGroup({
   disabled,
   orientation = "vertical",
   variant = "default",
+  helpSide = "top",
   name,
   className,
   ...rest
@@ -254,7 +261,12 @@ export function RadioGroup({
   const renderOptions = (): React.ReactNode => {
     if (variant === "cards") {
       return options?.map((opt, i) => (
-        <RadioCard key={opt.value} option={opt} idPrefix={`${idBase}-opt${i}`} />
+        <RadioCard
+          key={opt.value}
+          option={opt}
+          idPrefix={`${idBase}-opt${i}`}
+          helpSide={helpSide}
+        />
       ));
     }
     return options?.map((opt) => (

@@ -148,6 +148,13 @@
   color: var(--text-primary);
 }
 
+/* What the source means (#6036), lined up under its name past the radio. */
+.agent-setup-dialog__source-summary {
+  padding-left: calc(var(--spacing-lg) + var(--spacing-sm));
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
 .agent-setup-dialog__unsupported {
   font-size: var(--font-size-xs);
   color: var(--text-secondary);

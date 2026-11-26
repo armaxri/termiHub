@@ -910,9 +910,16 @@ Editor "● Record steps" ─▶ the editor collapses to a bar above the target 
           <li>
             <strong>Passwords:</strong> what is typed at a password prompt without an echo is marked
             while it is recorded, left out when the recording is saved, and stored only when the
-            user asks for that (an automation is stored unencrypted). It is recognised by the text
-            before the cursor, so a prompt that says neither password, passphrase, PIN nor the like
-            is not. Credential dialogs are not terminal input and are never recorded.
+            user asks for that (an automation is stored unencrypted). In a local shell on macOS and
+            Linux termiHub asks the terminal itself whether the program reads with its echo off (the
+            PTY's canonical mode without echo, as <code>read -s</code>, <code>sudo</code> and
+            <code>stty -echo</code> leave it), so an unusual prompt such as "Enter code:" counts too
+            (<a href="https://github.com/armaxri/termiHub/issues/6014">#6014</a>). The words before
+            the cursor count as well, and they are all there is where the terminal cannot be asked:
+            SSH, telnet, serial and sessions on an agent (the echo is decided on the far host, and
+            termiHub sees only its output), and Windows (ConPTY has no echo flag to read). There a
+            prompt that says neither password, passphrase, PIN nor the like is not recognised.
+            Credential dialogs are not terminal input and are never recorded.
           </li>
           <li>
             <strong>Where a password was left out, the replay waits</strong>
@@ -1994,8 +2001,11 @@ flowchart LR
               <tr>
                 <td>3</td>
                 <td>3.5: password prompts are recognised</td>
-                <td>By their words only, also in a local shell</td>
-                <td>Design reality</td>
+                <td>
+                  By the echo flag of a local shell's PTY (macOS, Linux) and by their words; by
+                  their words only in remote sessions and on Windows
+                </td>
+                <td>Resolved</td>
                 <td><a href="https://github.com/armaxri/termiHub/issues/6014">#6014</a></td>
               </tr>
               <tr>

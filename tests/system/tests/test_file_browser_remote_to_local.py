@@ -32,7 +32,7 @@ On the macOS and Windows lanes both hosts are the native sshd fixture (#5424,
 #5511). On Windows the direct session's login shell is Git Bash, so the POSIX
 seeding commands run there as written; the agent's shells are PowerShell, so
 that suite seeds with PowerShell, and its agent carries the install path of
-the app's PowerShell deploy step (:func:`~termihub_harness.deployed_agent_path`).
+the app's setup (the suite installs it through the agent's Setup, #5533).
 """
 
 from __future__ import annotations
@@ -60,7 +60,6 @@ from termihub_harness import (
     SystemTest,
     TabsUi,
     TerminalUi,
-    deployed_agent_path,
     unique_name,
 )
 
@@ -288,12 +287,12 @@ class TestAgentFileBrowserRemoteToLocal(
 
     def _open_remote_browser(self, seed: str) -> None:
         name = unique_name("r2l-agent")
-        self.create_remote_agent(
+        self.create_deployed_agent(
             name,
             host=SSH_HOST,
             port=REMOTE_AGENT_PORT,
             username=SSH_USERNAME,
-            agent_path=deployed_agent_path(),
+            password=SSH_PASSWORD,
         )
         self.connect_agent(name)
         self.handle_password_prompt(SSH_PASSWORD)

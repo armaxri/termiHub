@@ -17,10 +17,13 @@
 //! (`HUP`, `TERM`) reports no status either, for the same
 //! reason: the user did not end that shell.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use russh::ChannelMsg;
+
+use crate::connection::SessionEndCause;
 
 use super::exec::{exit_status_to_i32, russh_signal_name, signal_exit_status};
 
@@ -31,8 +34,17 @@ pub(crate) const EXIT_STATUS_GRACE: Duration = Duration::from_secs(2);
 
 /// The remote shell's exit status, shared by the shell channel task (which
 /// records it) and the backend (which reports it). The first status wins.
+///
+/// A [distrusting](Self::distrusting) slot is for a server whose status is not
+/// the shell's (#5995): it keeps no status, only that the shell exited.
 #[derive(Clone, Debug, Default)]
-pub struct ShellExitSlot(Arc<Mutex<Option<i32>>>);
+pub struct ShellExitSlot {
+    status: Arc<Mutex<Option<i32>>>,
+    /// Statuses recorded here are not the shell's.
+    distrust: bool,
+    /// The shell exited, and its status is not known.
+    exited_unknown: Arc<AtomicBool>,
+}
 
 impl ShellExitSlot {
     /// An empty slot.
@@ -40,9 +52,24 @@ impl ShellExitSlot {
         Self::default()
     }
 
-    /// Record `status` unless a status is already recorded.
+    /// An empty slot for a server whose exit status is not the shell's: a
+    /// Win32-OpenSSH PTY shell, which it reports as 0 however it exited
+    /// (`native_05m` on windows-latest, #5992/#5995).
+    pub fn distrusting() -> Self {
+        Self {
+            distrust: true,
+            ..Self::default()
+        }
+    }
+
+    /// Record `status` unless a status is already recorded. A distrusting
+    /// slot only notes that the shell exited.
     pub fn record(&self, status: i32) {
-        let mut slot = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        if self.distrust {
+            self.exited_unknown.store(true, Ordering::SeqCst);
+            return;
+        }
+        let mut slot = self.status.lock().unwrap_or_else(PoisonError::into_inner);
         if slot.is_none() {
             *slot = Some(status);
         }
@@ -50,7 +77,26 @@ impl ShellExitSlot {
 
     /// The recorded status, if any.
     pub fn get(&self) -> Option<i32> {
-        *self.0.lock().unwrap_or_else(PoisonError::into_inner)
+        *self.status.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Whether the shell exited with a status that is not known (#5995).
+    pub fn exited_without_status(&self) -> bool {
+        self.exited_unknown.load(Ordering::SeqCst)
+    }
+}
+
+/// Why the shell channel ended (#5995): a shell that exited with a status
+/// that is not its own ended as [`ShellExited`](SessionEndCause::ShellExited),
+/// whatever the channel did next; otherwise the channel's own cause.
+pub(crate) fn shell_end_cause(
+    ended_by: Option<SessionEndCause>,
+    slot: &ShellExitSlot,
+) -> Option<SessionEndCause> {
+    if slot.exited_without_status() {
+        Some(SessionEndCause::ShellExited)
+    } else {
+        ended_by
     }
 }
 
@@ -205,5 +251,58 @@ mod tests {
         slot.record(0);
         assert_eq!(slot.get(), Some(5));
         assert_eq!(slot.clone().get(), Some(5), "clones share the slot");
+    }
+
+    #[test]
+    fn a_distrusting_slot_keeps_no_status_but_knows_the_shell_exited() {
+        // Win32-OpenSSH sends 0 for a PTY shell that ran `exit 5` (#5995).
+        let slot = ShellExitSlot::distrusting();
+        assert!(!slot.exited_without_status());
+        slot.record(0);
+        assert_eq!(
+            slot.get(),
+            None,
+            "a status that is not the shell's is not reported"
+        );
+        assert!(slot.exited_without_status());
+        assert!(
+            slot.clone().exited_without_status(),
+            "clones share the slot"
+        );
+        // A trusted slot reports what it got and never says it is unknown.
+        let trusted = ShellExitSlot::new();
+        trusted.record(5);
+        assert_eq!(trusted.get(), Some(5));
+        assert!(!trusted.exited_without_status());
+    }
+
+    #[test]
+    fn a_shell_that_exited_without_a_status_ends_as_such() {
+        use crate::connection::SessionEndCause;
+        let unknown = ShellExitSlot::distrusting();
+        unknown.record(0);
+        assert_eq!(
+            shell_end_cause(Some(SessionEndCause::RemoteClosed), &unknown),
+            Some(SessionEndCause::ShellExited)
+        );
+        // Its status came before the link was lost: the shell still exited.
+        assert_eq!(
+            shell_end_cause(Some(SessionEndCause::IoError), &unknown),
+            Some(SessionEndCause::ShellExited)
+        );
+        // No status at all: the link's own cause.
+        let none = ShellExitSlot::distrusting();
+        assert_eq!(
+            shell_end_cause(Some(SessionEndCause::IoError), &none),
+            Some(SessionEndCause::IoError)
+        );
+        assert_eq!(shell_end_cause(None, &none), None);
+        // A trusted status keeps the server's close: the code says the rest.
+        let posix = ShellExitSlot::new();
+        posix.record(0);
+        assert_eq!(
+            shell_end_cause(Some(SessionEndCause::RemoteClosed), &posix),
+            Some(SessionEndCause::RemoteClosed)
+        );
     }
 }

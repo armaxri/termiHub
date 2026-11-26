@@ -7,7 +7,7 @@
  * binary source; a local file picker is available as fallback.
  */
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useId, useRef } from "react";
 import { open } from "@/services/nativeDialog";
 import { RemoteAgentDefinition } from "@/types/connection";
 import { RemoteAgentConfig } from "@/types/terminal";
@@ -33,6 +33,7 @@ import {
   type SelectOption,
   toast,
 } from "@/components/ui";
+import { choiceHelp, type ChoiceValue } from "@/utils/choiceHelp";
 import "./AgentSetupDialog.css";
 import { errorMessage } from "@/utils/errorMessage";
 
@@ -508,33 +509,21 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
                 onValueChange={(v) => setBinarySource(v as "github" | "branch" | "local")}
                 aria-labelledby="agent-setup-binary-source-label"
               >
-                <label
-                  className={`agent-setup-dialog__source-option${binarySource === "github" ? " agent-setup-dialog__source-option--selected" : ""}`}
+                <SourceOption
+                  value="github"
+                  selected={binarySource === "github"}
+                  label="Download from GitHub"
                 >
-                  <div className="agent-setup-dialog__source-option-header">
-                    <RadioGroupItem
-                      value="github"
-                      aria-label="Download from GitHub"
-                      data-testid="agent-setup-source-github"
-                    />
-                    <span>Download from GitHub</span>
-                  </div>
                   {effectiveDownloadUrl && (
                     <div className="agent-setup-dialog__url">{effectiveDownloadUrl}</div>
                   )}
-                </label>
+                </SourceOption>
 
-                <label
-                  className={`agent-setup-dialog__source-option${binarySource === "branch" ? " agent-setup-dialog__source-option--selected" : ""}`}
+                <SourceOption
+                  value="branch"
+                  selected={binarySource === "branch"}
+                  label="Branch build"
                 >
-                  <div className="agent-setup-dialog__source-option-header">
-                    <RadioGroupItem
-                      value="branch"
-                      aria-label="Branch build"
-                      data-testid="agent-setup-source-branch"
-                    />
-                    <span>Branch build</span>
-                  </div>
                   {binarySource === "branch" && (
                     <>
                       <Input
@@ -548,19 +537,13 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
                       )}
                     </>
                   )}
-                </label>
+                </SourceOption>
 
-                <label
-                  className={`agent-setup-dialog__source-option${binarySource === "local" ? " agent-setup-dialog__source-option--selected" : ""}`}
+                <SourceOption
+                  value="local"
+                  selected={binarySource === "local"}
+                  label="Use local file"
                 >
-                  <div className="agent-setup-dialog__source-option-header">
-                    <RadioGroupItem
-                      value="local"
-                      aria-label="Use local file"
-                      data-testid="agent-setup-source-local"
-                    />
-                    <span>Use local file</span>
-                  </div>
                   {binarySource === "local" && (
                     <div className="agent-setup-dialog__file-row">
                       <Input
@@ -578,7 +561,7 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
                       </Button>
                     </div>
                   )}
-                </label>
+                </SourceOption>
               </RadioGroup>
             </div>
 
@@ -621,5 +604,60 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
         )}
       </div>
     </Modal>
+  );
+}
+
+/** Props for {@link SourceOption}. */
+interface SourceOptionProps {
+  value: ChoiceValue<"agentBinarySource">;
+  label: string;
+  selected: boolean;
+  /** What only the chosen option shows: the URL, the branch or the file. */
+  children?: React.ReactNode;
+}
+
+/**
+ * One binary source: its radio and name, and a line saying what it means
+ * (#6036). The chosen one also says more, in place under it, so the options
+ * stay in view while comparing; the others carry it as their description.
+ */
+function SourceOption({ value, label, selected, children }: SourceOptionProps) {
+  const id = useId();
+  const help = choiceHelp("agentBinarySource", value)!;
+  return (
+    <label
+      className={`agent-setup-dialog__source-option${selected ? " agent-setup-dialog__source-option--selected" : ""}`}
+    >
+      <div className="agent-setup-dialog__source-option-header">
+        <RadioGroupItem
+          value={value}
+          aria-label={label}
+          aria-describedby={`${id}-summary ${id}-lines`}
+          data-testid={`agent-setup-source-${value}`}
+        />
+        <span>{label}</span>
+      </div>
+      <div
+        className="agent-setup-dialog__source-summary"
+        id={`${id}-summary`}
+        data-testid={`agent-setup-source-${value}-summary`}
+      >
+        {help.summary}
+      </div>
+      {selected ? (
+        <div
+          className="agent-setup-dialog__source-summary agent-setup-dialog__source-help"
+          id={`${id}-lines`}
+          data-testid={`agent-setup-source-${value}-help`}
+        >
+          {help.lines.join(" ")}
+        </div>
+      ) : (
+        <span id={`${id}-lines`} hidden>
+          {help.lines.join(" ")}
+        </span>
+      )}
+      {children}
+    </label>
   );
 }

@@ -615,7 +615,11 @@ pub(super) fn drop_may_reconnect(
     agent_hosted: bool,
     end_cause: Option<SessionEndCause>,
 ) -> bool {
-    resilient && !(agent_hosted && end_cause == Some(SessionEndCause::DeviceGone))
+    // A shell that exited without a status it can trust was ended by the user
+    // (#5995): reconnecting would start it again.
+    resilient
+        && end_cause != Some(SessionEndCause::ShellExited)
+        && !(agent_hosted && end_cause == Some(SessionEndCause::DeviceGone))
 }
 
 /// Status of a session's output logging, returned to the frontend.
@@ -2270,6 +2274,17 @@ impl SessionManager {
             sessions.get(session_id)?.connection.clone()
         };
         connection.ssh_algorithms().await
+    }
+
+    /// Whether a program in the session now reads a line with its echo off
+    /// (#6014); `None` when the session is gone or its backend cannot tell
+    /// (remote sessions, Windows ConPTY). Asked on demand, never polled.
+    pub async fn session_hidden_input(&self, session_id: &str) -> Option<bool> {
+        let connection = {
+            let sessions = self.sessions.lock().await;
+            sessions.get(session_id)?.connection.clone()
+        };
+        connection.hidden_input()
     }
 
     pub async fn session_capabilities(&self, session_id: &str) -> Option<Capabilities> {

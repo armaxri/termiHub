@@ -95,6 +95,8 @@ export function dropMayReconnect(
   endCause: SessionEndCause | null | undefined
 ): boolean {
   if (!isResilientReconnectTab(tab)) return false;
+  // The user ended a shell whose status is not known (#5995).
+  if (endCause === "shell_exited") return false;
   const cfg = tab?.config?.config as { agentId?: unknown } | undefined;
   return !(endCause === "device_gone" && !!cfg?.agentId);
 }

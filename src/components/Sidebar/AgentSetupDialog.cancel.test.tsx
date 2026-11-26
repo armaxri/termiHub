@@ -11,6 +11,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { AgentSetupDialog } from "./AgentSetupDialog";
+import { withTooltip } from "@/test/tooltip";
 import type { RemoteArchInfo } from "@/services/api";
 import type { RemoteAgentDefinition } from "@/types/connection";
 
@@ -117,7 +118,9 @@ function byTestId(id: string): HTMLElement | null {
 /** Render, let detection settle, click Start setup and enter the running phase. */
 async function startSetup(): Promise<void> {
   await act(async () => {
-    root.render(<AgentSetupDialog open={true} onOpenChange={onOpenChange} agent={makeAgent()} />);
+    root.render(
+      withTooltip(<AgentSetupDialog open={true} onOpenChange={onOpenChange} agent={makeAgent()} />)
+    );
   });
   await flush();
   const submit = byTestId("agent-setup-submit") as HTMLButtonElement;

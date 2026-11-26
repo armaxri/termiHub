@@ -318,6 +318,24 @@ if [ "$DEFAULT_SHELL" = bash ]; then
   require_passed "$core_log" "${CORE_TESTS[@]}"
 fi
 
+# ---- #6078: resize, then type, in bash: is a first byte lost? ----
+# Measures Git Bash and MSYS2 UCRT64 bash in a local ConPTY and the Git Bash
+# DefaultShell over SSH (core/tests/resize_input_repro.rs): every round, which
+# bytes arrived and the timing between our resize, our write and the output.
+# Reported, not gating: the lane keeps grading the deploy while #6078 is open;
+# a loss shows as a warning with its summary.
+if [ "$DEFAULT_SHELL" = bash ]; then
+  repro_log="$(mktemp)"
+  if TERMIHUB_RESIZE_INPUT_REPRO=1 TERMIHUB_NATIVE_SSHD_LOGIN_SHELL=gitbash \
+    cargo test -p termihub-core --features ssh,local-shell --test resize_input_repro -- \
+    --test-threads=1 --show-output 2>&1 | tee "$repro_log"; then
+    echo "#6078: no byte lost after a resize ($(grep -c '^summary' "$repro_log") kind/wait cells)"
+  else
+    summary="$(grep -E '^(== |summary .* [1-9][0-9]* (lost|silent))' "$repro_log" | tr '\n' ' ')"
+    echo "::warning::#6078 resize-then-type lost bytes: ${summary:-see the log above}"
+  fi
+fi
+
 # ---- PowerShell DefaultShell (#5044): the opt-in hook keeps the banner ----
 # Core SSH tests with shell integration on, as Windows PowerShell 5.1 and as
 # PowerShell 7 (sshd reads the DefaultShell per session); the DefaultShell is
