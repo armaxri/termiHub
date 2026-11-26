@@ -156,6 +156,20 @@ export function LocalProcessAuthDialog() {
               <span>{tf("localProcess.interpreter.text", { path: prompt.path })}</span>
             </div>
           ) : null}
+          {prompt.terminals?.length ? (
+            <div className="local-process-auth__field" data-testid="local-process-auth-terminals">
+              <span className="local-process-auth__label">
+                {t(
+                  prompt.terminals.length === 1 ? "localProcess.terminal" : "localProcess.terminals"
+                )}
+              </span>
+              <span className="local-process-auth__value">
+                {prompt.terminals.length === 1
+                  ? prompt.terminals[0]
+                  : tf("localProcess.terminalsShared", { terminals: prompt.terminals.join(", ") })}
+              </span>
+            </div>
+          ) : null}
           <div className="local-process-auth__field">
             <span className="local-process-auth__label">Program</span>
             <code className="local-process-auth__value" data-testid="local-process-auth-program">

@@ -164,6 +164,8 @@ export interface LocalProcessPromptState {
   args: string[];
   /** The name of the workflow requesting it, for the prompt copy. */
   workflowName: string;
+  /** The terminals of the run that asks, by title; several share one answer (#6132). */
+  terminals?: string[];
   /**
    * What "always" remembers (#6019): the file with any arguments, this very
    * command of the automations in `imported`, or nothing.
@@ -396,6 +398,7 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
           targetLabel: target.title,
           fanout: {
             authDecisions,
+            terminals: targets.map((x) => x.title),
             onProgress: (_completed, retryNote) =>
               renderProgress(retryNote ? `${target.title}: ${retryNote}` : undefined),
           },
