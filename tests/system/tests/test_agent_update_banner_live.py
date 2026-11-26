@@ -66,7 +66,6 @@ from termihub_harness import (
     SidebarUi,
     SystemTest,
     TabsUi,
-    deployed_agent_path,
     unique_name,
 )
 
@@ -101,12 +100,12 @@ class TestAgentUpdateBannerLive(
     def _create_agent(self, label: str) -> dict:
         """Create a password-auth agent definition against the deployed-agent container."""
         name = unique_name(label)
-        return self.create_remote_agent(
+        return self.create_deployed_agent(
             name,
             host=SSH_HOST,
             port=REMOTE_AGENT_PORT,
             username=SSH_USERNAME,
-            agent_path=deployed_agent_path(),
+            password=SSH_PASSWORD,
         )
 
     def _create_and_connect(self, label: str) -> dict:

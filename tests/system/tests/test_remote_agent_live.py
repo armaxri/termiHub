@@ -26,10 +26,9 @@ The suite skips cleanly when no container runtime is available or the agent
 cross-build toolchain is missing (see ``remote_agent_fixtures``).
 
 On the macOS and Windows lanes the host is the native sshd fixture with a
-host-OS agent installed (#5424, #5511). On Windows the agent sits where the
-app's PowerShell deploy step puts it, so each agent carries that path
-(:func:`~termihub_harness.deployed_agent_path`), and its shells are
-PowerShell, in which ``echo`` works the same.
+host-OS agent installed (#5424, #5511). On Windows each agent is installed through
+the app's Setup, which stores its managed install path (#5533), and its shells
+are PowerShell, in which ``echo`` works the same.
 """
 
 from __future__ import annotations
@@ -50,7 +49,6 @@ from termihub_harness import (
     SystemTest,
     TabsUi,
     TerminalUi,
-    deployed_agent_path,
     unique_name,
 )
 
@@ -85,12 +83,12 @@ class TestRemoteAgentLive(
     def _create_and_connect(self, label: str) -> dict:
         """Create a password-auth agent against the deployed-agent container and connect."""
         name = unique_name(label)
-        agent = self.create_remote_agent(
+        agent = self.create_deployed_agent(
             name,
             host=SSH_HOST,
             port=REMOTE_AGENT_PORT,
             username=SSH_USERNAME,
-            agent_path=deployed_agent_path(),
+            password=SSH_PASSWORD,
         )
         self.connect_agent(name)
         self.handle_password_prompt(SSH_PASSWORD)

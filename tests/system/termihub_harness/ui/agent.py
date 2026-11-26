@@ -33,6 +33,34 @@ from .base import HarnessMixin
 #: which no longer exist on the store.
 AGENTS_REGION = "agents"
 
+#: How long an agent setup through the app may take: the upload of the test
+#: agent over the loopback sshd and the script on a busy Windows runner.
+SETUP_DEADLINE = 300.0
+
+
+def _same_windows_path(a: str, b: str) -> bool:
+    return a.replace("\\", "/").lower() == b.replace("\\", "/").lower()
+
+
+def windows_setup_problems(
+    variant: Optional[str], saved_path: Optional[str], expected_path: str
+) -> list[str]:
+    """What is wrong with an agent the app set up on Windows (#5533).
+
+    ``variant`` is the setup tab's end strip (``agent-setup-installed`` when it
+    installed), ``saved_path`` the ``agentPath`` the app stored afterwards and
+    ``expected_path`` the managed install path the fixture knows.
+    """
+    problems = []
+    if variant != "agent-setup-installed":
+        problems.append(f"the setup ended {variant!r}, not installed")
+    if saved_path is None or not _same_windows_path(saved_path, expected_path):
+        problems.append(
+            f"the app stored agentPath {saved_path!r}, not the managed install path "
+            f"{expected_path!r}"
+        )
+    return problems
+
 
 class AgentUi(HarnessMixin):
     """Create remote agents and drive their menu, error dialog, and setup wizard."""
@@ -162,6 +190,91 @@ class AgentUi(HarnessMixin):
         agent = self.require_agent(name)
         if agent_path is not None:
             agent = self.set_agent_path(agent["id"], agent_path)
+        return agent
+
+    def create_deployed_agent(
+        self, name: str, *, host: str, port: int, username: str, password: str
+    ) -> dict[str, Any]:
+        """Create a password-auth agent on the deployed-agent host, ready to connect.
+
+        In the ``remote-agent`` container and on the macOS native sshd the agent
+        already sits at the app's default path. On the Windows native sshd the
+        agent is installed through the app's own Setup, which stores its
+        managed install path (#5533): no suite writes ``agentPath`` itself.
+        """
+        from termihub_harness.fixtures import deployed_agent_binary, deployed_agent_path
+
+        agent = self.create_remote_agent(name, host=host, port=port, username=username)
+        expected = deployed_agent_path()
+        if expected is None:
+            return agent
+        return self.deploy_agent_through_setup(
+            name, binary=str(deployed_agent_binary()), password=password, expected_path=expected
+        )
+
+    def deploy_agent_through_setup(
+        self, name: str, *, binary: str, password: str, expected_path: str
+    ) -> dict[str, Any]:
+        """Install the agent ``name`` runs the way a user does, through its Setup.
+
+        Opens the agent's Setup, answers the password prompts its SSH sessions
+        raise, picks the local ``binary`` and waits until the setup tab ends;
+        then the app must have stored ``expected_path`` (the managed install
+        path) as the agent's ``agentPath`` (#5533). Closes the setup tab.
+        """
+        self.open_agent_setup(name)
+
+        def ready() -> bool:
+            if getattr(self, "password_prompt_open")():
+                getattr(self, "handle_password_prompt")(password)
+                return False
+            if self.driver.exists(self.HOSTKEY_PROMPT):
+                self.driver.click(self.HOSTKEY_ACCEPT_REMEMBER)
+                return False
+            return self.setup_ready()
+
+        self.wait(ready, what="the agent-setup form after arch detection", timeout=60.0)
+        self.start_local_agent_setup(binary)
+
+        def ended() -> Optional[str]:
+            if getattr(self, "password_prompt_open")():
+                getattr(self, "handle_password_prompt")(password)
+                return None
+            if self.driver.exists(self.HOSTKEY_PROMPT):
+                self.driver.click(self.HOSTKEY_ACCEPT_REMEMBER)
+                return None
+            if not self.driver.exists("agent-setup-tab-strip"):
+                return None
+            return self.driver.get_attribute("terminal-disconnect-overlay", "data-variant")
+
+        variant = self.wait(
+            ended, timeout=SETUP_DEADLINE, interval=2.0, what="the agent setup tab to end"
+        )
+        reason = (
+            self.driver.get_text("agent-setup-tab-reason")
+            if self.driver.exists("agent-setup-tab-reason")
+            else ""
+        )
+        agent = self.require_agent(name)
+
+        def stored() -> Optional[dict[str, Any]]:
+            found = self.find_agent(name) or {}
+            path = (found.get("config") or {}).get("agentPath")
+            return found if path and _same_windows_path(path, expected_path) else None
+
+        if variant == "agent-setup-installed":
+            try:
+                agent = self.wait(stored, timeout=30.0, what="the app to store the install path")
+            except AssertionError:
+                agent = self.require_agent(name)
+        saved = (agent.get("config") or {}).get("agentPath")
+        problems = windows_setup_problems(variant, saved, expected_path)
+        assert not problems, f"{problems}: {reason}"
+        self.driver.click("agent-setup-tab-close-btn")
+        self.wait(
+            lambda: not self.driver.exists("agent-setup-tab-strip"),
+            what="the setup tab to close",
+        )
         return agent
 
     #: The connection store in the app's config dir that holds the agents.
