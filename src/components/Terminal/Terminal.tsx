@@ -1296,9 +1296,11 @@ export function Terminal({
               } catch {
                 hidden = Promise.resolve(null);
               }
+              // Called in the same guard as the reader itself (#6073): what it
+              // throws is logged, and goes no further.
               hidden.then(
-                (value) => then(before, value ?? null),
-                () => then(before, null)
+                (value) => callWaiter(() => then(before, value ?? null)),
+                () => callWaiter(() => then(before, null))
               );
             }),
           arrived: () => arrived,
