@@ -874,4 +874,21 @@ mod buffer_place_tests {
         drop(Recreating::begin(&recreations, "sess-1").await);
         assert!(recreations.lock().unwrap().is_empty());
     }
+
+    /// A waiter that gives up after the holder let go leaves no entry behind (#6110).
+    #[tokio::test]
+    async fn a_waiter_that_gives_up_leaves_nothing_behind() {
+        let recreations = Recreations::default();
+        let first = Recreating::begin(&recreations, "sess-1").await;
+        let second = tokio::spawn({
+            let recreations = recreations.clone();
+            async move { Recreating::begin(&recreations, "sess-1").await }
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        // Let go and give up before the waiter runs again.
+        drop(first);
+        second.abort();
+        assert!(second.await.is_err_and(|e| e.is_cancelled()));
+        assert!(recreations.lock().unwrap().is_empty());
+    }
 }
