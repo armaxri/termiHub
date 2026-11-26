@@ -10,6 +10,7 @@
  * directly and the components stay thin renderers.
  */
 
+import { t } from "@/i18n/catalog";
 import type { PortValue, ReachableFrom, TunnelConfig, TunnelType } from "@/types/tunnel";
 import { hostChoice, type HostChoice } from "@/utils/hostChoice";
 
@@ -94,6 +95,14 @@ function listenReach(host: HostChoice, bindHost: string, agentName?: string): st
 }
 
 /**
+ * Who reaches a remote tunnel's listener, as far as anybody here knows (#6034): for
+ * everything but loopback the SSH server has the last word, and nothing reports it.
+ */
+function serverReach(bindHost: string): string {
+  return t(isLoopbackBind(bindHost) ? "tunnel.reach.serverOnly" : "tunnel.reach.serverDecides");
+}
+
+/**
  * The named endpoint lines for a tunnel, naming the concrete machine + address
  * on each side (never a bare "local"/"remote" adjective) per the endpoint
  * semantics sub-concept. `sshLabel` is the SSH connection's display name.
@@ -131,7 +140,7 @@ export function tunnelEndpointLines(
           label: "Listens on",
           machine: `SSH server ${sshLabel}`,
           address: addr(c.remoteHost, c.remotePort),
-          note: "reachable on the SSH server's network",
+          note: serverReach(c.remoteHost),
         },
         {
           label: "Forwards to",
@@ -197,7 +206,9 @@ export function tunnelReachabilityWarning(
  */
 export function reportedReachability(
   reachableFrom: ReachableFrom | undefined,
-  agentName: string
+  agentName: string,
+  /** Where a remote tunnel was asked to listen, `host:port`. */
+  boundAddress?: string
 ): { label: string; warn: boolean } | null {
   switch (reachableFrom) {
     case "agentOnly":
@@ -205,7 +216,10 @@ export function reportedReachability(
     case "agentLan":
       return { label: `reachable on ${agentName}'s network`, warn: false };
     case "sshServer":
-      return { label: "reachable on the SSH server's network", warn: false };
+      return {
+        label: serverReach(boundAddress?.replace(/:[^:]*$/, "") ?? ""),
+        warn: false,
+      };
     default:
       return null;
   }

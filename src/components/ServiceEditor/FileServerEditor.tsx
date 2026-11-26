@@ -8,7 +8,6 @@ import {
   Input,
   NumberInput,
   RadioGroup,
-  Select,
   toast,
   UnsavedChangesDialog,
 } from "@/components/ui";
@@ -18,17 +17,16 @@ import { useRevealOnSave } from "@/hooks/useRevealedErrors";
 import { useServiceContext } from "@/hooks/useServiceContext";
 import { useZodEditorForm } from "@/hooks/useZodEditorForm";
 import { t, tf } from "@/i18n/catalog";
-import { listNetworkInterfaces } from "@/services/embeddedServerApi";
 import { open as openFolderDialog } from "@/services/nativeDialog";
 import { newId } from "@/services/transport/ids";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
-import type { NetworkInterface, ServerType } from "@/types/embeddedServer";
+import type { ServerType } from "@/types/embeddedServer";
 import type { ServerEditorMeta } from "@/types/terminal";
 import { draftKey } from "@/utils/draftKey";
 import { errorMessage } from "@/utils/errorMessage";
 import { clearDraftSecrets } from "@/utils/formDraftSecrets";
-import { frontendLog, frontendWarn } from "@/utils/frontendLog";
+import { frontendLog } from "@/utils/frontendLog";
 import { hostChoice, sameHost } from "@/utils/hostChoice";
 import { ITEM_DESCRIPTION_MAX_LENGTH, normalizeItemDescription } from "@/utils/itemDescription";
 import { isAgentHost } from "@/utils/runLocation";
@@ -46,14 +44,12 @@ import {
   missingText,
   newForm,
   openWarning,
-  ownAddresses,
   savedSignIn,
-  whoOf,
   withType,
   type FileServerForm,
-  type Who,
 } from "./fileServerForm";
-import { ServiceEditorShell, ServiceEditorWarning } from "./ServiceEditorShell";
+import { editorSubtitle, ServiceEditorShell, ServiceEditorWarning } from "./ServiceEditorShell";
+import { WhoCanOpen } from "./WhoCanOpen";
 import { useEditorTab } from "./useEditorTab";
 
 interface FileServerEditorProps {
@@ -144,20 +140,6 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
   const active = isServiceActive(serverServiceState(existing && states[existing.id]?.status));
   const moves = existing !== undefined && !sameHost(form.host, hostChoice(existing.host));
 
-  const [interfaces, setInterfaces] = useState<NetworkInterface[]>([]);
-  useEffect(() => {
-    let current = true;
-    listNetworkInterfaces()
-      .then((found) => current && setInterfaces(found))
-      // The other choices work without it.
-      .catch((err: unknown) =>
-        frontendWarn("embedded_server", `listing network interfaces failed: ${errorMessage(err)}`)
-      );
-    return () => {
-      current = false;
-    };
-  }, []);
-
   // ── What it is for ─────────────────────────────────────────────────────────
   const [choosing, setChoosing] = useState(false);
   // Whether who can open it is still what a new server of this kind starts with.
@@ -168,7 +150,6 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
       setValue(key as keyof FileServerForm, value as never);
     }
   };
-  const help = shareTypeHelp(form.serverType, form.host, agentName);
 
   // ── The folder ─────────────────────────────────────────────────────────────
   const nameAfterFolder = (folder: string) => {
@@ -185,42 +166,19 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
   useEffect(() => folderRef.current?.focus(), []);
 
   // ── Who can open it ────────────────────────────────────────────────────────
-  // One address is chosen before it is known which.
-  const [wantsAddress, setWantsAddress] = useState(false);
-  const who: Who | undefined = wantsAddress ? "address" : whoOf(form.bindHost);
-  const addresses = onAgent ? [] : ownAddresses(interfaces, form.bindHost);
-  const chooseWho = (next: Who) => {
-    setPresetWho(false);
-    setWantsAddress(next === "address");
-    if (next === "here") setValue("bindHost", "127.0.0.1");
-    else if (next === "network") setValue("bindHost", "0.0.0.0");
-    else setValue("bindHost", addresses[0]?.value ?? "");
-  };
-  const whoChoices = [
-    {
-      value: "here",
-      label: t(onAgent ? "server.editor.who.there" : "server.editor.who.here"),
-    },
-    {
-      value: "network",
-      label: t(
-        onAgent
-          ? "server.editor.who.anyoneThere"
-          : form.serverType === "tftp"
-            ? "server.editor.who.devices"
-            : "server.editor.who.network"
-      ),
-    },
-    // An agent does not say its addresses: there it is typed.
-    ...(onAgent || addresses.length > 0
-      ? [
-          {
-            value: "address",
-            label: t(onAgent ? "server.editor.who.one.there" : "server.editor.who.one.here"),
-          },
-        ]
-      : []),
-  ].map((choice) => ({ ...choice, "data-testid": `server-dialog-bind-${choice.value}` }));
+  const whoLabels = onAgent
+    ? {
+        here: t("server.editor.who.there"),
+        network: t("server.editor.who.anyoneThere"),
+        address: t("server.editor.who.one.there"),
+      }
+    : {
+        here: t("server.editor.who.here"),
+        network: t(
+          form.serverType === "tftp" ? "server.editor.who.devices" : "server.editor.who.network"
+        ),
+        address: t("server.editor.who.one.here"),
+      };
   const warning = openWarning(form);
 
   const context = useServiceContext(isWideBind(form.bindHost));
@@ -314,7 +272,7 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
       testId="server-editor"
       isVisible={isVisible}
       title={existing ? existing.name : t(`service.new.${form.serverType}`)}
-      subtitle={`${t(existing ? "server.editor.title.edit" : "server.editor.title.new")} · ${t(`service.new.${form.serverType}.technical`)}`}
+      subtitle={editorSubtitle(!existing, t(`service.new.${form.serverType}.technical`))}
       onChangeType={choosing ? undefined : () => setChoosing(true)}
       rootProps={rootProps}
       onKeyDown={onKeyDown}
@@ -364,7 +322,6 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
           />
         </div>
       )}
-      {!choosing && !existing && <p className="service-editor__hint">{help.lines[0]}</p>}
 
       <Field
         label={t("server.editor.folder")}
@@ -431,47 +388,19 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
         </Field>
       </div>
 
-      <Field
-        label={t("server.editor.who")}
-        error={who === "address" ? undefined : errors.bindHost}
-        data-testid="server-dialog-bind"
-      >
-        <RadioGroup
-          value={who ?? ""}
-          onValueChange={(next) => chooseWho(next as Who)}
-          aria-label={t("server.editor.who")}
-          options={whoChoices}
-          data-testid="server-dialog-bind-host"
-        />
-      </Field>
-      {who === "address" && (
-        <Field
-          className="service-editor__indent"
-          label={t("server.editor.who.address")}
-          htmlFor={`server-address-${tabId}`}
-          error={errors.bindHost}
-        >
-          {onAgent ? (
-            <Input
-              id={`server-address-${tabId}`}
-              value={form.bindHost}
-              onChange={(e) => setValue("bindHost", e.target.value)}
-              placeholder={t("server.editor.who.address.placeholder")}
-              error={Boolean(errors.bindHost)}
-              data-testid="server-dialog-address"
-            />
-          ) : (
-            <Select
-              id={`server-address-${tabId}`}
-              value={form.bindHost}
-              onChange={(address) => setValue("bindHost", address)}
-              options={addresses}
-              aria-label={t("server.editor.who.address")}
-              data-testid="server-dialog-address"
-            />
-          )}
-        </Field>
-      )}
+      <WhoCanOpen
+        testId="server-dialog"
+        id={`server-${tabId}`}
+        bind={form.bindHost}
+        onBind={(bind) => {
+          setPresetWho(false);
+          setValue("bindHost", bind);
+        }}
+        labels={whoLabels}
+        here="127.0.0.1"
+        onThisComputer={!onAgent}
+        error={errors.bindHost}
+      />
       {warning.length > 0 && (
         <ServiceEditorWarning testId="server-dialog-warning">
           {warning.join(" ")}

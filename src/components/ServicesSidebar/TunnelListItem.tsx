@@ -116,7 +116,7 @@ export function TunnelListItem({
   const hostBadge = tunnelHostBadge(tunnelHost, hostAgentName);
   const reach =
     running && state?.reachableFrom
-      ? reportedReachability(state.reachableFrom, hostBadge.label)
+      ? reportedReachability(state.reachableFrom, hostBadge.label, state.boundAddress)
       : null;
   const tooltip = tunnelRowTooltip(tunnel, {
     sshLabel: context.connections.find((c) => c.id === tunnel.sshConnectionId)?.name ?? "Unknown",

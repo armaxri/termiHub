@@ -16,6 +16,10 @@ import { TunnelEditor } from "./TunnelEditor";
 import { TooltipProvider } from "@/components/ui";
 import type { SavedConnection } from "@/types/connection";
 
+vi.mock("@/services/embeddedServerApi", () => ({
+  listNetworkInterfaces: vi.fn(() => Promise.resolve([])),
+}));
+
 const toastMock = vi.hoisted(() => ({
   success: vi.fn(),
   error: vi.fn(),
@@ -237,10 +241,12 @@ describe("TunnelEditor — save feedback (UX-022)", () => {
     expect(document.getElementById(`${remotePort.id}-error`)?.textContent).toBeTruthy();
 
     // Enter from another single-line field goes through the same guard.
-    const localHost = container.querySelector<HTMLInputElement>(`#tunnel-local-host-${TAB_ID}`)!;
-    act(() => localHost.focus());
+    const remoteHost = container.querySelector<HTMLInputElement>(
+      '[data-testid="tunnel-editor-remote-host"]'
+    )!;
+    act(() => remoteHost.focus());
     act(() => {
-      localHost.dispatchEvent(
+      remoteHost.dispatchEvent(
         new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })
       );
     });

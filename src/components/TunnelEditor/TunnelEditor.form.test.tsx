@@ -17,6 +17,10 @@ import { TooltipProvider } from "@/components/ui";
 import type { SavedConnection } from "@/types/connection";
 import type { TunnelConfig } from "@/types/tunnel";
 
+vi.mock("@/services/embeddedServerApi", () => ({
+  listNetworkInterfaces: vi.fn(() => Promise.resolve([])),
+}));
+
 vi.mock("@/themes", () => ({
   applyTheme: vi.fn(),
   onThemeChange: vi.fn(() => vi.fn()),
@@ -56,10 +60,6 @@ async function render() {
 
 function q(testid: string): HTMLElement {
   return container.querySelector<HTMLElement>(`[data-testid="${testid}"]`)!;
-}
-
-function byId(id: string): HTMLInputElement {
-  return container.querySelector<HTMLInputElement>(`#${id}`)!;
 }
 
 /** Set a value on a React-controlled input and fire the native input event. */
@@ -147,7 +147,13 @@ describe("TunnelEditor — form migration (UISF-011)", () => {
     const saved = vi.mocked(saveTunnel).mock.calls[0][0];
     expect(saved.tunnelType).toEqual({
       type: "remote",
-      config: { remoteHost: "0.0.0.0", remotePort: 8080, localHost: "127.0.0.1", localPort: 3000 },
+      // Open to nobody else (U-007).
+      config: {
+        remoteHost: "localhost",
+        remotePort: 8080,
+        localHost: "localhost",
+        localPort: 3000,
+      },
     });
   });
 
@@ -171,7 +177,7 @@ describe("TunnelEditor — form migration (UISF-011)", () => {
     expect((q("tunnel-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
       "false"
     );
-    setValue(byId(`tunnel-local-host-${TAB_ID}`), "");
+    setValue(q("tunnel-editor-remote-host") as HTMLInputElement, "");
     expect((q("tunnel-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
       "true"
     );

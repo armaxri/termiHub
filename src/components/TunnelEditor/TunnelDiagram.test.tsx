@@ -43,7 +43,7 @@ describe("TunnelDiagram", () => {
     });
     expect(container.querySelector('[data-testid="tunnel-diagram"]')).not.toBeNull();
     const text = boxes().join(" | ");
-    expect(text).toContain("Your PC");
+    expect(text).toContain("This computer");
     expect(text).toContain("127.0.0.1:8080");
     expect(text).toContain("Target");
     expect(text).toContain("db.internal:5432");
@@ -96,6 +96,6 @@ describe("TunnelDiagram", () => {
     expect(first(local)).toContain("Agent build-box");
     expect(first(dynamic)).toContain("Agent build-box");
     expect(first(remote)).toContain("Agent-side target");
-    expect(container.textContent).not.toContain("Your PC");
+    expect(container.textContent).not.toContain("This computer");
   });
 });

@@ -94,6 +94,16 @@ const STATES = {
   "servers--tooltip": "What exactly does this server share?",
   "servers--stop": "Stop a server while somebody downloads: what happens?",
   "servers--delete": "Delete a running server: what happens?",
+  "tunnel-editor--local": "Reach a database behind a server.",
+  "tunnel-editor--remote": "Let a server reach your web app.",
+  "tunnel-editor--dynamic": "Browse as if you were on the server's network.",
+  "tunnel-editor--open": "The whole network may use your tunnel: do you see what that means?",
+  "tunnel-editor--open-remote": "Colleagues of the server may reach your web app.",
+  "tunnel-editor--missing": "Saving did nothing: what is missing?",
+  "tunnel-editor--agent": "The tunnel runs on another machine: how do you use it here?",
+  "tunnel-editor--kinds": "You took the wrong kind: change it.",
+  "tunnel-editor--path": "Which way does it go?",
+  "tunnel-editor--edit": "Change the port of a running tunnel.",
   "server-editor--http": "Make a folder open in a browser.",
   "server-editor--ftp": "Share a folder to upload and download files.",
   "server-editor--tftp": "Make a server that gives firmware to a switch.",
@@ -654,6 +664,9 @@ const BOTH_ROWS: Partial<Record<State, { tunnels: Row[]; servers: Row[] }>> = {
 const EDITOR_STATES = (Object.keys(STATES) as State[]).filter((state) =>
   state.startsWith("server-editor--")
 );
+const TUNNEL_EDITOR_STATES = (Object.keys(STATES) as State[]).filter((state) =>
+  state.startsWith("tunnel-editor--")
+);
 
 /** What else the backend answers in a state. */
 const ANSWERS: Partial<Record<State, Partial<VisualScenario>>> = {
@@ -686,7 +699,9 @@ async function boot(page: Page, theme: string, state: State): Promise<void> {
     {
       populated: true,
       serviceData: data(
-        BOTH_ROWS[state]?.tunnels ?? TUNNEL_ROWS[state] ?? [],
+        BOTH_ROWS[state]?.tunnels ??
+          TUNNEL_ROWS[state] ??
+          (state.startsWith("tunnel-editor--") ? tunnelsIn("connected") : []),
         BOTH_ROWS[state]?.servers ??
           SERVER_ROWS[state] ??
           (state.startsWith("server-editor--") ? serversIn("running") : [])
@@ -833,6 +848,66 @@ for (const viewport of WINDOWS) {
         });
       }
 
+      for (const state of TUNNEL_EDITOR_STATES) {
+        test(state, async ({ page }) => {
+          await boot(page, theme, state);
+          const field = (name: string) => page.locator(id(`tunnel-editor-${name}`));
+          const open = async (kind: string) => {
+            await page.locator(id("service-new-btn")).click();
+            await page.locator(id(`service-new-tunnel-${kind}`)).click();
+            await page.locator(id("tunnel-editor")).waitFor();
+          };
+          const onAgent = async () => {
+            await field("host").click();
+            await page.locator("[role=option]").nth(1).click();
+          };
+          switch (state) {
+            case "tunnel-editor--local":
+              await open("local");
+              await field("remote-host").fill("db.internal");
+              await field("remote-port").fill("5432");
+              break;
+            case "tunnel-editor--remote":
+            case "tunnel-editor--dynamic":
+              await open(state.slice("tunnel-editor--".length));
+              break;
+            case "tunnel-editor--open":
+              await open("local");
+              await field("bind-network").click();
+              break;
+            case "tunnel-editor--open-remote":
+              await open("remote");
+              await field("bind-network").click();
+              break;
+            case "tunnel-editor--missing":
+              await open("local");
+              await field("remote-host").fill("");
+              await field("save-start").click({ force: true });
+              break;
+            case "tunnel-editor--agent":
+              await open("local");
+              await onAgent();
+              await field("reachability").scrollIntoViewIfNeeded();
+              break;
+            case "tunnel-editor--kinds":
+              await open("local");
+              await page.locator(id("tunnel-editor-change-type")).click();
+              break;
+            case "tunnel-editor--path":
+              await open("local");
+              await field("show-path").click();
+              await field("endpoints").scrollIntoViewIfNeeded();
+              break;
+            case "tunnel-editor--edit":
+              await page.locator(id("tunnel-item-db")).focus();
+              await page.keyboard.press("Enter");
+              await page.locator(id("tunnel-editor")).waitFor();
+              break;
+          }
+          await shot(page, state, id("tunnel-editor"));
+        });
+      }
+
       for (const state of EDITOR_STATES) {
         test(state, async ({ page }) => {
           await boot(page, theme, state);
@@ -926,7 +1001,7 @@ for (const viewport of WINDOWS) {
             case "services--new-tunnel":
               await page.locator(id("service-new-btn")).click();
               await page.locator(id("service-new-tunnel-remote")).click();
-              await expect(page.locator(id("tunnel-type-remote"))).toBeChecked();
+              await expect(page.locator(id("tunnel-editor-title"))).toContainText("Let a server");
               break;
             case "services--search":
               await page.locator(id("services-search")).fill("15003");

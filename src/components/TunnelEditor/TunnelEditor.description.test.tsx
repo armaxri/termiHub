@@ -13,6 +13,10 @@ import { TunnelEditor } from "./TunnelEditor";
 import { TooltipProvider } from "@/components/ui";
 import type { SavedConnection } from "@/types/connection";
 
+vi.mock("@/services/embeddedServerApi", () => ({
+  listNetworkInterfaces: vi.fn(() => Promise.resolve([])),
+}));
+
 const toastMock = vi.hoisted(() => ({
   success: vi.fn(),
   error: vi.fn(),

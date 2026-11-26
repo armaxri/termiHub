@@ -17,6 +17,10 @@ import { TooltipProvider } from "@/components/ui";
 import type { SavedConnection } from "@/types/connection";
 import type { TunnelConfig } from "@/types/tunnel";
 
+vi.mock("@/services/embeddedServerApi", () => ({
+  listNetworkInterfaces: vi.fn(() => Promise.resolve([])),
+}));
+
 vi.mock("@/components/ui", async () => {
   const actual = await vi.importActual<typeof import("@/components/ui")>("@/components/ui");
   return {

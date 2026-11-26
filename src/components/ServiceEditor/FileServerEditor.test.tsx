@@ -141,7 +141,7 @@ describe("a new one", () => {
   it("is named by what it is for, and asks for the folder first", async () => {
     await render({ serverType: "http" });
     expect(byTestId("server-editor-title")?.textContent).toBe("Open it in a browser");
-    expect(byTestId("server-editor")?.textContent).toContain("New file server · Web server (HTTP)");
+    expect(byTestId("server-editor")?.textContent).toContain("New service · Web server (HTTP)");
     expect(document.activeElement).toBe(field("root"));
     const order = [
       "root",
@@ -354,6 +354,10 @@ describe("who can open it", () => {
     await press("bind-address");
     expect(field("address")?.tagName).toBe("INPUT");
     expect(note()).toBe("Still needed: who can open it");
+    await press("save");
+    // Once, at the field that is empty.
+    const said = byTestId("server-editor")!.textContent!.split("Choose who can open it.");
+    expect(said).toHaveLength(2);
     type("address", "10.0.0.5");
     expect(field("warning")?.textContent).toContain("Anyone who reaches 10.0.0.5");
     await press("save");

@@ -174,10 +174,6 @@ class TestProductRunTunnelServiceControls(
                 lambda: self._try_select("tunnel-editor-ssh-connection", ssh),
                 what="the SSH connection option",
             )
-            self.driver.click("tunnel-type-local")
-            self.wait(
-                lambda: self.driver.exists("tunnel-editor-local-port"), what="the port fields"
-            )
             self.driver.type("tunnel-editor-local-port", str(self.free_port()))
             self.driver.type("tunnel-editor-remote-host", "db.internal")
             self.driver.type("tunnel-editor-remote-port", "5432")

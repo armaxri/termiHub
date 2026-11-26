@@ -1,41 +1,39 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { flushSync } from "react-dom";
 import { ITEM_DESCRIPTION_MAX_LENGTH, normalizeItemDescription } from "@/utils/itemDescription";
-import { Controller } from "react-hook-form";
 import { z } from "zod";
 import { useZodEditorForm } from "@/hooks/useZodEditorForm";
-import { useRevealedErrors } from "@/hooks/useRevealedErrors";
+import { useRevealOnSave } from "@/hooks/useRevealedErrors";
 import { useCarriedFormDraft, useFormDraftProvider } from "@/hooks/useFormDraftHandoff";
 import { clearDraftSecrets } from "@/utils/formDraftSecrets";
-import { Monitor, Server, AlertTriangle, Link2 } from "lucide-react";
+import { Monitor, Server } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { useLayoutRenderTree } from "@/store/layoutSelectors";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
-import {
-  TunnelConfig,
-  TunnelType,
-  LocalForwardConfig,
-  RemoteForwardConfig,
-  DynamicForwardConfig,
-} from "@/types/tunnel";
+import type { TunnelConfig, TunnelType } from "@/types/tunnel";
 import { TunnelEditorMeta } from "@/types/terminal";
 import {
   Button,
+  Checkbox,
   Input,
   NumberInput,
   RadioGroup,
   type RadioGroupOption,
   Select,
   Field,
-  Toggle,
   UnsavedChangesDialog,
   toast,
-  TOAST_AVOID_PROPS,
-  TOAST_AVOID_FORM_PROPS,
 } from "@/components/ui";
 import { useEditorKeyboard } from "@/hooks/useEditorKeyboard";
-import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
+import { useServiceContext } from "@/hooks/useServiceContext";
+import {
+  editorSubtitle,
+  ServiceEditorShell,
+  ServiceEditorWarning,
+} from "@/components/ServiceEditor/ServiceEditorShell";
+import { useEditorTab } from "@/components/ServiceEditor/useEditorTab";
+import { WhoCanOpen } from "@/components/ServiceEditor/WhoCanOpen";
+import { isWideBind } from "@/utils/serviceAddress";
+import { tunnelModel } from "@/utils/serviceModel";
 import { frontendLog } from "@/utils/frontendLog";
 import {
   isAgentHost,
@@ -51,14 +49,23 @@ import { hostChoice, sameHost, type HostChoice } from "@/utils/hostChoice";
 import { decodeRunLocation, encodeRunLocation, runLocationOptions } from "@/utils/runLocation";
 import { TunnelDiagram } from "./TunnelDiagram";
 import { TunnelChainPreviewDialog } from "./TunnelChainPreviewDialog";
+import {
+  bindField,
+  bindOf,
+  missingText,
+  newTunnelType,
+  openWarning,
+  reachSentence,
+  targetName,
+  whoLabels,
+} from "./tunnelForm";
 import { validateTunnelType, type TunnelFieldErrors } from "./tunnelValidation";
 import { newId } from "@/services/transport/ids";
 import { ambiguousConnectionIds } from "@/utils/jumpHost";
-import { t } from "@/i18n/catalog";
+import { t, tf } from "@/i18n/catalog";
 import { useConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
 import { errorMessage } from "@/utils/errorMessage";
 import { draftKey } from "@/utils/draftKey";
-import { findLeafByTab } from "@/utils/panelTree";
 import "./TunnelEditor.css";
 
 interface TunnelEditorProps {
@@ -67,35 +74,16 @@ interface TunnelEditorProps {
   isVisible: boolean;
 }
 
-const DEFAULT_LOCAL: LocalForwardConfig = {
-  localHost: "127.0.0.1",
-  localPort: 8080,
-  remoteHost: "localhost",
-  remotePort: 80,
+/** The test ids of the hosts and ports. */
+const FIELD_TEST_IDS = {
+  localHost: { "data-testid": "tunnel-editor-local-host" },
+  localPort: { "data-testid": "tunnel-editor-local-port" },
+  remoteHost: { "data-testid": "tunnel-editor-remote-host" },
+  remotePort: { "data-testid": "tunnel-editor-remote-port" },
 };
 
-const DEFAULT_REMOTE: RemoteForwardConfig = {
-  remoteHost: "0.0.0.0",
-  remotePort: 8080,
-  localHost: "127.0.0.1",
-  localPort: 3000,
-};
-
-const DEFAULT_DYNAMIC: DynamicForwardConfig = {
-  localHost: "127.0.0.1",
-  localPort: 1080,
-};
-
-function defaultTunnelType(type: "local" | "remote" | "dynamic"): TunnelType {
-  switch (type) {
-    case "local":
-      return { type: "local", config: { ...DEFAULT_LOCAL } };
-    case "remote":
-      return { type: "remote", config: { ...DEFAULT_REMOTE } };
-    case "dynamic":
-      return { type: "dynamic", config: { ...DEFAULT_DYNAMIC } };
-  }
-}
+/** The traffic of a tunnel that a preview is about. */
+const NO_TRAFFIC = { bytesSent: 0, bytesReceived: 0, activeConnections: 0, totalConnections: 0 };
 
 /** Editing shape of a {@link TunnelConfig} (the fields the form owns). */
 interface TunnelFormState {
@@ -169,13 +157,12 @@ function tunnelTypeOptions(host: HostChoice, agentName?: string): RadioGroupOpti
     const help = tunnelTypeHelp(kind, host, agentName);
     return {
       value: kind,
-      label: help.label,
-      description: (
-        <>
-          <span className="tunnel-editor__type-summary">{help.summary}</span>{" "}
-          <code className="tunnel-editor__type-flag">{help.flag}</code>
-        </>
-      ),
+      // As the New menu names it (#6076).
+      label: t(`service.new.${kind}`),
+      // Nothing is "here" on another machine.
+      description: `${
+        host.kind === "thisComputer" ? t(`service.new.${kind}.example`) : `${help.summary}.`
+      } ${t(`service.new.${kind}.technical`)}`,
       help: help.lines,
     };
   };
@@ -198,7 +185,7 @@ function tunnelTypeOptions(host: HostChoice, agentName?: string): RadioGroupOpti
  * react-hook-form's async error proxy). The scalar fields are Controller-wired;
  * the discriminated `tunnelType` union and the `host` run-location are driven
  * imperatively through `setValue` because they change shape/several fields at
- * once (type switch, "Widen bind", chaining), matching the previous hand-rolled
+ * once (type switch, "Let others reach it", chaining), matching the previous hand-rolled
  * behavior exactly.
  */
 export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
@@ -208,12 +195,9 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   const { remoteAgents } = useProjectedAgents();
   const saveTunnel = useAppStore((s) => s.saveTunnel);
   const startTunnel = useAppStore((s) => s.startTunnel);
-  const closeTab = useAppStore((s) => s.closeTab);
-  const setEditorDirty = useAppStore((s) => s.setEditorDirty);
-  const pendingCloseRequest = useAppStore((s) => s.pendingCloseRequest);
-  const setPendingCloseRequest = useAppStore((s) => s.setPendingCloseRequest);
+  const reconnectTunnel = useAppStore((s) => s.reconnectTunnel);
+  const openConnectionEditorTab = useAppStore((s) => s.openConnectionEditorTab);
   const openTunnelEditorTab = useAppStore((s) => s.openTunnelEditorTab);
-  const rootPanel = useLayoutRenderTree();
 
   // Find existing tunnel if editing
   const existingTunnel = meta.tunnelId ? tunnels.find((t) => t.id === meta.tunnelId) : undefined;
@@ -232,7 +216,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   // snapshot of the values (it reflects `setValue` at once), and `formErrors` /
   // `canSave` update on the same render as the edit.
   const {
-    form: { control, getValues, setValue, reset },
+    form: { getValues, setValue, reset },
     draft: form,
     errors: allFormErrors,
     canSave,
@@ -250,7 +234,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
           : undefined) ??
         pickableSshConnections[0]?.id ??
         "",
-      tunnelType: existingTunnel?.tunnelType ?? defaultTunnelType(meta.tunnelType ?? "local"),
+      tunnelType: existingTunnel?.tunnelType ?? newTunnelType(meta.tunnelType ?? "local"),
       // Which machine hosts this tunnel (S3, #2155). New tunnels default to This
       // computer — agent hosting is opt-in.
       host: hostChoice(existingTunnel?.host),
@@ -266,11 +250,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   // Errors show once the user edited a field and left it, or tried to save
   // (#5909) — a new tunnel does not open with "Name is required." in red.
   // `canSave` still reads every error.
-  const {
-    shown: formErrors,
-    revealProps,
-    revealAll: revealAllErrors,
-  } = useRevealedErrors(allFormErrors, form);
+  const { shown: formErrors, rootProps, revealAndFocus } = useRevealOnSave(allFormErrors, form);
 
   // Sync if the tunnel ID changes (reload the working copy from the store).
   // Keyed on the id, not the object: a republish of the tunnels list (a status
@@ -317,9 +297,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   // Report unsaved edits like ConnectionEditor does, so the tab-bar close guard
   // and every bulk close (panel, group, window) see this tab as dirty (UX2-004).
   const isDirty = draftKey(form) !== baselineKey;
-  useEffect(() => {
-    setEditorDirty(tabId, isDirty);
-  }, [tabId, isDirty, setEditorDirty]);
+  const tab = useEditorTab(tabId, isDirty);
 
   // Hand the unsaved draft to "Move tabs" on window close (#4500). A tunnel
   // form holds no secrets today; the check still runs, so a future one is
@@ -336,7 +314,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
 
   const handleTypeChange = (type: "local" | "remote" | "dynamic") => {
     if (getValues("tunnelType").type !== type) {
-      setValue("tunnelType", defaultTunnelType(type));
+      setValue("tunnelType", newTunnelType(type));
     }
   };
 
@@ -391,29 +369,11 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
     companionOf: existingTunnel?.companionOf,
   });
 
-  const formRef = useRef<HTMLDivElement>(null);
-
-  /**
-   * Move focus to the first field that blocks Save, in visual order, so a user
-   * who activates the (aria-disabled) Save sees why it did not save. Every
-   * invalid field carries `aria-invalid` (injected by `Field` alongside the
-   * inline message), so the first one in DOM order is the first invalid field.
-   */
-  const focusFirstInvalidField = () => {
-    const target = formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]');
-    if (target) {
-      target.scrollIntoView?.({ block: "center" });
-      target.focus();
-    }
-  };
-
   const handleSave = async (andStart: boolean) => {
     // Save stays keyboard-reachable while invalid (aria-disabled, not
     // disabled): activating it then points at the problem instead of saving.
     if (!canSave) {
-      // Render every error first: the focus target is the first `aria-invalid`.
-      flushSync(revealAllErrors);
-      focusFirstInvalidField();
+      revealAndFocus();
       return;
     }
     const config = buildConfig(getValues());
@@ -421,40 +381,18 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
     try {
       await saveTunnel(config);
       if (andStart) {
-        startTunnel(config.id).catch((err) => {
+        (active ? reconnectTunnel : startTunnel)(config.id).catch((err) => {
           frontendLog("tunnel_editor", `Failed to start tunnel after save: ${errorMessage(err)}`);
           toast.error("Failed to start tunnel");
         });
       }
       // A plain save closes the editor and the tunnel's row shows in the
       // sidebar; that is the confirmation (#5859, superseding UX-022).
-      // Find panelId for this tab and close it
-      const { findLeafByTab } = await import("@/utils/panelTree");
-      const leaf = findLeafByTab(rootPanel, tabId);
-      if (leaf) {
-        closeTab(tabId, leaf.id);
-      }
+      tab.close();
     } catch (err) {
       frontendLog("tunnel_editor", `Failed to save tunnel: ${errorMessage(err)}`);
       throw err instanceof Error ? err : new Error("Failed to save tunnel");
     }
-  };
-
-  const closeThisTab = () => {
-    const leaf = findLeafByTab(rootPanel, tabId);
-    if (leaf) closeTab(tabId, leaf.id);
-  };
-
-  // Cancel and Escape share the tab-bar close guard (UX2-004): with unsaved
-  // edits they raise the unsaved-changes prompt via pendingCloseRequest;
-  // otherwise the tab closes at once.
-  const handleCancel = () => {
-    if (useAppStore.getState().editorDirtyTabs[tabId]) {
-      const leaf = findLeafByTab(rootPanel, tabId);
-      if (leaf) setPendingCloseRequest({ tabId, panelId: leaf.id });
-      return;
-    }
-    closeThisTab();
   };
 
   const sshOptions = sshConnections.map((c) =>
@@ -474,10 +412,9 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   const hostOptions = runLocationOptions(remoteAgents, true, host);
   // Saving another machine for a running tunnel stops it (#6028).
   const savedStatus = existingTunnel && tunnelStates[existingTunnel.id]?.status;
+  const active = isServiceActive(tunnelServiceState(savedStatus));
   const movesRunning =
-    existingTunnel !== undefined &&
-    isServiceActive(tunnelServiceState(savedStatus)) &&
-    !sameHost(host, hostChoice(existingTunnel.host));
+    existingTunnel !== undefined && active && !sameHost(host, hostChoice(existingTunnel.host));
   const hostAgentName = isAgentHost(host)
     ? (remoteAgents.find((a) => a.id === host.agentId)?.name ?? host.agentId)
     : undefined;
@@ -494,7 +431,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   };
 
   // ── Chain a hop to this computer (#2597) ──────────────────────────────────
-  // The affordance sits beside "Widen bind" on the same reachability warning.
+  // The affordance sits beside "Let others reach it" on the same reachability warning.
   // It is offered only for a *saved* agent-hosted loopback parent (chaining links
   // a companion to the parent's persisted id), disabled while the host agent is
   // offline, and replaced by "Chained ✓ · reveal" once a companion exists.
@@ -556,9 +493,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
         });
       }
       setChainOpen(false);
-      const { findLeafByTab } = await import("@/utils/panelTree");
-      const leaf = findLeafByTab(rootPanel, tabId);
-      if (leaf) closeTab(tabId, leaf.id);
+      tab.close();
     } catch (err) {
       frontendLog("tunnel_editor", `Failed to chain hop: ${errorMessage(err)}`);
       toast.error("Failed to chain a hop to this computer");
@@ -570,7 +505,17 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   const chainCompanionLocal =
     chainCompanion.tunnelType.type === "local" ? chainCompanion.tunnelType.config : undefined;
 
-  const nameRef = useAutofocusSelect<HTMLInputElement>();
+  // What one came for has the focus: over a preset of a new tunnel one types at once,
+  // a saved value is not lost by it (U-008).
+  const { ref: fieldsRef } = rootProps;
+  const selects = useRef(!existingTunnel);
+  useEffect(() => {
+    const first = fieldsRef.current?.querySelector<HTMLInputElement>(
+      ".service-editor__first input"
+    );
+    first?.focus();
+    if (selects.current) first?.select();
+  }, [fieldsRef]);
 
   // Which footer action is primary (#5810): a new tunnel is saved to be used,
   // so "Save and start" is primary; editing an existing one keeps "Save".
@@ -585,7 +530,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   // the first invalid field instead of saving.
   const handleKeyDown = useEditorKeyboard({
     onSubmit: () => primaryButtonRef.current?.click(),
-    onCancel: handleCancel,
+    onCancel: tab.cancel,
   });
 
   const saveAndStartButton = (
@@ -597,7 +542,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
       data-invalid={!canSave || undefined}
       data-testid="tunnel-editor-save-start"
     >
-      Save and start
+      {t(active ? "service.editor.saveAndRestart" : "service.editor.saveAndStart")}
     </Button>
   );
   const saveButton = (
@@ -609,120 +554,151 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
       data-invalid={!canSave || undefined}
       data-testid="tunnel-editor-save"
     >
-      Save
+      {t("service.editor.save")}
     </Button>
   );
 
-  return (
-    <div
-      className={`tunnel-editor ${isVisible ? "" : "tunnel-editor--hidden"}`}
-      data-testid="tunnel-editor"
-      onKeyDown={handleKeyDown}
+  const machines = { host, agentName: hostAgentName, server: sshLabel };
+  const here = host.kind === "thisComputer";
+  const bind = bindField(tunnelType);
+  const warning = openWarning(tunnelType, machines);
+  const context = useServiceContext(isWideBind(bindOf(tunnelType)));
+  const preview = tunnelModel(
+    { ...buildConfig(form), id: "" },
+    { tunnelId: "", status: "connected", stats: NO_TRAFFIC },
+    context
+  ).address;
+  // Asked only when the New menu did not (U-008).
+  const [choosing, setChoosing] = useState(!existingTunnel && !meta.tunnelType);
+  const [showsPath, setShowsPath] = useState(false);
+
+  /** A tunnel without a name is called like what it reaches, once that is known. */
+  const nameAfterTarget = () => {
+    const name = targetName(getValues("tunnelType"));
+    if (name && getValues("name").trim() === "") setValue("name", name);
+  };
+  const portInput = (
+    field: "localPort" | "remotePort",
+    label: string,
+    value: number | "",
+    className = "service-editor__port"
+  ) => (
+    <Field
+      label={label}
+      htmlFor={`tunnel-${field}-${tabId}`}
+      className={className}
+      error={errors[field]}
     >
-      <div className="tunnel-editor__header">
-        <span className="tunnel-editor__title" data-testid="tunnel-editor-title">
-          {existingTunnel ? `Edit tunnel: ${existingTunnel.name}` : "New SSH tunnel"}
-        </span>
-      </div>
+      <NumberInput
+        id={`tunnel-${field}-${tabId}`}
+        value={value}
+        onValueChange={(v) => updateConfig(field, v)}
+        error={!!errors[field]}
+        {...FIELD_TEST_IDS[field]}
+      />
+    </Field>
+  );
+  const hostInput = (field: "localHost" | "remoteHost", label: string, value: string) => (
+    <Field label={label} htmlFor={`tunnel-${field}-${tabId}`} error={errors[field]}>
+      <Input
+        id={`tunnel-${field}-${tabId}`}
+        type="text"
+        value={value}
+        onChange={(e) => updateConfig(field, e.target.value)}
+        onBlur={nameAfterTarget}
+        error={!!errors[field]}
+        {...FIELD_TEST_IDS[field]}
+      />
+    </Field>
+  );
+  // What it reaches: at the far end, or here for a server.
+  const target = (() => {
+    switch (tunnelType.type) {
+      case "local":
+        return (
+          <div className="service-editor__row service-editor__first">
+            {hostInput("remoteHost", t("tunnel.editor.target.local"), tunnelType.config.remoteHost)}
+            {portInput("remotePort", t("tunnel.editor.target.port"), tunnelType.config.remotePort)}
+          </div>
+        );
+      case "remote":
+        return (
+          <div className="service-editor__row service-editor__first">
+            {hostInput(
+              "localHost",
+              t(here ? "tunnel.editor.target.remote" : "tunnel.editor.target.remote.there"),
+              tunnelType.config.localHost
+            )}
+            {portInput("localPort", t("tunnel.editor.target.port"), tunnelType.config.localPort)}
+          </div>
+        );
+      case "dynamic":
+        return null;
+    }
+  })();
+  const openedPort =
+    tunnelType.type === "remote"
+      ? portInput(
+          "remotePort",
+          t("tunnel.editor.port.server"),
+          tunnelType.config.remotePort,
+          "service-editor__opened"
+        )
+      : portInput(
+          "localPort",
+          t(here ? "tunnel.editor.port.here" : "tunnel.editor.port.there"),
+          tunnelType.config.localPort,
+          "service-editor__opened"
+        );
 
-      <div
-        className="tunnel-editor__form"
-        ref={formRef}
-        data-testid="tunnel-editor-form"
-        {...revealProps}
-        {...TOAST_AVOID_FORM_PROPS}
-      >
-        <Controller
-          name="name"
-          control={control}
-          render={({ field }) => (
-            <Field label="Name" htmlFor={`tunnel-name-${tabId}`} error={formErrors.name}>
-              <Input
-                ref={nameRef}
-                id={`tunnel-name-${tabId}`}
-                type="text"
-                value={field.value ?? ""}
-                error={!!formErrors.name}
-                onChange={(e) => field.onChange(e.target.value)}
-                onBlur={field.onBlur}
-                placeholder="e.g. Dev Database"
-                data-testid="tunnel-editor-name"
-              />
-            </Field>
-          )}
-        />
+  const check = (
+    name: "autoStart" | "startWithConnection" | "reconnectOnDisconnect",
+    label: string,
+    testId: { "data-testid": string }
+  ) => (
+    <label className="service-editor__check">
+      <Checkbox
+        checked={form[name]}
+        onCheckedChange={(checked) => setValue(name, checked === true)}
+        aria-label={label}
+        {...testId}
+      />
+      <span>{label}</span>
+    </label>
+  );
 
-        <Controller
-          name="description"
-          control={control}
-          render={({ field }) => (
-            <Field
-              label="Description (optional)"
-              htmlFor={`tunnel-description-${tabId}`}
-              hint="One short line shown under the name in the sidebar."
-            >
-              <Input
-                id={`tunnel-description-${tabId}`}
-                type="text"
-                value={field.value ?? ""}
-                onChange={(e) => field.onChange(e.target.value)}
-                onBlur={field.onBlur}
-                maxLength={ITEM_DESCRIPTION_MAX_LENGTH}
-                placeholder="What this tunnel is for"
-                data-testid="tunnel-editor-description"
-              />
-            </Field>
-          )}
-        />
-
-        <Field
-          label="SSH connection"
-          htmlFor={`tunnel-ssh-${tabId}`}
-          error={
-            sshConnectionAmbiguous
-              ? "A connection with this id exists in more than one connection file, so the " +
-                "tunnel cannot be hosted on it. Rename or move one of them, or pick another " +
-                "SSH connection."
-              : sshConnectionMissing
-                ? t("tunnel.editor.missingConnection")
-                : formErrors.sshConnectionId
-          }
-          data-testid="tunnel-editor-ssh-connection-field"
-        >
-          <Select
-            id={`tunnel-ssh-${tabId}`}
-            value={sshConnectionMissing ? undefined : form.sshConnectionId || undefined}
-            onChange={(v) => setValue("sshConnectionId", v)}
-            options={sshOptions}
-            placeholder={
-              sshConnectionMissing && sshOptions.length > 0
-                ? t("tunnel.editor.chooseSshConnection")
-                : "No SSH connections available"
-            }
-            aria-label="SSH connection"
-            data-testid="tunnel-editor-ssh-connection"
-          />
-        </Field>
-
-        <Field
-          label="Tunnel host"
-          htmlFor={`tunnel-host-${tabId}`}
-          hint={movesRunning ? t("service.host.moveHint") : undefined}
-          data-testid="tunnel-editor-host-field"
-        >
-          <Select
-            id={`tunnel-host-${tabId}`}
-            value={encodeRunLocation(host)}
-            onChange={(v) => setValue("host", decodeRunLocation(v))}
-            options={hostOptions}
-            aria-label="Tunnel host"
-            data-testid="tunnel-editor-host"
-          />
-        </Field>
-
-        <div className="tunnel-editor__field">
-          <span className="tunnel-editor__label" id={`tunnel-type-label-${tabId}`}>
-            Tunnel type
+  return (
+    <ServiceEditorShell
+      testId="tunnel-editor"
+      isVisible={isVisible}
+      title={existingTunnel ? existingTunnel.name : t(`service.new.${tunnelType.type}`)}
+      subtitle={editorSubtitle(!existingTunnel, t(`service.new.${tunnelType.type}.technical`))}
+      onChangeType={choosing ? undefined : () => setChoosing(true)}
+      rootProps={rootProps}
+      onKeyDown={handleKeyDown}
+      note={
+        canSave
+          ? active && isDirty && !movesRunning
+            ? t("service.editor.afterRestart")
+            : undefined
+          : missingText(tunnelType, allFormErrors)
+      }
+      actions={
+        <>
+          <Button variant="secondary" onClick={tab.cancel} data-testid="tunnel-editor-cancel">
+            {t("service.action.cancel")}
+          </Button>
+          {/* One primary per footer, on the right (copy style guide). */}
+          {!saveAndStartIsPrimary && saveAndStartButton}
+          {saveButton}
+          {saveAndStartIsPrimary && saveAndStartButton}
+        </>
+      }
+    >
+      {choosing && (
+        <div className="service-editor__group">
+          <span className="service-editor__label" id={`tunnel-type-label-${tabId}`}>
+            {t("tunnel.editor.type")}
           </span>
           <RadioGroup
             variant="cards"
@@ -734,306 +710,218 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
             options={tunnelTypeOptions(host, hostAgentName)}
           />
         </div>
+      )}
 
-        <TunnelDiagram tunnelType={tunnelType} agentName={hostAgentName} />
+      {target}
 
-        <div className="tunnel-editor__endpoints" data-testid="tunnel-editor-endpoints">
-          <div className="tunnel-editor__endpoints-host">
-            {isAgentHost(host) ? <Server size={13} /> : <Monitor size={13} />}
-            <span>
-              Host: <strong>{tunnelHostMachine(host, hostAgentName)}</strong>
-            </span>
-          </div>
-          {endpointLines.map((line, i) => (
-            <div className="tunnel-editor__endpoint-line" key={i}>
-              <strong>{line.label}</strong> {line.machine && <span>{line.machine}</span>}
-              {line.machine && line.address ? " · " : ""}
-              {line.address && <code>{line.address}</code>}
-              {line.note && <span className="tunnel-editor__endpoint-note"> ({line.note})</span>}
-            </div>
-          ))}
-        </div>
-
-        {reachability && (
-          <div className="tunnel-editor__reachability" data-testid="tunnel-editor-reachability">
-            <AlertTriangle size={14} className="tunnel-editor__reachability-icon" />
-            <span className="tunnel-editor__reachability-text">
-              {reachability.message}{" "}
+      <div className="service-editor__row service-editor__row--even">
+        <Field
+          label={t("tunnel.editor.server")}
+          htmlFor={`tunnel-ssh-${tabId}`}
+          error={
+            sshConnectionAmbiguous
+              ? "A connection with this id exists in more than one connection file, so the " +
+                "tunnel cannot be hosted on it. Rename or move one of them, or pick another " +
+                "SSH connection."
+              : sshConnectionMissing
+                ? t("tunnel.editor.missingConnection")
+                : formErrors.sshConnectionId
+          }
+          details={
+            sshConnections.length === 0 && (
               <button
                 type="button"
-                className="tunnel-editor__reachability-action"
-                onClick={handleWidenBind}
-                data-testid="tunnel-editor-widen-bind"
+                className="service-editor__link"
+                onClick={() => openConnectionEditorTab("new")}
+                data-testid="tunnel-editor-new-connection"
               >
-                Widen bind
+                {t("service.empty.newConnection")}
               </button>
-              {" · "}
-              {existingCompanion ? (
-                <button
-                  type="button"
-                  className="tunnel-editor__reachability-action"
-                  onClick={handleRevealCompanion}
-                  data-testid="tunnel-editor-chain-reveal"
-                >
-                  <Link2 size={12} className="tunnel-editor__reachability-action-icon" /> Chained
-                  &#10003; &middot; reveal
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  className="tunnel-editor__reachability-action"
-                  onClick={handleOpenChain}
-                  disabled={!agentOnline}
-                  title={
-                    agentOnline
-                      ? undefined
-                      : `Agent ${hostAgent?.name ?? "host"} is offline — connect it to chain a hop`
-                  }
-                  data-testid="tunnel-editor-chain-hop"
-                >
-                  <Link2 size={12} className="tunnel-editor__reachability-action-icon" /> Chain a
-                  hop to this computer
-                </button>
-              )}
-            </span>
-          </div>
-        )}
-
-        {tunnelType.type === "local" && (
-          <>
-            <span className="tunnel-editor__section-title">Local bind</span>
-            <div className="tunnel-editor__row">
-              <Field
-                label="Local host"
-                htmlFor={`tunnel-local-host-${tabId}`}
-                error={errors.localHost}
-              >
-                <Input
-                  id={`tunnel-local-host-${tabId}`}
-                  type="text"
-                  value={tunnelType.config.localHost}
-                  onChange={(e) => updateConfig("localHost", e.target.value)}
-                  error={!!errors.localHost}
-                />
-              </Field>
-              <Field
-                label="Local port"
-                htmlFor={`tunnel-local-port-${tabId}`}
-                className="tunnel-editor__port-field"
-                error={errors.localPort}
-              >
-                <NumberInput
-                  id={`tunnel-local-port-${tabId}`}
-                  value={tunnelType.config.localPort}
-                  onValueChange={(v) => updateConfig("localPort", v)}
-                  error={!!errors.localPort}
-                  data-testid="tunnel-editor-local-port"
-                />
-              </Field>
-            </div>
-            <span className="tunnel-editor__section-title">Remote target</span>
-            <div className="tunnel-editor__row">
-              <Field
-                label="Remote host"
-                htmlFor={`tunnel-remote-host-${tabId}`}
-                error={errors.remoteHost}
-              >
-                <Input
-                  id={`tunnel-remote-host-${tabId}`}
-                  type="text"
-                  value={tunnelType.config.remoteHost}
-                  onChange={(e) => updateConfig("remoteHost", e.target.value)}
-                  error={!!errors.remoteHost}
-                  data-testid="tunnel-editor-remote-host"
-                />
-              </Field>
-              <Field
-                label="Remote port"
-                htmlFor={`tunnel-remote-port-${tabId}`}
-                className="tunnel-editor__port-field"
-                error={errors.remotePort}
-              >
-                <NumberInput
-                  id={`tunnel-remote-port-${tabId}`}
-                  value={tunnelType.config.remotePort}
-                  onValueChange={(v) => updateConfig("remotePort", v)}
-                  error={!!errors.remotePort}
-                  data-testid="tunnel-editor-remote-port"
-                />
-              </Field>
-            </div>
-          </>
-        )}
-
-        {tunnelType.type === "remote" && (
-          <>
-            <span className="tunnel-editor__section-title">Remote Bind (on SSH Server)</span>
-            <div className="tunnel-editor__row">
-              <Field
-                label="Remote host"
-                htmlFor={`tunnel-r-remote-host-${tabId}`}
-                error={errors.remoteHost}
-              >
-                <Input
-                  id={`tunnel-r-remote-host-${tabId}`}
-                  type="text"
-                  value={tunnelType.config.remoteHost}
-                  onChange={(e) => updateConfig("remoteHost", e.target.value)}
-                  error={!!errors.remoteHost}
-                  data-testid="tunnel-editor-remote-host"
-                />
-              </Field>
-              <Field
-                label="Remote port"
-                htmlFor={`tunnel-r-remote-port-${tabId}`}
-                className="tunnel-editor__port-field"
-                error={errors.remotePort}
-              >
-                <NumberInput
-                  id={`tunnel-r-remote-port-${tabId}`}
-                  value={tunnelType.config.remotePort}
-                  onValueChange={(v) => updateConfig("remotePort", v)}
-                  error={!!errors.remotePort}
-                  data-testid="tunnel-editor-remote-port"
-                />
-              </Field>
-            </div>
-            <span className="tunnel-editor__section-title">Local target</span>
-            <div className="tunnel-editor__row">
-              <Field
-                label="Local host"
-                htmlFor={`tunnel-r-local-host-${tabId}`}
-                error={errors.localHost}
-              >
-                <Input
-                  id={`tunnel-r-local-host-${tabId}`}
-                  type="text"
-                  value={tunnelType.config.localHost}
-                  onChange={(e) => updateConfig("localHost", e.target.value)}
-                  error={!!errors.localHost}
-                />
-              </Field>
-              <Field
-                label="Local port"
-                htmlFor={`tunnel-r-local-port-${tabId}`}
-                className="tunnel-editor__port-field"
-                error={errors.localPort}
-              >
-                <NumberInput
-                  id={`tunnel-r-local-port-${tabId}`}
-                  value={tunnelType.config.localPort}
-                  onValueChange={(v) => updateConfig("localPort", v)}
-                  error={!!errors.localPort}
-                  data-testid="tunnel-editor-local-port"
-                />
-              </Field>
-            </div>
-          </>
-        )}
-
-        {tunnelType.type === "dynamic" && (
-          <>
-            <span className="tunnel-editor__section-title">SOCKS5 proxy bind</span>
-            <div className="tunnel-editor__row">
-              <Field
-                label="Local host"
-                htmlFor={`tunnel-d-local-host-${tabId}`}
-                error={errors.localHost}
-              >
-                <Input
-                  id={`tunnel-d-local-host-${tabId}`}
-                  type="text"
-                  value={tunnelType.config.localHost}
-                  onChange={(e) => updateConfig("localHost", e.target.value)}
-                  error={!!errors.localHost}
-                />
-              </Field>
-              <Field
-                label="Local port"
-                htmlFor={`tunnel-d-local-port-${tabId}`}
-                className="tunnel-editor__port-field"
-                error={errors.localPort}
-              >
-                <NumberInput
-                  id={`tunnel-d-local-port-${tabId}`}
-                  value={tunnelType.config.localPort}
-                  onValueChange={(v) => updateConfig("localPort", v)}
-                  error={!!errors.localPort}
-                  data-testid="tunnel-editor-local-port"
-                />
-              </Field>
-            </div>
-          </>
-        )}
-
-        <div className="tunnel-editor__checkbox-row">
-          <Controller
-            name="autoStart"
-            control={control}
-            render={({ field }) => (
-              <Toggle
-                id={`auto-start-${tabId}`}
-                checked={field.value}
-                onCheckedChange={field.onChange}
-              />
-            )}
-          />
-          <label className="tunnel-editor__checkbox-label" htmlFor={`auto-start-${tabId}`}>
-            Auto-start when app launches
-          </label>
-        </div>
-
-        <div className="tunnel-editor__checkbox-row">
-          <Controller
-            name="startWithConnection"
-            control={control}
-            render={({ field }) => (
-              <Toggle
-                id={`start-with-connection-${tabId}`}
-                checked={field.value}
-                onCheckedChange={field.onChange}
-                data-testid="tunnel-editor-start-with-connection"
-              />
-            )}
-          />
-          <label
-            className="tunnel-editor__checkbox-label"
-            htmlFor={`start-with-connection-${tabId}`}
-          >
-            Start when a session to this SSH connection opens
-          </label>
-        </div>
-
-        <div className="tunnel-editor__checkbox-row">
-          <Controller
-            name="reconnectOnDisconnect"
-            control={control}
-            render={({ field }) => (
-              <Toggle
-                id={`reconnect-${tabId}`}
-                checked={field.value}
-                onCheckedChange={field.onChange}
-              />
-            )}
-          />
-          <label className="tunnel-editor__checkbox-label" htmlFor={`reconnect-${tabId}`}>
-            Reconnect automatically on disconnect
-          </label>
-        </div>
-
-        <div
-          className="tunnel-editor__actions"
-          data-testid="tunnel-editor-actions"
-          {...TOAST_AVOID_PROPS}
+            )
+          }
+          data-testid="tunnel-editor-ssh-connection-field"
         >
-          <Button variant="secondary" onClick={handleCancel} data-testid="tunnel-editor-cancel">
-            Cancel
-          </Button>
-          {/* One primary per footer, on the right (copy style guide). */}
-          {!saveAndStartIsPrimary && saveAndStartButton}
-          {saveButton}
-          {saveAndStartIsPrimary && saveAndStartButton}
-        </div>
+          <Select
+            id={`tunnel-ssh-${tabId}`}
+            value={sshConnectionMissing ? undefined : form.sshConnectionId || undefined}
+            onChange={(v) => setValue("sshConnectionId", v)}
+            options={sshOptions}
+            placeholder={
+              sshConnectionMissing && sshOptions.length > 0
+                ? t("tunnel.editor.chooseSshConnection")
+                : t("tunnel.editor.noServer")
+            }
+            aria-label={t("tunnel.editor.server")}
+            data-testid="tunnel-editor-ssh-connection"
+          />
+        </Field>
+        <Field
+          label={t("tunnel.editor.runOn")}
+          htmlFor={`tunnel-host-${tabId}`}
+          hint={movesRunning ? t("service.host.moveHint") : undefined}
+          data-testid="tunnel-editor-host-field"
+        >
+          <Select
+            id={`tunnel-host-${tabId}`}
+            value={encodeRunLocation(host)}
+            onChange={(v) => setValue("host", decodeRunLocation(v))}
+            options={hostOptions}
+            aria-label={t("tunnel.editor.runOn")}
+            data-testid="tunnel-editor-host"
+          />
+        </Field>
+      </div>
+
+      <div className={tunnelType.type === "dynamic" ? "service-editor__first" : undefined}>
+        {openedPort}
+      </div>
+
+      <WhoCanOpen
+        testId="tunnel-editor"
+        id={`tunnel-${tabId}`}
+        key={tunnelType.type}
+        bind={bindOf(tunnelType)}
+        onBind={(address) => updateConfig(bind, address)}
+        labels={whoLabels(tunnelType, machines)}
+        here={tunnelType.type === "remote" ? "localhost" : "127.0.0.1"}
+        onThisComputer={here && tunnelType.type !== "remote"}
+        error={errors[bind]}
+      />
+      {warning && (
+        <ServiceEditorWarning testId="tunnel-editor-warning">{warning}</ServiceEditorWarning>
+      )}
+      {preview && (
+        <p className="service-editor__sentence" data-testid="tunnel-editor-sentence">
+          {preview.copy ? (
+            <>
+              {t("server.editor.address")} <code>{preview.copy}</code> · {preview.reach}
+            </>
+          ) : (
+            preview.reach
+          )}
+          <br />
+          {reachSentence(tunnelType, machines)}
+        </p>
+      )}
+
+      {reachability && (
+        <ServiceEditorWarning testId="tunnel-editor-reachability">
+          {reachability.message}{" "}
+          <button
+            type="button"
+            className="service-editor__warning-link"
+            onClick={handleWidenBind}
+            data-testid="tunnel-editor-widen-bind"
+          >
+            {t("tunnel.editor.letOthers")}
+          </button>
+          {" · "}
+          {existingCompanion ? (
+            <button
+              type="button"
+              className="service-editor__warning-link"
+              onClick={handleRevealCompanion}
+              data-testid="tunnel-editor-chain-reveal"
+            >
+              {t("tunnel.editor.broughtHere")}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="service-editor__warning-link"
+              onClick={handleOpenChain}
+              disabled={!agentOnline}
+              title={
+                agentOnline
+                  ? undefined
+                  : tf("tunnel.editor.bringHere.offline", { agent: hostAgent?.name ?? "host" })
+              }
+              data-testid="tunnel-editor-chain-hop"
+            >
+              {t("tunnel.editor.bringHere")}
+            </button>
+          )}
+        </ServiceEditorWarning>
+      )}
+
+      <Field
+        label={t("server.editor.name")}
+        htmlFor={`tunnel-name-${tabId}`}
+        error={formErrors.name}
+      >
+        <Input
+          id={`tunnel-name-${tabId}`}
+          type="text"
+          value={form.name}
+          error={!!formErrors.name}
+          onChange={(e) => setValue("name", e.target.value)}
+          placeholder={t("tunnel.editor.name.placeholder")}
+          data-testid="tunnel-editor-name"
+        />
+      </Field>
+      <Field label={t("server.editor.description")} htmlFor={`tunnel-description-${tabId}`}>
+        <Input
+          id={`tunnel-description-${tabId}`}
+          type="text"
+          value={form.description}
+          onChange={(e) => setValue("description", e.target.value)}
+          maxLength={ITEM_DESCRIPTION_MAX_LENGTH}
+          placeholder={t("tunnel.editor.description.placeholder")}
+          data-testid="tunnel-editor-description"
+        />
+      </Field>
+
+      <div className="service-editor__group">
+        <span className="service-editor__label">{t("tunnel.editor.start")}</span>
+        {check("autoStart", t("tunnel.editor.autoStart"), {
+          "data-testid": "tunnel-editor-auto-start",
+        })}
+        {check(
+          "startWithConnection",
+          tf("tunnel.editor.startWithConnection", {
+            server: sshLabel ?? t("service.what.unknownServer"),
+          }),
+          { "data-testid": "tunnel-editor-start-with-connection" }
+        )}
+        {check("reconnectOnDisconnect", t("tunnel.editor.reconnect"), {
+          "data-testid": "tunnel-editor-reconnect",
+        })}
+      </div>
+
+      <div className="service-editor__group">
+        <button
+          type="button"
+          className="service-editor__link service-editor__link--row"
+          aria-expanded={showsPath}
+          onClick={() => setShowsPath(!showsPath)}
+          data-testid="tunnel-editor-show-path"
+        >
+          {t(showsPath ? "tunnel.editor.hidePath" : "tunnel.editor.showPath")}
+        </button>
+        {showsPath && (
+          <>
+            <TunnelDiagram tunnelType={tunnelType} agentName={hostAgentName} />
+            <div className="tunnel-editor__endpoints" data-testid="tunnel-editor-endpoints">
+              <div className="tunnel-editor__endpoints-host">
+                {isAgentHost(host) ? <Server size={13} /> : <Monitor size={13} />}
+                <span>
+                  {t("tunnel.editor.runsOn")}{" "}
+                  <strong>{tunnelHostMachine(host, hostAgentName)}</strong>
+                </span>
+              </div>
+              {endpointLines.map((line, i) => (
+                <div className="tunnel-editor__endpoint-line" key={i}>
+                  <strong>{line.label}</strong> {line.machine && <span>{line.machine}</span>}
+                  {line.machine && line.address ? " · " : ""}
+                  {line.address && <code>{line.address}</code>}
+                  {line.note && (
+                    <span className="tunnel-editor__endpoint-note"> ({line.note})</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </div>
 
       <TunnelChainPreviewDialog
@@ -1060,13 +948,13 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
       />
 
       <UnsavedChangesDialog
-        open={pendingCloseRequest?.tabId === tabId}
+        open={tab.asking}
         subject="tunnel"
         name={form.name.trim() || undefined}
-        onCancel={() => setPendingCloseRequest(null)}
+        onCancel={tab.stopAsking}
         onJustClose={() => {
-          setPendingCloseRequest(null);
-          closeThisTab();
+          tab.stopAsking();
+          tab.close();
         }}
         onSaveAndClose={
           canSave
@@ -1074,11 +962,11 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
                 // Save closes the tab on success; on failure it throws, the
                 // Button toasts the error and the prompt stays up.
                 await handleSave(false);
-                setPendingCloseRequest(null);
+                tab.stopAsking();
               }
             : undefined
         }
       />
-    </div>
+    </ServiceEditorShell>
   );
 }

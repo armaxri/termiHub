@@ -12,7 +12,7 @@ interface TunnelDiagramProps {
  * Reactive to the current tunnel type and port configuration.
  */
 export function TunnelDiagram({ tunnelType, agentName }: TunnelDiagramProps) {
-  const hostTitle = agentName ? `Agent ${agentName}` : "Your PC";
+  const hostTitle = agentName ? `Agent ${agentName}` : "This computer";
   switch (tunnelType.type) {
     case "local":
       return (

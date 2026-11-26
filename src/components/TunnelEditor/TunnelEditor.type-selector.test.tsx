@@ -20,6 +20,10 @@ import { TooltipProvider } from "@/components/ui";
 import type { SavedConnection } from "@/types/connection";
 import type { TunnelConfig } from "@/types/tunnel";
 
+vi.mock("@/services/embeddedServerApi", () => ({
+  listNetworkInterfaces: vi.fn(() => Promise.resolve([])),
+}));
+
 vi.mock("@/themes", () => ({
   applyTheme: vi.fn(),
   onThemeChange: vi.fn(() => vi.fn()),
@@ -131,12 +135,12 @@ describe("TunnelEditor — tunnel type selector (UISF2-002)", () => {
     vi.clearAllMocks();
   });
 
-  it("is a radiogroup named by the visible Tunnel type label", async () => {
+  it("is a radiogroup named by its visible label", async () => {
     await render();
     const group = q("tunnel-editor-type-selector");
     expect(group.getAttribute("role")).toBe("radiogroup");
     const labelId = group.getAttribute("aria-labelledby") as string;
-    expect(document.getElementById(labelId)?.textContent).toBe("Tunnel type");
+    expect(document.getElementById(labelId)?.textContent).toBe("What it is for");
     expect(q("tunnel-type-local").getAttribute("role")).toBe("radio");
     expect(q("tunnel-type-local").getAttribute("type")).toBe("button");
     expect(q("tunnel-type-local").getAttribute("aria-checked")).toBe("true");
@@ -146,6 +150,11 @@ describe("TunnelEditor — tunnel type selector (UISF2-002)", () => {
 
   it("starts with the type the New menu asked for (#6028)", async () => {
     await render(null, "remote");
+    // Chosen once: the kinds show when asked for (U-008).
+    expect(q("tunnel-editor-type-selector")).toBeNull();
+    expect(q("tunnel-editor-title").textContent).toBe("Let a server reach something here");
+    click(q("tunnel-editor-change-type"));
+    expect(q("tunnel-editor-change-type")).toBeNull();
     expect(q("tunnel-type-remote").getAttribute("aria-checked")).toBe("true");
   });
 
@@ -172,7 +181,7 @@ describe("TunnelEditor — tunnel type selector (UISF2-002)", () => {
 
   it("names every control and leaves no orphan <label> (UISF2-010, #4351)", async () => {
     await render();
-    expect(getByRole("radiogroup", "Tunnel type", container)).toBe(
+    expect(getByRole("radiogroup", "What it is for", container)).toBe(
       q("tunnel-editor-type-selector")
     );
     const orphans = Array.from(container.querySelectorAll("label"))
@@ -189,16 +198,18 @@ describe("TunnelEditor — tunnel type selector (UISF2-002)", () => {
   it("says on each card what the type does, with its ssh flag (#6027)", async () => {
     await render();
     expect(q("tunnel-type-local").textContent).toBe(
-      "LocalReach something on the SSH server's side ssh -L"
+      "Reach something through a serverSuch as a database. SSH tunnel, local (ssh -L)"
     );
     expect(q("tunnel-type-remote").textContent).toBe(
-      "RemoteLet the SSH server reach something here ssh -R"
+      "Let a server reach something hereSuch as a web app. SSH tunnel, remote (ssh -R)"
     );
     expect(q("tunnel-type-dynamic").textContent).toBe(
-      "DynamicSOCKS5 proxy through the SSH server ssh -D"
+      "Browse through a serverAs if you were there. SOCKS5 proxy, dynamic (ssh -D)"
     );
-    // The name a screen reader announces stays the plain type.
-    expect(getByRole("radio", "Remote", container)).toBe(q("tunnel-type-remote"));
+    // The name a screen reader announces stays what it is for.
+    expect(getByRole("radio", "Let a server reach something here", container)).toBe(
+      q("tunnel-type-remote")
+    );
   });
 
   it("explains a type on hover while another one is selected (#6027)", async () => {
@@ -245,6 +256,8 @@ describe("TunnelEditor — tunnel type selector (UISF2-002)", () => {
       ],
     });
     await render("tun-agent");
+    click(q("tunnel-editor-change-type"));
+    click(q("tunnel-editor-show-path"));
     for (const type of ["local", "remote", "dynamic"]) {
       const text = description(q(`tunnel-type-${type}`));
       expect(text).toContain("agent build-box");

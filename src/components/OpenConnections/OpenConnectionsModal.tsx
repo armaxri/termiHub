@@ -1197,7 +1197,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                   : undefined;
               const reach =
                 isRunning && state?.reachableFrom
-                  ? reportedReachability(state.reachableFrom, hostBadge.label)
+                  ? reportedReachability(state.reachableFrom, hostBadge.label, state.boundAddress)
                   : null;
               const detail = [
                 hostText,

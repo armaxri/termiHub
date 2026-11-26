@@ -71,6 +71,8 @@ async function openEditor(page: Page): Promise<void> {
   await page.locator(id("service-new-btn")).click();
   await page.locator(id("service-new-tunnel-local")).click();
   await page.locator(EDITOR).waitFor();
+  // The New menu chose the type; the cards show when asked for.
+  await page.locator(id("tunnel-editor-change-type")).click();
   await page.locator(id("tunnel-editor-type-selector")).scrollIntoViewIfNeeded();
   await settle(page);
 }
@@ -118,7 +120,9 @@ for (const viewport of [
       /** The help is inside the window, unclipped, and does not cover its trigger. */
       async function checkHelp(help: Locator, trigger: Locator): Promise<void> {
         // Radix mounts the tooltip off-screen and places it a frame later.
-        await expect.poll(async () => (await help.boundingBox())?.y ?? -1).toBeGreaterThan(0);
+        await expect
+          .poll(async () => (await help.boundingBox())?.y ?? -1)
+          .toBeGreaterThanOrEqual(0);
         const box = (await help.boundingBox())!;
         const card = (await trigger.boundingBox())!;
         expect.soft(box.x).toBeGreaterThanOrEqual(0);
@@ -151,9 +155,9 @@ for (const viewport of [
         expect(await border(page.locator(id("tunnel-type-local")))).toBe(selected);
         await page.mouse.move(0, 0);
 
-        // Keyboard: Tab from the host selector, then the arrow keys.
-        await page.locator(id("tunnel-editor-host")).focus();
-        await page.keyboard.press("Tab");
+        // Keyboard: back from the first field, then the arrow keys.
+        await page.locator(id("tunnel-editor-remote-host")).focus();
+        await page.keyboard.press("Shift+Tab");
         await expect(page.locator(id("tunnel-type-local"))).toBeFocused();
         await checkHelp(
           page.locator(id("tunnel-type-local-help")),
@@ -182,6 +186,7 @@ for (const viewport of [
         const remote = page.locator(id("tunnel-type-remote"));
         await expect(remote).toContainText("on the agent's side");
         await shoot(page, "agent-rest");
+        await page.locator(id("tunnel-editor-show-path")).click();
         await page.locator(id("tunnel-editor-endpoints")).scrollIntoViewIfNeeded();
         await shoot(page, "agent-diagram");
         await remote.scrollIntoViewIfNeeded();

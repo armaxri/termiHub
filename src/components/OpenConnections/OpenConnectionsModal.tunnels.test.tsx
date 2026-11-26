@@ -128,6 +128,20 @@ describe("OpenConnectionsModal — SSH Tunnels section (live store source)", () 
     expect(titles.some((t) => t?.includes("web-forward"))).toBe(true);
   });
 
+  it("claims no more of a remote tunnel's reach than is known (#6034)", async () => {
+    const state = { ...tunnelState("t1", "connected"), reachableFrom: "sshServer" as const };
+    useAppStore.setState({
+      tunnels: [tunnelConfig("t1", "web-forward")],
+      tunnelStates: { t1: { ...state, boundAddress: "localhost:9000" } },
+    });
+    await renderModal();
+    expect(document.body.textContent).toContain("reachable only from the SSH server itself");
+    act(() =>
+      useAppStore.setState({ tunnelStates: { t1: { ...state, boundAddress: "0.0.0.0:9000" } } })
+    );
+    expect(document.body.textContent).toContain("the SSH server decides who reaches it");
+  });
+
   it("reflects a store tunnelStates change without re-opening the modal", async () => {
     useAppStore.setState({
       tunnels: [tunnelConfig("t1", "web-forward")],

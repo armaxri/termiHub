@@ -16,6 +16,10 @@ import type { SavedConnection } from "@/types/connection";
 import type { TunnelConfig } from "@/types/tunnel";
 import type { TunnelEditorMeta } from "@/types/terminal";
 
+vi.mock("@/services/embeddedServerApi", () => ({
+  listNetworkInterfaces: vi.fn(() => Promise.resolve([])),
+}));
+
 const toastMock = vi.hoisted(() => ({
   success: vi.fn(),
   error: vi.fn(),
@@ -83,7 +87,9 @@ function saveButton(): HTMLButtonElement {
   return container.querySelector<HTMLButtonElement>('[data-testid="tunnel-editor-save"]')!;
 }
 function startWithConnectionToggle(): HTMLButtonElement {
-  return container.querySelector<HTMLButtonElement>(`#start-with-connection-${TAB_ID}`)!;
+  return container.querySelector<HTMLButtonElement>(
+    '[data-testid="tunnel-editor-start-with-connection"]'
+  )!;
 }
 function savedConfig(): TunnelConfig {
   const save = useAppStore.getState().saveTunnel as unknown as {

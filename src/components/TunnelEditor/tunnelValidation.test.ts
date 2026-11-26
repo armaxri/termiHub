@@ -23,25 +23,25 @@ describe("validateTunnelType", () => {
   it("rejects port 0 (the parseInt||0 regression)", () => {
     const { valid, errors } = validateTunnelType(local({ localPort: 0 }));
     expect(valid).toBe(false);
-    expect(errors.localPort).toBe("Local port must be between 1 and 65535");
+    expect(errors.localPort).toBe("Port must be between 1 and 65535");
   });
 
   it("rejects a blank ('') port as required (#1444)", () => {
     const { valid, errors } = validateTunnelType(local({ localPort: "" }));
     expect(valid).toBe(false);
-    expect(errors.localPort).toBe("Local port is required");
+    expect(errors.localPort).toBe("Port is required");
   });
 
   it("rejects a port above 65535", () => {
     const { valid, errors } = validateTunnelType(local({ remotePort: 70000 }));
     expect(valid).toBe(false);
-    expect(errors.remotePort).toBe("Remote port must be between 1 and 65535");
+    expect(errors.remotePort).toBe("Port must be between 1 and 65535");
   });
 
   it("rejects a blank host", () => {
     const { valid, errors } = validateTunnelType(local({ remoteHost: "  " }));
     expect(valid).toBe(false);
-    expect(errors.remoteHost).toBe("Remote host is required");
+    expect(errors.remoteHost).toBe("Host is required");
   });
 
   it("validates only the fields present on a dynamic forward", () => {
@@ -56,7 +56,7 @@ describe("validateTunnelType", () => {
     };
     const { valid, errors } = validateTunnelType(bad);
     expect(valid).toBe(false);
-    expect(errors.localHost).toBe("Local host is required");
+    expect(errors.localHost).toBe("Address is required");
     expect(errors.remotePort).toBeUndefined();
   });
 });

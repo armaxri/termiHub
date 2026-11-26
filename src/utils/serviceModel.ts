@@ -459,7 +459,15 @@ function tunnelAddress(
       name,
       host: typeof server?.host === "string" && server.host !== "" ? server.host : undefined,
     };
-    return serviceAddress(tunnelType.config.remoteHost, tunnelType.config.remotePort, listener);
+    const address = serviceAddress(
+      tunnelType.config.remoteHost,
+      tunnelType.config.remotePort,
+      listener
+    );
+    // Its SSH server has the last word, and does not say it (#6034).
+    return address?.open && address.copy
+      ? { ...address, reach: tf("service.reach.anyoneOn.ifAllowed", { machine: name }) }
+      : address;
   }
   // An agent says where it really bound.
   const bound = state?.boundAddress ? splitHostPort(state.boundAddress) : undefined;

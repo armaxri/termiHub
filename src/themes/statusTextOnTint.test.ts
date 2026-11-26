@@ -307,7 +307,7 @@ describe("status tints keep their labels at AA in every built-in theme (#5740)",
     );
     expect(keys).toContain("components/Plugins/Plugins.css :: .plugin-install__native-desc");
     expect(keys).toContain(
-      "components/TunnelEditor/TunnelEditor.css :: .tunnel-editor__reachability-action"
+      "components/ServiceEditor/ServiceEditor.css :: .service-editor__warning-link"
     );
   });
 

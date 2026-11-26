@@ -18,6 +18,10 @@ import type { SavedConnection } from "@/types/connection";
 import type { TunnelConfig } from "@/types/tunnel";
 import type { TunnelEditorMeta } from "@/types/terminal";
 
+vi.mock("@/services/embeddedServerApi", () => ({
+  listNetworkInterfaces: vi.fn(() => Promise.resolve([])),
+}));
+
 vi.mock("@/themes", () => ({
   applyTheme: vi.fn(),
   onThemeChange: vi.fn(() => vi.fn()),
