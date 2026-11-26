@@ -206,4 +206,57 @@ mod tests {
         assert_eq!(slot.get(), Some(5));
         assert_eq!(slot.clone().get(), Some(5), "clones share the slot");
     }
+
+    #[test]
+    fn a_distrusting_slot_keeps_no_status_but_knows_the_shell_exited() {
+        // Win32-OpenSSH sends 0 for a PTY shell that ran `exit 5` (#5995).
+        let slot = ShellExitSlot::distrusting();
+        assert!(!slot.exited_without_status());
+        slot.record(0);
+        assert_eq!(
+            slot.get(),
+            None,
+            "a status that is not the shell's is not reported"
+        );
+        assert!(slot.exited_without_status());
+        assert!(
+            slot.clone().exited_without_status(),
+            "clones share the slot"
+        );
+        // A trusted slot reports what it got and never says it is unknown.
+        let trusted = ShellExitSlot::new();
+        trusted.record(5);
+        assert_eq!(trusted.get(), Some(5));
+        assert!(!trusted.exited_without_status());
+    }
+
+    #[test]
+    fn a_shell_that_exited_without_a_status_ends_as_such() {
+        use crate::connection::SessionEndCause;
+        let unknown = ShellExitSlot::distrusting();
+        unknown.record(0);
+        assert_eq!(
+            shell_end_cause(Some(SessionEndCause::RemoteClosed), &unknown),
+            Some(SessionEndCause::ShellExited)
+        );
+        // Its status came before the link was lost: the shell still exited.
+        assert_eq!(
+            shell_end_cause(Some(SessionEndCause::IoError), &unknown),
+            Some(SessionEndCause::ShellExited)
+        );
+        // No status at all: the link's own cause.
+        let none = ShellExitSlot::distrusting();
+        assert_eq!(
+            shell_end_cause(Some(SessionEndCause::IoError), &none),
+            Some(SessionEndCause::IoError)
+        );
+        assert_eq!(shell_end_cause(None, &none), None);
+        // A trusted status keeps the server's close: the code says the rest.
+        let posix = ShellExitSlot::new();
+        posix.record(0);
+        assert_eq!(
+            shell_end_cause(Some(SessionEndCause::RemoteClosed), &posix),
+            Some(SessionEndCause::RemoteClosed)
+        );
+    }
 }

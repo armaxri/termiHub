@@ -96,3 +96,16 @@ mod tests {
         assert_eq!(json(SessionEndCause::DeviceGone), "\"device_gone\"");
     }
 }
+
+#[cfg(test)]
+mod shell_exited_tests {
+    use super::SessionEndCause;
+
+    #[test]
+    fn a_shell_that_exited_without_a_status_is_named_for_the_wire() {
+        assert_eq!(
+            serde_json::to_string(&SessionEndCause::ShellExited).unwrap(),
+            "\"shell_exited\""
+        );
+    }
+}

@@ -690,6 +690,7 @@ mod tests {
             SessionEndCause::IoError,
             SessionEndCause::Timeout,
             SessionEndCause::DeviceGone,
+            SessionEndCause::ShellExited,
         ] {
             let payload = encode_exit(None, Some(cause));
             let mut buf = Vec::new();
