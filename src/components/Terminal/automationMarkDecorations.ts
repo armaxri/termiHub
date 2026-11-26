@@ -41,6 +41,7 @@ export function decorateAutomationTyping(
     el.classList.add(AUTOMATION_BADGE_CLASS);
     el.title = label;
     el.setAttribute("role", "button");
+    el.dataset.testid = "automation-mark-badge";
     el.setAttribute("aria-label", label);
     el.addEventListener("click", () => openHistory(typing.automationId));
   });

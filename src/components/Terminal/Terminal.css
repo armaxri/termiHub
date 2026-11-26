@@ -280,7 +280,6 @@
    the screen, not to a column, so a resize keeps it at the end of the row. */
 .terminal-container .xterm-decoration.terminal-automation-mark {
   background-color: color-mix(in srgb, var(--accent-color) 12%, transparent);
-  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent-color) 55%, transparent);
   pointer-events: none;
 }
 
