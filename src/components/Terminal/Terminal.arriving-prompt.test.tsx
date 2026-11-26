@@ -151,6 +151,7 @@ interface Engine {
   real: RealTerminal;
   typed: (data: string) => void;
   unblock: () => void;
+  queued: unknown[];
   step: () => void;
   write: Mock;
 }
@@ -230,7 +231,12 @@ beforeEach(async () => {
   await settle();
   expect(line()).toBe("");
 });
+/** Run `fn` every `ms` until the test ends, however it ends. */
+const repeating: ReturnType<typeof setInterval>[] = [];
+const repeat = (fn: () => void, ms: number) => void repeating.push(setInterval(fn, ms));
+
 afterEach(() => {
+  repeating.splice(0).forEach(clearInterval);
   act(() => root.unmount());
   container.remove();
   terminalDispatcher.destroy();
@@ -500,11 +506,10 @@ describe("Continue sees a prompt that has arrived (#6070)", () => {
 
   it("goes on in a terminal that prints every now and then", async () => {
     const state = startWait();
-    const busy = setInterval(() => arrive("tick\r\n"), 25);
+    repeat(() => arrive("tick\r\n"), 25);
     await settle();
     pressContinue();
     await vi.waitFor(() => expect(state.result).toBe("continued"), { timeout: 900 });
-    clearInterval(busy);
   });
 
   it("asks in one that never stops printing, and an insisting press goes on", async () => {
@@ -515,14 +520,13 @@ describe("Continue sees a prompt that has arrived (#6070)", () => {
       arrive("y\r\n");
       engine().step();
     };
-    const flood = setInterval(keepPrinting, 1);
+    repeat(keepPrinting, 1);
     await settle();
     pressContinue();
     await vi.waitFor(() => expect(wait()?.unchecked).toBe(true), { timeout: 2000 });
     expect(state.result).toBeUndefined();
     pressContinue();
     await vi.waitFor(() => expect(state.result).toBe("continued"), { timeout: 2000 });
-    clearInterval(flood);
   });
 
   it("insists on a prompt of the alternate screen only while nothing arrives", async () => {
@@ -536,9 +540,23 @@ describe("Continue sees a prompt that has arrived (#6070)", () => {
     pressContinue();
     await settle();
     expect(state.result).toBeUndefined();
+    // Insisting counts only for what was said: the screen changed since.
+    expect(wait()?.askedAgain).toBe(true);
     pressContinue();
     await settle();
     expect(state.result).toBe("continued");
+  });
+
+  it("decides across a batch that xterm takes in several slices (#6080)", async () => {
+    const state = startWait();
+    terminals.block = true;
+    arrive(`${"x".repeat(40_000)}\r\n${PROMPT}`);
+    pressContinue();
+    expect(engine().queued.length).toBeGreaterThan(2);
+    engine().unblock();
+    await settle(60);
+    expect(state.result).toBeUndefined();
+    expect(wait()?.stillAsking).toBe(true);
   });
 
   it("leaves no marker of the prompts that held it back", async () => {

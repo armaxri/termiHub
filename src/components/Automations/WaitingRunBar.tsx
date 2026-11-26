@@ -24,6 +24,7 @@ function waitText(wait: AutomationWait, hidden: boolean): string {
   if (wait.checking) return t("automation.wait.checking");
   if (wait.elsewhere) return t("automation.wait.elsewhere");
   if (wait.unchecked) return t("automation.wait.unchecked");
+  if (wait.stillAsking && wait.askedAgain) return t("automation.wait.askedAgain");
   if (wait.stillAsking) return t("automation.wait.stillAsking");
   if (wait.answered) return t("automation.wait.answered");
   if (password) return t("automation.wait.passwordThen");
