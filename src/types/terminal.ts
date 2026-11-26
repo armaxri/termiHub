@@ -423,6 +423,12 @@ export interface TerminalTab {
    * created) until the user confirms it.
    */
   pendingImportedConnection?: boolean;
+  /**
+   * With {@link pendingImportedConnection}: it is a saved connection that changed
+   * elsewhere (a restore, an import, a synced file) since it was confirmed here
+   * (#6065), not an imported inline config.
+   */
+  pendingConnectionChanged?: boolean;
 }
 
 /**

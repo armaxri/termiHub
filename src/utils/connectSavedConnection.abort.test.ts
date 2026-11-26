@@ -46,6 +46,10 @@ import {
   type ConnectSavedConnectionResult,
 } from "./connectSavedConnection";
 import { takePreconnectFailure } from "./preconnect";
+import { __trustAllSavedConnectionsForTest } from "@/services/savedConnectionTrust";
+
+// The connect flow under test, not the check of changed connections (#6065).
+__trustAllSavedConnectionsForTest(true);
 
 const mockedCreateTerminal = vi.mocked(createTerminal);
 const mockedResolveCredential = vi.mocked(resolveCredential);

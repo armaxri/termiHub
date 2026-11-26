@@ -13,6 +13,10 @@ import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connection
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { TooltipProvider } from "@/components/ui";
 import type { SavedConnection, ConnectionFolder, RemoteAgentDefinition } from "@/types/connection";
+import { __trustAllSavedConnectionsForTest } from "@/services/savedConnectionTrust";
+
+// The connect flow under test, not the check of changed connections (#6065).
+__trustAllSavedConnectionsForTest(true);
 
 vi.mock("@/services/api", () => ({
   listAvailableShells: vi.fn(() => Promise.resolve([])),

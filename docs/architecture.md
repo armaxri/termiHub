@@ -2376,6 +2376,15 @@ restore and becomes `restored-off.json` when it is applied; the next start asks 
 turn on (`components/RestoredOff/`), and Settings ▸ Backup & restore offers it until it is dealt with.
 HTTP monitors load stopped and macros have no triggers.
 
+A saved connection runs nothing by itself either once it changed elsewhere (#6065,
+`services/savedConnectionTrust.ts`): a restore, an import or a connection file another machine syncs can
+change where it connects, the program it starts here, its initial or reconnect command, its forwarded
+agent or display. What it runs is keyed (`saved:<sha256>` in `workspaceImportAllowlist`, a local
+permission key no file can write); the connections this machine had are confirmed once
+(`saved-baseline:1`), and a save in the editor or the user's Confirm adds one. Until then the last
+session and a workspace hold its tab with what would run, a schedule skips it, and opening it by hand
+shows what would run, or, when nothing runs by itself, is the confirmation.
+
 ```json
 {
   "format": "termihub-backup",

@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo, useId } from "react";
+import { confirmOnceSaved } from "@/services/savedConnectionTrust";
 import { ITEM_DESCRIPTION_MAX_LENGTH, normalizeItemDescription } from "@/utils/itemDescription";
 import { Controller, useController, useForm, useWatch } from "react-hook-form";
 import { useZodValidity } from "@/hooks/useZodEditorForm";
@@ -1195,10 +1196,13 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       const originalSource = existingConnection.sourceFile ?? null;
       if (originalSource !== sourceFile) {
         const moved = await saveConnectionToFile(saved, originalSource);
+        if (moved) void confirmOnceSaved(Promise.resolve(moved.id), moved.config);
         return moved ? { entry: moved, persistedId: Promise.resolve(moved.id) } : null;
       }
 
       const persistedId = updateConnection(saved);
+      // What it runs is the user's own now (#6065).
+      void confirmOnceSaved(persistedId, saved.config);
       return { entry: saved, persistedId };
     } else {
       const saved: SavedConnection = {
@@ -1214,6 +1218,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         sourceFile,
       };
       const persistedId = addConnection(saved);
+      void confirmOnceSaved(persistedId, saved.config);
       return { entry: saved, persistedId };
     }
   }, [

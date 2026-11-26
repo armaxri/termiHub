@@ -31,6 +31,10 @@ vi.mock("@/components/ui", async (importOriginal) => {
 import { useAppStore } from "@/store/appStore";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
+import { __trustAllSavedConnectionsForTest } from "@/services/savedConnectionTrust";
+
+// The connect flow under test, not the check of changed connections (#6065).
+__trustAllSavedConnectionsForTest(true);
 
 let container: HTMLDivElement;
 let root: Root;

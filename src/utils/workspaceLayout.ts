@@ -2,6 +2,7 @@
  * Utility functions for workspace layout tree manipulation.
  */
 
+import type { TrustedTabDef } from "@/services/workspaceImportTrust";
 import {
   WorkspaceLayoutNode,
   WorkspaceLeafNode,
@@ -344,6 +345,8 @@ type ResolvedTab =
       workspaceAgentRef?: { agentId: string; definitionId: string };
       /** The tab opens the def's inline config (not a saved connection). */
       fromInlineConfig?: boolean;
+      /** Resolved from a saved connection (`connectionRef`, #6065). */
+      fromSavedConnection?: boolean;
       /**
        * Set when the def carries no title and the tab is a shell: the name the
        * tab is numbered under once the whole layout is built (#5899).
@@ -418,7 +421,7 @@ function buildPanelTree(
           agentErrorMeta: resolved.agentErrorMeta,
           workspaceAgentRef: resolved.workspaceAgentRef,
           initialCommand: resolved.agentErrorMeta.initialCommand,
-          ...importedTrustFields(tabDef, false),
+          ...importedTrustFields(tabDef, "other"),
         };
       }
       const tab: TerminalTab = {
@@ -432,7 +435,10 @@ function buildPanelTree(
         isActive: false,
         workspaceAgentRef: resolved.workspaceAgentRef,
         initialCommand: tabDef.initialCommand,
-        ...importedTrustFields(tabDef, resolved.fromInlineConfig === true),
+        ...importedTrustFields(
+          tabDef,
+          resolved.fromInlineConfig ? "inline" : resolved.fromSavedConnection ? "saved" : "other"
+        ),
       };
       if (resolved.defaultTitleBase !== undefined) defaults.set(tab, resolved.defaultTitleBase);
       return tab;
@@ -470,14 +476,21 @@ function buildPanelTree(
  */
 function importedTrustFields(
   tabDef: WorkspaceTabDef,
-  opensInlineConfig: boolean
-): Pick<TerminalTab, "pendingImportedCommand" | "pendingImportedConnection"> {
+  opens: "inline" | "saved" | "other"
+): Pick<
+  TerminalTab,
+  "pendingImportedCommand" | "pendingImportedConnection" | "pendingConnectionChanged"
+> {
   return {
     ...(tabDef.pendingInitialCommand
       ? { pendingImportedCommand: tabDef.pendingInitialCommand }
       : {}),
-    ...(opensInlineConfig && tabDef.inlineConfigUnconfirmed
+    ...(opens === "inline" && tabDef.inlineConfigUnconfirmed
       ? { pendingImportedConnection: true }
+      : {}),
+    // A saved connection changed elsewhere since it was confirmed here (#6065).
+    ...(opens === "saved" && (tabDef as TrustedTabDef).savedConnectionUnconfirmed
+      ? { pendingImportedConnection: true, pendingConnectionChanged: true }
       : {}),
   };
 }
@@ -572,6 +585,7 @@ function resolveTabConfig(
         config: saved.config,
         title: tabDef.title ?? saved.name,
         connectionType: saved.config.type,
+        fromSavedConnection: true,
       };
     }
   }

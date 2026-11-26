@@ -69,6 +69,7 @@ import { layoutState } from "@/test/layoutState";
 import { currentSettingsView } from "./settingsBridge";
 import { seedSettings, setupSettingsRegion } from "@/test/settingsRegionTestHarness";
 import { importedCommandKey, importedConnectionKey } from "@/services/workspaceImportTrust";
+import { savedConnectionKey } from "@/services/savedConnectionTrust";
 
 const LOCAL_CONFIG: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
 
@@ -132,5 +133,14 @@ describe("appStore — imported workspace confirmations (#4434)", () => {
     const id = seedTab({ pendingImportedCommand: "ls", sessionId: "s1" });
     await useAppStore.getState().confirmImportedTabCommand(id);
     expect(allowlist()).toEqual(["cmd:old", await importedCommandKey("ls")]);
+  });
+
+  it("confirming a changed saved connection remembers what it runs, for every way it opens (#6065)", async () => {
+    const id = seedTab({ pendingImportedConnection: true, pendingConnectionChanged: true });
+    await useAppStore.getState().confirmImportedTabConnection(id);
+    const tab = useAppStore.getState().tabContent[id];
+    expect(tab.pendingImportedConnection).toBeUndefined();
+    expect(tab.pendingConnectionChanged).toBeUndefined();
+    expect(allowlist()).toContain(await savedConnectionKey(LOCAL_CONFIG));
   });
 });

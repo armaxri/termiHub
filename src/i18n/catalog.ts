@@ -244,6 +244,8 @@ const en = {
   "schedule.connect.skip.agentTooOld": "agent too old for unattended connect",
   "schedule.connect.skip.agentDisconnected": "agent not connected",
   "schedule.connect.skip.notTerminal": "not a terminal connection",
+  "schedule.connect.skip.unconfirmed":
+    "changed elsewhere (a restore, an import or a synced file) and not confirmed here: open it once yourself",
   "schedule.connect.skip.missing": "the saved connection no longer exists",
   "schedule.connect.skip.cancelled": "the connect was cancelled",
   "schedule.connect.skip.failed": "could not connect: {error}",

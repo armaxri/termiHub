@@ -621,6 +621,7 @@ export const createTabGroupsSlice: StateCreator<AppState, [], [], TabGroupsSlice
           ...(h.initialCommand ? { initialCommand: h.initialCommand } : {}),
           ...(h.pendingImportedCommand ? { pendingImportedCommand: h.pendingImportedCommand } : {}),
           ...(h.pendingImportedConnection ? { pendingImportedConnection: true } : {}),
+          ...(h.pendingConnectionChanged ? { pendingConnectionChanged: true } : {}),
           ...(h.persistentConnectionId ? { persistentConnectionId: h.persistentConnectionId } : {}),
           ...(h.connectionId ? { connectionId: h.connectionId } : {}),
           ...(h.spawned ? { spawned: true } : {}),
