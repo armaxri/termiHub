@@ -261,6 +261,36 @@ mod tests {
         assert_eq!(normalize_path_separators(""), "");
     }
 
+    // ── windows_sftp_path tests (#6147) ───────────────────────────────
+
+    const WIN_HOME: &str = "/C:/Users/me";
+
+    #[test]
+    fn a_git_bash_drive_path_opens_on_a_windows_sftp_server() {
+        assert_eq!(
+            windows_sftp_path("/c/Users/me/src", WIN_HOME).as_deref(),
+            Some("/C:/Users/me/src")
+        );
+        assert_eq!(windows_sftp_path("/d", WIN_HOME).as_deref(), Some("/D:/"));
+        assert_eq!(windows_sftp_path("/d/", WIN_HOME).as_deref(), Some("/D:/"));
+        assert_eq!(
+            windows_sftp_path("/c/Users/me", "/c:/Users/me").as_deref(),
+            Some("/C:/Users/me"),
+            "a lowercase drive in the server's home is Windows too"
+        );
+    }
+
+    #[test]
+    fn other_paths_and_posix_servers_are_left_alone() {
+        // A POSIX server: `/c/x` is a real path there.
+        assert_eq!(windows_sftp_path("/c/x", "/home/me"), None);
+        assert_eq!(windows_sftp_path("/c/x", "/"), None);
+        // Not a single-letter drive segment, or already a Windows path.
+        for path in ["/tmp", "/usr/bin", "/C:/Users", "C:/Users", "/", "", "~", "/cd/x"] {
+            assert_eq!(windows_sftp_path(path, WIN_HOME), None, "{path:?}");
+        }
+    }
+
     // ── normalize_platform_path tests ──────────────────────────────────
 
     #[cfg(windows)]
