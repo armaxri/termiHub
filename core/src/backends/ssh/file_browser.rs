@@ -20,7 +20,9 @@ use tokio::sync::Mutex;
 use crate::config::SshConfig;
 use crate::errors::FileError;
 use crate::files::transfer::SourceFingerprint;
-use crate::files::utils::{expand_home_relative, is_home_relative};
+use crate::files::utils::{
+    expand_home_relative, is_home_relative, is_msys_drive_path, windows_sftp_path,
+};
 use crate::files::{FileBrowser, FileEntry, RangedFileAccess};
 
 use super::handler::SshSession;
@@ -235,8 +237,13 @@ impl SftpFileBrowser {
     /// `~` — a `readdir` of `~` answers "No such file" — yet the file browser
     /// starts a session that reports no cwd (an SFTP-only host) at `~`. Other
     /// paths pass through without a round-trip.
+    ///
+    /// A Git Bash drive path (`/c/Users/me`, as that shell's hook reports its
+    /// directory) becomes the server's own `/C:/Users/me` when the login
+    /// directory says the server is a Windows one (#6147).
     async fn resolve_home(&self, path: &str) -> Result<String, FileError> {
-        if !is_home_relative(path) {
+        let msys = is_msys_drive_path(path);
+        if !is_home_relative(path) && !msys {
             return Ok(path.to_string());
         }
         self.ensure_connected().await?;
@@ -245,6 +252,9 @@ impl SftpFileBrowser {
             .as_ref()
             .ok_or_else(|| FileError::OperationFailed("SFTP not connected".to_string()))?;
         let home = sftp_ops::realpath(&state.sftp, ".").await?;
+        if msys {
+            return Ok(windows_sftp_path(path, &home).unwrap_or_else(|| path.to_string()));
+        }
         Ok(expand_home_relative(path, &home))
     }
 

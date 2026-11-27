@@ -99,18 +99,51 @@ pub fn normalize_path_separators(path: &str) -> String {
 /// ASCII letter after the leading `/`) and rewrite it to a drive letter.
 #[cfg(windows)]
 fn convert_msys_path(path: &str) -> String {
+    msys_drive(path).map_or_else(
+        || path.to_string(),
+        |(drive, rest)| format!("{drive}:/{rest}"),
+    )
+}
+
+/// The drive letter (uppercase) and the rest of an MSYS drive path: `/x` or
+/// `/x/...` where `x` is a single ASCII letter.
+fn msys_drive(path: &str) -> Option<(char, &str)> {
     let bytes = path.as_bytes();
-    // Match `/x` or `/x/...` where x is a single ASCII letter
     if bytes.len() >= 2
         && bytes[0] == b'/'
         && bytes[1].is_ascii_alphabetic()
         && (bytes.len() == 2 || bytes[2] == b'/')
     {
-        let drive = (bytes[1] as char).to_ascii_uppercase();
-        format!("{}:/{}", drive, path[2..].trim_start_matches('/'))
+        Some((
+            (bytes[1] as char).to_ascii_uppercase(),
+            path[2..].trim_start_matches('/'),
+        ))
     } else {
-        path.to_string()
+        None
     }
+}
+
+/// Whether `path` is a Git Bash / MSYS drive path (`/c`, `/c/Users/me`).
+pub fn is_msys_drive_path(path: &str) -> bool {
+    msys_drive(path).is_some()
+}
+
+/// The path a Windows SFTP server opens for the Git Bash drive path `path`
+/// (`/c/Users/me` → `/C:/Users/me`), when `home` — the server's SFTP
+/// `realpath` of `.` — says the server names folders that way (#6147).
+///
+/// A Git Bash login shell on a Win32-OpenSSH host reports its directory as
+/// an MSYS path, which that server's SFTP does not open: it names the same
+/// folder `/C:/Users/me`. `None` for any other path, and for every path of a
+/// server whose home is not a drive path, where `/c/x` is a real path.
+pub fn windows_sftp_path(path: &str, home: &str) -> Option<String> {
+    let home = home.as_bytes();
+    let windows_server =
+        home.len() >= 3 && home[0] == b'/' && home[1].is_ascii_alphabetic() && home[2] == b':';
+    if !windows_server {
+        return None;
+    }
+    msys_drive(path).map(|(drive, rest)| format!("/{drive}:/{rest}"))
 }
 
 /// Normalize a filesystem path for the current platform.
@@ -285,8 +318,18 @@ mod tests {
         // A POSIX server: `/c/x` is a real path there.
         assert_eq!(windows_sftp_path("/c/x", "/home/me"), None);
         assert_eq!(windows_sftp_path("/c/x", "/"), None);
+        assert!(is_msys_drive_path("/c/x") && !is_msys_drive_path("/cd/x"));
         // Not a single-letter drive segment, or already a Windows path.
-        for path in ["/tmp", "/usr/bin", "/C:/Users", "C:/Users", "/", "", "~", "/cd/x"] {
+        for path in [
+            "/tmp",
+            "/usr/bin",
+            "/C:/Users",
+            "C:/Users",
+            "/",
+            "",
+            "~",
+            "/cd/x",
+        ] {
             assert_eq!(windows_sftp_path(path, WIN_HOME), None, "{path:?}");
         }
     }
