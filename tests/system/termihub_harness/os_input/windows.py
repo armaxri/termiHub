@@ -207,6 +207,16 @@ class WindowsOsInput(OsInput):
         root = user32.GetAncestor(wintypes.HWND(child), GA_ROOT)
         return self._window_label(int(root or child))
 
+    def _owner_at(self, x: int, y: int) -> Optional[int]:
+        user32 = self._user32
+        user32.WindowFromPoint.restype = wintypes.HWND
+        user32.GetAncestor.restype = wintypes.HWND
+        child = user32.WindowFromPoint(wintypes.POINT(x, y))
+        if not child:
+            return 0
+        root = user32.GetAncestor(wintypes.HWND(child), GA_ROOT)
+        return self._window_pid(int(root or child))
+
     def _describe_frontmost(self) -> str:
         foreground = self._user32.GetForegroundWindow()
         return self._window_label(int(foreground)) if foreground else ""

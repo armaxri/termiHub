@@ -562,6 +562,52 @@ def test_calibration_keeps_retrying_past_the_first_nudges_until_a_move_lands(mon
     assert screen.offset == (500 - 400 + 23, 350 - 300 + 17)  # round 5 = nudge (23, 17)
 
 
+class CoveredInput(FakeInput):
+    """A window of another process (an alert) lies over part of the test window."""
+
+    def __init__(self, pid: int, cover: tuple[int, int, int, int], **kw):
+        super().__init__(pid, **kw)
+        self.cover = cover
+
+    def _owner_at(self, x, y):
+        left, top, right, bottom = self.cover
+        return 555 if left <= x < right and top <= y < bottom else self.pid
+
+
+def test_calibration_moves_where_the_window_is_not_covered_by_another_app():
+    # #6143: a system alert (UserNotificationCenter, above the pinned test window)
+    # lay over the window's centre on the macOS nightly, so every round moved the
+    # pointer onto the alert. The window is 100,50 800x600; the alert covers its
+    # middle and right, as in the nightly.
+    fake = CoveredInput(100, (380, 120, 900, 560), env=CI)
+    screen = ScreenMapper.calibrate(fake, ProbeDriver(client=(100.0, 100.0)), timeout=2.0)
+    moves = [c[1:] for c in fake.calls if c[0] == "move"]
+    assert moves, "the pointer never moved"
+    for x, y in moves:
+        assert not fake.covered_at(x, y), f"moved onto the alert at {(x, y)}"
+    x, y = moves[-1]
+    assert screen.offset == (x - 100.0, y - 100.0)
+
+
+def test_calibration_names_the_cover_when_the_whole_window_is_covered():
+    fake = CoveredInput(100, (0, 0, 2000, 2000), env=CI)
+    with pytest.raises(OsInputUnavailable, match="covered by another app") as raised:
+        ScreenMapper.calibrate(fake, ProbeDriver(), timeout=0.3)
+    assert not any(c[0] == "move" for c in fake.calls)
+    assert "calibration pointer move" in str(raised.value)
+
+
+def test_exposed_point_steps_off_a_window_of_another_app():
+    fake = CoveredInput(100, (0, 0, 2000, 2000), env=CI)
+    fake.cover = (0, 0, 0, 0)
+    rect = {"left": 0, "top": 0, "width": 400, "height": 200}
+    screen = ScreenMapper.calibrate(fake, ProbeDriver(client=(400.0, 300.0), rect=rect))
+    cx, cy = screen.point("r")
+    fake.cover = (int(cx) - 5, int(cy) - 5, 10_000, 10_000)
+    x, y = screen.exposed_point("r")
+    assert not fake.covered_at(x, y)
+
+
 def test_calibration_failure_names_what_was_under_the_pointer():
     class Diagnosing(FakeInput):
         def _describe_point(self, x, y):
@@ -824,6 +870,23 @@ def test_macos_calibration_miss_names_the_covering_window_and_desktop(monkeypatc
     desktop = osi.describe_desktop()
     assert desktop.startswith("active app pid: 81712")
     assert desktop.index("pid=555") < desktop.index("pid=81712")  # front to back
+
+
+def test_macos_owner_at_is_the_pid_a_pointer_event_there_reaches(monkeypatch):
+    # #6143: the owner, not a label, so calibration can step around a cover.
+    osi, _ = mac_input(monkeypatch, front=81712, env=CI)
+    monkeypatch.setattr(osi, "_window_list", lambda: MAC_WINDOWS)
+    assert osi.owner_at(512, 368) == 555  # the alert over the test window
+    assert osi.owner_at(100, 100) == 81712
+    assert osi.owner_at(100, 10) == 0  # nothing there
+    osi.allow_pid(81712)
+    assert osi.covered_at(512, 368) and not osi.covered_at(100, 100)
+
+    def broken():
+        raise RuntimeError("window server unavailable")
+
+    monkeypatch.setattr(osi, "_window_list", broken)
+    assert osi.owner_at(512, 368) is None and not osi.covered_at(512, 368)
 
 
 def test_macos_diagnostics_never_mask_the_failure(monkeypatch):
