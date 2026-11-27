@@ -610,6 +610,9 @@ def test_exposed_point_steps_off_a_window_of_another_app():
     fake.cover = (int(cx) - 5, int(cy) - 5, 10_000, 10_000)
     x, y = screen.exposed_point("r")
     assert not fake.covered_at(x, y)
+    # Covered everywhere: the requested point, as before, rather than a refusal.
+    fake.cover = (0, 0, 10_000, 10_000)
+    assert screen.exposed_point("r") == screen.point("r")
 
 
 def test_calibration_failure_names_what_was_under_the_pointer():

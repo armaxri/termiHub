@@ -76,15 +76,21 @@ def window_info_label(info: dict) -> str:
     )
 
 
-def window_info_at(infos: Iterable[dict], x: float, y: float) -> Optional[dict]:
+def window_info_at(
+    infos: Iterable[dict], x: float, y: float, *, hit_targets_only: bool = False
+) -> Optional[dict]:
     """The front-most on-screen window containing ``(x, y)``.
 
     ``CGWindowListCopyWindowInfo`` lists windows front to back, so the first
     one whose bounds hold the point (and that is not fully transparent) is the
     one a pointer event there reaches — a covering window of *any* process.
+    With ``hit_targets_only``, system layers that let clicks through are passed
+    over too (:func:`is_hit_target`).
     """
     for info in infos:
         if float(info.get("kCGWindowAlpha", 1.0)) <= 0.0:
+            continue
+        if hit_targets_only and not is_hit_target(info):
             continue
         bounds = info.get("kCGWindowBounds") or {}
         bx, by = float(bounds.get("X", 0)), float(bounds.get("Y", 0))
@@ -92,6 +98,17 @@ def window_info_at(infos: Iterable[dict], x: float, y: float) -> Optional[dict]:
         if bx <= x < bx + bw and by <= y < by + bh:
             return info
     return None
+
+
+def is_hit_target(info: dict) -> bool:
+    """Whether a window can take a pointer event over an app window (#6143).
+
+    The Dock keeps a full-screen window at layer 20 that lets clicks through,
+    and the menu bar and status items (layers 24, 25) lie above the app area.
+    Layers from :data:`MAX_APP_WINDOW_LAYER` up are such system chrome; an
+    alert of UserNotificationCenter (layer 8) is a real cover.
+    """
+    return int(info.get("kCGWindowLayer", 0)) < MAX_APP_WINDOW_LAYER
 
 
 class MacOsInput(OsInput):
@@ -193,14 +210,14 @@ class MacOsInput(OsInput):
         infos = self._safe_window_list()
         if infos is None:
             return ""
-        info = window_info_at(infos, x, y)
+        info = window_info_at(infos, x, y, hit_targets_only=True)
         return window_info_label(info) if info is not None else "nothing"
 
     def _owner_at(self, x: int, y: int) -> Optional[int]:
         infos = self._safe_window_list()
         if infos is None:
             return None
-        info = window_info_at(infos, x, y)
+        info = window_info_at(infos, x, y, hit_targets_only=True)
         return int(info.get("kCGWindowOwnerPID", 0)) if info is not None else 0
 
     def _describe_frontmost(self) -> str:
