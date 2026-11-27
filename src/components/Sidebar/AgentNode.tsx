@@ -1341,7 +1341,8 @@ export function AgentNode({
   });
 
   const handleConnect = useCallback(async () => {
-    if (connecting) return;
+    // Nor while a setup installs it (a double-click): the row says "Installing…" (#5518).
+    if (connecting || setupPhase === "installing") return;
     connectCanceledRef.current = false;
 
     try {
@@ -1368,7 +1369,7 @@ export function AgentNode({
     } finally {
       setConnecting(false);
     }
-  }, [agent, connectRemoteAgent, requestPassword, connecting]);
+  }, [agent, connectRemoteAgent, requestPassword, connecting, setupPhase]);
 
   const handleSetupFromError = useCallback(() => {
     setErrorDialogOpen(false);
@@ -1982,7 +1983,12 @@ export function AgentNode({
             </MenuItem>
           ) : !isConnected && !isReconnecting ? (
             <>
-              <MenuItem onSelect={handleConnect} data-testid="context-agent-connect">
+              <MenuItem
+                onSelect={handleConnect}
+                // A setup still installs it: its path is stored when it is done (#5518).
+                disabled={setupPhase === "installing"}
+                data-testid="context-agent-connect"
+              >
                 <Play size={14} />
                 Connect
               </MenuItem>
