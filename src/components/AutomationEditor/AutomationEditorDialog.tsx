@@ -131,8 +131,6 @@ export function AutomationEditorDialog({
   const schedules = useAppStore((s) => s.schedules);
   const linked = schedules.filter((x) => x.action.automationId === automation.id);
   const { connections } = useProjectedConnections();
-  // What starts it comes first when something does (A-024); the heading says what.
-  const [whenFirst] = useState(initial.triggers.length > 0 || (!isNew && linked.length > 0));
   const [whenOpen, setWhenOpen] = useState(false);
   const [valuesOpen, setValuesOpen] = useState(false);
   const [tagsOpen, setTagsOpen] = useState(false);
@@ -383,13 +381,14 @@ export function AutomationEditorDialog({
               Cancel
             </Button>
           </ModalClose>
-          {/* Save is the primary, on the right, in New and Edit (A-021). Both stay
-              enabled while something is missing: a click then shows it (A-023). */}
+          {/* Save is the primary, on the right, in New and Edit (A-021). While
+              something is missing both look unavailable, as the note says (live
+              review editor-3), and stay reachable: a click shows it (A-023). */}
           <Button
             variant="secondary"
             className="automation-editor__save-run"
             onClick={() => handleSave(true)}
-            aria-disabled={blockedBy !== null}
+            aria-disabled={!canSave || blockedBy !== null}
             errorToast={false}
             data-testid="automation-editor-save-run"
           >
@@ -402,6 +401,7 @@ export function AutomationEditorDialog({
             variant="primary"
             onClick={() => handleSave(false)}
             data-invalid={!canSave || undefined}
+            aria-disabled={!canSave || undefined}
             errorToast={false}
             data-testid="automation-editor-save"
           >
@@ -447,8 +447,6 @@ export function AutomationEditorDialog({
             />
           </Field>
         </div>
-
-        {whenFirst && whenSection}
 
         <section
           className="automation-editor__section"
@@ -512,7 +510,9 @@ export function AutomationEditorDialog({
           </StepEditorProvider>
         </section>
 
-        {!whenFirst && whenSection}
+        {/* One order for every automation (live review editor-6): the steps come
+            first; the heading of When it runs names its triggers (A-024). */}
+        {whenSection}
 
         {showValues && (
           <div data-enter-exempt>
