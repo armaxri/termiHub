@@ -138,6 +138,26 @@ CALIBRATION_MOVE_WAIT = 2.0
 EXPOSURE_GRID = (0.05, 0.15, 0.25, 0.35, 0.5, 0.65, 0.75, 0.85, 0.95)
 
 
+def _exposed_point(
+    os_input: OsInput, window: OsWindow, dx: int, dy: int
+) -> Optional[tuple[int, int]]:
+    """The calibration point of ``window``: its centre nudged by ``(dx, dy)`` when
+    no other app's window lies over it there, else the exposed grid point nearest
+    to it (#6143); ``None`` when every point is covered.
+    """
+    cx, cy = window.center
+    grid = [
+        (window.x + round(window.width * gx), window.y + round(window.height * gy))
+        for gx in EXPOSURE_GRID
+        for gy in EXPOSURE_GRID
+    ]
+    grid.sort(key=lambda p: ((p[0] - cx) ** 2 + (p[1] - cy) ** 2, p))
+    for x, y in [(cx + dx, cy + dy), *grid]:
+        if window.contains(x, y) and not os_input.covered_at(x, y):
+            return x, y
+    return None
+
+
 @dataclass
 class ScreenMapper:
     """Maps one app window's CSS client coordinates to OS screen coordinates.
@@ -168,6 +188,10 @@ class ScreenMapper:
         what was under the pointer each time and lists every window on the
         desktop, so a covering or input-grabbing window is named (#4993).
 
+        The move goes to a point of the window that no window of another app
+        covers: a system alert pinned above the test window took every move to
+        the centre on the macOS nightly (#6143), and a retry cannot move it.
+
         Before anything moves, it refuses (:class:`ForeignAppAlive`) while any
         other termiHub process is alive: a leaked or parallel app pinned on top
         over the test window would eat the moves, or take the foreground (#5467).
@@ -189,8 +213,13 @@ class ScreenMapper:
                 except OsInputUnavailable as exc:
                     misses.append(f"{window}: not activated ({exc})")
                     continue  # e.g. a hidden helper window that cannot take focus
-                cx, cy = window.center
-                x, y = cx + dx, cy + dy
+                exposed = _exposed_point(os_input, window, dx, dy)
+                if exposed is None:
+                    cx, cy = window.center
+                    under = os_input.describe_point(cx, cy) or "?"
+                    misses.append(f"{window}: covered by another app (at its centre: {under})")
+                    continue
+                x, y = exposed
                 probe = driver.os_input_probe(reset=True)
                 os_input.pointer_move(x - 7, y - 7)
                 os_input.pointer_move(x, y)
@@ -265,6 +294,12 @@ class ScreenMapper:
         point not avoided is taken as is.
         """
         rect = self.rect(test_id)
+        given = avoid
+
+        def avoided(x: float, y: float) -> bool:
+            # Nor a point where a window of another app lies over ours (#6143).
+            return self.os_input.covered_at(x, y) or (given is not None and given(x, y))
+
         fractions = sorted(
             {(gx, gy) for gx in {fx, *EXPOSURE_GRID} for gy in {fy, *EXPOSURE_GRID}},
             key=lambda f: ((f[0] - fx) ** 2 + (f[1] - fy) ** 2, f),
@@ -273,7 +308,7 @@ class ScreenMapper:
             (rect["left"] + rect["width"] * gx, rect["top"] + rect["height"] * gy)
             for gx, gy in fractions
         ]
-        clients = [c for c in clients if avoid is None or not avoid(*self.to_screen(*c))]
+        clients = [c for c in clients if not avoided(*self.to_screen(*c))]
         if not clients:
             raise AssertionError(f"every point of {test_id!r} {rect} is ruled out")
         hits = self.driver.os_input_probe(test_id, points=clients).get("hits")

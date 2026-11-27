@@ -600,9 +600,8 @@ def test_calibration_names_the_cover_when_the_whole_window_is_covered():
 def test_exposed_point_steps_off_a_window_of_another_app():
     fake = CoveredInput(100, (0, 0, 2000, 2000), env=CI)
     fake.cover = (0, 0, 0, 0)
-    screen = ScreenMapper.calibrate(
-        fake, ProbeDriver(client=(400.0, 300.0), rect={"left": 0, "top": 0, "width": 400, "height": 200})
-    )
+    rect = {"left": 0, "top": 0, "width": 400, "height": 200}
+    screen = ScreenMapper.calibrate(fake, ProbeDriver(client=(400.0, 300.0), rect=rect))
     cx, cy = screen.point("r")
     fake.cover = (int(cx) - 5, int(cy) - 5, 10_000, 10_000)
     x, y = screen.exposed_point("r")

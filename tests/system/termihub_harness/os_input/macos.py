@@ -196,6 +196,13 @@ class MacOsInput(OsInput):
         info = window_info_at(infos, x, y)
         return window_info_label(info) if info is not None else "nothing"
 
+    def _owner_at(self, x: int, y: int) -> Optional[int]:
+        infos = self._safe_window_list()
+        if infos is None:
+            return None
+        info = window_info_at(infos, x, y)
+        return int(info.get("kCGWindowOwnerPID", 0)) if info is not None else 0
+
     def _describe_frontmost(self) -> str:
         pid = self._frontmost_pid()
         infos = self._safe_window_list()

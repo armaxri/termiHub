@@ -283,6 +283,26 @@ class OsInput:
         """
         return self._describe_point(int(round(x)), int(round(y)))
 
+    def owner_at(self, x: float, y: float) -> Optional[int]:
+        """The PID of the window a pointer event at ``(x, y)`` reaches (#6143).
+
+        ``0`` when no window is there, ``None`` when the backend cannot tell
+        (then nothing is ruled out). Read-only, and never raises.
+        """
+        try:
+            return self._owner_at(int(round(x)), int(round(y)))
+        except Exception:  # noqa: BLE001 — a lookup must never fail the input
+            return None
+
+    def covered_at(self, x: float, y: float) -> bool:
+        """Whether a pointer event at ``(x, y)`` would reach a window of another app.
+
+        A system alert pinned above the test window (UserNotificationCenter on
+        the macOS runners, #6143) takes every event there. Unknown is not covered.
+        """
+        owner = self.owner_at(x, y)
+        return owner is not None and owner not in self._allowed
+
     def describe_desktop(self) -> str:
         """Every visible top-level window and the input state (diagnostics).
 
@@ -433,6 +453,10 @@ class OsInput:
 
     def _describe_point(self, x: int, y: int) -> str:
         return ""
+
+    def _owner_at(self, x: int, y: int) -> Optional[int]:
+        """See :meth:`owner_at`; ``None`` where the backend cannot tell."""
+        return None
 
     def _describe_frontmost(self) -> str:
         """The frontmost window, for a refusal message (empty when unknown)."""
