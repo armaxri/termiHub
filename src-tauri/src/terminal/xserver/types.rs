@@ -347,8 +347,8 @@ impl XServerError {
             dependency: "XWayland".to_string(),
             install_mode: InstallMode::Backend,
             install_hint: Some(
-                "Install your distribution's XWayland package (e.g. `xwayland`, `xorg-xwayland`, \
-                or `xwayland` via your package manager), then reconnect."
+                "Install your distribution's XWayland package (xwayland, xorg-xwayland or \
+                xorg-x11-server-Xwayland, depending on the distribution), then reconnect."
                     .to_string(),
             ),
             install_command: None,
@@ -361,8 +361,8 @@ impl XServerError {
     pub fn linux_sandbox_socket_hidden() -> Self {
         XServerError::ServerUnreachable {
             message: "termiHub is running in a Flatpak/Snap sandbox that is not exposing the host \
-                X socket. Grant X access to the sandbox (e.g. `--socket=x11`, or \
-                `--socket=fallback-x11` on Wayland) and reconnect."
+                X socket. Grant the sandbox X access (the permission --socket=x11, or \
+                --socket=fallback-x11 on Wayland) and reconnect."
                 .to_string(),
         }
     }
