@@ -438,6 +438,36 @@ pub const X_SERVER_CONNECT_FAILED_EVENT: &str = "x-server-connect-failed";
 mod tests {
     use super::*;
 
+    /// The user reads `message` and `installHint` as plain text, so markdown
+    /// backticks would show literally (#6166). `installCommand` is a command.
+    #[test]
+    fn guidance_text_has_no_markdown_backticks() {
+        let errors = [
+            XServerError::vcxsrv_missing(),
+            XServerError::winget_required(),
+            XServerError::windows_server_unreachable(),
+            XServerError::windows_no_local_server(),
+            XServerError::xquartz_missing(),
+            XServerError::homebrew_required(),
+            XServerError::macos_server_unreachable(),
+            XServerError::linux_x_missing(),
+            XServerError::linux_server_unreachable(),
+            XServerError::linux_xwayland_missing(),
+            XServerError::linux_sandbox_socket_hidden(),
+            XServerError::linux_headless(),
+            XServerError::linux_install_unsupported(),
+        ];
+        for error in errors {
+            let json = serde_json::to_value(&error).expect("serializes");
+            for field in ["message", "installHint"] {
+                let text = json.pointer(&format!("/{field}")).and_then(|v| v.as_str());
+                if let Some(text) = text {
+                    assert!(!text.contains('`'), "{field} shows a backtick: {text}");
+                }
+            }
+        }
+    }
+
     #[test]
     fn platform_current_is_one_of_the_variants() {
         let p = XServerPlatform::current();
