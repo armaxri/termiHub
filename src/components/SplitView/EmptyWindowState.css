@@ -48,3 +48,16 @@
 .empty-window__recent-item {
   justify-content: flex-start;
 }
+
+/* #6162: the same state in one empty panel of a split — tighter, no icon badge. */
+.empty-window--compact .ui-empty--card {
+  padding: var(--spacing-md);
+}
+
+.empty-window--compact .ui-empty__title {
+  font-size: var(--font-size-md);
+}
+
+.empty-window--compact .empty-window__actions {
+  gap: var(--spacing-md);
+}
