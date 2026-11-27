@@ -943,7 +943,9 @@ def test_macos_calibration_steps_around_the_alert_but_not_the_dock(monkeypatch):
     osi, _ = mac_input(monkeypatch, front=81712, env=CI)
     moves: list = []
     monkeypatch.setattr(osi, "_windows", lambda pid: [OsWindow(658, pid, 0, 31, 1024, 674)])
+    # No AppKit or Accessibility: this runs without pyobjc, like the other macOS tests.
     monkeypatch.setattr(osi, "_activate", lambda window: None)
+    monkeypatch.setattr(osi, "_frontmost_window", lambda: 658)
     monkeypatch.setattr(osi, "_foreign_apps", lambda timeout: [])
     monkeypatch.setattr(osi, "_end_own_leaks", lambda: None)
     monkeypatch.setattr(osi, "_pointer_move", lambda pid, x, y: moves.append((x, y)))
