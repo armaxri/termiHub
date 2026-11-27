@@ -4,6 +4,8 @@ import { Button, Modal } from "@/components/ui";
 import type { AutomationImport, ImportedEntry } from "@/services/automationFileIo";
 import { joinWords } from "@/utils/joinWords";
 import { EXPERIMENTAL_SETTING_PATH } from "@/utils/experimentalSetting";
+import { LOCAL_PROGRAMS_SETTING_LABEL } from "@/utils/localProcessGate";
+import { useProjectedSettings } from "@/store/useProjectedSettings";
 import "./AutomationImportDialog.css";
 
 /** Props for {@link AutomationImportDialog}. */
@@ -15,8 +17,27 @@ export interface AutomationImportDialogProps {
   onShow: () => void;
 }
 
+/** The switches a local program of an imported automation waits for. */
+export interface LocalProgramSwitches {
+  /** Settings ▸ General ▸ Allow experimental features. */
+  experimental: boolean;
+  /** Settings ▸ Security ▸ Allow automations to run local programs. */
+  localPrograms: boolean;
+}
+
+/** What the dialog says about a local program: the switch still off, or the question. */
+function localProgramNote({ experimental, localPrograms }: LocalProgramSwitches): string {
+  if (!experimental) {
+    return `Runs a program on this computer: not until you turn on ${EXPERIMENTAL_SETTING_PATH} and allow the program.`;
+  }
+  if (!localPrograms) {
+    return `Runs a program on this computer: not until you turn on Settings ▸ Security ▸ ${LOCAL_PROGRAMS_SETTING_LABEL}.`;
+  }
+  return "Runs a program on this computer: termiHub asks you before it runs the program.";
+}
+
 /** What to know about one imported automation, a sentence each. */
-function entryNotes(entry: ImportedEntry): string[] {
+export function importEntryNotes(entry: ImportedEntry, switches: LocalProgramSwitches): string[] {
   const notes: string[] = [];
   if (entry.leftOut.length > 0) {
     notes.push(
@@ -29,9 +50,7 @@ function entryNotes(entry: ImportedEntry): string[] {
     notes.push(`Triggers off: ${entry.triggersOff.join(", ")}. Turn them on in its row.`);
   }
   if (entry.localProcess) {
-    notes.push(
-      `Runs a program on this computer: not until you turn on ${EXPERIMENTAL_SETTING_PATH} and allow the program.`
-    );
+    notes.push(localProgramNote(switches));
   }
   for (const path of entry.removedScriptPaths) {
     notes.push(
@@ -59,6 +78,11 @@ export function AutomationImportDialog({ result, onClose, onShow }: AutomationIm
     if (result) setShown(result);
   }, [result]);
   const current = result ?? shown;
+  const settings = useProjectedSettings();
+  const switches: LocalProgramSwitches = {
+    experimental: settings.experimentalFeaturesEnabled ?? false,
+    localPrograms: settings.workflowLocalProcessEnabled ?? false,
+  };
   const entries = current?.entries ?? [];
   const refused = current?.refused ?? [];
   const count = entries.length;
@@ -102,7 +126,7 @@ export function AutomationImportDialog({ result, onClose, onShow }: AutomationIm
         // One block per automation, what came in first (A-051).
         <ul className="automation-import" data-testid="automation-import-names">
           {entries.map((entry) => {
-            const notes = entryNotes(entry);
+            const notes = importEntryNotes(entry, switches);
             const partly = entry.leftOut.length > 0;
             return (
               <li
