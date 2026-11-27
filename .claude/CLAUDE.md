@@ -118,11 +118,12 @@ Older concepts may still use the retired **folder form** (`concept.md` + `behavi
 ```
 src/                          # React frontend
   components/                 # ActivityBar/, Sidebar/, Terminal/, SplitView/, Settings/,
-                              # ConnectionEditor/, StatusBar/, TunnelEditor/, TunnelSidebar/,
+                              # ConnectionEditor/, StatusBar/, TunnelEditor/,
                               # CredentialStoreIndicator/, LogViewer/, FileEditor/,
                               # DynamicForm/ (schema-driven connection forms),
                               # NetworkTools/ (ping, traceroute, port scanner, DNS, WoL, HTTP monitor),
-                              # WorkspaceSidebar/, EmbeddedServerSidebar/, etc.
+                              # WorkspaceSidebar/, ServicesSidebar/, ServiceListItem/,
+                              # ServiceEditor/, ServiceActivity/, etc.
   data/                       # Application data/fixtures
   hooks/                      # useTerminal, useConnections, useKeyboardShortcuts, etc.
   services/                   # api.ts (Tauri commands), events.ts (Tauri events)
