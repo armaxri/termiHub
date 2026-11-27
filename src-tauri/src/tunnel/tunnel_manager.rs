@@ -863,6 +863,13 @@ impl<R: Runtime> TunnelManager<R> {
             None => {
                 let started = self.start_desktop_tunnel(tunnel_id, &config);
                 if self.finish(ticket, Outcome::Failed, tunnel_id) {
+                    if let Err(e) = &started {
+                        // The failure was published while the start still
+                        // counted as starting, so the UI kept "connecting"
+                        // (#6139): publish where it rests now.
+                        tracing::warn!("Tunnel {tunnel_id} did not start: {e}");
+                        self.emit_status(tunnel_id, self.resting_status_of(tunnel_id));
+                    }
                     started
                 } else {
                     // A stop pressed while it started.
@@ -870,6 +877,14 @@ impl<R: Runtime> TunnelManager<R> {
                 }
             }
         }
+    }
+
+    /// The status `tunnel_id` rests in now, as the UI is sent it.
+    fn resting_status_of(&self, tunnel_id: &str) -> TunnelStatus {
+        self.get_statuses()
+            .ok()
+            .and_then(|states| states.into_iter().find(|s| s.tunnel_id == tunnel_id))
+            .map_or(TunnelStatus::Disconnected, |state| state.status)
     }
 
     /// What an automatic start of `config` has to wait for, if anything.
@@ -1409,7 +1424,41 @@ impl<R: Runtime> TunnelManager<R> {
         let ssh_config = self.resolve_ssh_config(&config.ssh_connection_id)?;
         let conn_id = &config.ssh_connection_id;
         let jumped = !ssh_config.proxy_jump.is_empty();
+        // Where a start waits, for a start that does not end (#6139).
+        tracing::info!(
+            tunnel = %config.id,
+            host = %ssh_config.host,
+            port = ssh_config.port,
+            jumped,
+            timeout_secs = ssh_config.connect_timeout().as_secs(),
+            "Tunnel start: connecting"
+        );
+        let connecting_since = Instant::now();
+        let built = self.build_forwarder_over(config, conn_id, &ssh_config, cancel, jumped);
+        match &built {
+            Ok(_) => tracing::info!(
+                tunnel = %config.id,
+                elapsed_ms = connecting_since.elapsed().as_millis() as u64,
+                "Tunnel start: forwarder up"
+            ),
+            Err(e) => tracing::info!(
+                tunnel = %config.id,
+                elapsed_ms = connecting_since.elapsed().as_millis() as u64,
+                "Tunnel start: ended without a forwarder: {e}"
+            ),
+        }
+        built
+    }
 
+    /// The forwarder of `config` over the SSH session of `ssh_config`.
+    fn build_forwarder_over(
+        &self,
+        config: &TunnelConfig,
+        conn_id: &str,
+        ssh_config: &SshConfig,
+        cancel: CancellationToken,
+        jumped: bool,
+    ) -> Result<(ActiveForwarder, PooledSessionGuards, Option<LivenessWatch>), TerminalError> {
         // The returned [`LivenessWatch`] is the native, event-driven session-death
         // signal the supervisor selects over so a dead SSH session surfaces as
         // `Error` even while the local listener keeps accepting (#1243/#1297, GAP 1).
@@ -1418,7 +1467,7 @@ impl<R: Runtime> TunnelManager<R> {
         match &config.tunnel_type {
             TunnelType::Local(local_config) => {
                 let (session, guards, liveness) =
-                    self.acquire_endpoint(conn_id, &ssh_config, cancel, jumped)?;
+                    self.acquire_endpoint(conn_id, ssh_config, cancel, jumped)?;
                 let f = LocalForwarder::start(local_config, session).map_err(|e| {
                     TerminalError::TunnelError(format!("Failed to start local forwarder: {}", e))
                 })?;
@@ -1426,7 +1475,7 @@ impl<R: Runtime> TunnelManager<R> {
             }
             TunnelType::Dynamic(dynamic_config) => {
                 let (session, guards, liveness) =
-                    self.acquire_endpoint(conn_id, &ssh_config, cancel, jumped)?;
+                    self.acquire_endpoint(conn_id, ssh_config, cancel, jumped)?;
                 let f = DynamicForwarder::start(dynamic_config, session).map_err(|e| {
                     TerminalError::TunnelError(format!("Failed to start dynamic forwarder: {}", e))
                 })?;
@@ -1436,7 +1485,7 @@ impl<R: Runtime> TunnelManager<R> {
                 // Remote forwarding needs tcpip_forward (&mut SshSession), so it always gets
                 // a dedicated connection rather than a pooled shared Arc<SshSession>.
                 let (session, registry, guards) =
-                    self.acquire_dedicated(&ssh_config, cancel, jumped)?;
+                    self.acquire_dedicated(ssh_config, cancel, jumped)?;
                 let f = RemoteForwarder::start(remote_config, session, registry).map_err(|e| {
                     TerminalError::TunnelError(format!("{REMOTE_FORWARD_FAILED}{e}"))
                 })?;
@@ -1671,7 +1720,10 @@ impl<R: Runtime> TunnelManager<R> {
 
         // A tunnel on an agent (S3, #2185) or on its way there: its stop is owed
         // until the agent confirms it, however long it is away (#6028).
-        match self.hosted.stop(tunnel_id) {
+        let plan = self.hosted.stop(tunnel_id);
+        tracing::info!("Tunnel {tunnel_id} stop requested ({plan:?})");
+        let start_will_stop = matches!(plan, StopPlan::StartWillStop);
+        match plan {
             StopPlan::StopThere(agent_id) => {
                 self.settle_stop(&agent_id, tunnel_id);
                 return Ok(());
@@ -1726,6 +1778,10 @@ impl<R: Runtime> TunnelManager<R> {
         if self.connecting.request_cancel(tunnel_id) {
             self.emit_status(tunnel_id, TunnelStatus::Disconnected);
             tracing::info!("Tunnel {} stop requested while connecting", tunnel_id);
+        } else if !start_will_stop {
+            // Nothing ran: the stop still dismissed a recorded failure, which
+            // the UI must be sent (#6139).
+            self.emit_status(tunnel_id, self.resting_status_of(tunnel_id));
         }
 
         Ok(())
@@ -4020,3 +4076,7 @@ mod tests {
 #[cfg(test)]
 #[path = "tunnel_manager_agent_tests.rs"]
 mod agent_tests;
+
+#[cfg(test)]
+#[path = "tunnel_manager_desktop_tests.rs"]
+mod desktop_tests;

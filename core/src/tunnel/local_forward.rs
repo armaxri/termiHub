@@ -14,6 +14,7 @@ use crate::backends::ssh::handler::SshSession;
 
 use super::channel::{ChannelOpener, SshChannelOpener};
 use super::config::{LocalForwardConfig, TunnelStats};
+use super::relay_end::{refused_by_target, EndWatch};
 use super::MAX_CONCURRENT_FORWARDED_CONNECTIONS;
 
 /// Manages a local port forwarding tunnel.
@@ -260,13 +261,13 @@ impl LocalForwarder {
     }
 
     async fn relay_connection<O: ChannelOpener>(
-        mut stream: tokio::net::TcpStream,
+        stream: tokio::net::TcpStream,
         opener: Arc<O>,
         remote_host: String,
         remote_port: u16,
         stats: &ForwarderStats,
     ) {
-        let mut channel_stream = match opener.open_direct_tcpip(remote_host, remote_port).await {
+        let channel_stream = match opener.open_direct_tcpip(remote_host, remote_port).await {
             Ok(ch) => ch,
             Err(e) => {
                 tracing::error!("Failed to open direct-tcpip channel: {}", e);
@@ -274,12 +275,28 @@ impl LocalForwarder {
                 return;
             }
         };
+        let opened = std::time::Instant::now();
+        let (mut client, client_ended) = EndWatch::new(stream);
+        let (mut channel, channel_ended) = EndWatch::new(channel_stream);
 
-        if let Ok((sent, received)) =
-            tokio::io::copy_bidirectional(&mut stream, &mut channel_stream).await
-        {
-            stats.add_bytes_sent(sent);
-            stats.add_bytes_received(received);
+        let received = match tokio::io::copy_bidirectional(&mut client, &mut channel).await {
+            Ok((sent, received)) => {
+                stats.add_bytes_sent(sent);
+                stats.add_bytes_received(received);
+                received
+            }
+            Err(_) => 0,
+        };
+        // A server that opened the channel before connecting ends it when the
+        // target refuses (Win32-OpenSSH, #6139).
+        if refused_by_target(
+            opened,
+            channel_ended.get().copied(),
+            client_ended.get().copied(),
+            received,
+        ) {
+            tracing::info!("The forward's target ended the channel at once without a byte");
+            stats.note_refused();
         }
     }
 }
@@ -528,3 +545,7 @@ mod tests {
         assert_eq!(snap.total_connections, 2, "total is monotonic");
     }
 }
+
+#[cfg(test)]
+#[path = "local_forward_refusal_tests.rs"]
+mod refusal_tests;

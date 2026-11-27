@@ -18,6 +18,7 @@ pub mod channel;
 pub mod config;
 pub mod dynamic_forward;
 pub mod local_forward;
+mod relay_end;
 pub mod remote_forward;
 pub(crate) mod socks4;
 
