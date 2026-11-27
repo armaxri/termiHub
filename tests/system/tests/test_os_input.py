@@ -589,11 +589,15 @@ def test_calibration_moves_where_the_window_is_not_covered_by_another_app():
     assert screen.offset == (x - 100.0, y - 100.0)
 
 
-def test_calibration_names_the_cover_when_the_whole_window_is_covered():
+def test_calibration_falls_back_to_the_centre_when_the_whole_window_seems_covered():
+    # A cover that cannot be stepped around must not refuse calibration outright
+    # (#6143): the old centre attempt still runs, and a miss names the cover.
     fake = CoveredInput(100, (0, 0, 2000, 2000), env=CI)
+    screen = ScreenMapper.calibrate(fake, ProbeDriver(client=(400.0, 300.0)), timeout=2.0)
+    assert [c[1:] for c in fake.calls if c[0] == "move"][-1] == (500, 350)
+    assert screen.offset == (100.0, 50.0)
     with pytest.raises(OsInputUnavailable, match="covered by another app") as raised:
-        ScreenMapper.calibrate(fake, ProbeDriver(), timeout=0.3)
-    assert not any(c[0] == "move" for c in fake.calls)
+        ScreenMapper.calibrate(fake, ProbeDriver(sees=False), timeout=0.3)
     assert "calibration pointer move" in str(raised.value)
 
 
@@ -606,6 +610,9 @@ def test_exposed_point_steps_off_a_window_of_another_app():
     fake.cover = (int(cx) - 5, int(cy) - 5, 10_000, 10_000)
     x, y = screen.exposed_point("r")
     assert not fake.covered_at(x, y)
+    # Covered everywhere: the requested point, as before, rather than a refusal.
+    fake.cover = (0, 0, 10_000, 10_000)
+    assert screen.exposed_point("r") == screen.point("r")
 
 
 def test_calibration_failure_names_what_was_under_the_pointer():
@@ -887,6 +894,70 @@ def test_macos_owner_at_is_the_pid_a_pointer_event_there_reaches(monkeypatch):
 
     monkeypatch.setattr(osi, "_window_list", broken)
     assert osi.owner_at(512, 368) is None and not osi.covered_at(512, 368)
+
+
+#: The macOS runner's desktop on the nightly after #6144 (job 140327915358): the
+#: Dock's full-screen window lies over everything at layer 20, yet takes no clicks.
+MAC_RUNNER_DESKTOP = [
+    {
+        "kCGWindowNumber": 15,
+        "kCGWindowOwnerPID": 159,
+        "kCGWindowOwnerName": "Window Server",
+        "kCGWindowName": "Menubar",
+        "kCGWindowLayer": 24,
+        "kCGWindowBounds": {"X": 0, "Y": 0, "Width": 1024, "Height": 30},
+    },
+    {
+        "kCGWindowNumber": 6,
+        "kCGWindowOwnerPID": 323,
+        "kCGWindowOwnerName": "Dock",
+        "kCGWindowName": "Dock",
+        "kCGWindowLayer": 20,
+        "kCGWindowBounds": {"X": 0, "Y": 0, "Width": 1024, "Height": 768},
+    },
+    {
+        "kCGWindowNumber": 658,
+        "kCGWindowOwnerPID": 81712,
+        "kCGWindowOwnerName": "termiHub",
+        "kCGWindowName": "termiHub",
+        "kCGWindowLayer": 5,
+        "kCGWindowBounds": {"X": 0, "Y": 31, "Width": 1024, "Height": 674},
+    },
+]
+
+
+def test_macos_the_docks_full_screen_window_covers_nothing(monkeypatch):
+    # #6143 follow-up: counting the Dock as a cover failed every calibration.
+    osi, _ = mac_input(monkeypatch, front=81712, env=CI)
+    osi.allow_pid(81712)
+    monkeypatch.setattr(osi, "_window_list", lambda: MAC_RUNNER_DESKTOP)
+    assert osi.owner_at(512, 368) == 81712
+    assert not osi.covered_at(512, 368)
+    # The alert of the earlier nightly still does.
+    alert = MAC_WINDOWS[0]
+    monkeypatch.setattr(osi, "_window_list", lambda: [alert, *MAC_RUNNER_DESKTOP])
+    assert osi.owner_at(512, 368) == 555 and osi.covered_at(512, 368)
+
+
+def test_macos_calibration_steps_around_the_alert_but_not_the_dock(monkeypatch):
+    osi, _ = mac_input(monkeypatch, front=81712, env=CI)
+    moves: list = []
+    monkeypatch.setattr(osi, "_windows", lambda pid: [OsWindow(658, pid, 0, 31, 1024, 674)])
+    # No AppKit or Accessibility: this runs without pyobjc, like the other macOS tests.
+    monkeypatch.setattr(osi, "_activate", lambda window: None)
+    monkeypatch.setattr(osi, "_frontmost_window", lambda: 658)
+    monkeypatch.setattr(osi, "_foreign_apps", lambda timeout: [])
+    monkeypatch.setattr(osi, "_end_own_leaks", lambda: None)
+    monkeypatch.setattr(osi, "_pointer_move", lambda pid, x, y: moves.append((x, y)))
+    monkeypatch.setattr(osi, "_window_list", lambda: MAC_RUNNER_DESKTOP)
+    osi.retarget(81712)
+    ScreenMapper.calibrate(osi, ProbeDriver(client=(100.0, 100.0)), timeout=2.0)
+    assert moves[-1] == (512, 368)  # the centre: the Dock is no cover
+    moves.clear()
+    alert = MAC_WINDOWS[0]
+    monkeypatch.setattr(osi, "_window_list", lambda: [alert, *MAC_RUNNER_DESKTOP])
+    ScreenMapper.calibrate(osi, ProbeDriver(client=(100.0, 100.0)), timeout=2.0)
+    assert moves and not osi.covered_at(*moves[-1])
 
 
 def test_macos_diagnostics_never_mask_the_failure(monkeypatch):

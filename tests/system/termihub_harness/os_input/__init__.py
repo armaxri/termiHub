@@ -143,7 +143,7 @@ def _exposed_point(
 ) -> Optional[tuple[int, int]]:
     """The calibration point of ``window``: its centre nudged by ``(dx, dy)`` when
     no other app's window lies over it there, else the exposed grid point nearest
-    to it (#6143); ``None`` when every point is covered.
+    to it (#6143); ``None`` when every point seems covered.
     """
     cx, cy = window.center
     grid = [
@@ -215,10 +215,12 @@ class ScreenMapper:
                     continue  # e.g. a hidden helper window that cannot take focus
                 exposed = _exposed_point(os_input, window, dx, dy)
                 if exposed is None:
+                    # A cover that cannot be stepped around may be one that takes
+                    # no clicks after all: try the centre, as before #6143.
                     cx, cy = window.center
                     under = os_input.describe_point(cx, cy) or "?"
                     misses.append(f"{window}: covered by another app (at its centre: {under})")
-                    continue
+                    exposed = (cx + dx, cy + dy)
                 x, y = exposed
                 probe = driver.os_input_probe(reset=True)
                 os_input.pointer_move(x - 7, y - 7)
@@ -294,12 +296,6 @@ class ScreenMapper:
         point not avoided is taken as is.
         """
         rect = self.rect(test_id)
-        given = avoid
-
-        def avoided(x: float, y: float) -> bool:
-            # Nor a point where a window of another app lies over ours (#6143).
-            return self.os_input.covered_at(x, y) or (given is not None and given(x, y))
-
         fractions = sorted(
             {(gx, gy) for gx in {fx, *EXPOSURE_GRID} for gy in {fy, *EXPOSURE_GRID}},
             key=lambda f: ((f[0] - fx) ** 2 + (f[1] - fy) ** 2, f),
@@ -308,7 +304,11 @@ class ScreenMapper:
             (rect["left"] + rect["width"] * gx, rect["top"] + rect["height"] * gy)
             for gx, gy in fractions
         ]
-        clients = [c for c in clients if not avoided(*self.to_screen(*c))]
+        clients = [c for c in clients if avoid is None or not avoid(*self.to_screen(*c))]
+        # Nor a point where a window of another app lies over ours (#6143); when
+        # that rules out all, the cover may take no clicks: keep them all.
+        exposed = [c for c in clients if not self.os_input.covered_at(*self.to_screen(*c))]
+        clients = exposed or clients
         if not clients:
             raise AssertionError(f"every point of {test_id!r} {rect} is ruled out")
         hits = self.driver.os_input_probe(test_id, points=clients).get("hits")
