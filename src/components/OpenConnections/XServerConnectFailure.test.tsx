@@ -68,7 +68,7 @@ const XWAYLAND_MISSING: XServerError = {
   dependency: "XWayland",
   installMode: "backend",
   installHint:
-    "Install your distribution's XWayland package (e.g. `xwayland`, `xorg-xwayland`, or `xwayland` via your package manager), then reconnect.",
+    "Install your distribution's XWayland package (xwayland, xorg-xwayland or xorg-x11-server-Xwayland, depending on the distribution), then reconnect.",
 };
 
 const HEADLESS: XServerError = {

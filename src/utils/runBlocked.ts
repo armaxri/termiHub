@@ -3,7 +3,7 @@
  * the palette and the menus say so instead of offering Run; the run itself is
  * refused elsewhere (`automationRunner`, `localProcessRefusal`). All **pure**.
  */
-import { findUnknownStep, unknownStepReason } from "@/services/automationRunner";
+import { findUnknownStep, unknownStepReason, visitSteps } from "@/services/automationRunner";
 import { t, tf } from "@/i18n/catalog";
 import type { Automation } from "@/types/generated/Automation";
 import { EXPERIMENTAL_SETTING_PATH } from "@/utils/experimentalSetting";
@@ -35,4 +35,24 @@ export function runBlockedShort(
   return localProcessBlockedReason(automation, resolve, experimental) === null
     ? null
     : t("automation.blockedShort.local");
+}
+
+/**
+ * The 1-based top-level step of `automation` that runs an automation the library
+ * does not hold, or chooses none; `null` when there is none (live review files-2).
+ * The run is not refused for it (the step may be skipped or continue on error),
+ * but its row keeps saying so until the step is fixed.
+ */
+export function missingCalleeStep(
+  automation: Automation,
+  resolve: ResolveAutomation
+): number | null {
+  for (const [index, step] of automation.steps.entries()) {
+    let missing = false;
+    visitSteps([step], (inner) => {
+      if (inner.kind === "run-automation" && !resolve(inner.automationId)) missing = true;
+    });
+    if (missing) return index + 1;
+  }
+  return null;
 }

@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo, useId } from "react";
 import { confirmOnceSaved } from "@/services/savedConnectionTrust";
+import { announceSessionsOnOldSettings } from "@/store/savedConnectionSessions";
 import { ITEM_DESCRIPTION_MAX_LENGTH, normalizeItemDescription } from "@/utils/itemDescription";
 import { Controller, useController, useForm, useWatch } from "react-hook-form";
 import { useZodValidity } from "@/hooks/useZodEditorForm";
@@ -1260,12 +1261,18 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       if (originalSource !== sourceFile) {
         const moved = await saveConnectionToFile(saved, originalSource);
         if (moved) void confirmOnceSaved(Promise.resolve(moved.id), moved.config);
+        if (moved) announceSessionsOnOldSettings(existingConnection, moved);
         return moved ? { entry: moved, persistedId: Promise.resolve(moved.id) } : null;
       }
 
       const persistedId = updateConnection(saved);
       // What it runs is the user's own now (#6065).
       void confirmOnceSaved(persistedId, saved.config);
+      // Its open sessions keep the old settings until they reconnect (#6163).
+      const before = existingConnection;
+      void Promise.resolve(persistedId).then((id) => {
+        if (id !== null) announceSessionsOnOldSettings(before, saved);
+      });
       return { entry: saved, persistedId };
     } else {
       const saved: SavedConnection = {

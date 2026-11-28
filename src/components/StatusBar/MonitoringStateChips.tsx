@@ -1,7 +1,11 @@
-import { Activity, Info } from "lucide-react";
+import { Activity, Info, RotateCw } from "lucide-react";
 import { Spinner, Tooltip } from "@/components/ui";
 import type { MonitorStatusReason } from "@/types/monitoring";
-import { monitorOfflineReasonText, monitorUnsupportedTooltip } from "@/utils/monitorStatusReason";
+import {
+  MONITOR_UNSUPPORTED_SHORT,
+  monitorOfflineReasonText,
+  monitorUnsupportedTooltip,
+} from "@/utils/monitorStatusReason";
 
 /** Props for {@link MonitoringStopped}. */
 export interface MonitoringStoppedProps {
@@ -34,24 +38,60 @@ export function MonitoringStopped({ onStart }: MonitoringStoppedProps) {
   );
 }
 
-/**
- * Status-bar state for a host with no stats source (#5471, #5628). It is a
- * permanent capability state, not an error: muted text with an info icon and a
- * tooltip explaining why, and no Retry.
- */
-export function MonitoringUnsupported() {
-  const reason = monitorUnsupportedTooltip();
+/** Props of the stats-less chips that can be tried again. */
+export interface MonitoringRetryProps {
+  /** Try monitoring again. */
+  onRetry: () => void;
+}
+
+/** "Monitoring unavailable · why · Retry": the reason without hovering, and a way on (states-1). */
+function UnavailableChip({
+  testId,
+  reason,
+  short,
+  tooltip,
+  onRetry,
+}: MonitoringRetryProps & { testId: string; reason?: string; short: string; tooltip: string }) {
   return (
     <span
-      className="status-bar__item monitoring-status__muted"
-      title={reason}
-      aria-label={`Monitoring unavailable: ${reason}`}
-      data-testid="monitoring-unsupported"
-      data-reason="unsupported"
+      className="monitoring-status"
+      title={tooltip}
+      aria-label={`Monitoring unavailable: ${tooltip}`}
+      data-testid={testId}
+      data-reason={reason}
     >
-      <Info size={12} />
-      Monitoring unavailable
+      <span className="status-bar__item monitoring-status__muted">
+        <Info size={12} />
+        Monitoring unavailable · {short}
+      </span>
+      <button
+        className="status-bar__item status-bar__item--interactive monitoring-status__muted"
+        aria-label="Retry monitoring"
+        data-testid={`${testId}-retry`}
+        onClick={onRetry}
+      >
+        <RotateCw size={12} />
+        Retry
+      </button>
     </span>
+  );
+}
+
+/**
+ * Status-bar state for a host with no stats source (#5471, #5628). It is a
+ * capability state, not an error: muted, with the reason in a few words and in
+ * the tooltip. Retry stays offered (live review states-1): the host may gain a
+ * shell, or the probe may have met a passing failure.
+ */
+export function MonitoringUnsupported({ onRetry }: MonitoringRetryProps) {
+  return (
+    <UnavailableChip
+      testId="monitoring-unsupported"
+      reason="unsupported"
+      short={MONITOR_UNSUPPORTED_SHORT}
+      tooltip={monitorUnsupportedTooltip()}
+      onRetry={onRetry}
+    />
   );
 }
 
@@ -74,7 +114,7 @@ export function MonitoringWaiting() {
 }
 
 /** Props for {@link MonitoringUnavailable}. */
-export interface MonitoringUnavailableProps {
+export interface MonitoringUnavailableProps extends MonitoringRetryProps {
   /** Why collects are failing, or `null` when the backend gave no reason. */
   reason: MonitorStatusReason | null;
 }
@@ -93,18 +133,14 @@ export function monitoringUnavailableTooltip(reason: MonitorStatusReason | null)
  * is muted rather than an error because the session itself is fine, and the
  * loop is still retrying; a terminal failure becomes the offline Retry chip.
  */
-export function MonitoringUnavailable({ reason }: MonitoringUnavailableProps) {
-  const tooltip = monitoringUnavailableTooltip(reason);
+export function MonitoringUnavailable({ reason, onRetry }: MonitoringUnavailableProps) {
   return (
-    <span
-      className="status-bar__item monitoring-status__muted"
-      title={tooltip}
-      aria-label={`Monitoring unavailable: ${tooltip}`}
-      data-testid="monitoring-unavailable"
-      data-reason={reason ?? undefined}
-    >
-      <Info size={12} />
-      Monitoring unavailable
-    </span>
+    <UnavailableChip
+      testId="monitoring-unavailable"
+      reason={reason ?? undefined}
+      short={monitorOfflineReasonText(reason)}
+      tooltip={monitoringUnavailableTooltip(reason)}
+      onRetry={onRetry}
+    />
   );
 }
