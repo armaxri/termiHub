@@ -1,21 +1,28 @@
 import { toast } from "@/components/ui";
-import { TerminalTab, ReopenTabPayload } from "@/types/terminal";
+import { ReopenTabPayload, type ConnectionConfig } from "@/types/terminal";
+import { forgetClosedTabs, takeLastClosedTab } from "@/utils/closedTabStack";
+
+export { reopenPayloadForTab } from "@/utils/closedTabStack";
 import { useAppStore } from "@/store/appStore";
 
 /**
- * Build the {@link ReopenTabPayload} for a tab, or `null` when the tab cannot be
- * meaningfully reopened (non-terminal tabs, or tabs attached to a persistent
- * session — closing those only detaches, so there is nothing to undo).
+ * The config a reopened tab starts with (#6161): the closed tab's, without the
+ * command it ran at its start. Reopening a tab is not opening the connection
+ * again, so it runs nothing by itself (#6065).
  */
-export function reopenPayloadForTab(
-  tab: Pick<
-    TerminalTab,
-    "title" | "connectionType" | "config" | "contentType" | "persistentConnectionId"
-  >
-): ReopenTabPayload | null {
-  if (tab.contentType !== "terminal") return null;
-  if (tab.persistentConnectionId) return null;
-  return { title: tab.title, connectionType: tab.connectionType, config: tab.config };
+export function reopenConfig(config: ConnectionConfig): ConnectionConfig {
+  const inner = config.config as Record<string, unknown> | undefined;
+  if (!inner || !("initialCommand" in inner)) return config;
+  const { initialCommand: _dropped, ...rest } = inner;
+  return { ...config, config: rest } as ConnectionConfig;
+}
+
+/** Reopen the newest closed tab (#6161); `false` when there is none. */
+export function reopenLastClosedTab(): boolean {
+  const payload = takeLastClosedTab();
+  if (!payload) return false;
+  reopenAll([payload]);
+  return true;
 }
 
 /**
@@ -60,8 +67,12 @@ export function reopenToastDescription(closed: readonly ReopenTabPayload[]): str
 /** Open a fresh tab for each of `closed`, in the order they were closed. */
 function reopenAll(closed: readonly ReopenTabPayload[]): void {
   const { addTab } = useAppStore.getState();
+  // The shortcut does not reopen them again (#6161).
+  forgetClosedTabs(closed.map((p) => p.closedTabId));
   for (const payload of closed) {
-    addTab(payload.title, payload.connectionType, payload.config, { contentType: "terminal" });
+    addTab(payload.title, payload.connectionType, reopenConfig(payload.config), {
+      contentType: "terminal",
+    });
   }
 }
 

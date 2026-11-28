@@ -1,4 +1,5 @@
 import { StateCreator } from "zustand";
+import { recordClosedTab, reopenPayloadForTab } from "@/utils/closedTabStack";
 
 import type { AppState } from "../appStore";
 import { beginRestoreGuard, collectRestoreCohort } from "../restoreHelpers";
@@ -185,6 +186,8 @@ export const createTabGroupsSlice: StateCreator<AppState, [], [], TabGroupsSlice
       const releasedSessions = new Set<string>();
       const closingTabIdSet = new Set(closingTabIds);
       for (const tab of closingTabs) {
+        // Reopen closed tab can bring it back (#6161).
+        recordClosedTab(reopenPayloadForTab(tab));
         // Lifecycle record + broadcast membership (#4313).
         releaseTabFromSharedRegions(get, tab.id);
         // On-disconnect workflow triggers (#3791) — checked before the tab
