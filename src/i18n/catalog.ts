@@ -211,6 +211,7 @@ const en = {
   "schedule.editAutomation": "Edit the automation",
   "schedule.confirm.does": "What it types there ({steps}):",
   "schedule.short.localProcess": "it needs experimental features",
+  "schedule.short.localPrograms": "local programs are off in Security",
   "schedule.short.waits": "a step waits for you",
   "schedule.short.missing": "it asks for a value",
   "schedule.next.missed":

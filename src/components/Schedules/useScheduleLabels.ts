@@ -7,7 +7,7 @@ import { useProjectedConnections } from "@/store/useProjectedConnections";
 import type { ScheduleAction, ScheduleTargets } from "@/types/schedule";
 
 import { t, tf } from "@/i18n/catalog";
-import { localProcessBlockedReason } from "@/utils/localProcessGate";
+import { localProcessBlockedReason, localProcessSwitchOff } from "@/utils/localProcessGate";
 import { unattendedBlockedReason, waitingStep } from "@/utils/unattended";
 
 import { describeTargetNames } from "./scheduleForm";
@@ -58,7 +58,12 @@ export function useScheduleLabels() {
       const automation = find(s.action.automationId);
       if (!automation) return t("schedule.gone.automation");
       if (localProcessBlockedReason(automation, find, localSwitches)) {
-        return t("schedule.short.localProcess");
+        // Name the switch that is off (#6178): experimental features, then Security.
+        return t(
+          localProcessSwitchOff(localSwitches) === "experimental"
+            ? "schedule.short.localProcess"
+            : "schedule.short.localPrograms"
+        );
       }
       if (unattendedBlockedReason(automation, find)) {
         return t(
