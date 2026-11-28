@@ -28,7 +28,8 @@ Covered (replacing the #4010 triage rows in ``docs/testing.md``):
 
 The container cases need a working Docker/Podman (they skip without one, and on
 Windows, whose runners only run Windows containers); the SSH case needs the
-Docker SSH fixture (``ssh_password_fixtures`` skips without it).
+Docker SSH fixture (``ssh_password_fixtures`` skips without it), or the native
+sshd on macOS and Windows (#5449).
 """
 
 from __future__ import annotations
@@ -252,6 +253,9 @@ class TestExternalSpawnColdStart(SpawnUi, SystemTest):
 
 # ── #1511: SSH spawn opens its real backend ──────────────────────────────────
 @pytest.mark.usefixtures("ssh_password_fixtures")
+# The native sshd (#5449): macOS, and Windows with Git Bash as the login shell,
+# where `cd '/tmp'` and `pwd` keep the MSYS path `/tmp`.
+@pytest.mark.native_sshd
 class TestExternalSshSpawn(SpawnUi, ConnectionsUi, PasswordPromptUi, SystemTest):
     """``spawn --kind ssh --connection <id> --location`` opens the saved SSH host."""
 
