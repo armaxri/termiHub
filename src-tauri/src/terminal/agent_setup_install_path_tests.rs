@@ -142,3 +142,39 @@ fn a_failed_posix_setup_keeps_the_stored_path() {
     // previous agent back.
     assert!(!installs_agent(ShellEnd::NoStatus));
 }
+
+/// Live product run (#5518): the row offered Connect when the POSIX setup script
+/// had only started, before its path was stored, so a connect then read
+/// "Agent not installed". The setup now says it is done only once its shell has
+/// ended and the path is stored; until then it is "sent", which keeps the row
+/// "Installing…".
+#[test]
+fn a_posix_setup_is_done_only_after_its_path_is_stored() {
+    let (_dir, app, _agents) = app_with_agent();
+    let (step, _) = finish_posix_setup(
+        app.handle(),
+        "a1",
+        "/opt/termihub-agent",
+        ShellEnd::Exited(0),
+    );
+    assert_eq!(step, "done");
+    assert_eq!(
+        stored_agent_path(&app).as_deref(),
+        Some("/opt/termihub-agent")
+    );
+    assert_eq!(
+        POSIX_SETUP_STARTED_STEP, "sent",
+        "the start does not claim an install"
+    );
+}
+
+#[test]
+fn a_posix_setup_that_did_not_install_ends_without_claiming_it() {
+    for end in [ShellEnd::Exited(1), ShellEnd::NoStatus] {
+        let (_dir, app, _agents) = app_with_agent();
+        let (step, message) = finish_posix_setup(app.handle(), "a1", "/opt/termihub-agent", end);
+        assert_eq!(step, "ended", "{end:?}");
+        assert!(!message.is_empty());
+        assert_eq!(stored_agent_path(&app), None, "{end:?}");
+    }
+}

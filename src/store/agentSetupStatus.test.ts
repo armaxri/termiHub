@@ -15,6 +15,8 @@ describe("agentSetupStatus (#5906)", () => {
     ["failed", null],
     ["error", null],
     ["cancelled", null],
+    // A POSIX setup that ended without installing (live product run, #5518).
+    ["ended", null],
   ])("step %s leaves the agent %s", (step, phase) => {
     expect(setupPhaseAfterStep(step)).toBe(phase);
   });
