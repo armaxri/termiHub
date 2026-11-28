@@ -202,6 +202,35 @@ export function ModalClose({ children }: { children: React.ReactElement }): Reac
 }
 
 /**
+ * The open modals, oldest first (#6183, editor-7). A modal that is not the last
+ * one is covered by a dialog opened over it (the schedule editor over the
+ * automation editor, a confirmation over an editor); it hides its footer so
+ * only the top dialog's actions show.
+ */
+let openModals: readonly symbol[] = [];
+const modalStackListeners = new Set<() => void>();
+function setOpenModals(next: readonly symbol[]): void {
+  openModals = next;
+  for (const listener of modalStackListeners) listener();
+}
+function subscribeModalStack(listener: () => void): () => void {
+  modalStackListeners.add(listener);
+  return () => modalStackListeners.delete(listener);
+}
+
+/** Whether another open modal covers the modal `id` while it is `open`. */
+function useCoveredByAnotherModal(open: boolean): boolean {
+  const [id] = React.useState(() => Symbol("modal"));
+  React.useLayoutEffect(() => {
+    if (!open) return;
+    setOpenModals([...openModals, id]);
+    return () => setOpenModals(openModals.filter((m) => m !== id));
+  }, [open, id]);
+  const stack = React.useSyncExternalStore(subscribeModalStack, () => openModals);
+  return open && stack.includes(id) && stack[stack.length - 1] !== id;
+}
+
+/**
  * The single shared modal shell. Compose dialogs from this + {@link Button}
  * instead of hand-rolling an overlay, close button, and spacing per dialog.
  */
@@ -224,6 +253,7 @@ export function Modal({
   ...rest
 }: ModalProps): React.ReactElement {
   const statusLine = inlineStatus ?? size !== "full";
+  const covered = useCoveredByAnotherModal(open);
   // The message the inline status line shows (#5830), fed by the toast hub.
   const [status, setStatus] = React.useState<InlineStatus | null>(null);
   React.useEffect(() => {
@@ -289,6 +319,8 @@ export function Modal({
           // Radix makes everything outside the content inert (aria-hidden) but
           // does not state it on the dialog itself; say so explicitly (#4329).
           aria-modal="true"
+          // Another dialog is open over this one: its footer hides (#6183).
+          data-covered={covered || undefined}
           // With no `description`, opt out of `aria-describedby` explicitly
           // (Radix's documented pattern) instead of pointing it at a
           // Description element that is never rendered, which also makes
