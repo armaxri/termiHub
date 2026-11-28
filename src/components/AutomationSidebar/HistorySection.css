@@ -143,3 +143,14 @@
     transition: none;
   }
 }
+
+/* The run that started another one, as a link to its row (#6183, history-2). */
+.automation-history__link {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--text-link);
+  text-decoration: underline;
+  cursor: pointer;
+}

@@ -134,6 +134,31 @@ describe("HistorySection (#5818, slice 9)", () => {
     expect(row.getAttribute("aria-expanded")).toBe("false");
   });
 
+  it("names the automation that started a nested run and links to its run (#6183, history-2)", () => {
+    const caller = run({ id: "run-caller", automationName: "History caller", origin: "manual" });
+    const nested = run({
+      id: "run-nested",
+      automationName: "Callee",
+      origin: "run-by-automation",
+      startedByRunId: "run-caller",
+      startedByName: "History caller",
+    });
+    render([nested, caller]);
+    act(() => query("automation-run-toggle-run-nested")!.click());
+    expect(query("automation-run-origin-run-nested")!.textContent).toBe("History caller");
+    act(() => query("automation-run-caller-run-nested")!.click());
+    // The caller's run opens, and takes the focus.
+    expect(query("automation-run-toggle-run-caller")!.getAttribute("aria-expanded")).toBe("true");
+    expect(document.activeElement).toBe(query("automation-run-toggle-run-caller"));
+  });
+
+  it("still says another automation started a run without its caller", () => {
+    render([run({ id: "run-old", origin: "run-by-automation" })]);
+    act(() => query("automation-run-toggle-run-old")!.click());
+    expect(query("automation-run-origin-run-old")!.textContent).toBe("Another automation");
+    expect(query("automation-run-caller-run-old")).toBeNull();
+  });
+
   it("opens a row to show origin, outcome, steps, terminal and error", () => {
     render(RUNS);
     act(() => query("automation-run-toggle-run-2")!.click());

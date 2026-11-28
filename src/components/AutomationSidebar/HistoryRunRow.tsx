@@ -23,6 +23,8 @@ export interface HistoryRunRowProps {
   expanded: boolean;
   /** Show or hide the run's details. */
   onToggle: (runId: string) => void;
+  /** Open another run of the list, by id (the one that started this run). */
+  onShowRun?: (runId: string) => void;
 }
 
 /**
@@ -30,7 +32,13 @@ export interface HistoryRunRowProps {
  * under it in words how the run ended, when and where (#6026), so two runs of one
  * automation can be told apart. Activating the row discloses the rest.
  */
-export function HistoryRunRow({ run, schedule, expanded, onToggle }: HistoryRunRowProps) {
+export function HistoryRunRow({
+  run,
+  schedule,
+  expanded,
+  onToggle,
+  onShowRun,
+}: HistoryRunRowProps) {
   const detailsId = `automation-run-details-${run.id}`;
   const targets = automationRunTargets(run);
   const row = useRef<HTMLDivElement>(null);
@@ -94,7 +102,9 @@ export function HistoryRunRow({ run, schedule, expanded, onToggle }: HistoryRunR
           </span>
         </span>
       </button>
-      {expanded ? <HistoryRunDetails run={run} schedule={schedule} id={detailsId} /> : null}
+      {expanded ? (
+        <HistoryRunDetails run={run} schedule={schedule} id={detailsId} onShowRun={onShowRun} />
+      ) : null}
     </div>
   );
 }

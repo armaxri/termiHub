@@ -137,6 +137,7 @@ fn bounded(mut run: AutomationRun) -> AutomationRun {
     run.automation_name = truncate(run.automation_name);
     run.target_label = run.target_label.map(truncate);
     run.error = run.error.map(truncate);
+    run.started_by_name = run.started_by_name.map(truncate);
     run
 }
 

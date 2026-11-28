@@ -677,6 +677,9 @@ export function workflowTarget(run: WorkflowTargetRun, cancel: () => void): Work
   // Captured at the start so the persisted history record (PROD-0046) carries the
   // real run duration; `triggeredBy` defaults to a manual launch.
   let startedAt = "";
+  // This run's history id, known from the start so the runs it starts can name
+  // and link it (#6183, history-2).
+  const historyRunId = newId("workflow-run");
   const nestedRuns = new Map<string, AutomationRun>();
   const deps: WorkflowRunnerDeps = {
     send,
@@ -790,7 +793,13 @@ export function workflowTarget(run: WorkflowTargetRun, cancel: () => void): Work
     // A `run-automation` step's callee gets its own history record, labeled
     // "Run by another automation", on the same terminal (#5818, slice 9).
     onNestedRunFinished: (event) =>
-      collectNestedRun(nestedRuns, nestedRunRecord(event, targetTabId, targetLabel)),
+      collectNestedRun(
+        nestedRuns,
+        nestedRunRecord(event, targetTabId, targetLabel, undefined, {
+          runId: historyRunId,
+          name: workflow.name,
+        })
+      ),
     onStepContinued: (event) => {
       frontendLog(
         "workflow",
@@ -805,7 +814,7 @@ export function workflowTarget(run: WorkflowTargetRun, cancel: () => void): Work
     // a history-write failure must NEVER fail or block the run, so it is logged
     // (never rethrown) and the returned, capped list is mirrored into the store.
     const runRecord: AutomationRun = {
-      id: newId("workflow-run"),
+      id: historyRunId,
       automationId: workflowId,
       automationName: workflow.name,
       // A run whose seams could not be made has no start of its own.

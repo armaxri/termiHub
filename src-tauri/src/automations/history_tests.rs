@@ -281,3 +281,36 @@ fn run_history_newer_file_is_left_untouched() {
         newer
     );
 }
+
+#[test]
+fn a_nested_run_keeps_who_started_it_and_round_trips() {
+    // A run started by another automation names that run and that automation
+    // (#6183, history-2); a record without them stays as it was.
+    let nested = AutomationRun {
+        origin: AutomationRunOrigin::RunByAutomation,
+        started_by_run_id: Some("run-caller".into()),
+        started_by_name: Some("History caller".into()),
+        ..run("nested", &at(0, 0))
+    };
+    let json = serde_json::to_value(&nested).unwrap();
+    assert_eq!(json["startedByRunId"], "run-caller");
+    assert_eq!(json["startedByName"], "History caller");
+    let back: AutomationRun = serde_json::from_value(json).unwrap();
+    assert_eq!(back, nested);
+
+    let plain = serde_json::to_value(run("plain", &at(0, 0))).unwrap();
+    assert!(plain.get("startedByRunId").is_none());
+    assert!(plain.get("startedByName").is_none());
+}
+
+#[test]
+fn manager_bounds_the_starters_name() {
+    let dir = TempDir::new().unwrap();
+    let manager = AutomationRunHistoryManager::with_storage(StoreFile::in_dir(dir.path())).unwrap();
+    let big = AutomationRun {
+        started_by_name: Some("y".repeat(500)),
+        ..run("big", &at(0, 0))
+    };
+    let listed = manager.record_at(big, now()).unwrap();
+    assert_eq!(listed[0].started_by_name.as_ref().unwrap().chars().count(), 200);
+}

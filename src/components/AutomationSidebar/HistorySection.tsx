@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { flushSync } from "react-dom";
 import { History, Trash2, X } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { Button, ConfirmDialog, EmptyState, Select, Tooltip, toast } from "@/components/ui";
@@ -83,6 +84,21 @@ export function HistorySection({ automationId, onFilterChange, collapse }: Histo
       else next.add(runId);
       return next;
     });
+  }, []);
+
+  // The run that started another one (#6183, history-2): opened and focused.
+  // Only a run the list shows is a link: a filtered-out caller stays a name.
+  const shownRunIds = useMemo(
+    () => new Set(entries.flatMap((e) => (e.kind === "run" ? [e.run.id] : []))),
+    [entries]
+  );
+  const handleShowRun = useCallback((runId: string) => {
+    flushSync(() => setExpanded((prev) => new Set(prev).add(runId)));
+    const toggle = document.querySelector<HTMLElement>(
+      `[data-testid="automation-run-toggle-${runId.replace(/["\\]/g, "\\$&")}"]`
+    );
+    toggle?.scrollIntoView?.({ block: "nearest" });
+    toggle?.focus();
   }, []);
 
   const clear = useCallback(
@@ -236,6 +252,11 @@ export function HistorySection({ automationId, onFilterChange, collapse }: Histo
                 schedule={entry.schedule}
                 expanded={expanded.has(entry.run.id)}
                 onToggle={handleToggle}
+                onShowRun={
+                  entry.run.startedByRunId && shownRunIds.has(entry.run.startedByRunId)
+                    ? handleShowRun
+                    : undefined
+                }
               />
             ) : (
               <HistoryGapRow

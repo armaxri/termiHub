@@ -114,6 +114,15 @@ pub struct AutomationRun {
     pub target_labels: Vec<String>,
     /// What launched the run.
     pub origin: AutomationRunOrigin,
+    /// For a run another automation started: the id of that automation's run,
+    /// so the history can link to it (#6183).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub started_by_run_id: Option<String>,
+    /// For a run another automation started: that automation's name at run time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub started_by_name: Option<String>,
 }
 
 /// What the migration last saw of one legacy run-history file.
@@ -204,6 +213,8 @@ pub fn from_macro_run(run: &MacroRun, macro_ids: &HashMap<String, String>) -> Au
             MacroRunOrigin::WorkflowStep => AutomationRunOrigin::RunByAutomation,
             MacroRunOrigin::Scheduled => AutomationRunOrigin::Scheduled,
         },
+        started_by_run_id: None,
+        started_by_name: None,
     }
 }
 
@@ -238,6 +249,8 @@ pub fn from_workflow_run(run: &WorkflowRun) -> AutomationRun {
             WorkflowRunTrigger::OnDisconnect => AutomationRunOrigin::OnDisconnect,
             WorkflowRunTrigger::OnOutputMatch => AutomationRunOrigin::OnOutputMatch,
         },
+        started_by_run_id: None,
+        started_by_name: None,
     }
 }
 

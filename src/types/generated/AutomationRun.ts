@@ -71,4 +71,13 @@ targetLabels?: Array<string>,
 /**
  * What launched the run.
  */
-origin: AutomationRunOrigin, };
+origin: AutomationRunOrigin, 
+/**
+ * For a run another automation started: the id of that automation's run,
+ * so the history can link to it (#6183).
+ */
+startedByRunId?: string, 
+/**
+ * For a run another automation started: that automation's name at run time.
+ */
+startedByName?: string, };
