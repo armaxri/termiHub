@@ -114,12 +114,13 @@ describe("what a power user asks for", () => {
     expect(query("automation-param-name-0")).not.toBeNull();
   });
 
-  it("names the triggers that are there before the steps (A-024)", async () => {
+  it("names the triggers in its heading, and keeps the steps first (editor-6)", async () => {
     await open({ ...keys, triggers: [{ kind: "hotkey", binding: "Ctrl+Alt+D" }] });
     const toggle = query("automation-editor-when-toggle")!;
     expect(toggle.textContent).toContain("Hotkey");
+    // One order for every automation: the steps do not move with its triggers.
     expect(
-      toggle.compareDocumentPosition(query("automation-editor-steps")!) &
+      query("automation-editor-steps")!.compareDocumentPosition(toggle) &
         Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy();
     click("automation-editor-when-toggle");
