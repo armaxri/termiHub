@@ -58,6 +58,14 @@ export class PluginThemeError extends Error {
   }
 }
 
+/** Tokens a plugin theme may leave out (added after plugin themes shipped, #6154). */
+const OPTIONAL_PLUGIN_TOKENS: ReadonlySet<keyof ThemeColors> = new Set([
+  "borderInput",
+  "colorNotice",
+  "broadcastAccent",
+  "macroAccent",
+]);
+
 /** Type guard: a JSON value is a non-null, non-array object. */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -94,12 +102,18 @@ export function parsePluginTheme(
   }
 
   const stored = isRecord(raw.colors) ? raw.colors : {};
+  const colorScheme = raw.colorScheme === "light" ? "light" : "dark";
+  // Tokens added after plugin themes shipped (#6154) are optional: a theme that
+  // predates them takes the built-in value of its colour scheme.
+  const fallback = colorScheme === "light" ? BASE_THEME_ORDER[1] : BASE_THEME_ORDER[0];
   const colors = {} as ThemeColors;
   const missing: string[] = [];
   for (const key of COLOR_TOKEN_KEYS) {
     const value = stored[key];
     if (typeof value === "string" && value.trim() !== "") {
       colors[key] = value;
+    } else if (OPTIONAL_PLUGIN_TOKENS.has(key)) {
+      colors[key] = fallback.colors[key];
     } else {
       missing.push(key);
     }
@@ -132,7 +146,7 @@ export function parsePluginTheme(
   return {
     id: pluginThemeId(pluginId, entry.id),
     name: entry.name,
-    colorScheme: raw.colorScheme === "light" ? "light" : "dark",
+    colorScheme,
     colors,
   };
 }

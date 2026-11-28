@@ -175,8 +175,15 @@ class ConnectionsUi(HarnessMixin):
         open keeps this idempotent (it never reopens an already-open editor).
         """
 
+        def editor_open() -> bool:
+            # The agent editor shares the name field's test id: only an editor
+            # with the connection-type select is a connection editor.
+            return self.driver.exists("connection-editor-name-input") and self.driver.exists(
+                self.EDITOR_TYPE
+            )
+
         def opened() -> bool:
-            if self.driver.exists("connection-editor-name-input"):
+            if editor_open():
                 return True
             # The New Connection button lives only in the connections sidebar
             # view; an earlier file-browser step can leave the sidebar on
@@ -191,7 +198,7 @@ class ConnectionsUi(HarnessMixin):
                 self.driver.click(self.NEW_CONNECTION)
             elif self.driver.exists(self.NEW_CONNECTION_MENU):
                 self.driver.click(self.NEW_CONNECTION_MENU)
-            return self.driver.exists("connection-editor-name-input")
+            return editor_open()
 
         self.wait(opened, what="the connection editor")
 
