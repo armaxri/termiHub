@@ -18,6 +18,8 @@ vi.mock("@/themes", () => ({ applyTheme: vi.fn(), onThemeChange: vi.fn() }));
 const experimental = vi.hoisted(() => ({ on: false }));
 vi.mock("@/hooks/useExperimentalFeatures", () => ({
   useExperimentalFeatures: () => experimental.on,
+  // Local programs allowed in Security: the experimental switch is what these test (#6178).
+  useLocalProcessSwitches: () => ({ experimental: experimental.on, localPrograms: true }),
 }));
 
 let container: HTMLDivElement;

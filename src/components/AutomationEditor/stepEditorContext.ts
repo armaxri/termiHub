@@ -37,8 +37,8 @@ export interface StepEditorContextValue {
   failureOpen: ReadonlySet<string>;
   /** Show a step's "If this step fails" options. */
   showFailure: (uid: string) => void;
-  /** Step aside for the settings; the editor keeps its draft (A-031). */
-  openSettings: () => void;
+  /** Step aside for the settings, at `category`; the editor keeps its draft (A-031). */
+  openSettings: (category?: "general" | "security") => void;
   /** Tell a screen reader what a reorder or a delete just did. */
   announce: (message: string) => void;
   /**

@@ -75,6 +75,16 @@ describe("import", () => {
     expect(query("automation-import-dialog")).toBeNull();
   });
 
+  it("says how many settings were left out, count first (#6178)", async () => {
+    await importJson({
+      version: 1,
+      automations: [{ ...automation({}), own: 1, imported: 2 }],
+    });
+    expect(entry("Deploy")?.textContent).toContain(
+      "Left out 2 settings from a newer termiHub (“own”, “imported”)"
+    );
+  });
+
   it("says that a copy was made, under which name, when the name is taken (files-1)", async () => {
     act(() => useAppStore.setState(automationLibraryState([automation({ id: "old" })])));
     await importJson({ version: 1, automations: [automation({})] });
@@ -121,7 +131,9 @@ describe("import", () => {
     expect(refused("Odd")?.textContent).toContain("teleport");
     expect(refused("Odd")?.textContent).toContain("Update termiHub");
     expect(entry("Part")?.dataset.state).toBe("partly");
-    expect(entry("Part")?.textContent).toContain("a setting of step 1 (“later”)");
+    expect(entry("Part")?.textContent).toContain(
+      "1 setting from a newer termiHub (“later”) in step 1"
+    );
   });
 
   it("says that nothing was imported", async () => {

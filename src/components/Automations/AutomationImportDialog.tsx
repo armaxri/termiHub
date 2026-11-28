@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
 import { Ban, Check, TriangleAlert } from "lucide-react";
 import { Button, Modal } from "@/components/ui";
-import type { AutomationImport, ImportedEntry } from "@/services/automationFileIo";
-import { joinWords } from "@/utils/joinWords";
+import {
+  describeLeftOut,
+  type AutomationImport,
+  type ImportedEntry,
+} from "@/services/automationFileIo";
 import { EXPERIMENTAL_SETTING_PATH } from "@/utils/experimentalSetting";
 import { LOCAL_PROGRAMS_SETTING_LABEL } from "@/utils/localProcessGate";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
@@ -41,9 +44,8 @@ export function importEntryNotes(entry: ImportedEntry, switches: LocalProgramSwi
   const notes: string[] = [];
   if (entry.leftOut.length > 0) {
     notes.push(
-      `Left out, because this version does not know ${entry.leftOut.length === 1 ? "it" : "them"}: ` +
-        `${joinWords(entry.leftOut)}. It may do less, or something else, than the original: ` +
-        "check it before you run it. Its row says so until you have saved it."
+      `Left out ${describeLeftOut(entry.leftOut)}. It may do less, or something else, than the ` +
+        "original: check it before you run it. Its row says so until you have saved it."
     );
   }
   if (entry.triggersOff.length > 0) {
