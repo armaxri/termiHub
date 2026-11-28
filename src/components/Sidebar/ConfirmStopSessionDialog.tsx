@@ -26,7 +26,7 @@ export function ConfirmStopSessionDialog({
   return (
     <ConfirmDialog
       open={name !== null}
-      title="Stop background session?"
+      title="Stop persistent session?"
       variant="danger"
       message={name !== null ? stopSessionMessage(name) : ""}
       confirmLabel="Stop session"

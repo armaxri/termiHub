@@ -107,6 +107,11 @@ import { isFrozenMonitorBadge, monitorStatusBadge } from "@/utils/reconnectStatu
 import { errorMessage } from "@/utils/errorMessage";
 import { itemMatchesQuery } from "@/hooks/useListFilter";
 import "./StatusBar.css";
+import {
+  connectionStateHeading,
+  connectionStateWord,
+  connectionVerb,
+} from "@/utils/connectionStateCopy";
 
 const INDENT_SIZES = [1, 2, 4, 8] as const;
 
@@ -523,7 +528,7 @@ function PersistentSessionsIndicator() {
 
   if (runningCount === 0) return null;
 
-  const sessionsLabel = `${runningCount} background session${
+  const sessionsLabel = `${runningCount} persistent session${
     runningCount !== 1 ? "s" : ""
   } running — click to open Connections`;
 
@@ -852,21 +857,21 @@ function MonitoringStatus() {
               data-testid="monitoring-loading"
             >
               <Spinner size="xs" label={null} />
-              Connecting…
+              {connectionStateHeading("connecting")}
             </span>
             {/*
               Cancel aborts the in-flight connect and tears the entry down so a
               stuck handshake is never a dead-end (#1233).
             */}
-            <Tooltip content="Cancel monitoring connect" side="top">
+            <Tooltip content="Abort monitoring connect" side="top">
               <button
                 className="status-bar__item status-bar__item--interactive"
-                aria-label="Cancel monitoring connect"
+                aria-label="Abort monitoring connect"
                 data-testid="monitoring-cancel-btn"
                 onClick={handleCancel}
               >
                 <X size={12} />
-                Cancel
+                {connectionVerb("abort")}
               </button>
             </Tooltip>
           </>
@@ -1021,7 +1026,7 @@ function MonitoringStatus() {
               data-testid="monitoring-reconnecting"
             >
               <Spinner size="xs" label={null} />
-              Reconnecting…
+              {connectionStateHeading("reconnecting")}
             </span>
           )}
           {/*
@@ -1225,9 +1230,9 @@ function MonitoringDetailDropdown({
             // transient state the collapsed spinner label does not spell out.
             title={
               isReconnecting
-                ? `Reconnecting to ${host ?? "monitor"}…`
+                ? `${connectionStateWord("reconnecting")} to ${host ?? "monitor"}…`
                 : loading
-                  ? `Connecting to ${host ?? "monitor"}…`
+                  ? `${connectionStateWord("connecting")} to ${host ?? "monitor"}…`
                   : undefined
             }
             data-testid="monitoring-host"
