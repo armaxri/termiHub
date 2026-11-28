@@ -609,3 +609,8 @@
 .monitoring-menu__value--muted {
   color: var(--text-secondary);
 }
+
+/* Something went wrong, unlike a monitor the user paused (#6183, states-2). */
+.monitoring-status__warn-icon {
+  color: var(--color-warning);
+}
