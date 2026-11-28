@@ -162,8 +162,9 @@ export function RowLines({
           >
             {triggers.text}
           </span>
-          <span className="automation-item__arm-toggle" {...keepOffRow}>
-            <Tooltip content={t("automation.triggers.switchHint")} side="top">
+          {/* The span is the tooltip's anchor: Toggle forwards no ref. */}
+          <Tooltip content={t("automation.triggers.switchHint")} side="top">
+            <span className="automation-item__arm-toggle" {...keepOffRow}>
               <Toggle
                 checked={triggers.on}
                 onCheckedChange={onSetTriggers}
@@ -173,8 +174,8 @@ export function RowLines({
                 )}
                 data-testid={`automation-arm-toggle-${id}`}
               />
-            </Tooltip>
-          </span>
+            </span>
+          </Tooltip>
         </div>
       )}
       {nextRun !== null && (

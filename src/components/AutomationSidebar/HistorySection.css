@@ -73,8 +73,9 @@
 .automation-history__main {
   display: flex;
   flex: 1;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: var(--spacing-xs);
+  column-gap: var(--spacing-xs);
   min-width: 0;
   white-space: nowrap;
 }
@@ -90,9 +91,11 @@
   font-size: var(--font-size-xs);
 }
 
+/* A cut name or terminal keeps a readable stub; when the sidebar is too
+   narrow for both on one line, the terminal goes under the name. */
 .automation-history__name {
   flex: 0 1 auto;
-  min-width: 0;
+  min-width: 5em;
 }
 
 .automation-history__line {
@@ -113,8 +116,8 @@
 }
 
 .automation-history__target {
-  flex: 1 1 0;
-  min-width: 0;
+  flex: 1 1 5em;
+  min-width: 5em;
   color: var(--text-secondary);
   font-size: var(--font-size-xs);
 }

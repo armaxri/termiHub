@@ -6,12 +6,7 @@ import type { AutomationRun } from "@/types/generated/AutomationRun";
 import { formatAbsoluteTime, formatDayTime } from "@/utils/formatters";
 import { useRevealWhenOpened } from "./useRevealWhenOpened";
 import { HistoryRunDetails } from "./HistoryRunDetails";
-import {
-  automationRunStatusLabel,
-  automationRunTargets,
-  automationRunTone,
-  toleratedText,
-} from "./historyFormat";
+import { automationRunStatusLabel, automationRunTargets, automationRunTone } from "./historyFormat";
 
 /** Props of {@link HistoryRunRow}. */
 export interface HistoryRunRowProps {
@@ -76,7 +71,8 @@ export function HistoryRunRow({
   const title = oneAutomation && where !== null ? where : run.automationName;
   const mark = originMark(run.origin);
   const outcome = `${automationRunStatusLabel(run.status)}${
-    run.continuedFailures ? ` · ${toleratedText(run.continuedFailures)}` : ""
+    // Short on the row, which shares a line; the details say the rest.
+    run.continuedFailures ? ` · ${run.continuedFailures} failed` : ""
   }`;
 
   return (
