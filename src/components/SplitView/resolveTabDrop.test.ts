@@ -192,6 +192,85 @@ describe("isOutsideViewport", () => {
   });
 });
 
+describe("resolveTabDrop after a dwell switched the group (#6201)", () => {
+  // The drag started in g1; hovering a chip switched the view to g2.
+  const switched = (partial: Partial<TabDropInput>) =>
+    input({ dragGroupId: "g1", activeGroupId: "g2", ...partial });
+
+  it("drops into the panel zone under the pointer in the visible group", () => {
+    const action = resolveTabDrop(
+      switched({
+        pointerHits: [
+          { tabGroupId: null, newGroupButton: false, dropPanelId: "q1", dropEdge: "left" },
+        ],
+      })
+    );
+    expect(action).toEqual({
+      kind: "moveToGroupPanel",
+      fromGroupId: "g1",
+      toGroupId: "g2",
+      toPanelId: "q1",
+      edge: "left",
+    });
+  });
+
+  it("ignores the stale droppable of the hidden source group", () => {
+    const action = resolveTabDrop(
+      switched({
+        overId: `center-${RIGHT}`,
+        overPanelId: RIGHT,
+        pointerHits: [
+          { tabGroupId: null, newGroupButton: false, dropPanelId: "q1", dropEdge: "center" },
+        ],
+      })
+    );
+    expect(action).toMatchObject({ kind: "moveToGroupPanel", toPanelId: "q1", edge: "center" });
+  });
+
+  it("a drop on a group chip puts the tab into that group's first panel", () => {
+    for (const group of ["g2", "g3"]) {
+      const action = resolveTabDrop(
+        switched({ pointerHits: [{ tabGroupId: group, newGroupButton: false }] })
+      );
+      expect(action).toEqual({
+        kind: "moveToGroupPanel",
+        fromGroupId: "g1",
+        toGroupId: group,
+        toPanelId: null,
+        edge: "center",
+      });
+    }
+  });
+
+  it("a drop back on the source group's chip changes nothing", () => {
+    expect(
+      resolveTabDrop(switched({ pointerHits: [{ tabGroupId: "g1", newGroupButton: false }] }))
+    ).toEqual({ kind: "none" });
+  });
+
+  it("a drop on nothing changes nothing", () => {
+    expect(resolveTabDrop(switched({}))).toEqual({ kind: "none" });
+  });
+
+  it("still tears the tab off outside the window", () => {
+    expect(resolveTabDrop(switched({ dropPoint: { x: -10, y: 100 } }))).toEqual({
+      kind: "tearOff",
+    });
+  });
+
+  it("routes as before when no switch happened", () => {
+    expect(
+      resolveTabDrop(
+        input({
+          dragGroupId: "g1",
+          activeGroupId: "g1",
+          pointerHits: [{ tabGroupId: "g2", newGroupButton: false }],
+        })
+      )
+    ).toEqual({ kind: "moveToGroup", groupId: "g2" });
+  });
+});
+
 describe("dispatchTabDrop", () => {
   function ops(): TabDropOps {
     return {
@@ -201,6 +280,7 @@ describe("dispatchTabDrop", () => {
       moveTab: vi.fn(),
       reorderTabs: vi.fn(),
       moveTabToWindow: vi.fn().mockResolvedValue(undefined),
+      moveTabToGroupPanel: vi.fn(),
     };
   }
 
@@ -231,6 +311,17 @@ describe("dispatchTabDrop", () => {
       "reorderTabs",
       [LEFT, 0, 2],
     ],
+    [
+      {
+        kind: "moveToGroupPanel",
+        fromGroupId: "g1",
+        toGroupId: "g2",
+        toPanelId: "q1",
+        edge: "top",
+      } as const,
+      "moveTabToGroupPanel",
+      ["t1", "g1", LEFT, "g2", "q1", "top"],
+    ],
   ])("routes %o to %s", (action, op, args) => {
     const o = ops();
     dispatchTabDrop(action, "t1", LEFT, o);
@@ -244,18 +335,21 @@ describe("describePointerHits", () => {
     bar.innerHTML = `
       <button data-tab-group-id="grp-9"><span id="chip-label">Group</span></button>
       <button data-new-group-btn="true"><svg id="plus"></svg></button>
-      <div id="other"></div>`;
+      <div id="other"></div>
+      <div data-drop-panel="q1" data-drop-edge="right"><span id="zone"></span></div>`;
     document.body.appendChild(bar);
     try {
       const hits = describePointerHits([
         bar.querySelector("#plus")!,
         bar.querySelector("#chip-label")!,
         bar.querySelector("#other")!,
+        bar.querySelector("#zone")!,
       ]);
       expect(hits).toEqual([
         { tabGroupId: null, newGroupButton: true },
         { tabGroupId: "grp-9", newGroupButton: false },
         { tabGroupId: null, newGroupButton: false },
+        { tabGroupId: null, newGroupButton: false, dropPanelId: "q1", dropEdge: "right" },
       ]);
     } finally {
       bar.remove();
