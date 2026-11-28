@@ -54,6 +54,7 @@ export const lightTheme: ThemeDefinition = {
     // Borders
     borderPrimary: "#d1d5da",
     borderSecondary: "#e1e4e8",
+    borderInput: "#7d838c", // #6154: 3:1 on the input and around it
 
     // Accent / focus
     accentColor: "#0366d6",
@@ -69,7 +70,7 @@ export const lightTheme: ThemeDefinition = {
 
     // State dots
     stateConnected: "#22863a",
-    stateConnecting: "#b08800",
+    stateConnecting: "#8a6d00", // #6154: 3:1 on every surface a dot sits on
     stateDisconnected: "#cb2431",
 
     // Terminal
@@ -97,6 +98,11 @@ export const lightTheme: ThemeDefinition = {
     ansiBrightWhite: "#ffffff",
 
     // Scrollbar
+    // Indicators (#6154): text on the status bar at 4.5:1, marks at 3:1.
+    colorNotice: "#a14a08",
+    broadcastAccent: "#b23c0b",
+    macroAccent: "#7c3aed",
+
     scrollbarThumb: "rgba(100, 100, 100, 0.45)",
     scrollbarThumbHover: "rgba(100, 100, 100, 0.65)",
   },
