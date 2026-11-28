@@ -654,8 +654,8 @@ describe("appStore — workflow run slice (#1852)", () => {
 
       await useAppStore.getState().runWorkflow("w1");
 
-      // The prior send ran; the local process NEVER spawned.
-      expect(injected).toEqual(["a\n"]);
+      // Refused before anything ran (#6178): nothing typed, the process NEVER spawned.
+      expect(injected).toEqual([]);
       expect(invokeRunLocalProcess).not.toHaveBeenCalled();
       expect(toast.error).toHaveBeenCalled();
     });

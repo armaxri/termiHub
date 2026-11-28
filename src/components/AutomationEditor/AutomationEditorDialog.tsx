@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { describeLeftOut } from "@/services/automationFileIo";
 import { flushSync } from "react-dom";
 import { Button, Field, Input, LiveRegion, Modal, ModalClose } from "@/components/ui";
 import { useEditorKeyboard } from "@/hooks/useEditorKeyboard";
 import { useConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
 import { useRevealOnSave } from "@/hooks/useRevealedErrors";
-import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
+import { useLocalProcessSwitches } from "@/hooks/useExperimentalFeatures";
 import { getActiveTab, useAppStore } from "@/store/appStore";
 import type { RecordedTake } from "@/store/slices/recordingSlice";
 import { showTerminal } from "@/utils/showTerminal";
@@ -39,7 +40,6 @@ import { StepList } from "./StepList";
 import { hotkeyConflict } from "./HotkeyField";
 import { tf } from "@/i18n/catalog";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
-import { joinWords } from "@/utils/joinWords";
 import { triggerKindLabel } from "./stepMeta";
 import type { AutomationTrigger } from "@/types/generated/AutomationTrigger";
 import { triggerBlocked, unattendedStartBlocked } from "@/utils/triggerBlocked";
@@ -151,7 +151,7 @@ export function AutomationEditorDialog({
     const tab = getActiveTab(s);
     return tab?.contentType === "terminal" ? tab.title || "Terminal" : null;
   });
-  const experimental = useExperimentalFeatures();
+  const localSwitches = useLocalProcessSwitches();
   const aside = useAutomationEditor((s) => s.aside);
   const setAside = useAutomationEditor((s) => s.setAside);
   const takeForEditor = useAppStore((s) => s.takeForEditor);
@@ -197,9 +197,9 @@ export function AutomationEditorDialog({
       setExpanded: (uid, open) => setExpandedSet((prev) => toggled(prev, uid, open)),
       failureOpen,
       showFailure: (uid) => setFailureOpen((prev) => toggled(prev, uid, true)),
-      openSettings: () => {
+      openSettings: (category = "general") => {
         setAside(true);
-        openSettingsTab({ category: "general" });
+        openSettingsTab({ category });
       },
       announce: setAnnouncement,
       renderStepList: (props) => <StepList {...props} />,
@@ -263,8 +263,8 @@ export function AutomationEditorDialog({
 
   // Why running it would be refused, in a few words; it can be saved (A-032).
   const blockedBy = useMemo(
-    () => blockedSummary(draft.steps, (id) => automations.find((a) => a.id === id), experimental),
-    [draft.steps, automations, experimental]
+    () => blockedSummary(draft.steps, (id) => automations.find((a) => a.id === id), localSwitches),
+    [draft.steps, automations, localSwitches]
   );
   const missing = missingSummary(allErrors);
   // A hotkey somebody else answers to is stored and never works (B-022).
@@ -422,7 +422,7 @@ export function AutomationEditorDialog({
             className="automation-step__note automation-step__note--warning"
             data-testid="automation-editor-imported-part"
           >
-            {tf("automation.importedNote", { parts: joinWords(base.importedInPart) })}
+            {tf("automation.importedNote", { parts: describeLeftOut(base.importedInPart) })}
           </p>
         ) : null}
         <div className="automation-editor__head">

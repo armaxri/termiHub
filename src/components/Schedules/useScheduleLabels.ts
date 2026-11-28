@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from "react";
 
-import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
+import { useLocalProcessSwitches } from "@/hooks/useExperimentalFeatures";
 import { useAppStore } from "@/store/appStore";
 import { useBroadcastGroups } from "@/store/broadcastGroups";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
@@ -28,7 +28,7 @@ export function useScheduleLabels() {
     [automations]
   );
 
-  const experimental = useExperimentalFeatures();
+  const localSwitches = useLocalProcessSwitches();
 
   const targets = useCallback(
     (target: ScheduleTargets) => describeTargetNames(target, (id) => names.get(id), groups),
@@ -42,13 +42,13 @@ export function useScheduleLabels() {
       const automation = find(s.action.automationId);
       if (!automation) return tf("schedule.blocked", { reason: t("schedule.gone.automation") });
       const blocked =
-        localProcessBlockedReason(automation, find, experimental) ??
+        localProcessBlockedReason(automation, find, localSwitches) ??
         unattendedBlockedReason(automation, find);
       if (blocked) return blocked;
       const { gone } = targets(s.targets);
       return gone ? tf("schedule.blocked", { reason: gone }) : null;
     },
-    [automations, experimental, targets]
+    [automations, localSwitches, targets]
   );
 
   /** The same in a few words, for a line about something else (B-016). */
@@ -57,7 +57,7 @@ export function useScheduleLabels() {
       const find = (id: string) => automations.find((x) => x.id === id);
       const automation = find(s.action.automationId);
       if (!automation) return t("schedule.gone.automation");
-      if (localProcessBlockedReason(automation, find, experimental)) {
+      if (localProcessBlockedReason(automation, find, localSwitches)) {
         return t("schedule.short.localProcess");
       }
       if (unattendedBlockedReason(automation, find)) {
@@ -67,7 +67,7 @@ export function useScheduleLabels() {
       }
       return targets(s.targets).gone;
     },
-    [automations, experimental, targets]
+    [automations, localSwitches, targets]
   );
 
   return { automations, connections, groups, actionLabel, blockedReason, blockedShort, targets };

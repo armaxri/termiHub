@@ -23,6 +23,7 @@ import { KNOWN_ENTRY_KEYS, KNOWN_STEP_KINDS, KNOWN_TRIGGER_KINDS } from "@/servi
 import { triggerKindLabel } from "@/components/AutomationEditor/stepText";
 import { referencedAutomations } from "@/services/automationRunner";
 import { newId } from "@/services/transport/ids";
+import { joinWords } from "@/utils/joinWords";
 import { macroToAutomation, workflowToAutomation } from "@/store/slices/automationViews";
 import type { Automation } from "@/types/generated/Automation";
 import type { AutomationStep } from "@/types/generated/AutomationStep";
@@ -110,6 +111,24 @@ function partName(path: readonly (string | number)[]): string {
   if (list === "steps") return what(` of step ${index + 1}`);
   if (list === "triggers") return what(` of trigger ${index + 1}`);
   return what(list === "parameters" ? ` of value ${index + 1}` : "");
+}
+
+/** A left-out part as {@link partName} wrote it: the key, and where. */
+const PART = /^a setting(?: of (step|trigger|value) (\d+))? \(“(.*)”\)$/;
+
+/**
+ * The parts an import left out, in one count-led phrase (#6178): "2 settings from
+ * a newer termiHub (“own”, “imported”) in step 2". A part this does not recognise
+ * (an older wording, stored on a row) is kept as written.
+ */
+export function describeLeftOut(parts: readonly string[]): string {
+  const parsed = parts.map((part) => PART.exec(part));
+  if (parsed.length === 0 || parsed.some((m) => m === null)) return joinWords(parts);
+  const keys = parsed.map((m) => `“${m![3]}”`);
+  const places = [...new Set(parsed.filter((m) => m![1]).map((m) => `${m![1]} ${m![2]}`))];
+  const count = `${parts.length} setting${parts.length === 1 ? "" : "s"}`;
+  const where = places.length > 0 ? ` in ${joinWords(places)}` : "";
+  return `${count} from a newer termiHub (${keys.join(", ")})${where}`;
 }
 
 /** The keys of `raw`, at any level, that validation took out. */
