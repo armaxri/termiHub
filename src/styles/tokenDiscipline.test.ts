@@ -1462,3 +1462,45 @@ describe("icon size scale (#6157)", () => {
     ).toEqual([]);
   });
 });
+
+/**
+ * Boxes that hold an icon rather than being one: an icon badge or a picker
+ * cell is sized by its layout, and the glyph inside it uses the scale.
+ */
+const ICON_BOX_ALLOWLIST = [".ui-empty--card .ui-empty__icon", ".plugin-detail__icon"];
+
+/** Rules that size a glyph (an svg or an icon class) with a raw px width or height. */
+function rawCssIconSizes(css: string): string[] {
+  const out: string[] = [];
+  for (const { selector, body } of cssRules(css)) {
+    const last = selector.split(",").map((s) => s.trim());
+    const glyph = last.some((s) => /(\bsvg|__icon(-svg)?|-icon|\[data-icon\])(\.[\w-]+)?$/.test(s));
+    if (!glyph || ICON_BOX_ALLOWLIST.includes(selector)) continue;
+    for (const m of body.matchAll(/(?:^|[;\s])((?:min-|max-)?(?:width|height))\s*:\s*([^;]+)/g)) {
+      if (/\d+px/.test(m[2].replace(/var\([^)]*\)/g, " ")))
+        out.push(`${selector} ${m[1]}: ${m[2]}`);
+    }
+  }
+  return out;
+}
+
+describe("icon sizes in CSS (#6157)", () => {
+  it("flags a raw px glyph size and accepts a token or a box (guard self-check)", () => {
+    expect(rawCssIconSizes(".a__icon { width: 15px; height: 15px; }")).toHaveLength(2);
+    expect(rawCssIconSizes(".a svg { width: 14px; }")).toHaveLength(1);
+    expect(rawCssIconSizes(".a__icon { width: var(--icon-sm); height: var(--icon-sm); }")).toEqual(
+      []
+    );
+    expect(rawCssIconSizes(".plugin-detail__icon { width: 40px; }")).toEqual([]);
+    expect(rawCssIconSizes(".icon-picker__cell { width: 36px; }")).toEqual([]);
+  });
+
+  it("sizes every glyph in app CSS with an --icon-* token", () => {
+    const offenders = ALL_CSS.flatMap((file) =>
+      rawCssIconSizes(readFileSync(file, "utf8")).map(
+        (hit) => `${toPosix(file).split("/src/")[1]} ${hit}`
+      )
+    );
+    expect(offenders, "Use an --icon-* token:\n" + offenders.join("\n")).toEqual([]);
+  });
+});
