@@ -61,6 +61,24 @@ describe("KeyboardSettings polish (#5561)", () => {
     clearOverrides();
   });
 
+  it("shows its two toggles as the settings pages' inline rows (#6153)", async () => {
+    await render();
+    for (const [toggle, label] of [
+      ["keyboard-settings-passthrough", "Pass through shell keys when terminal is focused"],
+      ["keyboard-settings-editor-delegation", "Let editor tabs handle their own editing shortcuts"],
+    ]) {
+      const row = byTestId(toggle)?.closest(".settings-form__field");
+      expect(row?.classList.contains("settings-form__field--inline"), toggle).toBe(true);
+      expect(row?.querySelector(".settings-form__label")?.textContent).toContain(label);
+      expect(row?.querySelector(".settings-form__hint")?.textContent).not.toBe("");
+      // The toggle sits at the row's end, in its control column.
+      expect(
+        row?.querySelector(`.settings-form__field-control [data-testid="${toggle}"]`)
+      ).not.toBeNull();
+    }
+    expect(container.querySelector(".keyboard-settings__passthrough")).toBeNull();
+  });
+
   it("shows no reset button on a row that is at its default", async () => {
     await render();
     expect(byTestId("keybinding-row-toggle-sidebar")).not.toBeNull();
