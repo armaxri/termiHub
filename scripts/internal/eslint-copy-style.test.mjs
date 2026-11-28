@@ -3,6 +3,7 @@ import { RuleTester } from "eslint";
 import tseslint from "typescript-eslint";
 import {
   britishSpelling,
+  glossaryTerm,
   copyStyleRule,
   formatMessage,
   parseMessage,
@@ -217,6 +218,65 @@ describe("copy/copy-style on accessible names, tooltips and titles (#5493)", () 
         code: 'const e = { title: "Could Not Reach Host", message: "x" };',
         options,
         errors: [sentenceCase("Could Not Reach Host")],
+      },
+    ],
+  });
+});
+
+describe("glossaryTerm (#6159)", () => {
+  it("names the glossary term for an old name", () => {
+    expect(glossaryTerm("Port forwarding")?.term).toBe("tunnel");
+    expect(glossaryTerm("Add a port forward")?.term).toBe("tunnel");
+    expect(glossaryTerm("Stop background session?")?.term).toBe("persistent session");
+    expect(glossaryTerm("Connection lost")?.term).toBe('"Reconnecting…" or "Session ended"');
+    expect(glossaryTerm("Connection lost — reconnecting…")?.term).toBe(
+      '"Reconnecting…" or "Session ended"'
+    );
+    expect(glossaryTerm("Disconnected")?.term).toBe('"Session ended" or "Connection failed"');
+  });
+
+  it("leaves the glossary's own words and other uses alone", () => {
+    expect(glossaryTerm("New tunnel")).toBeNull();
+    expect(glossaryTerm("X11 forwarding by default")).toBeNull();
+    expect(glossaryTerm("Device disconnected — reconnecting…")).toBeNull();
+    expect(glossaryTerm("The connection was lost.")).toBeNull();
+    expect(glossaryTerm("Stop persistent session?")).toBeNull();
+  });
+});
+
+describe("copy/copy-style glossary check (#6159)", () => {
+  RuleTester.describe = describe;
+  RuleTester.it = it;
+  const tester = new RuleTester({
+    languageOptions: {
+      parser: tseslint.parser,
+      parserOptions: { ecmaFeatures: { jsx: true } },
+    },
+  });
+  const options = [{ baselinePath: null }];
+  const glossary = (text) => ({ message: formatMessage("glossary", text) });
+
+  tester.run("copy-style", copyStyleRule, {
+    valid: [
+      { code: '<span title="New tunnel" />', options },
+      { code: "<p>The connection was lost.</p>", options },
+      { code: 'const words = ["Port forwarding"];', options },
+    ],
+    invalid: [
+      {
+        code: '<span title="Port forwarding" />',
+        options,
+        errors: [glossary("Port forwarding")],
+      },
+      {
+        code: "<p>Disconnected</p>",
+        options,
+        errors: [glossary("Disconnected")],
+      },
+      {
+        code: 'const e = { title: "Connection lost" };',
+        options,
+        errors: [glossary("Connection lost")],
       },
     ],
   });
