@@ -34,6 +34,8 @@ class _SidebarDriver:
         self.clicks: list[str] = []
         self.editor_open = False
         self.menu_open = False
+        # A remote agent's editor: the name field, but no connection-type select.
+        self.agent_editor_open = False
 
     def get_state(self, path: Optional[str] = None) -> Any:
         if path == "sidebarView":
@@ -42,6 +44,8 @@ class _SidebarDriver:
 
     def exists(self, test_id: str) -> bool:
         if test_id == "connection-editor-name-input":
+            return self.editor_open or self.agent_editor_open
+        if test_id == "connection-editor-type-select":
             return self.editor_open
         if test_id == "connection-list-new-menu":
             return self.view == "connections"
@@ -89,3 +93,13 @@ def test_noop_when_editor_already_open():
     driver.editor_open = True
     _Conn(driver).open_new_connection_editor()
     assert driver.clicks == []
+
+
+def test_an_open_agent_editor_is_not_the_connection_editor():
+    """A remote agent's editor shares the name field's test id; the harness must
+    still open a connection editor rather than type into the agent's."""
+    driver = _SidebarDriver(view="connections")
+    driver.agent_editor_open = True
+    _Conn(driver).open_new_connection_editor()
+    assert driver.editor_open
+    assert "connection-list-new-connection" in driver.clicks

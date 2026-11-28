@@ -136,6 +136,8 @@
 
   /* Border colors */
   --border-primary: #2a2f40;
+  /* Input boundary at 3:1 (#6154); a theme token, Dark value until the theme applies. */
+  --border-input: #666f86;
   --border-secondary: #1a1e2a;
   --panel-border: var(--border-primary);
 
@@ -171,26 +173,24 @@
   --banner-accent-width: 3px;
   /*
    * Notice amber: brighter than --color-warning, reserved for
-   * "update available" indicator dots (status bar + update notification).
+   * "update available" indicator dots and counts. A theme token since #6154
+   * (ThemeColors.colorNotice); this is the Dark value until the theme applies.
    * --color-badge-dev: purple fill for the "develop channel" badge.
-   * Saturated solid fills that read on both dark and light themes; kept as
-   * single :root values like the other indicator dots (--state-*).
    */
   --color-notice: #f59e0b;
   --color-badge-dev: #7c3aed;
 
   /*
    * Broadcast input (#1957): distinct orange accent for the participating-panel
-   * rings/glow, the per-tab Radio badge, and the status-bar pill. A single-root
-   * value (like the state dots) that reads on both dark and light themes, and
-   * deliberately distinct from the blue --accent-color so a broadcast ring is
+   * rings/glow, the per-tab Radio badge, and the status-bar pill. A theme token
+   * since #6154 (ThemeColors.broadcastAccent; Dark value here), deliberately distinct from the blue --accent-color so a broadcast ring is
    * never mistaken for focus.
    */
   --broadcast-accent: #e87d0d;
   /*
    * Multi-target macro playback (#3446): the per-tab "receiving macro" badge.
    * Violet, so it is distinct from both the orange broadcast badge and the blue
-   * focus accent, and reads on dark and light themes.
+   * focus accent. A theme token since #6154 (ThemeColors.macroAccent; Dark value here).
    */
   --macro-accent: #a66cf0;
 
@@ -268,6 +268,9 @@
      former 22%-alpha single ring was too faint and failed 3:1 non-text
      contrast. */
   --shadow-focus: 0 0 0 2px var(--bg-primary), 0 0 0 4px var(--focus-border);
+  /* The focus ring (#6154): an outline off the element, so it shows on any surface. */
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
 
   /* Border radius */
   --radius-xs: 2px;

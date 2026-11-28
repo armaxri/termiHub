@@ -49,6 +49,8 @@ export interface ThemeColors {
   // Borders
   borderPrimary: string;
   borderSecondary: string;
+  /** Boundary of inputs, selects and text areas: 3:1 on the input and the surface around it (#6154). */
+  borderInput: string;
 
   // Accent / focus
   accentColor: string;
@@ -95,6 +97,14 @@ export interface ThemeColors {
   ansiBrightMagenta: string;
   ansiBrightCyan: string;
   ansiBrightWhite: string;
+
+  // Indicators (#6154): per theme, so each reads on light surfaces too.
+  /** "Update available" dots and counts. */
+  colorNotice: string;
+  /** Broadcast input rings, badges and the status-bar pill. */
+  broadcastAccent: string;
+  /** The per-tab "running automation" badge. */
+  macroAccent: string;
 
   // Scrollbar
   scrollbarThumb: string;

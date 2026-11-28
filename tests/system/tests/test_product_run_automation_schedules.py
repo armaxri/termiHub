@@ -299,7 +299,7 @@ class TestProductRunAutomationSchedules(
             t = self.tag
             self.show_automations()
             self.author_workflow(
-                f"Sched command {t}", [("send-command", {"command": f"echo PR_SCHED_C_{t}"})]
+                f"Sched command {t}", [("send-command", {"step-command": f"echo PR_SCHED_C_{t}"})]
             )
             self.save_workflow()
             self.ids["command"] = self.workflow_id(f"Sched command {t}")
