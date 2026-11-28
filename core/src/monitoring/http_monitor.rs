@@ -1062,9 +1062,57 @@ async fn check_once(config: &HttpMonitorConfig, client: &Client) -> HttpCheckRes
             status_code: None,
             latency_ms: None,
             ok: false,
-            error: Some(e.to_string()),
+            error: Some(check_failure_reason(&e, config)),
             timestamp_ms,
         },
+    }
+}
+
+/// Why a check that got no response failed, in words (live review 2026-11-28):
+/// reqwest says "error sending request for url (…)" for every one of them.
+/// A refused connect and a timeout get a plain cause; anything else its
+/// innermost error, which names it ("dns error: …", "invalid peer
+/// certificate: …").
+fn check_failure_reason(e: &reqwest::Error, config: &HttpMonitorConfig) -> String {
+    let target = e
+        .url()
+        .and_then(|url| {
+            Some(format!(
+                "{}:{}",
+                url.host_str()?,
+                url.port_or_known_default()?
+            ))
+        })
+        .unwrap_or_else(|| config.url.clone());
+    if e.is_timeout() {
+        return format!(
+            "No answer from {target} within {}",
+            human_timeout(config.timeout_ms)
+        );
+    }
+    let mut innermost: &(dyn std::error::Error + 'static) = e;
+    while let Some(next) = innermost.source() {
+        innermost = next;
+    }
+    if let Some(io) = innermost.downcast_ref::<std::io::Error>() {
+        if io.kind() == std::io::ErrorKind::ConnectionRefused {
+            return format!("Connection refused: nothing is listening on {target}");
+        }
+    }
+    let cause = innermost.to_string();
+    if e.is_connect() {
+        format!("Could not connect to {target}: {cause}")
+    } else {
+        cause
+    }
+}
+
+/// A timeout as a reader says it: whole seconds in seconds, else milliseconds.
+fn human_timeout(ms: u64) -> String {
+    if ms >= 1000 && ms % 1000 == 0 {
+        format!("{} s", ms / 1000)
+    } else {
+        format!("{ms} ms")
     }
 }
 
@@ -1235,7 +1283,10 @@ mod tests {
         cfg.timeout_ms = 300;
         let client = build_guarded_client(&cfg).expect("client builds");
         let err = check_once(&cfg, &client).await.error.unwrap_or_default();
-        assert_eq!(err, format!("No answer from 127.0.0.1:{port} within 300 ms"));
+        assert_eq!(
+            err,
+            format!("No answer from 127.0.0.1:{port} within 300 ms")
+        );
     }
 
     #[test]
