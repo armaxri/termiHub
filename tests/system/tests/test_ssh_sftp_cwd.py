@@ -10,10 +10,10 @@ The checks are substring matches, which accept both.
 
 On Windows the suite runs against the native sshd with Git Bash as the login
 shell (#5449, #6147). Win32-OpenSSH is followed only through the shell hook, so
-the connection turns Command Marks on there. Git Bash reports its directory as an
-MSYS drive path (``/c/Users``), which the browser opens as the server's
-``/C:/Users``; MSYS mounts such as ``/tmp`` cannot be followed, so the suite
-changes into drive folders instead.
+the connection turns Command Marks on there. The suite changes into drive
+folders (``/c/Users``), which the browser opens as the server's ``/C:/Users``,
+and into the MSYS mount ``/tmp``: the hook reports the folder Git Bash maps it
+to (``pwd -W``, #6170), ``C:/Users/<user>/AppData/Local/Temp``.
 """
 
 from __future__ import annotations
@@ -89,6 +89,22 @@ class TestSshSftpCwd(
             lambda: _shows(self.file_browser_path(), FIRST_DIR), what=f"the browser at {FIRST_DIR}"
         )
         self._lists(FIRST_DIR)
+
+    @pytest.mark.skipif(not WINDOWS, reason="an MSYS mount only exists on a Git Bash host")
+    def test_follows_cd_to_an_msys_mount(self):
+        # #6170: /tmp is a Git Bash mount, not a Windows folder; the hook
+        # reports where it points, and the browser opens that folder.
+        probe = unique_name("th-6170-probe")
+        self._connect(unique_name("sftp-cwd-mount"))
+        self.run_command(f"cd /tmp && touch {probe}")
+        self._cd_settles()
+        self.connect_sftp_browser()
+        assert self.wait(
+            lambda: "appdata/local/temp" in self.file_browser_path().replace("\\", "/").lower(),
+            what="the browser at the folder /tmp maps to",
+        )
+        self.wait_for_file_row(probe)
+        self.run_command(f"rm -f {probe}")
 
     def test_follows_cd_to_home(self):
         self._connect(unique_name("sftp-cwd-home"))

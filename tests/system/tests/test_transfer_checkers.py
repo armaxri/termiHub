@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import contextlib
 import socket
+import sys
 import threading
 import time
 from pathlib import Path
@@ -30,7 +31,7 @@ tftpy = pytest.importorskip("tftpy", reason="tftpy required for TFTP checker tes
 
 
 def _free_port() -> int:
-    """Pick an unused TCP port (good enough for the UDP-based TFTP server too)."""
+    """Pick an unused TCP port, for the FTP server (TCP)."""
     with contextlib.closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
@@ -38,28 +39,56 @@ def _free_port() -> int:
 
 @contextlib.contextmanager
 def _tftp_server(root: Path):
-    """Run a tftpy TFTP server in a background thread on a free UDP port."""
-    port = _free_port()
+    """Run a tftpy TFTP server in a background thread on a free UDP port.
+
+    The server binds port 0 and reads back the UDP port the OS gave it. A port
+    a TCP probe found free could be held on UDP (another test's server, a
+    parallel worker), which killed the thread before it bound.
+    """
     server = tftpy.TftpServer(str(root))
     thread = threading.Thread(
         target=server.listen,
-        kwargs={"listenip": "127.0.0.1", "listenport": port},
+        # A short select timeout, so a stop ends the thread at once.
+        kwargs={"listenip": "127.0.0.1", "listenport": 0, "timeout": 0.5},
         daemon=True,
     )
     thread.start()
-    # Wait until ``listen`` has actually bound the socket (tftpy sets
-    # ``listenport`` right after ``bind``). A fixed sleep raced it on a loaded
-    # host: an RRQ sent before the bind is lost to a closed UDP port (#5543).
+    # Wait until ``listen`` has bound and is about to serve (``is_running`` is
+    # set right after the bind). An RRQ sent before the bind is lost to a
+    # closed UDP port (#5543).
     deadline = time.monotonic() + 10
-    while server.listenport != port:
+    while not server.is_running.is_set():
         assert thread.is_alive(), "the TFTP server thread died before binding"
         assert time.monotonic() < deadline, "the TFTP server never bound its port"
         time.sleep(0.01)
     try:
-        yield port
+        yield server.listenport
     finally:
         with contextlib.suppress(Exception):
             server.stop(now=True)
+        thread.join(timeout=5)
+
+
+def test_tftp_server_binds_when_a_udp_socket_holds_the_probed_port(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The server must not depend on a port a TCP probe found free (CI flake).
+
+    A free TCP port can be taken on UDP, by another test's server or a parallel
+    worker; binding it then killed the server thread before it bound. The
+    fixture lets the server pick its own UDP port and reads it back.
+    """
+    held = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    held.bind(("127.0.0.1", 0))
+    busy = held.getsockname()[1]
+    try:
+        monkeypatch.setattr(sys.modules[__name__], "_free_port", lambda: busy, raising=False)
+        (tmp_path / "boot.txt").write_text("ok", encoding="utf-8")
+        with _tftp_server(tmp_path) as port:
+            assert port != busy
+            assert tftp_download("127.0.0.1", port, "boot.txt") == b"ok"
+    finally:
+        held.close()
 
 
 def test_tftp_download_returns_file_bytes(tmp_path: Path):

@@ -669,11 +669,21 @@ pub fn detect_available_shells() -> Vec<String> {
 /// `declare -xa` prints as `declare -ax`), making the `"declare -a"*` prefix
 /// match exact — it never matches a scalar, including one whose value contains
 /// the letter `a`.
+///
+/// The one-argument form reports the path in `$path` (a shell word) after
+/// running `$setup` inside the hook, after `$?` is saved
+/// ([`windows_posix_osc7_command`], #6170).
 macro_rules! osc7_bash_prompt_hook {
     () => {
+        osc7_bash_prompt_hook!("", r#""$PWD""#)
+    };
+    ($setup:expr, $path:expr) => {
         concat!(
             r#"__termihub_osc7(){ local __th_s=$?;"#,
-            r#"printf '\e]133;D;%s\a\e]7;file://%s\a\e]133;A\a' "$__th_s" "$PWD";"#,
+            $setup,
+            r#"printf '\e]133;D;%s\a\e]7;file://%s\a\e]133;A\a' "$__th_s" "#,
+            $path,
+            ";",
             r#"return $__th_s;};"#,
             r#"__termihub_c(){ printf '\e]133;C\a'; };"#,
             r#"if [ -z "$__termihub_si" ]; then __termihub_si=1;"#,
@@ -730,6 +740,41 @@ fn bash_osc7_command() -> &'static str {
     concat!(
         " ",
         osc7_bash_prompt_hook!(),
+        "; ",
+        r"printf '\e]6973;termihub-setup-done\a'",
+    )
+}
+
+/// The hook's part that finds the Windows path of a Windows POSIX shell's
+/// directory: Git Bash's `pwd -W`, else `cygpath -m "$PWD"` (Cygwin), else
+/// `$PWD` as before. A drive path gets one leading `/` (`/C:/Users/me`), as
+/// PowerShell's hook sends it. Asked again only when `$PWD` changed, so a
+/// prompt forks no subshell while the directory stays.
+macro_rules! windows_posix_path_setup {
+    () => {
+        concat!(
+            r#"[ "$PWD" = "$__th_wd" ]||{ __th_wd=$PWD;"#,
+            r#"__th_wp=$(pwd -W 2>/dev/null)&&[ -n "$__th_wp" ]||"#,
+            r#"__th_wp=$(cygpath -m "$PWD" 2>/dev/null)&&[ -n "$__th_wp" ]||__th_wp=$PWD;"#,
+            r#"case $__th_wp in [A-Za-z]:*)__th_wp=/$__th_wp;;esac;};"#,
+        )
+    };
+}
+
+/// OSC 7 setup command for a POSIX shell on a Windows SSH host (Git Bash,
+/// MSYS2, Cygwin as the OpenSSH `DefaultShell`, #6170).
+///
+/// The same typed, hidden line as `bash_osc7_command`, except that it
+/// reports the directory's Windows path: such a shell's `$PWD` names MSYS
+/// mounts (`/tmp`, `/usr`) that the SFTP server cannot open, and that no rule
+/// maps to a Windows folder without asking the shell. Where neither
+/// `pwd -W` nor `cygpath` answers, it reports `$PWD` as before; the SFTP
+/// browser still opens a drive path such as `/c/Users/me` from that (#6147).
+#[must_use]
+pub fn windows_posix_osc7_command() -> &'static str {
+    concat!(
+        " ",
+        osc7_bash_prompt_hook!(windows_posix_path_setup!(), r#""$__th_wp""#),
         "; ",
         r"printf '\e]6973;termihub-setup-done\a'",
     )
@@ -1132,6 +1177,10 @@ fn git_bash_from_path() -> Option<PathBuf> {
     let install_root = git_exe.parent()?.parent()?;
     Some(install_root.join("bin").join("bash.exe"))
 }
+
+#[cfg(test)]
+#[path = "shell_windows_posix_tests.rs"]
+mod windows_posix_tests;
 
 #[cfg(test)]
 mod tests {

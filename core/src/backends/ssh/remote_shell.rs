@@ -654,9 +654,12 @@ pub fn erases_setup_echo(shell: RemoteShell, has_integration: bool) -> bool {
 /// - Unknown shells: nothing.
 pub fn integration_setup_line(shell: RemoteShell) -> Option<String> {
     match shell {
-        RemoteShell::Posix | RemoteShell::WindowsPosix => {
-            osc7_setup_command("bash").map(|s| format!("{s}\n"))
-        }
+        RemoteShell::Posix => osc7_setup_command("bash").map(|s| format!("{s}\n")),
+        // It reports its directory's Windows path (#6170).
+        RemoteShell::WindowsPosix => Some(format!(
+            "{}\n",
+            crate::session::shell::windows_posix_osc7_command()
+        )),
         RemoteShell::Fish {
             native_integration: false,
             ..
@@ -1645,7 +1648,8 @@ mod tests {
     fn a_posix_shell_on_windows_gets_the_posix_setup_and_never_hides_it() {
         let w = RemoteShell::WindowsPosix;
         let p = RemoteShell::Posix;
-        assert_eq!(integration_setup_line(w), integration_setup_line(p));
+        // Its own hook since #6170 (it reports the Windows path), the rest
+        // as on a Linux host.
         assert!(integration_setup_line(w).is_some());
         assert_eq!(line_ending(w), Some("\n"));
         let e = env(&[("A", "it's")]);
@@ -1815,6 +1819,22 @@ mod tests {
         assert!(SHELL_PROBE_COMMAND.contains(SHELL_PROBE_START));
         assert!(SHELL_PROBE_COMMAND.contains(SHELL_PROBE_END));
         assert!(SHELL_PROBE_COMMAND.contains(SHELL_PROBE_OS));
+    }
+
+    #[test]
+    fn a_posix_shell_on_windows_gets_the_hook_that_reports_the_windows_path() {
+        // #6170: Git Bash's `$PWD` names mounts such as /tmp that no rule maps
+        // to a Windows folder; its hook asks `pwd -W` instead.
+        let line = integration_setup_line(RemoteShell::WindowsPosix).expect("setup");
+        assert_eq!(
+            line,
+            format!("{}\n", crate::session::shell::windows_posix_osc7_command())
+        );
+        assert_ne!(
+            Some(line),
+            integration_setup_line(RemoteShell::Posix),
+            "a Linux host keeps its hook"
+        );
     }
 
     #[test]
