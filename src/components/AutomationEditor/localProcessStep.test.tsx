@@ -41,8 +41,11 @@ const entries = () =>
 let editor: EditorHarness;
 afterEach(() => editor.unmount());
 
-async function open(experimental: boolean): Promise<void> {
-  seedSettings({ experimentalFeaturesEnabled: experimental });
+async function open(experimental: boolean, localPrograms = true): Promise<void> {
+  seedSettings({
+    experimentalFeaturesEnabled: experimental,
+    workflowLocalProcessEnabled: localPrograms,
+  });
   editor = await mountEditor(automation);
 }
 
@@ -115,6 +118,23 @@ describe("the Run local process step", () => {
     act(() => useAutomationEditor.getState().open(automationWith([], { id: "other" }), false));
     expect(useAutomationEditor.getState().editing?.automation.id).toBe(automation.id);
     expect(query("automation-editor-name")).toHaveProperty("value", "Renamed");
+    act(() => useAutomationEditor.getState().close());
+  });
+
+  it("with local programs off in Security: says so, and leads to Security (#6178)", async () => {
+    await open(true, false);
+    const openSettingsTab = vi.fn();
+    act(() => useAppStore.setState({ openSettingsTab }));
+    expect(query("automation-editor-step-summary-1")?.textContent).toContain("Will not run");
+    click("automation-editor-step-toggle-1");
+    expect(query("automation-editor-step-blocked-1")?.textContent).toContain(
+      "Settings ▸ Security ▸ Allow automations to run local programs"
+    );
+    expect(query("automation-editor-footer-note")?.textContent).toBe(
+      "Cannot run: local programs are switched off."
+    );
+    click("automation-editor-step-open-settings-1");
+    expect(openSettingsTab).toHaveBeenCalledWith({ category: "security" });
     act(() => useAutomationEditor.getState().close());
   });
 

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { Automation } from "@/types/generated/Automation";
 import type { AutomationStep } from "@/types/generated/AutomationStep";
 import {
+  describeLeftOut,
   AUTOMATION_FILE_VERSION,
   parseAutomationFile,
   prepareAutomationImport,
@@ -576,5 +577,23 @@ describe("a file of a newer build", () => {
   it("with a kind named like something every object has is refused too", () => {
     const odd = automation({ steps: [{ kind: "constructor" }] as never });
     expect(importFile(exported(odd)).refused).toEqual([{ name: "Deploy", kind: "constructor" }]);
+  });
+});
+
+describe("describeLeftOut (#6178)", () => {
+  it("leads with how many settings a newer termiHub wrote, and where", () => {
+    expect(describeLeftOut(["a setting (“own”)", "a setting (“imported”)"])).toBe(
+      "2 settings from a newer termiHub (“own”, “imported”)"
+    );
+    expect(describeLeftOut(["a setting of step 2 (“later”)"])).toBe(
+      "1 setting from a newer termiHub (“later”) in step 2"
+    );
+    expect(describeLeftOut(["a setting of step 2 (“a”)", "a setting of trigger 1 (“b”)"])).toBe(
+      "2 settings from a newer termiHub (“a”, “b”) in step 2 and trigger 1"
+    );
+  });
+
+  it("keeps a part it does not recognise as written", () => {
+    expect(describeLeftOut(["something odd"])).toBe("something odd");
   });
 });
