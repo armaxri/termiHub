@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import { subscribeAutomationTyping } from "@/services/automationTypingMarks";
 import { showHistoryInSidebar } from "@/components/AutomationSidebar/automationSections";
-import { decorateAutomationTyping } from "./automationMarkDecorations";
+import { placeAutomationMark } from "./automationMarkDecorations";
 import { sessionInputHidden } from "@/services/api";
 import { beginConnectAttempt } from "@/store/connectProgressBridge";
 import { ABORTED_CONNECT_MESSAGE } from "@/store/reconnectHelpers";
@@ -2025,8 +2025,8 @@ export function Terminal({
     // The lines an automation types here are marked, never the user's own (#6021).
     const automationMarks: IDisposable[] = [];
     const unsubscribeAutomationTyping = subscribeAutomationTyping(tabId, (typing) => {
-      const mark = decorateAutomationTyping(xterm, typing, showHistoryInSidebar);
-      if (mark) automationMarks.push(mark);
+      // On the row its text echoes on, not where the cursor sat (#6183).
+      automationMarks.push(placeAutomationMark(xterm, typing, showHistoryInSidebar));
     });
 
     // Track whether the user has scrolled away from the bottom.
