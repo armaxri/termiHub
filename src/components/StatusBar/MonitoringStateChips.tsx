@@ -1,4 +1,4 @@
-import { Activity, Info, RotateCw } from "lucide-react";
+import { Activity, Info, RotateCw, TriangleAlert } from "lucide-react";
 import { Spinner, Tooltip } from "@/components/ui";
 import type { MonitorStatusReason } from "@/types/monitoring";
 import {
@@ -51,7 +51,18 @@ function UnavailableChip({
   short,
   tooltip,
   onRetry,
-}: MonitoringRetryProps & { testId: string; reason?: string; short: string; tooltip: string }) {
+  tone = "muted",
+}: MonitoringRetryProps & {
+  testId: string;
+  reason?: string;
+  short: string;
+  tooltip: string;
+  /**
+   * `warning` when something went wrong (collects fail); `muted` for what is so
+   * by design, like a host without a stats source (#6183, states-2).
+   */
+  tone?: "muted" | "warning";
+}) {
   return (
     <span
       className="monitoring-status"
@@ -61,7 +72,17 @@ function UnavailableChip({
       data-reason={reason}
     >
       <span className="status-bar__item monitoring-status__muted">
-        <Info size={12} />
+        {tone === "warning" ? (
+          <TriangleAlert
+            size={12}
+            className="monitoring-status__warn-icon"
+            data-tone="warning"
+            data-testid={`${testId}-icon`}
+            aria-hidden="true"
+          />
+        ) : (
+          <Info size={12} data-tone="muted" data-testid={`${testId}-icon`} aria-hidden="true" />
+        )}
         Monitoring unavailable · {short}
       </span>
       <button
@@ -129,14 +150,16 @@ export function monitoringUnavailableTooltip(reason: MonitorStatusReason | null)
 
 /**
  * Status-bar state for a monitor whose collects fail before the first sample
- * (#5840): a muted "Monitoring unavailable" with the reason in the tooltip. It
- * is muted rather than an error because the session itself is fine, and the
- * loop is still retrying; a terminal failure becomes the offline Retry chip.
+ * (#5840): "Monitoring unavailable" with the reason. Its text stays muted, as
+ * the session itself is fine and the loop is still retrying, but its icon is a
+ * warning, so it does not look like a monitor the user stopped (#6183,
+ * states-2); a terminal failure becomes the offline Retry chip.
  */
 export function MonitoringUnavailable({ reason, onRetry }: MonitoringUnavailableProps) {
   return (
     <UnavailableChip
       testId="monitoring-unavailable"
+      tone="warning"
       reason={reason ?? undefined}
       short={monitorOfflineReasonText(reason)}
       tooltip={monitoringUnavailableTooltip(reason)}

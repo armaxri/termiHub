@@ -609,3 +609,25 @@
 .monitoring-menu__value--muted {
   color: var(--text-secondary);
 }
+
+/* Something went wrong, unlike a monitor the user paused (#6183, states-2). */
+.monitoring-status__warn-icon {
+  color: var(--color-warning);
+}
+
+/* A percentage metric's usage bar in the host menu (#6183, states-3), sized
+   like the row's sparkline; its fill takes the per-core tones. */
+.monitoring-menu__usage {
+  display: flex;
+  flex-shrink: 0;
+  width: 72px;
+  height: var(--spacing-sm);
+  overflow: hidden;
+  border-radius: var(--radius-xs);
+  background-color: var(--bg-tertiary);
+}
+
+.monitoring-menu__usage-fill {
+  height: 100%;
+  border-radius: var(--radius-xs);
+}

@@ -3,7 +3,7 @@ import { automationWith } from "@/test/automationEditorHarness";
 import type { AutomationStep } from "@/types/generated/AutomationStep";
 import type { AutomationTrigger } from "@/types/generated/AutomationTrigger";
 import { toDraft } from "./automationDraft";
-import { draftErrors, draftValues, missingSummary } from "./draftValidation";
+import { draftErrors, draftValues, firstStepProblem, missingSummary } from "./draftValidation";
 
 const condition = { left: " ", op: "eq" as const, right: "" };
 const errorsOf = (steps: AutomationStep[], triggers: AutomationTrigger[] = []) => {
@@ -76,3 +76,50 @@ it.each<[Record<string, string>, string | null]>([
     "To save: give it a name and complete the steps and the triggers.",
   ],
 ])("says what is missing: %j", (errors, text) => expect(missingSummary(errors)).toBe(text));
+
+describe("the save hint names the step to fix (#6183, editor-4)", () => {
+  it("names the first step with a problem, its kind and what is wrong", () => {
+    const draft = toDraft(
+      automationWith([
+        { kind: "send-command", command: "ls" },
+        { kind: "type-keys", chunks: [{ data: "a", delayMs: 0 }] },
+      ])
+    );
+    // What the user typed into the keys field: an escape the format does not know.
+    draft.steps[1].keys![0] = { ...draft.steps[1].keys![0], text: "\\q" };
+    const errors = draftErrors(draft);
+    const problem = firstStepProblem(draft, errors);
+    expect(problem).toMatchObject({ uid: draft.steps[1].uid, number: "2", kind: "Type keys" });
+    // The first clause of the error, without its long "use …" advice.
+    expect(problem?.message).toBe('unknown escape "\\q"');
+    expect(missingSummary(errors, problem)).toBe(
+      'To save: fix step 2 (Type keys): unknown escape "\\q".'
+    );
+  });
+
+  it("numbers a step inside another step as 1.1", () => {
+    const { errors, draft } = errorsOf([
+      {
+        kind: "conditional",
+        condition: { left: "a", op: "eq", right: "b" },
+        then: [{ kind: "send-command", command: " " }],
+      },
+    ]);
+    const problem = firstStepProblem(draft, errors);
+    expect(problem?.number).toBe("1.1");
+    expect(problem?.kind).toBe("Run command");
+  });
+
+  it("keeps the name and the triggers in the same sentence", () => {
+    const { errors, draft } = errorsOf([{ kind: "send-command", command: " " }]);
+    const all = { ...errors, name: "Name is required." };
+    expect(missingSummary(all, firstStepProblem(draft, all))).toBe(
+      "To save: give it a name and fix step 1 (Run command): enter the command."
+    );
+  });
+
+  it("is null without a step problem", () => {
+    const { errors, draft } = errorsOf([{ kind: "send-command", command: "ls" }]);
+    expect(firstStepProblem(draft, { ...errors, name: "x" })).toBeNull();
+  });
+});

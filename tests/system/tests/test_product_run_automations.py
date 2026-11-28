@@ -324,7 +324,7 @@ class TestProductRunAutomations(
             "Workflow rows show names and the armed state; trigger and target are in the "
             "tooltip; history names each run's terminal",
             expect="the Automations sidebar: 'Deploy smoke' shows only its name (and its "
-            "description once edited); 'Answer on match' shows its name and 'Triggers on: …' "
+            "description once edited); 'Answer on match' shows its name and 'Triggers on · …' "
             "with its switch, no 'On output match' text on the row; the two Deploy smoke "
             "history rows name different terminals (#5635, #5757)",
         ):

@@ -50,6 +50,10 @@ describe("UnsavedChangesDialog", () => {
     render(<UnsavedChangesDialog {...baseProps} />);
     expect(document.querySelector(".ui-modal")).toBeTruthy();
     expect(q("unsaved-changes-cancel")).toBeTruthy();
+    // Labelled by outcome (#6183, editor-5): this prompt sits right over the
+    // editor's own Cancel, which means the opposite (close without saving).
+    expect(q("unsaved-changes-cancel")?.textContent).toBe("Keep editing");
+    expect(q("unsaved-changes-just-close")?.textContent).toBe("Discard changes");
     expect(q("unsaved-changes-just-close")).toBeTruthy();
     expect(q("unsaved-changes-save-and-close")).toBeTruthy();
   });

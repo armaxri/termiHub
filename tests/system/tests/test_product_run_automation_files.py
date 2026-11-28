@@ -92,12 +92,12 @@ def test_grade_round_trip():
 
 
 def test_grade_disarmed():
-    assert disarmed_problems(_automation(triggersEnabled=False), "Triggers off: hotkey F9 does not start it.") == []
+    assert disarmed_problems(_automation(triggersEnabled=False), "Triggers off · Hotkey F9") == []
     assert disarmed_problems(_automation(), None) == [
         "it is stored armed",
         "its row shows no marker",
     ]
-    assert disarmed_problems(_automation(triggersEnabled=False), "Triggers on: …") != []
+    assert disarmed_problems(_automation(triggersEnabled=False), "Triggers on · …") != []
 
 
 def test_grade_called():

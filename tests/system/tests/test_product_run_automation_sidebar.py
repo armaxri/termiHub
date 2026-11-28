@@ -96,8 +96,8 @@ def test_grade_new_copy_passes():
 
 
 def test_grade_row_text():
-    row = "Deploy prep Pull and build Triggers on: hotkey F8"
-    marker = "Triggers on: hotkey F8"
+    row = "Deploy prep Pull and build Triggers on · Hotkey F8"
+    marker = "Triggers on · Hotkey F8"
     assert row_text_problems(row, "Deploy prep", "Pull and build", marker) == []
     assert row_text_problems("Deploy prep\nOn connect · prod", "Deploy prep") == [
         "settings text on the row: 'On connect · prod'"
@@ -326,7 +326,7 @@ class TestProductRunAutomationSidebar(
             "automation-sidebar.list",
             "A typed, a triggered and a scheduled automation share one list of names and states",
             expect="the Automations sidebar: 'Typed …' and 'Scheduled …' with only their names "
-            "and a Run button, 'Answer …' with 'Triggers on: …' and its switch under its name",
+            "and a Run button, 'Answer …' with 'Triggers on · …' and its switch under its name",
         ):
             name = f"pr-sidebar-{t}"
             self.switch_to_connections_sidebar()
@@ -364,7 +364,7 @@ class TestProductRunAutomationSidebar(
                 marker = ""
                 if kind == "triggered":
                     marker = self.driver.get_text(f"automation-armed-{aid}").strip()
-                    if not marker.startswith("Triggers on: matching output in "):
+                    if not marker.startswith("Triggers on · Matching output in "):
                         problems.append(f"the trigger sentence reads {marker!r}")
                 text = self.row_text(f"automation-item-{aid}")
                 self.evidence(f"{kind}: {text!r}; tooltip {self.row_tooltip(f'automation-item-{aid}')!r}")

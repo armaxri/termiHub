@@ -347,6 +347,11 @@ describe("runWorkflowOnTarget — run-macro and history", () => {
       2,
       expect.objectContaining({ automationId: "wf-wf", origin: "manual", tabId: "tab-1" })
     );
+    // The callee's record names and links its caller's run (#6183, history-2).
+    const callee = mocks.recordAutomationRun.mock.calls[0][0];
+    const caller = mocks.recordAutomationRun.mock.calls[1][0];
+    expect(callee.startedByRunId).toBe(caller.id);
+    expect(callee.startedByName).toBe(caller.automationName);
   });
 
   it("stores an empty history when the workflow record reply is not an array", async () => {

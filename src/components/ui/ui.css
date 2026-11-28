@@ -1189,6 +1189,12 @@
 }
 
 /* Content goes on below the footer's edge: it fades out there (A-024). */
+/* A dialog opened over this one owns the actions now: the lower dialog's
+   footer would show a second Cancel / Save right under it (#6183, editor-7). */
+.ui-modal[data-covered] .ui-modal__foot {
+  visibility: hidden;
+}
+
 .ui-modal__body[data-more-below] + .ui-modal__foot {
   position: relative;
 }

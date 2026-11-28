@@ -31,6 +31,11 @@ const MS_PER_SECOND = 1000;
  * connections, the pattern (literal or regex, validated inline), and the
  * cooldown and max-runs-per-session limits. Blank limits use the defaults.
  */
+/** The placeholder of a number field that is empty: the value used, named as the default. */
+function defaultPlaceholder(value: number): string {
+  return `${value} (default)`;
+}
+
 export function OnOutputMatchTriggerDetail({
   index,
   errors,
@@ -97,7 +102,10 @@ export function OnOutputMatchTriggerDetail({
             id={`automation-trigger-cooldown-${index}`}
             value={cooldownSeconds}
             min={1}
-            placeholder={String(OUTPUT_TRIGGER_LIMITS.defaultCooldownMs / MS_PER_SECOND)}
+            // Named as the default, so a dimmed number never reads as a set value (#6183).
+            placeholder={defaultPlaceholder(
+              OUTPUT_TRIGGER_LIMITS.defaultCooldownMs / MS_PER_SECOND
+            )}
             onValueChange={(v) =>
               setOptional("cooldownMs", v === "" ? undefined : Math.round(v * MS_PER_SECOND))
             }
@@ -116,7 +124,7 @@ export function OnOutputMatchTriggerDetail({
             id={`automation-trigger-max-fires-${index}`}
             value={trigger.maxFiresPerSession ?? ""}
             min={1}
-            placeholder={String(OUTPUT_TRIGGER_LIMITS.defaultMaxFiresPerSession)}
+            placeholder={defaultPlaceholder(OUTPUT_TRIGGER_LIMITS.defaultMaxFiresPerSession)}
             onValueChange={(v) => setOptional("maxFiresPerSession", v === "" ? undefined : v)}
             data-testid={`automation-trigger-max-fires-${index}`}
           />

@@ -201,6 +201,9 @@ describe("StatusBar — monitoring states and host menu (#5840)", () => {
     expect(chip.getAttribute("title")).toContain("remote output unreadable");
     expect(chip.className).not.toContain("monitoring-status__error");
     expect(q("monitoring-waiting")).toBeNull();
+    // Something went wrong: a warning icon, unlike a host without stats or a
+    // monitor the user stopped, which stay muted (#6183, states-2).
+    expect(q("monitoring-unavailable-icon")!.getAttribute("data-tone")).toBe("warning");
     // The reason shows without hovering, and Retry is one click away (states-1).
     expect(chip.textContent).toContain("remote output unreadable");
     const clearMonitoringError = vi.fn();
@@ -225,6 +228,7 @@ describe("StatusBar — monitoring states and host menu (#5840)", () => {
     expect(q("monitoring-unavailable")).toBeNull();
     // Why, in a few words, and a way to try again (states-1).
     expect(q("monitoring-unsupported")!.textContent).toContain("no shell for stats on this host");
+    expect(q("monitoring-unsupported-icon")!.getAttribute("data-tone")).toBe("muted");
     expect(q("monitoring-unsupported-retry")?.tagName).toBe("BUTTON");
   });
 

@@ -8,6 +8,9 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
+import { readFileSync } from "fs";
+import { dirname, join } from "path";
+import { fileURLToPath } from "url";
 import { createRoot, Root } from "react-dom/client";
 import { flushAsync } from "@/test/flushAsync";
 import { toast } from "@/components/ui";
@@ -164,7 +167,15 @@ describe("CommandPalette", () => {
     const row = document.querySelector('[data-testid="command-palette-item-connection:c1"]');
     expect(row).not.toBeNull();
     expect(row?.querySelector(".command-palette__label")?.textContent).toBe("Production Server");
+    // Sentence case, no all-caps badge (#6183, files-4): the type's own name,
+    // or its id while the registry has none.
     expect(row?.querySelector(".command-palette__type")?.textContent).toBe("ssh");
+    act(() =>
+      useAppStore.setState({
+        connectionTypes: [{ typeId: "ssh", displayName: "SSH" } as never],
+      })
+    );
+    expect(row?.querySelector(".command-palette__type")?.textContent).toBe("SSH");
     // A connection row has no accelerator.
     expect(row?.querySelector(".command-palette__accelerator")).toBeNull();
   });
@@ -463,7 +474,7 @@ describe("CommandPalette", () => {
     expect(activeLabel()).toBe("Dev Layout");
     const item = document.querySelector('[data-testid="command-palette-item-workspace:ws-1"]');
     expect(item?.querySelector(".command-palette__label")?.textContent).toBe("Dev Layout");
-    expect(item?.querySelector(".command-palette__type")?.textContent).toBe("workspace");
+    expect(item?.querySelector(".command-palette__type")?.textContent).toBe("Workspace");
     typeInto("launch workspace");
     expect(activeLabel()).toBe("Dev Layout");
   });
@@ -737,5 +748,16 @@ describe("CommandPalette — icons, a counted result and the shortcut (#6158)", 
     expect(document.querySelector('[data-testid="command-palette-empty"]')?.textContent).toContain(
       getActionAccelerator("command-palette") ?? "the palette shortcut"
     );
+  });
+});
+
+describe("palette badges are sentence case (#6183, files-4)", () => {
+  it("draws no all-caps badge", () => {
+    const css = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "CommandPalette.css"),
+      "utf8"
+    );
+    const rule = css.match(/\.command-palette__type\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(rule).not.toMatch(/text-transform\s*:\s*uppercase/);
   });
 });

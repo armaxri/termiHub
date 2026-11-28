@@ -19,6 +19,11 @@ export interface AutomationTyping {
   origin: AutomationRunOrigin;
   /** When the line was started, in ms. */
   at: number;
+  /**
+   * The first line of what the run typed to start it, without its Enter: the
+   * terminal marks the row this echoes on (#6183, automations-2).
+   */
+  text?: string;
 }
 
 type Listener = (typing: AutomationTyping) => void;
@@ -57,7 +62,7 @@ export function markAutomationInput<R>(
   const midLine = new Set<string>();
   return (tabId, data) => {
     if (!midLine.has(tabId) && data.length > 0) {
-      const typing: AutomationTyping = { ...run, at: now() };
+      const typing: AutomationTyping = { ...run, at: now(), text: data.split(/[\r\n]/)[0] };
       for (const listener of [...(listeners.get(tabId) ?? [])]) listener(typing);
     }
     if (endsLine(data)) midLine.delete(tabId);

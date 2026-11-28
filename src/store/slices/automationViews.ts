@@ -199,7 +199,8 @@ export function nestedRunRecord(
   event: WorkflowNestedRunEvent,
   tabId: string,
   targetLabel: string | undefined,
-  runId: string = newId("workflow-run")
+  runId: string = newId("workflow-run"),
+  caller?: { runId: string; name: string }
 ): AutomationRun {
   const record: AutomationRun = {
     id: runId,
@@ -213,6 +214,11 @@ export function nestedRunRecord(
     tabId,
     origin: "run-by-automation",
   };
+  // Who started it, named and linked in the history (#6183, history-2).
+  if (caller) {
+    record.startedByRunId = caller.runId;
+    record.startedByName = caller.name;
+  }
   if (event.failedStepIndex !== undefined) record.failedStepIndex = event.failedStepIndex;
   if (event.error) record.error = event.error;
   if (targetLabel) record.targetLabel = targetLabel;

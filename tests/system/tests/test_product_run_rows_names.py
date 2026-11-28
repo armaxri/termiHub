@@ -206,16 +206,16 @@ class TestProductRunRowsNames(
             "A workflow row shows its name, description and its triggers in words; its "
             "target and the tags are in the tooltip",
             expect="the Automations sidebar: 'Answer rows …' with 'Replies on match' muted under "
-            "it and 'Triggers on: matching output in …' with its switch; no tag "
+            "it and 'Triggers on · Matching output in …' with its switch; no tag "
             "chips on the row (#5757)",
         ):
             self.require("rows-names.items")
             self.show_automations()
             wid = self.ids["workflow"]
             marker = self.driver.get_text(f"automation-armed-{wid}").strip()
-            assert marker.startswith("Triggers on: matching output in "), f"it reads {marker!r}"
+            assert marker.startswith("Triggers on · Matching output in "), f"it reads {marker!r}"
             # The trigger marker names the terminal it listens to (it is the
-            # "Triggers on: matching output in …" line itself), so the name is on
+            # "Triggers on · Matching output in …" line itself), so the name is on
             # the row by design; the tooltip still carries it.
             self._grade_row(
                 f"automation-item-{wid}",

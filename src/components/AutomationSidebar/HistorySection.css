@@ -68,15 +68,34 @@
   transform: rotate(90deg);
 }
 
+/* One line per run (#6183, macro-2): name, outcome when it did not complete,
+   the terminal muted and cut; the time sits right of it. */
 .automation-history__main {
   display: flex;
   flex: 1;
-  flex-direction: column;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--spacing-xs);
   min-width: 0;
+  white-space: nowrap;
 }
 
+.automation-history__origin {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.automation-history__time {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+/* A cut name or terminal keeps a readable stub; when the sidebar is too
+   narrow for both on one line, the terminal goes under the name. */
 .automation-history__name {
-  min-width: 0;
+  flex: 0 1 auto;
+  min-width: 5em;
 }
 
 .automation-history__line {
@@ -91,12 +110,16 @@
 }
 
 .automation-history__outcome {
+  flex-shrink: 0;
   color: var(--text-primary);
+  font-size: var(--font-size-xs);
 }
 
 .automation-history__target {
-  min-width: 0;
-  max-width: 100%;
+  flex: 1 1 5em;
+  min-width: 5em;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
 }
 
 .automation-history__details {
@@ -142,4 +165,15 @@
   .automation-history__chevron {
     transition: none;
   }
+}
+
+/* The run that started another one, as a link to its row (#6183, history-2). */
+.automation-history__link {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--text-link);
+  text-decoration: underline;
+  cursor: pointer;
 }

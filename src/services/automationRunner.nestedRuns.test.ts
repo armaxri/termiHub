@@ -109,6 +109,28 @@ describe("nested automation runs (#5818, slice 9)", () => {
     expect(record.targetCount).toBeUndefined();
   });
 
+  it("names the run and the automation that started it (#6183, history-2)", () => {
+    const callee = automation("inner", [keys("a")]);
+    const record = nestedRunRecord(
+      {
+        automation: callee,
+        startedAt: new Date("2026-09-20T00:00:00Z"),
+        endedAt: new Date("2026-09-20T00:00:01Z"),
+        status: "completed",
+        stepsCompleted: 1,
+      },
+      "tab-1",
+      undefined,
+      "run-9",
+      { runId: "run-caller", name: "History caller" }
+    );
+    expect(record).toMatchObject({
+      origin: "run-by-automation",
+      startedByRunId: "run-caller",
+      startedByName: "History caller",
+    });
+  });
+
   it("keeps one record for an automation a loop calls many times", async () => {
     const inner = automation("inner", [keys("a")]);
     const outer = automation("outer", [

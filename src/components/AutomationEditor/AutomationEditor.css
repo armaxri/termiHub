@@ -701,3 +701,14 @@
   color: var(--text-secondary);
   font-size: var(--font-size-xs);
 }
+
+/* The step the save hint names, as a link that opens it (#6183, editor-4). */
+.automation-editor__footer-fix {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--text-link);
+  text-decoration: underline;
+  cursor: pointer;
+}

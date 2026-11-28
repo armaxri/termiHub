@@ -25,6 +25,8 @@ export interface HistoryRunDetailsProps {
   /** The schedule that started it, when one did. */
   schedule?: RunSchedule;
   id: string;
+  /** Open the run that started this one, when it is in the list (#6183, history-2). */
+  onShowRun?: (runId: string) => void;
 }
 
 /** A reason as a sentence: an error starts as it is, mostly without a capital. */
@@ -37,7 +39,7 @@ function sentence(reason: string): string {
  * step of what kind, why, what to do next, who started it, how long it took, and
  * the ways on: its automation, its terminal, another run (which asks where).
  */
-export function HistoryRunDetails({ run, schedule, id }: HistoryRunDetailsProps) {
+export function HistoryRunDetails({ run, schedule, id, onShowRun }: HistoryRunDetailsProps) {
   const automation = useAppStore((s) => s.automations.find((a) => a.id === run.automationId));
   const openEditor = useAutomationEditor((s) => s.open);
   // Its terminal, while it is open here and not the one in front already.
@@ -78,7 +80,23 @@ export function HistoryRunDetails({ run, schedule, id }: HistoryRunDetailsProps)
         ) : null}
         <dt>Started by</dt>
         <dd data-testid={`automation-run-origin-${run.id}`}>
-          {automationRunStarter(run.origin, schedule?.name)}
+          {run.origin === "run-by-automation" && run.startedByName ? (
+            // The automation that started it, by name; its run is a link (#6183).
+            run.startedByRunId && onShowRun ? (
+              <button
+                type="button"
+                className="automation-history__link"
+                onClick={() => onShowRun(run.startedByRunId!)}
+                data-testid={`automation-run-caller-${run.id}`}
+              >
+                {run.startedByName}
+              </button>
+            ) : (
+              run.startedByName
+            )
+          ) : (
+            automationRunStarter(run.origin, schedule?.name)
+          )}
           {via ? <span className="automation-history__via"> · {via}</span> : null}
           {schedule?.leftOut ? (
             <span data-testid={`automation-run-schedule-${run.id}`}> · {schedule.leftOut}</span>

@@ -62,6 +62,15 @@ describe("markAutomationInput", () => {
     expect(order).toEqual(["mark", "send"]);
   });
 
+  it("carries the first line it types, to find where it echoes (#6183, automations-2)", async () => {
+    const seen: AutomationTyping[] = [];
+    subscribeAutomationTyping("tab-1", (typing) => seen.push(typing));
+    const send = markAutomationInput(() => true, RUN);
+    await send("tab-1", "sleep 1; echo READY\r");
+    await send("tab-1", "printf 'a\\nb'\nnext\n");
+    expect(seen.map((s) => s.text)).toEqual(["sleep 1; echo READY", "printf 'a\\nb'"]);
+  });
+
   it("stops after an unsubscribe", async () => {
     const seen = vi.fn();
     const off = subscribeAutomationTyping("tab-1", seen);

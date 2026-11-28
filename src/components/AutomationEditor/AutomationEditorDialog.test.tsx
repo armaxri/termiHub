@@ -352,12 +352,35 @@ describe("validation timing (#5917)", () => {
     await open(blankKeys, true);
     expect(nameError()).toBeNull();
     expect(document.querySelector('[aria-invalid="true"]')).toBeNull();
-    expect(missing()).toBe("To save: give it a name and complete the steps.");
+    // The step to fix is named (#6183, editor-4).
+    expect(missing()).toBe(
+      "To save: give it a name and fix step 1 (Type keys): enter the keys to type."
+    );
     // The footer note and the buttons agree: both say it cannot be saved yet. Still
     // reachable, so a press shows what is missing (A-023).
     expect(saveButton().disabled).toBe(false);
     expect(saveButton().getAttribute("aria-disabled")).toBe("true");
     expect(query("automation-editor-save-run")?.getAttribute("aria-disabled")).toBe("true");
+  });
+
+  it("links the step to fix; the link opens and focuses its field (#6183, editor-4)", async () => {
+    await open(
+      automationWith(
+        [
+          { kind: "send-command", command: "ls" },
+          { kind: "send-command", command: " " },
+        ],
+        { name: "Two" }
+      )
+    );
+    expect(missing()).toBe("To save: fix step 2 (Run command): enter the command.");
+    const link = query("automation-editor-footer-fix");
+    expect(link?.textContent).toBe("fix step 2 (Run command)");
+    click("automation-editor-footer-fix");
+    await flushAsync();
+    const field = query("automation-editor-step-command-1");
+    expect(document.activeElement).toBe(field);
+    expect(field?.getAttribute("aria-invalid")).toBe("true");
   });
 
   it("makes Save available once nothing is missing (editor-3)", async () => {
