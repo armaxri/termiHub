@@ -10,6 +10,8 @@ import { act } from "react";
 import { flushMacrotask } from "@/test/flushAsync";
 import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
+import { fakeBackend, type FakeBackend } from "@/test/fakeBackend";
+import { CONNECTION_EDITOR_MOUNT } from "@/test/connectionEditorBackend";
 import { useAppStore } from "@/store/appStore";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { setupAgentsRegion } from "@/test/agentsRegionTestHarness";
@@ -38,7 +40,7 @@ globalThis.ResizeObserver = class {
   disconnect() {}
 } as unknown as typeof ResizeObserver;
 
-const mockedInvoke = vi.mocked(invoke);
+let backend: FakeBackend;
 
 const SSH_TYPE: ConnectionTypeInfo = {
   typeId: "ssh",
@@ -146,14 +148,18 @@ describe("ConnectionEditor — shared named credential (#3557)", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     resetRuntimeCache();
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "list_named_credentials") return Promise.resolve(SHARED);
-      if (cmd === "resolve_named_credential") return Promise.resolve("shared-secret");
-      if (cmd === "resolve_credential") return Promise.resolve("stale-own");
-      if (cmd === "save_connection") return Promise.resolve();
-      if (cmd === "load_connections_and_folders")
-        return Promise.resolve({ connections: [CONN], folders: [] });
-      return Promise.resolve(null);
+    backend = fakeBackend({
+      ...CONNECTION_EDITOR_MOUNT,
+      list_named_credentials: () => SHARED,
+      resolve_named_credential: () => "shared-secret",
+      resolve_credential: () => "stale-own",
+      save_connection: ({ connection }) => connection.id,
+      load_connections_and_folders: () => ({
+        connections: [CONN],
+        folders: [],
+        agents: [],
+        externalErrors: [],
+      }),
     });
     useAppStore.setState({
       ...useAppStore.getInitialState(),
@@ -196,8 +202,8 @@ describe("ConnectionEditor — shared named credential (#3557)", () => {
     });
     await flush();
 
-    const saveCall = mockedInvoke.mock.calls.find(([cmd]) => cmd === "save_connection");
-    const persisted = (saveCall?.[1] as { connection: SavedConnection }).connection;
+    const [saveCall] = backend.callsTo("save_connection");
+    const persisted = saveCall.connection;
     const cfg = persisted.config.config as Record<string, unknown>;
     expect(cfg.shell).toBe("/bin/zsh");
     expect(cfg.credentialRef).toBe("nc-pw");
@@ -213,10 +219,10 @@ describe("ConnectionEditor — shared named credential (#3557)", () => {
     await flush();
 
     expect(useAppStore.getState().passwordPromptOpen).toBe(false);
-    expect(mockedInvoke).toHaveBeenCalledWith("resolve_named_credential", {
+    expect(invoke).toHaveBeenCalledWith("resolve_named_credential", {
       id: "nc-pw",
       credentialType: "password",
     });
-    expect(mockedInvoke.mock.calls.some(([cmd]) => cmd === "resolve_credential")).toBe(false);
+    expect(backend.callsTo("resolve_credential")).toEqual([]);
   });
 });
