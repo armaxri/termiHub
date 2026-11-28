@@ -32,9 +32,10 @@
     border-color var(--transition-fast);
 }
 
+/* The shared outline (#6154), as in global.css. */
 .ui-btn:focus-visible {
-  outline: none;
-  box-shadow: var(--shadow-focus);
+  outline: var(--focus-ring-width) solid var(--focus-border);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .ui-btn__icon {
@@ -116,8 +117,11 @@
   background: var(--bg-hover);
 }
 
+/* Unavailable (#6154): muted text on a raised surface, not stacked opacity. */
 .ui-btn[disabled] {
-  opacity: 0.5;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  border-color: var(--border-primary);
   cursor: not-allowed;
   pointer-events: none;
 }
@@ -185,7 +189,7 @@
   width: 100%;
   background: var(--bg-input);
   color: var(--text-primary);
-  border: 1px solid var(--border-primary);
+  border: 1px solid var(--border-input);
   border-radius: var(--radius-md);
   padding: 0 var(--spacing-sm);
   font-family: var(--font-family);
@@ -207,7 +211,9 @@
 }
 
 .ui-input:disabled {
-  opacity: 0.5;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  border-color: var(--border-primary);
   cursor: not-allowed;
 }
 
@@ -272,7 +278,7 @@
   min-height: calc(var(--control-height-lg) * 2);
   background: var(--bg-input);
   color: var(--text-primary);
-  border: 1px solid var(--border-primary);
+  border: 1px solid var(--border-input);
   border-radius: var(--radius-md);
   padding: var(--spacing-xs) var(--spacing-sm);
   font-family: var(--font-mono);
@@ -296,7 +302,9 @@
 }
 
 .ui-textarea:disabled {
-  opacity: 0.5;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  border-color: var(--border-primary);
   cursor: not-allowed;
 }
 
@@ -364,7 +372,7 @@
   width: 100%;
   background: var(--bg-input);
   color: var(--text-primary);
-  border: 1px solid var(--border-primary);
+  border: 1px solid var(--border-input);
   border-radius: var(--radius-md);
   padding: 0 var(--spacing-sm);
   font-family: var(--font-family);
@@ -396,7 +404,9 @@
 }
 
 .ui-select__trigger:disabled {
-  opacity: 0.5;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  border-color: var(--border-primary);
   cursor: not-allowed;
 }
 
@@ -556,9 +566,8 @@
 }
 
 .ui-menu__item[data-disabled] {
-  color: var(--text-secondary);
+  color: var(--text-muted);
   cursor: default;
-  opacity: 0.6;
 }
 
 .ui-menu__item[data-disabled]:hover {
@@ -664,9 +673,10 @@
     border-color var(--transition-fast);
 }
 
+/* The shared outline (#6154), as in global.css. */
 .ui-toggle:focus-visible {
-  outline: none;
-  box-shadow: var(--shadow-focus);
+  outline: var(--focus-ring-width) solid var(--focus-border);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .ui-toggle[data-state="checked"] {
@@ -675,8 +685,15 @@
 }
 
 .ui-toggle:disabled {
-  opacity: 0.5;
+  background: var(--bg-tertiary);
+  border-color: var(--border-primary);
   cursor: not-allowed;
+}
+
+/* On, but not to be changed: the muted tone instead of the accent. */
+.ui-toggle[data-state="checked"]:disabled {
+  background: var(--text-muted);
+  border-color: var(--text-muted);
 }
 
 .ui-toggle__thumb {
@@ -732,9 +749,10 @@
     border-color var(--transition-fast);
 }
 
+/* The shared outline (#6154), as in global.css. */
 .ui-checkbox:focus-visible {
-  outline: none;
-  box-shadow: var(--shadow-focus);
+  outline: var(--focus-ring-width) solid var(--focus-border);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .ui-checkbox[data-state="checked"],
@@ -744,8 +762,14 @@
 }
 
 .ui-checkbox:disabled {
-  opacity: 0.5;
+  background: var(--bg-tertiary);
+  border-color: var(--text-muted);
   cursor: not-allowed;
+}
+
+.ui-checkbox[data-state="checked"]:disabled,
+.ui-checkbox[data-state="indeterminate"]:disabled {
+  background: var(--text-muted);
 }
 
 .ui-checkbox__indicator {
@@ -793,9 +817,10 @@
     border-color var(--transition-fast);
 }
 
+/* The shared outline (#6154), as in global.css. */
 .ui-radio__control:focus-visible {
-  outline: none;
-  box-shadow: var(--shadow-focus);
+  outline: var(--focus-ring-width) solid var(--focus-border);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .ui-radio__control[data-state="checked"] {
@@ -803,7 +828,8 @@
 }
 
 .ui-radio__control:disabled {
-  opacity: 0.5;
+  background: var(--bg-tertiary);
+  border-color: var(--text-muted);
   cursor: not-allowed;
 }
 
@@ -870,9 +896,10 @@
   background-color: var(--bg-hover);
 }
 
+/* The shared outline (#6154), as in global.css. */
 .ui-radio-card:focus-visible {
-  outline: none;
-  box-shadow: var(--shadow-focus);
+  outline: var(--focus-ring-width) solid var(--focus-border);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .ui-radio-card[data-state="checked"] {
@@ -885,7 +912,9 @@
 }
 
 .ui-radio-card:disabled {
-  opacity: 0.5;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  border-color: var(--border-primary);
   cursor: not-allowed;
 }
 
