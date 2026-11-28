@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import contextlib
 import socket
+import sys
 import threading
 import time
 from pathlib import Path
@@ -60,6 +61,28 @@ def _tftp_server(root: Path):
     finally:
         with contextlib.suppress(Exception):
             server.stop(now=True)
+
+
+def test_tftp_server_binds_when_a_udp_socket_holds_the_probed_port(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The server must not depend on a port a TCP probe found free (CI flake).
+
+    A free TCP port can be taken on UDP, by another test's server or a parallel
+    worker; binding it then killed the server thread before it bound. The
+    fixture lets the server pick its own UDP port and reads it back.
+    """
+    held = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    held.bind(("127.0.0.1", 0))
+    busy = held.getsockname()[1]
+    try:
+        monkeypatch.setattr(sys.modules[__name__], "_free_port", lambda: busy, raising=False)
+        (tmp_path / "boot.txt").write_text("ok", encoding="utf-8")
+        with _tftp_server(tmp_path) as port:
+            assert port != busy
+            assert tftp_download("127.0.0.1", port, "boot.txt") == b"ok"
+    finally:
+        held.close()
 
 
 def test_tftp_download_returns_file_bytes(tmp_path: Path):
