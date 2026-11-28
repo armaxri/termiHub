@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import eslint from "@eslint/js";
 import tseslint from "typescript-eslint";
 import reactHooks from "eslint-plugin-react-hooks";
+import jsxA11y from "eslint-plugin-jsx-a11y";
 import { importX } from "eslint-plugin-import-x";
 import { createTypeScriptImportResolver } from "eslint-import-resolver-typescript";
 import { copyStylePlugin } from "./scripts/internal/eslint-copy-style.mjs";
@@ -284,6 +285,41 @@ export default tseslint.config(
     files: ["src/**/*.test.{ts,tsx}", "src/test/**"],
     rules: {
       "no-console": "off",
+    },
+  },
+  {
+    // Accessibility (#6155): jsx-a11y's recommended rules on the app's components.
+    // Findings that predate it are recorded in eslint-suppressions.json and burned
+    // down in #FOLLOWUP; anything new fails.
+    files: ["src/**/*.tsx"],
+    ignores: ["src/**/*.test.tsx", "src/test/**"],
+    ...jsxA11y.flatConfigs.recommended,
+    rules: {
+      ...jsxA11y.flatConfigs.recommended.rules,
+      // The shared primitives render the real control, so a label around one is
+      // associated with it.
+      "jsx-a11y/label-has-associated-control": [
+        "error",
+        {
+          controlComponents: [
+            "Checkbox",
+            "Toggle",
+            "Input",
+            "NumberInput",
+            "SearchInput",
+            "Select",
+            "Textarea",
+          ],
+          assert: "either",
+          depth: 3,
+        },
+      ],
+      // `role` on a component is a prop (EmptyState's `role={null}` drops its live
+      // region); only check it on DOM elements.
+      "jsx-a11y/aria-role": ["error", { ignoreNonDOM: true }],
+      // A dialog moves the focus to its first field on purpose (Modal, #5550): that
+      // is where the user types next, and the dialog is announced with it.
+      "jsx-a11y/no-autofocus": "off",
     },
   }
 );

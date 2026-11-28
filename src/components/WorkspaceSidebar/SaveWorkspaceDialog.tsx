@@ -92,7 +92,11 @@ export function SaveWorkspaceDialog({
 
         {showScopeSelector && (
           <div className="save-workspace-dialog__field" data-testid="save-workspace-scope">
-            <label id="ws-save-scope-label">Capture</label>
+            {/* A radio group's name, not a field label: it labels the group via
+                aria-labelledby (#6155). */}
+            <span id="ws-save-scope-label" className="save-workspace-dialog__field-label">
+              Capture
+            </span>
             <RadioGroup
               className="save-workspace-dialog__radio-group"
               value={scope}

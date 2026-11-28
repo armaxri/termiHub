@@ -162,8 +162,11 @@ export function ExternalFilesSettings() {
         </p>
         {showCreatePrompt && (
           <div className="settings-panel__create-prompt">
-            <label className="settings-panel__create-label">Display name:</label>
+            <label className="settings-panel__create-label" htmlFor="external-file-create-name">
+              Display name:
+            </label>
             <Input
+              id="external-file-create-name"
               className="settings-panel__create-input"
               value={createName}
               onChange={(e) => setCreateName(e.target.value)}
