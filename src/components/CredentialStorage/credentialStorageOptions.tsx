@@ -2,6 +2,7 @@ import { KeyRound, LockKeyhole, ShieldOff, type LucideIcon } from "lucide-react"
 import type { RadioGroupOption } from "@/components/ui";
 import type { CredentialStorageMode } from "@/types/credential";
 import { CREDENTIAL_STORAGE_CHOICES } from "@/utils/credentialStorageCopy";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./CredentialStorageChooser.css";
 
 /**
@@ -31,7 +32,7 @@ export function credentialStorageRadioOptions(
       label: (
         <>
           <Icon
-            size={14}
+            size={ICON_SIZE.sm}
             aria-hidden="true"
             className="credential-storage-option__icon"
             data-testid={`${testIdFor(option.mode)}-icon`}

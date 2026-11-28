@@ -17,6 +17,7 @@ import { validateHost, validateIntRange } from "@/utils/fieldValidation";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import { useNetworkTask, type NetworkTaskContext } from "@/hooks/useNetworkTask";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface TraceroutePanelProps {
   prefillHost?: string;
 }
@@ -118,7 +119,7 @@ export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
           <Button
             variant="secondary"
             size="sm"
-            icon={<Download size={14} />}
+            icon={<Download size={ICON_SIZE.sm} />}
             disabled={hops.length === 0}
             onClick={handleExport}
             data-testid="traceroute-export"
@@ -129,7 +130,7 @@ export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
             <Button
               variant="danger"
               size="sm"
-              icon={<StopCircle size={14} />}
+              icon={<StopCircle size={ICON_SIZE.sm} />}
               pendingLabel="Stopping…"
               errorToast={false}
               onClick={stop}
@@ -140,7 +141,7 @@ export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
             <Button
               variant="primary"
               size="sm"
-              icon={<Play size={14} />}
+              icon={<Play size={ICON_SIZE.sm} />}
               pendingLabel="Starting…"
               errorToast={false}
               type="submit"

@@ -18,6 +18,7 @@ import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import "./WorkspaceSidebar.css";
 import { errorMessage } from "@/utils/errorMessage";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 export function WorkspaceSidebar() {
   const workspaces = useAppStore((s) => s.workspaces);
   const deleteWorkspace = useAppStore((s) => s.deleteWorkspaceFromBackend);
@@ -220,7 +221,7 @@ export function WorkspaceSidebar() {
           {
             id: "new",
             label: "New workspace",
-            icon: <Plus size={14} />,
+            icon: <Plus size={ICON_SIZE.sm} />,
             onClick: handleNew,
             primary: true,
             testId: "workspace-new-btn",
@@ -229,7 +230,7 @@ export function WorkspaceSidebar() {
             id: "save-current",
             label: "Save current layout",
             shortLabel: "Save current",
-            icon: <Save size={14} />,
+            icon: <Save size={ICON_SIZE.sm} />,
             onClick: () => setShowSaveDialog(true),
             testId: "workspace-save-current-btn",
           },

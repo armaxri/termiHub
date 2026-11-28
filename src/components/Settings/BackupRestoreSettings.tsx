@@ -9,6 +9,7 @@ import { OlderPasswordImport } from "./OlderPasswordImport";
 import "./CredentialVault.css";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** "2 restored entries that start by themselves are still off." */
 export function restoredOffText(count: number): string {
   return count === 1
@@ -41,7 +42,7 @@ export function BackupRestoreSettings() {
         <Button
           variant="secondary"
           size="sm"
-          icon={<Download size={14} />}
+          icon={<Download size={ICON_SIZE.sm} />}
           onClick={() => setExportOpen(true)}
           data-testid="backup-export-btn"
         >
@@ -50,7 +51,7 @@ export function BackupRestoreSettings() {
         <Button
           variant="secondary"
           size="sm"
-          icon={<Upload size={14} />}
+          icon={<Upload size={ICON_SIZE.sm} />}
           onClick={() => setRestoreOpen(true)}
           data-testid="backup-restore-btn"
         >

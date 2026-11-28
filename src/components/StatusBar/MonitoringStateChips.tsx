@@ -3,6 +3,7 @@ import { Spinner, Tooltip } from "@/components/ui";
 import type { MonitorStatusReason } from "@/types/monitoring";
 import { monitorOfflineReasonText, monitorUnsupportedTooltip } from "@/utils/monitorStatusReason";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Props for {@link MonitoringStopped}. */
 export interface MonitoringStoppedProps {
   /** Restart monitoring for the active tab. */
@@ -25,7 +26,7 @@ export function MonitoringStopped({ onStart }: MonitoringStoppedProps) {
           data-testid="monitoring-start-btn"
           onClick={onStart}
         >
-          <Activity size={12} />
+          <Activity size={ICON_SIZE.xs} />
           Monitoring off
           <span className="monitoring-status__action">· Start monitoring</span>
         </button>
@@ -49,7 +50,7 @@ export function MonitoringUnsupported() {
       data-testid="monitoring-unsupported"
       data-reason="unsupported"
     >
-      <Info size={12} />
+      <Info size={ICON_SIZE.xs} />
       Monitoring unavailable
     </span>
   );
@@ -103,7 +104,7 @@ export function MonitoringUnavailable({ reason }: MonitoringUnavailableProps) {
       data-testid="monitoring-unavailable"
       data-reason={reason ?? undefined}
     >
-      <Info size={12} />
+      <Info size={ICON_SIZE.xs} />
       Monitoring unavailable
     </span>
   );

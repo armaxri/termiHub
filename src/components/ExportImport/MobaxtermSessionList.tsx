@@ -3,6 +3,7 @@ import { Checkbox } from "@/components/ui";
 import type { MobaxtermSession } from "@/types/connection";
 import { folderLabel } from "@/services/mobaxtermImport";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface MobaxtermSessionListProps {
   /** Sessions that can be imported. */
   importable: MobaxtermSession[];
@@ -70,7 +71,7 @@ export function MobaxtermSessionList({
                     <span className="ssh-config-import__row-chain">{metaLine(session)}</span>
                     {session.notes.map((note) => (
                       <span key={note} className="mobaxterm-import__note">
-                        <AlertTriangle size={12} aria-hidden />
+                        <AlertTriangle size={ICON_SIZE.xs} aria-hidden />
                         {note}
                       </span>
                     ))}
@@ -92,7 +93,7 @@ export function MobaxtermSessionList({
                 className="mobaxterm-import__skipped-row"
                 data-testid={`mobaxterm-import-skip-${session.key}`}
               >
-                <Ban size={14} aria-hidden className="mobaxterm-import__skipped-icon" />
+                <Ban size={ICON_SIZE.sm} aria-hidden className="mobaxterm-import__skipped-icon" />
                 <span className="ssh-config-import__row-text">
                   <span className="ssh-config-import__row-name">{session.name}</span>
                   <span className="ssh-config-import__row-chain">{metaLine(session)}</span>

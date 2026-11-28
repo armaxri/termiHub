@@ -10,6 +10,7 @@ import {
   type ImportedItem,
 } from "@/services/workspaceImportTrust";
 import type { WorkspaceTabGroupDef } from "@/types/workspace";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./ImportedItemsSection.css";
 
 interface ImportedItemsSectionProps {
@@ -82,9 +83,13 @@ export function ImportedItemsSection({ tabGroupDefs }: ImportedItemsSectionProps
               data-testid={`workspace-imported-item-${item.id}`}
             >
               {confirmed ? (
-                <ShieldCheck size={14} className="imported-items__icon--ok" aria-hidden />
+                <ShieldCheck size={ICON_SIZE.sm} className="imported-items__icon--ok" aria-hidden />
               ) : (
-                <ShieldAlert size={14} className="imported-items__icon--warn" aria-hidden />
+                <ShieldAlert
+                  size={ICON_SIZE.sm}
+                  className="imported-items__icon--warn"
+                  aria-hidden
+                />
               )}
               <div className="imported-items__body">
                 <span className="imported-items__tab">

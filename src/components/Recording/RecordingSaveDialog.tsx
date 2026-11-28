@@ -11,6 +11,7 @@ import { recordedTime, recordingName } from "@/utils/recordingText";
 import "./Recording.css";
 import { t, tf } from "@/i18n/catalog";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Props of {@link RecordingSaveDialog}. Mount it with a fresh `key` per take. */
 export interface RecordingSaveDialogProps {
   take: RecordedTake;
@@ -175,7 +176,7 @@ export function RecordingSaveDialog({
         )}
         {hasSecrets && (
           <div className="recording-save__secrets" data-testid="recording-save-secrets">
-            <KeyRound size={14} aria-hidden="true" />
+            <KeyRound size={ICON_SIZE.sm} aria-hidden="true" />
             <div>
               <p>
                 {prompts.length > 0
@@ -248,7 +249,13 @@ export function RecordingSaveDialog({
                 variant="ghost"
                 size="sm"
                 aria-expanded={detailsOpen}
-                icon={detailsOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                icon={
+                  detailsOpen ? (
+                    <ChevronDown size={ICON_SIZE.xs} />
+                  ) : (
+                    <ChevronRight size={ICON_SIZE.xs} />
+                  )
+                }
                 onClick={() => setDetailsOpen((v) => !v)}
                 data-testid="recording-save-details"
               >

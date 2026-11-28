@@ -426,7 +426,7 @@
    chevron leads. */
 .connection-tree__chevron-spacer {
   flex-shrink: 0;
-  width: 16px;
+  width: var(--icon-md);
 }
 
 .connection-tree__folder--drop-over {

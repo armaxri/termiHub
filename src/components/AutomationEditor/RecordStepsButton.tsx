@@ -12,6 +12,7 @@ import {
 } from "@/components/ui";
 import { useRunTargets } from "@/components/Automations/useRunTargets";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Props of {@link RecordStepsButton}. */
 export interface RecordStepsButtonProps {
   /** Record in this terminal; `null`: in a new one. */
@@ -48,7 +49,7 @@ export const RecordStepsButton = forwardRef<HTMLButtonElement, RecordStepsButton
             ref={ref}
             variant="ghost"
             size="sm"
-            icon={<CircleDot size={14} />}
+            icon={<CircleDot size={ICON_SIZE.sm} />}
             onClick={() => onRecord(only?.id ?? null)}
             data-testid="automation-editor-record"
           >
@@ -64,7 +65,7 @@ export const RecordStepsButton = forwardRef<HTMLButtonElement, RecordStepsButton
             ref={ref}
             variant="ghost"
             size="sm"
-            icon={<CircleDot size={14} />}
+            icon={<CircleDot size={ICON_SIZE.sm} />}
             data-testid="automation-editor-record"
           >
             Record steps…

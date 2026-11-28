@@ -15,6 +15,7 @@ import { formatBytes } from "@/utils/formatters";
 import { isRootPath, type PaneListing } from "./usePaneListing";
 import { nextPaneCursor, rangeSelection } from "./paneSelection";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** What a dragged pane row carries (dnd-kit `data`). */
 export interface PaneDragData {
   side: PaneSide;
@@ -99,9 +100,9 @@ function PaneRow({
       data-testid={`transfer-pane-${side}-row-${entry.name}`}
     >
       {entry.isDirectory ? (
-        <Folder size={14} className="transfer-pane__icon" aria-hidden="true" />
+        <Folder size={ICON_SIZE.sm} className="transfer-pane__icon" aria-hidden="true" />
       ) : (
-        <File size={14} className="transfer-pane__icon" aria-hidden="true" />
+        <File size={ICON_SIZE.sm} className="transfer-pane__icon" aria-hidden="true" />
       )}
       <span className="transfer-pane__name">{entry.name}</span>
       {!entry.isDirectory && <span className="transfer-pane__size">{formatBytes(entry.size)}</span>}
@@ -248,7 +249,7 @@ export function TransferPane({
           <Button
             variant="ghost"
             size="sm"
-            icon={<ArrowUp size={14} />}
+            icon={<ArrowUp size={ICON_SIZE.sm} />}
             aria-label={`${title}: go up one directory`}
             disabled={!path || isRootPath(path)}
             onClick={() => void listing.up()}
@@ -270,7 +271,7 @@ export function TransferPane({
           <Button
             variant="ghost"
             size="sm"
-            icon={<RefreshCw size={14} />}
+            icon={<RefreshCw size={ICON_SIZE.sm} />}
             aria-label={`${title}: refresh`}
             disabled={!!placeholder}
             onClick={() => void listing.refresh()}

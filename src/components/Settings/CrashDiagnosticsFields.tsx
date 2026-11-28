@@ -5,6 +5,7 @@ import { openDiagnosticsExport } from "@/components/Diagnostics/diagnosticsDialo
 import { SettingsField } from "./SettingsField";
 import type { SettingsUpdate } from "./GeneralSettings";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface CrashDiagnosticsFieldsProps {
   settings: AppSettings;
   onChange: (update: SettingsUpdate) => void;
@@ -42,7 +43,7 @@ export function CrashDiagnosticsFields({ settings, onChange }: CrashDiagnosticsF
         <Button
           variant="secondary"
           size="sm"
-          icon={<FileArchive size={14} />}
+          icon={<FileArchive size={ICON_SIZE.sm} />}
           onClick={() => openDiagnosticsExport()}
           data-testid="settings-export-diagnostics"
         >

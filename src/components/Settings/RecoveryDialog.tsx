@@ -8,6 +8,7 @@
 import { AlertTriangle } from "lucide-react";
 import { Modal, Button } from "@/components/ui";
 import { RecoveryWarning } from "@/types/connection";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./RecoveryDialog.css";
 
 interface RecoveryDialogProps {
@@ -26,7 +27,7 @@ export function RecoveryDialog({ open, onOpenChange, warnings }: RecoveryDialogP
       data-testid="recovery-dialog"
       title={
         <span className="recovery-dialog__title-row">
-          <AlertTriangle size={20} className="recovery-dialog__icon" />
+          <AlertTriangle size={ICON_SIZE.lg} className="recovery-dialog__icon" />
           Configuration recovery
         </span>
       }

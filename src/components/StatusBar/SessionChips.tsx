@@ -27,6 +27,7 @@ import { useAgentSetupStatus } from "@/store/agentSetupStatus";
 import { agentSetupTabOutcome } from "@/components/Terminal/AgentSetupTabStrip";
 import { useProjectedSessionLifecycle } from "@/store/useSessionLifecycle";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** The chip icon per trust level: a check once the key is remembered. */
 const TRUST_ICON: Record<SshTrustLevel, typeof ShieldCheck> = {
   trusted: ShieldCheck,
@@ -76,10 +77,10 @@ export function SshStatus() {
           aria-label={chip.ariaLabel}
           title={chip.tooltip}
         >
-          <Route size={13} aria-hidden />
+          <Route size={ICON_SIZE.xs} aria-hidden />
           SSH: {chip.label}
           <TrustIcon
-            size={13}
+            size={ICON_SIZE.xs}
             aria-hidden
             className={`status-bar__ssh-trust status-bar__ssh-trust--${chip.trust}`}
             data-testid="status-bar-ssh-trust"
@@ -108,7 +109,7 @@ export function SshStatus() {
         </dl>
         <MenuSeparator />
         <MenuItem
-          icon={<ShieldCheck size={14} aria-hidden />}
+          icon={<ShieldCheck size={ICON_SIZE.sm} aria-hidden />}
           onSelect={() => openSettingsTab({ category: "security" })}
           data-testid="status-bar-ssh-manage-trust"
         >
@@ -134,7 +135,7 @@ export function LocalShellStatus() {
       data-testid="status-bar-local-shell"
       title={chip.tooltip}
     >
-      <Terminal size={13} aria-hidden />
+      <Terminal size={ICON_SIZE.xs} aria-hidden />
       {chip.label}
     </span>
   );
@@ -150,7 +151,7 @@ export function SerialStatus() {
   if (!chip) return null;
   return (
     <span className="status-bar__item" data-testid="status-bar-serial" title={chip.tooltip}>
-      <Cable size={13} />
+      <Cable size={ICON_SIZE.xs} />
       {chip.label}
     </span>
   );
@@ -171,7 +172,7 @@ export function TelnetStatus() {
       data-testid="status-bar-telnet"
       title={chip.tooltip}
     >
-      <TerminalSquare size={13} aria-hidden />
+      <TerminalSquare size={ICON_SIZE.xs} aria-hidden />
       {chip.label}
       <UnencryptedBadge data-testid="status-bar-telnet-unencrypted" />
     </span>

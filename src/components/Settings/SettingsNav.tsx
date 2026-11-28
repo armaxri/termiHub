@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronRight, type LucideIcon } from "lucide-react";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./SettingsNav.css";
 
 interface CategoryItem {
@@ -96,7 +97,11 @@ export function SettingsNav<T extends string = string>({
         data-group-collapsed={group?.collapsed ? "true" : undefined}
       >
         {/* Test hook: the product run checks the icon keeps its size (#5845). */}
-        <Icon size={16} aria-hidden="true" data-testid={`settings-category-icon-${cat.id}`} />
+        <Icon
+          size={ICON_SIZE.md}
+          aria-hidden="true"
+          data-testid={`settings-category-icon-${cat.id}`}
+        />
         <span className="settings-nav__label">{cat.label}</span>
       </button>
     );
@@ -157,7 +162,7 @@ export function SettingsNav<T extends string = string>({
                 data-testid={`settings-navgroup-${group.id}-toggle`}
               >
                 <ChevronRight
-                  size={12}
+                  size={ICON_SIZE.xs}
                   aria-hidden="true"
                   className={`settings-nav__group-chevron ${open ? "settings-nav__group-chevron--open" : ""}`}
                 />

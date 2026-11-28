@@ -1,5 +1,6 @@
 import { RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./SettingDefaultMarker.css";
 
 export interface SettingDefaultMarkerProps {
@@ -51,7 +52,7 @@ export function SettingDefaultMarker({
       variant="ghost"
       size="sm"
       className="settings-default-marker__reset"
-      icon={<RotateCcw size={12} aria-hidden="true" />}
+      icon={<RotateCcw size={ICON_SIZE.xs} aria-hidden="true" />}
       onClick={onReset}
       aria-label={`Reset ${name.toLowerCase()} to the default${suffix}`}
       data-testid={resetId}

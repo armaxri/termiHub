@@ -24,6 +24,7 @@ import {
   updateCustomRule,
 } from "@/services/customHighlightRules";
 import { defaultHighlightingConfig } from "@/services/syntaxHighlightingConfig";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./ConnectionAdditionalRules.css";
 
 interface ConnectionTerminalSettingsProps {
@@ -118,7 +119,7 @@ function ConnectionAdditionalRules({ options, onChange }: ConnectionTerminalSett
         <Button
           variant="ghost"
           size="sm"
-          icon={<Plus size={14} />}
+          icon={<Plus size={ICON_SIZE.sm} />}
           onClick={() => setEditor({ mode: "new" })}
           disabled={editor !== null}
           data-testid="connection-additional-rule-add"
@@ -171,7 +172,7 @@ function ConnectionAdditionalRules({ options, onChange }: ConnectionTerminalSett
                   variant="ghost"
                   size="sm"
                   iconOnly
-                  icon={<ChevronUp size={14} />}
+                  icon={<ChevronUp size={ICON_SIZE.sm} />}
                   aria-label={`Move ${rule.name} up`}
                   disabled={editor !== null || index === 0}
                   onClick={() => setRules(moveCustomRule(rules, index, index - 1))}
@@ -181,7 +182,7 @@ function ConnectionAdditionalRules({ options, onChange }: ConnectionTerminalSett
                   variant="ghost"
                   size="sm"
                   iconOnly
-                  icon={<ChevronDown size={14} />}
+                  icon={<ChevronDown size={ICON_SIZE.sm} />}
                   aria-label={`Move ${rule.name} down`}
                   disabled={editor !== null || index === rules.length - 1}
                   onClick={() => setRules(moveCustomRule(rules, index, index + 1))}
@@ -191,7 +192,7 @@ function ConnectionAdditionalRules({ options, onChange }: ConnectionTerminalSett
                   variant="ghost"
                   size="sm"
                   iconOnly
-                  icon={<Pencil size={14} />}
+                  icon={<Pencil size={ICON_SIZE.sm} />}
                   aria-label={`Edit ${rule.name}`}
                   disabled={editor !== null}
                   onClick={() => setEditor({ mode: "edit", id: rule.id })}
@@ -201,7 +202,7 @@ function ConnectionAdditionalRules({ options, onChange }: ConnectionTerminalSett
                   variant="ghost"
                   size="sm"
                   iconOnly
-                  icon={<Trash2 size={14} />}
+                  icon={<Trash2 size={ICON_SIZE.sm} />}
                   aria-label={`Delete ${rule.name}`}
                   disabled={editor !== null}
                   onClick={() => setRules(removeCustomRule(rules, rule.id))}

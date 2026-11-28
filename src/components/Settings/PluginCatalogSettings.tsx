@@ -23,6 +23,7 @@ import { isImeComposing } from "@/utils/imeComposition";
 import { itemMatchesQuery } from "@/hooks/useListFilter";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Shown when the index URL setting is unset — mirrors the backend default. */
 const DEFAULT_PLUGIN_INDEX_URL =
   "https://raw.githubusercontent.com/armaxri/termiHub/main/plugins/index.json";
@@ -61,8 +62,8 @@ export function IndexSignatureNotice({ status }: { status: PluginIndexSignatureS
           data-testid="plugin-catalog-signature"
           data-status={status}
         >
-          <ShieldCheck size={14} aria-hidden="true" /> Signature verified — this index is signed by
-          the termiHub plugin-index key.
+          <ShieldCheck size={ICON_SIZE.sm} aria-hidden="true" /> Signature verified — this index is
+          signed by the termiHub plugin-index key.
         </p>
       );
     case "unsigned":
@@ -73,8 +74,8 @@ export function IndexSignatureNotice({ status }: { status: PluginIndexSignatureS
           data-testid="plugin-catalog-signature"
           data-status={status}
         >
-          <ShieldAlert size={14} aria-hidden="true" /> Unsigned index — its contents are not
-          verified. Only use indexes you trust; every package is still reviewed before install.
+          <ShieldAlert size={ICON_SIZE.sm} aria-hidden="true" /> Unsigned index — its contents are
+          not verified. Only use indexes you trust; every package is still reviewed before install.
         </p>
       );
     case "notConfigured":
@@ -84,8 +85,9 @@ export function IndexSignatureNotice({ status }: { status: PluginIndexSignatureS
           data-testid="plugin-catalog-signature"
           data-status={status}
         >
-          <ShieldQuestion size={14} aria-hidden="true" /> Signature not checked — this termiHub
-          build has no plugin-index signing key yet. Every package is still reviewed before install.
+          <ShieldQuestion size={ICON_SIZE.sm} aria-hidden="true" /> Signature not checked — this
+          termiHub build has no plugin-index signing key yet. Every package is still reviewed before
+          install.
         </p>
       );
   }
@@ -198,7 +200,7 @@ export function PluginCatalogSettings() {
           <Button
             variant="secondary"
             size="sm"
-            icon={<RefreshCw size={14} />}
+            icon={<RefreshCw size={ICON_SIZE.sm} />}
             onClick={handleLoad}
             disabled={load.phase === "loading" || Boolean(urlError)}
             errorToast={false}
@@ -210,7 +212,7 @@ export function PluginCatalogSettings() {
             <Button
               variant="ghost"
               size="sm"
-              icon={<RotateCcw size={14} />}
+              icon={<RotateCcw size={ICON_SIZE.sm} />}
               onClick={() => saveUrl("")}
               data-testid="plugin-catalog-url-reset"
             >

@@ -108,6 +108,7 @@ import { X11ForwardingChip } from "./X11ForwardingChip";
 import { ConfirmStopSessionDialog } from "@/components/Sidebar/ConfirmStopSessionDialog";
 import { errorMessage } from "@/utils/errorMessage";
 import { withLoggedFallback } from "@/utils/loggedFallback";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./OpenConnectionsModal.css";
 
 interface OpenConnectionsModalProps {
@@ -934,14 +935,14 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
         {connectingTabs.length > 0 && (
           <Section
             title="Connecting"
-            icon={<Loader2 size={14} />}
+            icon={<Loader2 size={ICON_SIZE.sm} />}
             count={connectingTabs.length}
             onKillAll={handleCancelAllConnecting}
           >
             {connectingTabs.map((tab) => (
               <ConnectionRow
                 key={tab.id}
-                icon={<Loader2 size={14} />}
+                icon={<Loader2 size={ICON_SIZE.sm} />}
                 title={tab.title}
                 badge="connecting"
                 onKill={() => handleCancelConnecting(tab.id, tab.panelId)}
@@ -954,7 +955,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
         {establishingAgents.length > 0 && (
           <Section
             title="Establishing / recovering"
-            icon={<Loader2 size={14} />}
+            icon={<Loader2 size={ICON_SIZE.sm} />}
             count={establishingAgents.length}
             onKillAll={handleCancelAllEstablishingAgents}
             killAllLabel="Cancel all"
@@ -965,9 +966,9 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                 key={a.id}
                 icon={
                   a.connectionState === "reconnecting" ? (
-                    <Server size={14} />
+                    <Server size={ICON_SIZE.sm} />
                   ) : (
-                    <Loader2 size={14} />
+                    <Loader2 size={ICON_SIZE.sm} />
                   )
                 }
                 title={a.name}
@@ -988,14 +989,14 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
         {plainLocalSessions.length > 0 && (
           <Section
             title="Local sessions"
-            icon={<Terminal size={14} />}
+            icon={<Terminal size={ICON_SIZE.sm} />}
             count={plainLocalSessions.length}
             onKillAll={handleKillAllLocal}
           >
             {plainLocalSessions.map((s) => (
               <ConnectionRow
                 key={s.id}
-                icon={<Terminal size={14} />}
+                icon={<Terminal size={ICON_SIZE.sm} />}
                 title={s.title}
                 meta={
                   s.x11Forwarding && (
@@ -1023,7 +1024,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
         {spawnedSessions.length > 0 && (
           <Section
             title="Spawned containers"
-            icon={<Package size={14} />}
+            icon={<Package size={ICON_SIZE.sm} />}
             count={spawnedSessions.length}
             onKillAll={handleKillAllSpawned}
             data-testid="open-connections-spawned-section"
@@ -1031,7 +1032,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
             {spawnedSessions.map((s) => (
               <ConnectionRow
                 key={s.id}
-                icon={<Package size={14} />}
+                icon={<Package size={ICON_SIZE.sm} />}
                 title={s.title}
                 badge={s.alive ? "spawned" : "dead"}
                 owningWindow={resolveOwningWindow(s.id)}
@@ -1046,14 +1047,14 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
         {connectedAgents.length > 0 && (
           <Section
             title="Agent connections"
-            icon={<Server size={14} />}
+            icon={<Server size={ICON_SIZE.sm} />}
             count={connectedAgents.length}
             onKillAll={handleKillAllAgents}
           >
             {connectedAgents.map((a) => (
               <ConnectionRow
                 key={a.id}
-                icon={<Server size={14} />}
+                icon={<Server size={ICON_SIZE.sm} />}
                 title={a.name}
                 badge="connected"
                 meta={
@@ -1078,7 +1079,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                       <Button
                         variant="ghost"
                         size="sm"
-                        icon={<Unplug size={14} />}
+                        icon={<Unplug size={ICON_SIZE.sm} />}
                         onClick={() => handleKillAgent(a.id)}
                         errorToast={false}
                         aria-label={`Disconnect (detach) ${a.name}`}
@@ -1088,7 +1089,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                       </Button>
                     </Tooltip>
                     <ConfirmButton
-                      icon={<Power size={14} />}
+                      icon={<Power size={ICON_SIZE.sm} />}
                       ariaLabel={`Shutdown (stop remote) ${a.name}`}
                       tooltip="Stop remote sessions and disconnect"
                       data-testid={`oc-agent-shutdown-${a.id}`}
@@ -1115,14 +1116,20 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
             <Section
               key={`proxy-sessions-${a.id}`}
               title={`Connections via ${a.name}`}
-              icon={<Server size={14} />}
+              icon={<Server size={ICON_SIZE.sm} />}
               count={sessions.length}
               onKillAll={() => handleKillAllProxy(a.id)}
             >
               {sessions.map((s) => (
                 <ConnectionRow
                   key={s.id}
-                  icon={s.connectionType === "ssh" ? <Server size={14} /> : <Terminal size={14} />}
+                  icon={
+                    s.connectionType === "ssh" ? (
+                      <Server size={ICON_SIZE.sm} />
+                    ) : (
+                      <Terminal size={ICON_SIZE.sm} />
+                    )
+                  }
                   title={s.title}
                   badge={s.alive ? "alive" : "dead"}
                   owningWindow={resolveOwningWindow(s.id)}
@@ -1145,13 +1152,13 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
             <Section
               key={`agent-sessions-${a.id}`}
               title={`Sessions on ${a.name}`}
-              icon={<Terminal size={14} />}
+              icon={<Terminal size={ICON_SIZE.sm} />}
               count={sessions.length}
               onKillAll={sessions.length > 0 ? () => handleKillAllAgentSessions(a.id) : undefined}
             >
               {loadError && (
                 <ConnectionRow
-                  icon={<Terminal size={14} />}
+                  icon={<Terminal size={ICON_SIZE.sm} />}
                   title={`Could not list sessions: ${loadError}`}
                   badge="error"
                   data-testid={`oc-agent-sessions-error-${a.id}`}
@@ -1159,7 +1166,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                     <Button
                       variant="ghost"
                       size="sm"
-                      icon={<RotateCw size={14} />}
+                      icon={<RotateCw size={ICON_SIZE.sm} />}
                       onClick={() => retryAgentSessions(a.id)}
                       aria-label={`Retry listing sessions on ${a.name}`}
                       data-testid={`oc-agent-sessions-retry-${a.id}`}
@@ -1172,7 +1179,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
               {sessions.map((s) => (
                 <ConnectionRow
                   key={s.sessionId}
-                  icon={<Terminal size={14} />}
+                  icon={<Terminal size={ICON_SIZE.sm} />}
                   title={s.title}
                   badge={s.status === "attached" || s.status === "running" ? "alive" : "dead"}
                   onKill={guardPersistentStop(
@@ -1193,7 +1200,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
         {activeTunnels.length + runningEmbeddedServers.length > 0 && (
           <Section
             title="Services"
-            icon={<Server size={14} />}
+            icon={<Server size={ICON_SIZE.sm} />}
             count={activeTunnels.length + runningEmbeddedServers.length}
             onKillAll={handleStopAllServices}
             killAllLabel="Stop all…"
@@ -1246,7 +1253,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
               return (
                 <ConnectionRow
                   key={t.id}
-                  icon={<ArrowLeftRight size={14} />}
+                  icon={<ArrowLeftRight size={ICON_SIZE.sm} />}
                   title={t.name}
                   detail={detailWithLink}
                   reason={reason}
@@ -1281,7 +1288,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                   reason={model?.reason}
                   badgeLabel={model?.stateLabel}
                   key={s.id}
-                  icon={<Server size={14} />}
+                  icon={<Server size={ICON_SIZE.sm} />}
                   title={s.name}
                   detail={`${PROTOCOL_LABELS[s.serverType]} · ${s.bindHost}:${s.port} · ${tunnelHostMachine(
                     serverHost,
@@ -1319,7 +1326,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
         {transferList.length > 0 && (
           <Section
             title="Transfers"
-            icon={<ArrowDownUp size={14} />}
+            icon={<ArrowDownUp size={ICON_SIZE.sm} />}
             count={transferList.length}
             onKillAll={handleCancelAllTransfers}
             killAllLabel="Cancel all"
@@ -1339,14 +1346,14 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
         {openMonitors.length > 0 && (
           <Section
             title="Monitoring"
-            icon={<Activity size={14} />}
+            icon={<Activity size={ICON_SIZE.sm} />}
             count={openMonitors.length}
             onKillAll={() => disconnectMonitoring()}
           >
             {openMonitors.map((m) => (
               <ConnectionRow
                 key={m.key}
-                icon={<MonitorStop size={14} />}
+                icon={<MonitorStop size={ICON_SIZE.sm} />}
                 title={m.host ?? m.key}
                 detail={monitorRowDetail(m)}
                 badge={monitorRowBadge(m)}
@@ -1370,7 +1377,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
         {httpMonitors.length > 0 && (
           <Section
             title="HTTP monitors"
-            icon={<Globe size={14} />}
+            icon={<Globe size={ICON_SIZE.sm} />}
             count={httpMonitors.length}
             onKillAll={handleStopAllHttpMonitors}
             killAllLabel="Stop all"
@@ -1379,7 +1386,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
             {httpMonitors.map((m) => (
               <ConnectionRow
                 key={m.config.id}
-                icon={<Globe size={14} />}
+                icon={<Globe size={ICON_SIZE.sm} />}
                 title={m.config.url}
                 badge={
                   !m.running
@@ -1403,7 +1410,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
         {(showXServer || showXServerSetup) && (
           <Section
             title="X servers"
-            icon={<MonitorCog size={14} />}
+            icon={<MonitorCog size={ICON_SIZE.sm} />}
             count={showXServer ? 1 : 0}
             onKillAll={showXServer && xServerManaged ? handleStopXServer : undefined}
             killAllLabel="Stop"
@@ -1411,7 +1418,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
           >
             {showXServer && xServer ? (
               <ConnectionRow
-                icon={<MonitorCog size={14} />}
+                icon={<MonitorCog size={ICON_SIZE.sm} />}
                 title={xServerManaged ? "VcXsrv" : "External X server"}
                 detail={xServerDetail}
                 badge={xServerManaged ? "managed" : "external"}
@@ -1423,7 +1430,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
             ) : (
               <div className="oc-row" data-testid="open-connections-x-server-empty">
                 <span className="oc-row__icon">
-                  <MonitorCog size={14} />
+                  <MonitorCog size={ICON_SIZE.sm} />
                 </span>
                 <span className="oc-row__title oc-row__title--muted">No X server</span>
                 <Button
@@ -1654,7 +1661,11 @@ function TransferRow({ transfer, onCancel }: TransferRowProps) {
   return (
     <div className="oc-row oc-transfer" data-testid="open-connections-transfer">
       <span className="oc-row__icon">
-        {direction === "download" ? <Download size={14} /> : <Upload size={14} />}
+        {direction === "download" ? (
+          <Download size={ICON_SIZE.sm} />
+        ) : (
+          <Upload size={ICON_SIZE.sm} />
+        )}
       </span>
       <div className="oc-transfer__body">
         <span className="oc-row__title" title={fileName}>
@@ -1673,7 +1684,7 @@ function TransferRow({ transfer, onCancel }: TransferRowProps) {
         variant="danger"
         size="sm"
         className="oc-row__kill"
-        icon={<Ban size={14} />}
+        icon={<Ban size={ICON_SIZE.sm} />}
         onClick={() => onCancel()}
         aria-label={`Cancel transfer of ${fileName}`}
       >
@@ -1778,7 +1789,7 @@ function ConnectionRow({
             variant="ghost"
             size="sm"
             className="oc-row__window"
-            icon={<AppWindow size={12} />}
+            icon={<AppWindow size={ICON_SIZE.xs} />}
             onClick={() => onFocusWindow?.(owningWindow.label)}
             aria-label={`Focus ${owningWindow.name}`}
             data-testid="oc-row-window"
@@ -1868,7 +1879,7 @@ function MonitorRowActions({
             aria-label="Retry monitor"
             data-testid={`monitor-retry-${entry.key}`}
           >
-            <RotateCw size={14} />
+            <RotateCw size={ICON_SIZE.sm} />
           </Button>
         </Tooltip>
       )}
@@ -1880,7 +1891,7 @@ function MonitorRowActions({
           aria-label={paused ? "Resume monitoring" : "Pause monitoring"}
           data-testid={paused ? `monitor-resume-${entry.key}` : `monitor-pause-${entry.key}`}
         >
-          {paused ? <Play size={14} /> : <Pause size={14} />}
+          {paused ? <Play size={ICON_SIZE.sm} /> : <Pause size={ICON_SIZE.sm} />}
         </Button>
       </Tooltip>
       <DropdownMenuRoot>
@@ -1892,7 +1903,7 @@ function MonitorRowActions({
               aria-label="Set refresh interval"
               data-testid={`monitor-interval-${entry.key}`}
             >
-              <Timer size={14} />
+              <Timer size={ICON_SIZE.sm} />
               {formatMonitorInterval(entry.intervalMs)}
             </Button>
           </DropdownMenuTrigger>
@@ -1917,7 +1928,7 @@ function MonitorRowActions({
                 data-testid={`monitor-interval-${entry.key}-${opt}`}
               >
                 <MenuItemIndicator className="monitoring-menu__radio-indicator">
-                  <Check size={14} />
+                  <Check size={ICON_SIZE.sm} />
                 </MenuItemIndicator>
                 <span className="monitoring-menu__radio-label">
                   Refresh every {formatMonitorInterval(opt)}

@@ -17,6 +17,7 @@ import { SettingsField } from "./SettingsField";
 import "./SyntaxHighlightingSettings.css";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /**
  * Short, representative sample text per built-in rule id. Rendered in the rule's
  * own color so the user can preview what each rule recolors without opening a
@@ -151,7 +152,7 @@ export function SyntaxHighlightingSettings({
           <Button
             variant="ghost"
             size="sm"
-            icon={<Plus size={14} />}
+            icon={<Plus size={ICON_SIZE.sm} />}
             onClick={() => setEditor({ mode: "new" })}
             disabled={editor !== null}
             data-testid="syntax-custom-rule-add"
@@ -198,7 +199,7 @@ export function SyntaxHighlightingSettings({
                   variant="ghost"
                   size="sm"
                   iconOnly
-                  icon={<ChevronUp size={14} />}
+                  icon={<ChevronUp size={ICON_SIZE.sm} />}
                   aria-label={`Move ${rule.name} up`}
                   disabled={editor !== null || index === 0}
                   onClick={() => setCustomRules(moveCustomRule(customRules, index, index - 1))}
@@ -208,7 +209,7 @@ export function SyntaxHighlightingSettings({
                   variant="ghost"
                   size="sm"
                   iconOnly
-                  icon={<ChevronDown size={14} />}
+                  icon={<ChevronDown size={ICON_SIZE.sm} />}
                   aria-label={`Move ${rule.name} down`}
                   disabled={editor !== null || index === customRules.length - 1}
                   onClick={() => setCustomRules(moveCustomRule(customRules, index, index + 1))}
@@ -218,7 +219,7 @@ export function SyntaxHighlightingSettings({
                   variant="ghost"
                   size="sm"
                   iconOnly
-                  icon={<Pencil size={14} />}
+                  icon={<Pencil size={ICON_SIZE.sm} />}
                   aria-label={`Edit ${rule.name}`}
                   disabled={editor !== null}
                   onClick={() => setEditor({ mode: "edit", id: rule.id })}
@@ -228,7 +229,7 @@ export function SyntaxHighlightingSettings({
                   variant="ghost"
                   size="sm"
                   iconOnly
-                  icon={<Trash2 size={14} />}
+                  icon={<Trash2 size={ICON_SIZE.sm} />}
                   aria-label={`Delete ${rule.name}`}
                   disabled={editor !== null}
                   onClick={() => setCustomRules(removeCustomRule(customRules, rule.id))}

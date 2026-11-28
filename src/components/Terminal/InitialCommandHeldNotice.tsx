@@ -9,6 +9,7 @@ import {
   useInitialCommandHeldNotice,
   type InitialCommandHeldNotice as HeldNotice,
 } from "@/store/initialCommandHeldBridge";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./InitialCommandHeldNotice.css";
 
 interface InitialCommandHeldNoticeProps {
@@ -92,7 +93,7 @@ export function InitialCommandHeldNotice({ tabId }: InitialCommandHeldNoticeProp
       aria-label={copy.label}
       data-testid="initial-command-held-notice"
     >
-      <Hourglass size={16} className="initial-command-held-notice__icon" aria-hidden />
+      <Hourglass size={ICON_SIZE.md} className="initial-command-held-notice__icon" aria-hidden />
       <span className="initial-command-held-notice__text">{copy.text}</span>
       <div className="initial-command-held-notice__actions">
         <Button

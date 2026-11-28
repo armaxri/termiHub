@@ -3,6 +3,7 @@ import { Zap } from "lucide-react";
 import { Button } from "@/components/ui";
 import { useAutomationEditor } from "./automationEditorStore";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** The way back to the automation editor while it has stepped aside (A-031). */
 export function EditorAsideBar() {
   const editing = useAutomationEditor((s) => s.editing);
@@ -21,7 +22,7 @@ export function EditorAsideBar() {
   const name = editing.automation.name;
   return (
     <div className="recording-bar" data-testid="automation-editor-aside">
-      <Zap size={14} aria-hidden="true" />
+      <Zap size={ICON_SIZE.sm} aria-hidden="true" />
       <span className="recording-bar__text" role="status">
         {name ? `“${name}”` : "The new automation"} is still open. Your changes are kept, not saved
         yet.

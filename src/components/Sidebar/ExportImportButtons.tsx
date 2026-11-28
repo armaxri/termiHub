@@ -1,6 +1,7 @@
 import { Download, Upload } from "lucide-react";
 import type { ToolbarAction } from "@/components/ui";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /**
  * Shared export / import icon-button pair (UISF-019).
  *
@@ -47,7 +48,7 @@ export function exportImportActions({
     {
       id: "export",
       label: exportLabel,
-      icon: <Download size={14} />,
+      icon: <Download size={ICON_SIZE.sm} />,
       onClick: onExport,
       disabled: exportDisabled,
       iconOnly: true,
@@ -56,7 +57,7 @@ export function exportImportActions({
     {
       id: "import",
       label: importLabel,
-      icon: <Upload size={14} />,
+      icon: <Upload size={ICON_SIZE.sm} />,
       onClick: onImport,
       iconOnly: true,
       testId: importTestId,

@@ -19,6 +19,7 @@ import { frontendLog } from "@/utils/frontendLog";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import { errorMessage } from "@/utils/errorMessage";
 import { newId } from "@/services/transport/ids";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./ConnectionPathDialog.css";
 
 interface ConnectionPathDialogProps {
@@ -156,7 +157,7 @@ export function ConnectionPathDialog({ open, connection, onClose }: ConnectionPa
       data-testid="connection-path-dialog"
       title={
         <span className="connection-path-dialog__title-row">
-          <Route size={16} /> Connection path
+          <Route size={ICON_SIZE.md} /> Connection path
         </span>
       }
       footer={
@@ -187,7 +188,7 @@ export function ConnectionPathDialog({ open, connection, onClose }: ConnectionPa
               data-testid="connection-path-node"
             >
               <div className="connection-path-dialog__row">
-                <Icon size={15} className="connection-path-dialog__icon" />
+                <Icon size={ICON_SIZE.sm} className="connection-path-dialog__icon" />
                 <span className="connection-path-dialog__label">{node.label}</span>
                 <span className="connection-path-dialog__detail">{node.detail}</span>
                 {spin && reducedMotion && (
@@ -197,13 +198,13 @@ export function ConnectionPathDialog({ open, connection, onClose }: ConnectionPa
                 )}
                 {StatusIcon === null ? (
                   <Spinner
-                    size={15}
+                    size={ICON_SIZE.sm}
                     label="status: connecting"
                     className="connection-path-dialog__status connection-path-dialog__status--connecting"
                   />
                 ) : (
                   <StatusIcon
-                    size={15}
+                    size={ICON_SIZE.sm}
                     className={`connection-path-dialog__status connection-path-dialog__status--${status}`}
                     aria-label={`status: ${status}`}
                   />
@@ -215,7 +216,11 @@ export function ConnectionPathDialog({ open, connection, onClose }: ConnectionPa
                 </span>
               )}
               {!isLast && (
-                <ChevronDown size={14} className="connection-path-dialog__arrow" aria-hidden />
+                <ChevronDown
+                  size={ICON_SIZE.sm}
+                  className="connection-path-dialog__arrow"
+                  aria-hidden
+                />
               )}
             </li>
           );

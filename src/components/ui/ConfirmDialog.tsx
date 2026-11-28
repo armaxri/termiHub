@@ -3,6 +3,7 @@ import { AlertTriangle } from "lucide-react";
 import { Modal } from "./Modal";
 import { Button, ButtonVariant } from "./Button";
 import { Checkbox } from "./Checkbox";
+import { ICON_SIZE } from "./iconSize";
 import "./ui.css";
 
 /**
@@ -200,7 +201,8 @@ export function ConfirmDialog({
   // Resolve the title accent icon: a caller-supplied `icon` wins, otherwise the
   // danger/warn variants fall back to an alert triangle. `default` has no icon.
   const accentIcon =
-    icon ?? (variant === "default" ? null : <AlertTriangle size={16} aria-hidden="true" />);
+    icon ??
+    (variant === "default" ? null : <AlertTriangle size={ICON_SIZE.md} aria-hidden="true" />);
   const titleNode = accentIcon ? (
     <span className="ui-confirm__title">
       <span

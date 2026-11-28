@@ -7,6 +7,7 @@ import "./CredentialStoreIndicator.css";
 import { errorMessage } from "@/utils/errorMessage";
 import { t } from "@/i18n/catalog";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /**
  * Status bar indicator showing the state of the credential store.
  *
@@ -45,7 +46,7 @@ export function CredentialStoreIndicator() {
         data-testid="credential-store-indicator"
       >
         {/* The key glyph means saved credentials; no connection type uses it (#5850). */}
-        <KeyRound size={12} data-icon="key-round" />
+        <KeyRound size={ICON_SIZE.xs} data-icon="key-round" />
         Keychain
       </span>
     );
@@ -70,7 +71,11 @@ export function CredentialStoreIndicator() {
       data-state={isLocked ? "locked" : "unlocked"}
       data-testid="credential-store-indicator"
     >
-      {isLocked ? <Lock size={13} aria-hidden /> : <LockOpen size={13} aria-hidden />}
+      {isLocked ? (
+        <Lock size={ICON_SIZE.xs} aria-hidden />
+      ) : (
+        <LockOpen size={ICON_SIZE.xs} aria-hidden />
+      )}
       {isLocked ? t("statusBar.lock.locked") : t("statusBar.lock.unlocked")}
     </button>
   );

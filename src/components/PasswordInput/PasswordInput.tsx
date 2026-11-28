@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Eye, EyeOff, AlertTriangle } from "lucide-react";
 import { Input } from "@/components/ui";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./PasswordInput.css";
 
 interface PasswordInputProps {
@@ -88,7 +89,7 @@ export function PasswordInput({
         title={visible ? "Hide password" : "Show password"}
         disabled={disabled}
       >
-        {visible ? <EyeOff size={14} /> : <Eye size={14} />}
+        {visible ? <EyeOff size={ICON_SIZE.sm} /> : <Eye size={ICON_SIZE.sm} />}
       </button>
       {capsLockOn && !disabled && (
         <p
@@ -97,7 +98,7 @@ export function PasswordInput({
           aria-live="assertive"
           data-testid={dataTestId ? `${dataTestId}-caps-lock` : undefined}
         >
-          <AlertTriangle size={12} aria-hidden="true" />
+          <AlertTriangle size={ICON_SIZE.xs} aria-hidden="true" />
           <span>Caps Lock is on</span>
         </p>
       )}

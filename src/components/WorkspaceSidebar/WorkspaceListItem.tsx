@@ -5,6 +5,7 @@ import { SidebarListItem } from "@/components/SidebarListItem";
 import { WorkspaceSummary } from "@/types/workspace";
 import { tf } from "@/i18n/catalog";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /**
  * The workspace row's tooltip lines (#5770): how many tabs it opens, and in
  * how many groups. The row shows only the name and the description.
@@ -67,7 +68,9 @@ export function WorkspaceListItem({
               aria-label="Launch"
               data-testid={`workspace-launch-${workspace.id}`}
               disabled={launchDisabled}
-              icon={launchDisabled ? <Spinner size="xs" label={null} /> : <Play size={12} />}
+              icon={
+                launchDisabled ? <Spinner size="xs" label={null} /> : <Play size={ICON_SIZE.xs} />
+              }
               onClick={(e) => {
                 e.stopPropagation();
                 onLaunch(workspace.id);
@@ -81,7 +84,7 @@ export function WorkspaceListItem({
               iconOnly
               aria-label="Edit"
               data-testid={`workspace-edit-${workspace.id}`}
-              icon={<Pencil size={12} />}
+              icon={<Pencil size={ICON_SIZE.xs} />}
               onClick={(e) => {
                 e.stopPropagation();
                 onEdit(workspace.id);
@@ -95,7 +98,7 @@ export function WorkspaceListItem({
               iconOnly
               aria-label="Duplicate"
               data-testid={`workspace-duplicate-${workspace.id}`}
-              icon={<Copy size={12} />}
+              icon={<Copy size={ICON_SIZE.xs} />}
               onClick={(e) => {
                 e.stopPropagation();
                 onDuplicate(workspace.id);
@@ -109,7 +112,7 @@ export function WorkspaceListItem({
               iconOnly
               aria-label="Delete"
               data-testid={`workspace-delete-${workspace.id}`}
-              icon={<Trash2 size={12} />}
+              icon={<Trash2 size={ICON_SIZE.xs} />}
               onClick={(e) => {
                 e.stopPropagation();
                 onDelete(workspace.id);

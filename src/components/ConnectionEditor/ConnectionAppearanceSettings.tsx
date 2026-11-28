@@ -8,6 +8,7 @@ import { IconByName } from "@/utils/connectionIcons";
 import { Button, Field } from "@/components/ui";
 import { useState } from "react";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface ConnectionAppearanceSettingsProps {
   color: string | undefined;
   onColorChange: (color: string | undefined) => void;
@@ -77,7 +78,7 @@ export function ConnectionAppearanceSettings({
       >
         <>
           <div className="connection-editor__color-row">
-            {icon && <IconByName name={icon} size={18} />}
+            {icon && <IconByName name={icon} size={ICON_SIZE.md} />}
             <Button
               variant="secondary"
               size="sm"

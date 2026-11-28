@@ -10,6 +10,7 @@ import type { ClipboardImageInfo, ClipboardImageStatus } from "@/types/remoteDes
 import { frontendLog } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface RemoteDesktopClipboardImageProps {
   /** The graphical session whose clipboard image this section drives. */
   sessionId: string;
@@ -86,7 +87,7 @@ export function RemoteDesktopClipboardImage({
           <Button
             variant="secondary"
             size="sm"
-            icon={<ImageDown size={14} />}
+            icon={<ImageDown size={ICON_SIZE.sm} />}
             onClick={handleCopy}
             pendingLabel="Copying…"
             data-testid="remote-desktop-clipboard-copy-image"
@@ -98,7 +99,7 @@ export function RemoteDesktopClipboardImage({
           <Button
             variant="secondary"
             size="sm"
-            icon={<ImageUp size={14} />}
+            icon={<ImageUp size={ICON_SIZE.sm} />}
             onClick={handleSend}
             pendingLabel="Sending…"
             data-testid="remote-desktop-clipboard-send-image"

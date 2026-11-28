@@ -14,6 +14,7 @@ import { useRef } from "react";
 import { AlertTriangle, Info } from "lucide-react";
 import { Modal, Button } from "@/components/ui";
 import { ClassifiedAgentError } from "@/utils/classifyAgentError";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./ConnectionErrorDialog.css";
 
 interface ConnectionErrorDialogProps {
@@ -65,7 +66,7 @@ export function ConnectionErrorDialog({
       title={
         <span className="connection-error-dialog__title-row">
           <Icon
-            size={20}
+            size={ICON_SIZE.lg}
             className={`connection-error-dialog__icon${notInstalled ? " connection-error-dialog__icon--info" : ""}`}
             aria-hidden="true"
             data-testid="connection-error-icon"

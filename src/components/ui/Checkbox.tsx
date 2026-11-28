@@ -1,6 +1,7 @@
 import React from "react";
 import * as CheckboxPrimitive from "@radix-ui/react-checkbox";
 import { Check, Minus } from "lucide-react";
+import { ICON_SIZE } from "./iconSize";
 import "./ui.css";
 
 /**
@@ -63,9 +64,9 @@ export function Checkbox({
     >
       <CheckboxPrimitive.Indicator className="ui-checkbox__indicator">
         {checked === "indeterminate" ? (
-          <Minus size={10} strokeWidth={3} aria-hidden="true" />
+          <Minus size={ICON_SIZE.xs} strokeWidth={3} aria-hidden="true" />
         ) : (
-          <Check size={10} strokeWidth={3} aria-hidden="true" />
+          <Check size={ICON_SIZE.xs} strokeWidth={3} aria-hidden="true" />
         )}
       </CheckboxPrimitive.Indicator>
     </CheckboxPrimitive.Root>

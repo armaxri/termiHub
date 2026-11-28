@@ -1,6 +1,7 @@
 import { RotateCcw } from "lucide-react";
 import type { ReactNode } from "react";
 import { ErrorBoundary } from "@/components/ui";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./PanelErrorBoundary.css";
 
 interface PanelErrorBoundaryProps {
@@ -31,7 +32,7 @@ export function PanelErrorBoundary({ children, label }: PanelErrorBoundaryProps)
             onClick={reset}
             data-testid="panel-error-retry"
           >
-            <RotateCcw size={14} />
+            <RotateCcw size={ICON_SIZE.sm} />
             Retry
           </button>
         </div>

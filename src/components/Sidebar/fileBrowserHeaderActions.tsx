@@ -17,6 +17,7 @@ import type React from "react";
 import type { FileBrowserAction } from "./FileBrowserActions";
 import { FileSortSubmenu, type FileSort } from "./FileSortSubmenu";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** What {@link buildFileBrowserActions} needs to know about the browser. */
 export interface FileBrowserActionsInput {
   mode: "local" | "session";
@@ -79,7 +80,7 @@ export function buildFileBrowserActions(input: FileBrowserActionsInput): FileBro
       label: "Go up one directory",
       tooltip: "Go up",
       // A parent-folder glyph, so Up never reads as Upload's tray-arrow (#5624).
-      icon: <CornerLeftUp size={14} />,
+      icon: <CornerLeftUp size={ICON_SIZE.sm} />,
       iconName: "corner-left-up",
       onClick: input.onNavigateUp,
       disabled: isRootPath(input.currentPath),
@@ -94,7 +95,7 @@ export function buildFileBrowserActions(input: FileBrowserActionsInput): FileBro
       tooltip: "Refresh",
       icon: (
         <RefreshCw
-          size={14}
+          size={ICON_SIZE.sm}
           className={refreshing ? "file-browser__spinner motion-essential-spinner" : ""}
         />
       ),
@@ -111,7 +112,7 @@ export function buildFileBrowserActions(input: FileBrowserActionsInput): FileBro
       id: "new",
       label: "New",
       tooltip: "New file or folder",
-      icon: <Plus size={14} />,
+      icon: <Plus size={ICON_SIZE.sm} />,
       iconName: "plus",
       testId: "file-browser-new",
       group: "create",
@@ -120,7 +121,7 @@ export function buildFileBrowserActions(input: FileBrowserActionsInput): FileBro
         {
           id: "new-file",
           label: "File",
-          icon: <FilePlus size={14} />,
+          icon: <FilePlus size={ICON_SIZE.sm} />,
           onClick: input.onNewFile,
           opensField: true,
           testId: "file-browser-new-file",
@@ -129,7 +130,7 @@ export function buildFileBrowserActions(input: FileBrowserActionsInput): FileBro
         {
           id: "new-folder",
           label: "Folder",
-          icon: <FolderPlus size={14} />,
+          icon: <FolderPlus size={ICON_SIZE.sm} />,
           onClick: input.onNewFolder,
           opensField: true,
           testId: "file-browser-new-folder",
@@ -142,7 +143,7 @@ export function buildFileBrowserActions(input: FileBrowserActionsInput): FileBro
     actions.push({
       id: "upload",
       label: "Upload file",
-      icon: <Upload size={14} />,
+      icon: <Upload size={ICON_SIZE.sm} />,
       iconName: "upload",
       onClick: input.onUpload,
       testId: "file-browser-upload",
@@ -155,7 +156,7 @@ export function buildFileBrowserActions(input: FileBrowserActionsInput): FileBro
       id: "paste",
       label: "Paste",
       tooltip: input.pasteTooltip ?? "Paste",
-      icon: <ClipboardPaste size={14} />,
+      icon: <ClipboardPaste size={ICON_SIZE.sm} />,
       onClick: input.onPaste,
       disabled: input.pasteTooltip === null,
       testId: "file-browser-paste",
@@ -168,7 +169,7 @@ export function buildFileBrowserActions(input: FileBrowserActionsInput): FileBro
       // A command, so a command's name: "Follow …" read as a toggle (#5832).
       label: "Go to terminal folder",
       tooltip: "Go to the terminal's working directory",
-      icon: <FolderSync size={14} />,
+      icon: <FolderSync size={ICON_SIZE.sm} />,
       onClick: input.onNavigateToCwd,
       disabled: !input.hasCwd,
       testId: "file-browser-go-to-cwd",
@@ -177,7 +178,7 @@ export function buildFileBrowserActions(input: FileBrowserActionsInput): FileBro
     {
       id: "copy-path",
       label: "Copy path",
-      icon: <Copy size={14} />,
+      icon: <Copy size={ICON_SIZE.sm} />,
       onClick: input.onCopyPath,
       testId: "file-browser-copy-path",
       group: "navigate",
@@ -195,7 +196,7 @@ export function buildFileBrowserActions(input: FileBrowserActionsInput): FileBro
       label: input.canCd
         ? "Open this folder in terminal"
         : "Open this folder in terminal (no active terminal)",
-      icon: <Terminal size={14} />,
+      icon: <Terminal size={ICON_SIZE.sm} />,
       onClick: input.onCdHere,
       disabled: !input.canCd,
       testId: "file-browser-cd-here",
@@ -214,7 +215,7 @@ export function buildFileBrowserActions(input: FileBrowserActionsInput): FileBro
     {
       id: "transfer-view",
       label: "Open dual-pane transfer view",
-      icon: <Columns2 size={14} />,
+      icon: <Columns2 size={ICON_SIZE.sm} />,
       onClick: input.onOpenTransferView,
       testId: "file-browser-open-transfer-view",
       group: "view",
@@ -235,7 +236,7 @@ export function buildFileBrowserActions(input: FileBrowserActionsInput): FileBro
     actions.push({
       id: "open-in-explorer",
       label: input.fileManagerLabel,
-      icon: <ExternalLink size={14} />,
+      icon: <ExternalLink size={ICON_SIZE.sm} />,
       onClick: input.onOpenInFileManager,
       testId: "file-browser-open-in-explorer",
       group: "open",
@@ -244,7 +245,7 @@ export function buildFileBrowserActions(input: FileBrowserActionsInput): FileBro
       actions.push({
         id: "open-folder-vscode",
         label: "Open folder in VS Code",
-        icon: <CodeXml size={14} />,
+        icon: <CodeXml size={ICON_SIZE.sm} />,
         onClick: input.onOpenInVscode,
         testId: "file-browser-open-folder-vscode",
         group: "open",

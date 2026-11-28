@@ -11,6 +11,7 @@ import {
   type ConnectedHost,
 } from "@/services/api";
 import type { RemoteAgentConfig } from "@/types/terminal";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./UpdateAgentDialog.css";
 
 /** Props for {@link UpdateAgentDialog}. */
@@ -147,7 +148,7 @@ export function UpdateAgentDialog({
       data-testid="update-agent-dialog"
       testIdBase="update-agent"
       confirmVariant="primary"
-      confirmIcon={<ArrowUp size={13} aria-hidden="true" />}
+      confirmIcon={<ArrowUp size={ICON_SIZE.xs} aria-hidden="true" />}
       confirmLabel={notifiesOthers ? "Notify others and update" : "Update"}
       onConfirm={handleConfirm}
       onCancel={() => onOpenChange(false)}
@@ -167,7 +168,11 @@ export function UpdateAgentDialog({
 
       {hasOtherHosts ? (
         <div className="update-agent-dialog__warning" data-testid="update-agent-other-hosts">
-          <AlertCircle className="update-agent-dialog__warning-icon" size={16} aria-hidden="true" />
+          <AlertCircle
+            className="update-agent-dialog__warning-icon"
+            size={ICON_SIZE.md}
+            aria-hidden="true"
+          />
           <div>
             {otherHosts.length} other host(s) are connected to this agent:
             <ul className="update-agent-dialog__hosts">

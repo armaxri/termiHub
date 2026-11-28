@@ -91,6 +91,7 @@ import { NativePluginGateSettings } from "./NativePluginGateSettings";
 import { TrustedPublishersSettings } from "./TrustedPublishersSettings";
 import { UpdateSettings } from "./UpdateSettings";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./SettingsPanel.css";
 
 /**
@@ -622,7 +623,7 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
           >
             {showSavedAck && (
               <>
-                <Check size={12} aria-hidden="true" />
+                <Check size={ICON_SIZE.xs} aria-hidden="true" />
                 Saved
               </>
             )}

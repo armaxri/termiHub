@@ -8,6 +8,7 @@ import {
   credentialRestoreStorageOffText,
 } from "@/utils/credentialStorageCopy";
 import { CredentialVaultImportDialog } from "./CredentialVaultImportDialog";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./BackupRestore.css";
 
 /** Why passwords cannot be restored into the current store, or null. */
@@ -55,7 +56,7 @@ export function OlderPasswordImport() {
           <Button
             variant="secondary"
             size="sm"
-            icon={<KeyRound size={14} />}
+            icon={<KeyRound size={ICON_SIZE.sm} />}
             onClick={() => void openImport()}
             data-testid="older-password-import-btn"
           >

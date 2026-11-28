@@ -8,6 +8,7 @@ import type { DownloadedPackageReview } from "@/components/Plugins/pluginDownloa
 import { reviewDownloadedPackage } from "@/components/Plugins/pluginDownloadReview";
 import { SettingsField } from "./SettingsField";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Props for {@link PluginUrlInstall}. */
 export interface PluginUrlInstallProps {
   /** Called with the verified package, to open the install dialog. */
@@ -63,7 +64,7 @@ export function PluginUrlInstall({ onReady }: PluginUrlInstallProps) {
   return (
     <div className="plugin-catalog__url" data-testid="plugin-url-install">
       <h4 className="plugin-catalog__subtitle">
-        <Link size={14} aria-hidden="true" /> Install from URL
+        <Link size={ICON_SIZE.sm} aria-hidden="true" /> Install from URL
       </h4>
       <SettingsField
         label="Package URL"

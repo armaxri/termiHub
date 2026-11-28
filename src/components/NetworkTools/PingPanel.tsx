@@ -21,6 +21,7 @@ import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
 import { formatLatencyMs } from "@/utils/formatters";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface PingPanelProps {
   prefillHost?: string;
 }
@@ -226,7 +227,7 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
           <Button
             variant="secondary"
             size="sm"
-            icon={<Download size={14} />}
+            icon={<Download size={ICON_SIZE.sm} />}
             disabled={results.length === 0}
             onClick={handleExport}
             data-testid="ping-export"
@@ -237,7 +238,7 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
             <Button
               variant="danger"
               size="sm"
-              icon={<StopCircle size={14} />}
+              icon={<StopCircle size={ICON_SIZE.sm} />}
               pendingLabel="Stopping…"
               errorToast={false}
               onClick={handleStop}
@@ -249,7 +250,7 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
             <Button
               variant="primary"
               size="sm"
-              icon={<Play size={14} />}
+              icon={<Play size={ICON_SIZE.sm} />}
               pendingLabel="Starting…"
               errorToast={false}
               type="submit"

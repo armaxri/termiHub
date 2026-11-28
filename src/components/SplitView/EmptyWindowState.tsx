@@ -8,6 +8,7 @@ import { BackupRestoreDialog } from "@/components/Settings/BackupRestoreDialog";
 import { ConnectionIcon } from "@/utils/connectionIcons";
 import { connectSavedConnection } from "@/utils/connectSavedConnection";
 import { pickRecentConnections } from "@/utils/recentConnections";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./EmptyWindowState.css";
 
 /**
@@ -56,7 +57,7 @@ export function EmptyWindowState() {
       <EmptyState
         variant="card"
         role={undefined}
-        icon={<AppWindow size={28} strokeWidth={1.5} />}
+        icon={<AppWindow size={ICON_SIZE.xl} strokeWidth={1.5} />}
         title="This window is empty"
         description={
           <>
@@ -78,7 +79,7 @@ export function EmptyWindowState() {
               <Button
                 variant="primary"
                 size="sm"
-                icon={<Plus size={14} />}
+                icon={<Plus size={ICON_SIZE.sm} />}
                 onClick={() => {
                   addLocalShellTab();
                 }}
@@ -91,7 +92,7 @@ export function EmptyWindowState() {
                   <Button
                     variant="secondary"
                     size="sm"
-                    icon={<Network size={14} />}
+                    icon={<Network size={ICON_SIZE.sm} />}
                     onClick={() => openConnectionEditorTab("new")}
                     data-testid="empty-window-new-connection"
                   >
@@ -100,7 +101,7 @@ export function EmptyWindowState() {
                   <Button
                     variant="secondary"
                     size="sm"
-                    icon={<Upload size={14} />}
+                    icon={<Upload size={ICON_SIZE.sm} />}
                     onClick={() => setRestoreOpen(true)}
                     data-testid="empty-window-restore"
                   >
@@ -132,7 +133,7 @@ export function EmptyWindowState() {
                         customIcon={connection.icon}
                         iconColor={connection.iconColor}
                         iconEmoji={connection.iconEmoji}
-                        size={14}
+                        size={ICON_SIZE.sm}
                       />
                     }
                     onClick={() => void connectSavedConnection(connection)}

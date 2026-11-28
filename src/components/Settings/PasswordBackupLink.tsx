@@ -5,6 +5,7 @@ import { Button } from "@/components/ui";
 import { credentialStorageOffText } from "@/utils/credentialStorageCopy";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /**
  * Where the saved passwords are, in the words of the chosen store (#5860, R-052),
  * or `null` while passwords are not saved.
@@ -54,7 +55,7 @@ export function PasswordBackupLink() {
           <Button
             variant="secondary"
             size="sm"
-            icon={<DatabaseBackup size={14} />}
+            icon={<DatabaseBackup size={ICON_SIZE.sm} />}
             onClick={() => openSettingsTab({ category: "backup" })}
             data-testid="password-backup-open"
           >

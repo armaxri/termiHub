@@ -2,6 +2,7 @@ import { Hand, ListVideo } from "lucide-react";
 import { Tooltip } from "@/components/ui";
 import { runningAutomationLabel, type RunningAutomationInfo } from "@/utils/automationTabBadge";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Props for {@link TabAutomationBadge}. */
 export interface TabAutomationBadgeProps {
   /** The tab the badge sits on (for its test id). */
@@ -33,7 +34,11 @@ export function TabAutomationBadge({ tabId, info, onStop }: TabAutomationBadgePr
         }}
         data-testid={`tab-automation-badge-${tabId}`}
       >
-        {info.waiting ? <Hand size={12} aria-hidden /> : <ListVideo size={12} aria-hidden />}
+        {info.waiting ? (
+          <Hand size={ICON_SIZE.xs} aria-hidden />
+        ) : (
+          <ListVideo size={ICON_SIZE.xs} aria-hidden />
+        )}
         <span className="tab__automation-progress" aria-hidden>
           {info.waiting ? "waits" : info.progress}
         </span>

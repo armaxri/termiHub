@@ -273,6 +273,15 @@
   --focus-ring-width: 2px;
   --focus-ring-offset: 2px;
 
+  /* Icon sizes (#6157): the same scale as ICON_SIZE in
+     src/components/ui/iconSize.ts, for glyphs sized in CSS. */
+  --icon-xs: 12px;
+  --icon-sm: 14px;
+  --icon-md: 16px;
+  --icon-lg: 20px;
+  --icon-xl: 24px;
+  --icon-hero: 32px;
+
   /* Border radius */
   --radius-xs: 2px;
   --radius-sm: 4px;

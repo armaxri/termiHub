@@ -1,6 +1,7 @@
 import { ShieldAlert } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { Button } from "@/components/ui";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./ImportedTabConfirmation.css";
 
 interface ImportedCommandBannerProps {
@@ -34,7 +35,7 @@ export function ImportedCommandBanner({ tabId }: ImportedCommandBannerProps) {
       aria-label="Imported command not yet confirmed"
       data-testid="imported-command-banner"
     >
-      <ShieldAlert size={16} className="imported-tab-confirm__icon" aria-hidden />
+      <ShieldAlert size={ICON_SIZE.md} className="imported-tab-confirm__icon" aria-hidden />
       <div className="imported-command-banner__body">
         <span className="imported-command-banner__title">
           Imported command not yet confirmed. It has not run.

@@ -10,6 +10,7 @@ import { Button, Input, Tooltip, EmptyState } from "@/components/ui";
 import { errorMessage } from "@/utils/errorMessage";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface CustomGrammarsSettingsProps {
   visibleFields?: Set<string>;
 }
@@ -177,7 +178,7 @@ export function CustomGrammarsSettings({ visibleFields }: CustomGrammarsSettings
                   <Button
                     variant="primary"
                     size="sm"
-                    icon={<FileCode size={14} />}
+                    icon={<FileCode size={ICON_SIZE.sm} />}
                     onClick={() => void handleImport()}
                     data-testid="custom-grammar-import-btn"
                   >
@@ -279,7 +280,7 @@ export function CustomGrammarsSettings({ visibleFields }: CustomGrammarsSettings
                         variant="ghost"
                         size="sm"
                         iconOnly
-                        icon={<Trash2 size={14} />}
+                        icon={<Trash2 size={ICON_SIZE.sm} />}
                         onClick={() => handleRemove(g.id)}
                         aria-label={`Remove grammar "${g.name}"`}
                         data-testid={`custom-grammar-remove-${g.id}`}

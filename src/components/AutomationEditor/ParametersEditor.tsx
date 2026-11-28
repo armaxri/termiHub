@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Button, Input, Field, Select, Toggle, EmptyState } from "@/components/ui";
 import type { WorkflowParameter, WorkflowParameterType } from "@/types/workflow";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./ParametersEditor.css";
 
 /** The parameter value types, in the order shown in the type picker. */
@@ -174,7 +175,7 @@ export function ParametersEditor({ parameters, onChange }: ParametersEditorProps
                 <Button
                   variant="ghost"
                   size="sm"
-                  icon={<Trash2 size={14} />}
+                  icon={<Trash2 size={ICON_SIZE.sm} />}
                   onClick={() => removeParam(index)}
                   aria-label={`Remove value ${index + 1}`}
                   data-testid={`automation-param-remove-${index}`}
@@ -190,7 +191,7 @@ export function ParametersEditor({ parameters, onChange }: ParametersEditorProps
         <Button
           variant="secondary"
           size="sm"
-          icon={<Plus size={14} />}
+          icon={<Plus size={ICON_SIZE.sm} />}
           onClick={addParam}
           data-testid="automation-params-add"
         >

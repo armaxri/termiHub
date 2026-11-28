@@ -5,6 +5,7 @@ import { useProjectedSessionLifecycle } from "@/store/useSessionLifecycle";
 import { getComposedLayout } from "@/store/layoutHelpers";
 import { findLeafByTab } from "@/utils/panelTree";
 import { Button, ContentOverlay } from "@/components/ui";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./TerminalDisconnectOverlay.css";
 
 interface TerminalFilesOnlyPanelProps {
@@ -56,7 +57,7 @@ export function TerminalFilesOnlyPanel({ tabId, isActive = false }: TerminalFile
     >
       <ContentOverlay
         className="terminal-disconnect-overlay__body"
-        icon={<FolderOpen size={32} className="terminal-files-only-panel__icon" />}
+        icon={<FolderOpen size={ICON_SIZE.hero} className="terminal-files-only-panel__icon" />}
         heading="This host doesn't allow a shell."
         subheading="Files are available in the sidebar."
         // A state change, announced once through the overlay's live region
@@ -67,7 +68,7 @@ export function TerminalFilesOnlyPanel({ tabId, isActive = false }: TerminalFile
           <Button
             variant="primary"
             size="sm"
-            icon={<FolderOpen size={14} />}
+            icon={<FolderOpen size={ICON_SIZE.sm} />}
             onClick={handleOpenFiles}
             data-testid="terminal-files-only-open-files"
           >

@@ -15,6 +15,7 @@ import { typedPercent } from "@/utils/runProgress";
 import { t, tf } from "@/i18n/catalog";
 import { getActionAccelerator, withActionAccelerator } from "@/services/keybindings";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Keeps the open menu this far from every window edge (same as the file browser menu, #5624). */
 export const TERMINAL_MENU_EDGE_PADDING = 8;
 
@@ -109,7 +110,7 @@ export function TerminalToolbarMore(props: TerminalToolbarMoreProps) {
                 t("terminalToolbar.broadcast.stop"),
                 "toggle-broadcast"
               )}
-              icon={<Radio size={14} />}
+              icon={<Radio size={ICON_SIZE.sm} />}
               tone="broadcast"
               onClick={onToggleBroadcast}
               testId="terminal-view-active-broadcast"
@@ -119,7 +120,7 @@ export function TerminalToolbarMore(props: TerminalToolbarMoreProps) {
             <ActiveChip
               label={recordingLabel}
               tooltip={withActionAccelerator(recordingLabel, "toggle-macro-recording")}
-              icon={<Square size={12} fill="currentColor" />}
+              icon={<Square size={ICON_SIZE.xs} fill="currentColor" />}
               tone="recording"
               onClick={onToggleRecording}
               testId="terminal-view-active-recording"
@@ -129,7 +130,7 @@ export function TerminalToolbarMore(props: TerminalToolbarMoreProps) {
             <ActiveChip
               label={playbackLabel}
               tooltip={withActionAccelerator(playbackLabel, "play-macro")}
-              icon={<Square size={12} fill="currentColor" />}
+              icon={<Square size={ICON_SIZE.xs} fill="currentColor" />}
               tone="run"
               onClick={onStopPlayback}
               testId="terminal-view-active-playback"
@@ -142,7 +143,7 @@ export function TerminalToolbarMore(props: TerminalToolbarMoreProps) {
                 t("terminalToolbar.logging.stop"),
                 "toggle-session-logging"
               )}
-              icon={<ScrollText size={14} />}
+              icon={<ScrollText size={ICON_SIZE.sm} />}
               tone="active"
               onClick={onToggleLogging}
               testId="terminal-view-active-logging"
@@ -157,7 +158,7 @@ export function TerminalToolbarMore(props: TerminalToolbarMoreProps) {
               variant="ghost"
               size="sm"
               iconOnly
-              icon={<MoreHorizontal size={16} />}
+              icon={<MoreHorizontal size={ICON_SIZE.md} />}
               aria-label={moreLabel}
               data-active-count={activeCount}
               data-testid="terminal-view-more-actions"
@@ -196,7 +197,7 @@ function MoreMenuItems({
   return (
     <>
       <MenuItem
-        icon={<RowIcon icon={<Radio size={14} />} />}
+        icon={<RowIcon icon={<Radio size={ICON_SIZE.sm} />} />}
         shortcut={getActionAccelerator("toggle-broadcast")}
         onSelect={onToggleBroadcast}
         data-active={broadcastActive}
@@ -207,7 +208,7 @@ function MoreMenuItems({
           : t("terminalToolbar.broadcast.start")}
       </MenuItem>
       <MenuCheckboxItem
-        icon={<RowIcon toggle icon={<ScrollText size={14} />} />}
+        icon={<RowIcon toggle icon={<ScrollText size={ICON_SIZE.sm} />} />}
         shortcut={getActionAccelerator("toggle-session-logging")}
         checked={loggingActive}
         onSelect={onToggleLogging}
@@ -218,7 +219,7 @@ function MoreMenuItems({
       </MenuCheckboxItem>
       <MenuSeparator />
       <MenuCheckboxItem
-        icon={<RowIcon toggle icon={<CircleDot size={14} />} />}
+        icon={<RowIcon toggle icon={<CircleDot size={ICON_SIZE.sm} />} />}
         shortcut={getActionAccelerator("toggle-macro-recording")}
         checked={recording}
         onSelect={onToggleRecording}
@@ -230,7 +231,13 @@ function MoreMenuItems({
       <MenuItem
         icon={
           <RowIcon
-            icon={playback ? <Square size={12} fill="currentColor" /> : <Play size={14} />}
+            icon={
+              playback ? (
+                <Square size={ICON_SIZE.xs} fill="currentColor" />
+              ) : (
+                <Play size={ICON_SIZE.sm} />
+              )
+            }
           />
         }
         shortcut={getActionAccelerator("play-macro")}
@@ -259,7 +266,7 @@ function RowIcon({ icon, toggle = false }: { icon: ReactNode; toggle?: boolean }
       <span className="ui-menu__indicator" aria-hidden>
         {toggle && (
           <MenuItemIndicator>
-            <Check size={14} />
+            <Check size={ICON_SIZE.sm} />
           </MenuItemIndicator>
         )}
       </span>

@@ -2,6 +2,7 @@ import { useId } from "react";
 import type React from "react";
 import { ChevronRight } from "lucide-react";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Props of {@link EditorSection}. */
 export interface EditorSectionProps {
   title: string;
@@ -35,7 +36,7 @@ export function EditorSection({
           data-testid={testId}
         >
           <ChevronRight
-            size={14}
+            size={ICON_SIZE.sm}
             className={
               open
                 ? "automation-step__chevron automation-step__chevron--open"

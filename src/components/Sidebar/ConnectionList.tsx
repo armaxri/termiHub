@@ -118,6 +118,7 @@ import {
   type FolderMoveTarget,
 } from "@/utils/connectionKeyboardMove";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /**
  * Keyboard / menu alternatives to dragging a connection in the tree (#4528):
  * Move Up / Move Down within its folder and Move to Folder. They reuse the
@@ -292,7 +293,7 @@ function TreeNode({
               onSelect={() => onNewConnectionInFolder(folder.id)}
               data-testid="context-folder-new-connection"
             >
-              <Plus size={14} /> New connection
+              <Plus size={ICON_SIZE.sm} /> New connection
             </MenuItem>
             <MenuItem
               onSelect={() => {
@@ -302,19 +303,19 @@ function TreeNode({
               }}
               data-testid="context-folder-new-subfolder"
             >
-              <FolderPlus size={14} /> New subfolder
+              <FolderPlus size={ICON_SIZE.sm} /> New subfolder
             </MenuItem>
             <MenuItem
               onSelect={() => onFolderAppearance(folder.id)}
               data-testid="context-folder-appearance"
             >
-              <Palette size={14} /> Appearance…
+              <Palette size={ICON_SIZE.sm} /> Appearance…
             </MenuItem>
             <MenuItem
               onSelect={() => folderRename.start(folder.id)}
               data-testid="context-folder-rename"
             >
-              <Pencil size={14} /> Rename
+              <Pencil size={ICON_SIZE.sm} /> Rename
             </MenuItem>
             <MenuSeparator />
             <MenuItem
@@ -322,7 +323,7 @@ function TreeNode({
               onSelect={() => onDeleteFolder(folder.id)}
               data-testid="context-folder-delete"
             >
-              <Trash2 size={14} /> Delete folder
+              <Trash2 size={ICON_SIZE.sm} /> Delete folder
             </MenuItem>
           </ContextMenuContent>
         </ContextMenuRoot>
@@ -577,7 +578,7 @@ function ConnectionItem({
                 customIcon={connection.icon}
                 iconColor={connection.iconColor}
                 iconEmoji={connection.iconEmoji}
-                size={16}
+                size={ICON_SIZE.md}
                 testId={`connection-icon-${connection.id}`}
               />
               {connection.description ? (
@@ -602,7 +603,7 @@ function ConnectionItem({
                     data-testid={`connection-plugin-missing-${connection.id}`}
                     data-reason={pluginIssue.reason}
                   >
-                    <Puzzle size={12} aria-hidden="true" />
+                    <Puzzle size={ICON_SIZE.xs} aria-hidden="true" />
                   </span>
                 </Tooltip>
               )}
@@ -616,7 +617,7 @@ function ConnectionItem({
                     aria-label={jumpHostTooltip(jumpHosts)}
                     data-testid={`connection-jump-badge-${connection.id}`}
                   >
-                    <Route size={12} aria-hidden="true" data-icon="route" />
+                    <Route size={ICON_SIZE.xs} aria-hidden="true" data-icon="route" />
                     {jumpHosts.length > 1 && (
                       <span className="connection-tree__jump-count" aria-hidden="true">
                         {jumpHosts.length}
@@ -639,7 +640,7 @@ function ConnectionItem({
                         variant="ghost"
                         size="xs"
                         iconOnly
-                        icon={<Play size={12} />}
+                        icon={<Play size={ICON_SIZE.xs} />}
                         aria-label="Start session"
                         data-testid={`persistent-start-${connection.id}`}
                         onClick={(e) => {
@@ -655,7 +656,7 @@ function ConnectionItem({
                           variant="ghost"
                           size="xs"
                           iconOnly
-                          icon={<Link size={12} />}
+                          icon={<Link size={ICON_SIZE.xs} />}
                           aria-label="Attach new tab"
                           data-testid={`persistent-attach-${connection.id}`}
                           onClick={(e) => {
@@ -669,7 +670,7 @@ function ConnectionItem({
                           variant="ghost"
                           size="xs"
                           iconOnly
-                          icon={<Square size={12} />}
+                          icon={<Square size={ICON_SIZE.xs} />}
                           aria-label="Stop session"
                           data-testid={`persistent-stop-${connection.id}`}
                           onClick={(e) => {
@@ -690,7 +691,7 @@ function ConnectionItem({
                   size="xs"
                   iconOnly
                   className="connection-tree__connect"
-                  icon={<Play size={14} />}
+                  icon={<Play size={ICON_SIZE.sm} />}
                   aria-label={`Connect to ${connection.name}`}
                   tabIndex={-1}
                   onClick={(e) => {
@@ -709,7 +710,7 @@ function ConnectionItem({
               onSelect={handleStartPersistent}
               data-testid="context-connection-start-persistent"
             >
-              <Play size={14} /> Start session
+              <Play size={ICON_SIZE.sm} /> Start session
             </MenuItem>
           )}
           {persistentCapable && isPersistentRunning && (
@@ -718,24 +719,24 @@ function ConnectionItem({
                 onSelect={handleAttachPersistent}
                 data-testid="context-connection-attach-persistent"
               >
-                <Link size={14} /> Attach new tab
+                <Link size={ICON_SIZE.sm} /> Attach new tab
               </MenuItem>
               <MenuItem
                 danger
                 onSelect={handleStopPersistent}
                 data-testid="context-connection-stop-persistent"
               >
-                <Square size={14} /> Stop session
+                <Square size={ICON_SIZE.sm} /> Stop session
               </MenuItem>
             </>
           )}
           {persistentCapable && !isPersistentTransitioning && <MenuSeparator />}
           <MenuItem onSelect={() => onConnect(connection)} data-testid="context-connection-connect">
-            <Play size={14} /> Connect
+            <Play size={ICON_SIZE.sm} /> Connect
           </MenuItem>
           {pluginIssue && (
             <MenuItem onSelect={handleManagePlugin} data-testid="context-connection-manage-plugin">
-              <Puzzle size={14} />{" "}
+              <Puzzle size={ICON_SIZE.sm} />{" "}
               {pluginIssue.installed
                 ? `Manage plugin '${pluginIssue.pluginName}'`
                 : `Install plugin '${pluginIssue.pluginId}'…`}
@@ -743,11 +744,11 @@ function ConnectionItem({
           )}
           {!!readConfigString(connection.config, "host") && (
             <MenuItem onSelect={() => onPingHost(connection)} data-testid="context-connection-ping">
-              <Activity size={14} /> Ping host
+              <Activity size={ICON_SIZE.sm} /> Ping host
             </MenuItem>
           )}
           <MenuItem onSelect={() => onEdit(connection.id)} data-testid="context-connection-edit">
-            <Pencil size={14} /> Edit
+            <Pencil size={ICON_SIZE.sm} /> Edit
           </MenuItem>
           {jumpHosts.length > 0 && (
             <>
@@ -769,13 +770,13 @@ function ConnectionItem({
                 }}
                 data-testid="context-connection-open-jump-host"
               >
-                <Server size={14} /> Open jump host terminal
+                <Server size={ICON_SIZE.sm} /> Open jump host terminal
               </MenuItem>
               <MenuItem
                 onSelect={() => setShowConnectionPath(true)}
                 data-testid="context-connection-show-path"
               >
-                <Route size={14} /> Show connection path
+                <Route size={ICON_SIZE.sm} /> Show connection path
               </MenuItem>
               <MenuSeparator />
             </>
@@ -784,7 +785,7 @@ function ConnectionItem({
             onSelect={() => onDuplicate(connection.id)}
             data-testid="context-connection-duplicate"
           >
-            <Copy size={14} /> Duplicate
+            <Copy size={ICON_SIZE.sm} /> Duplicate
           </MenuItem>
           <MenuSeparator />
           <ConnectionMoveItems connection={connection} moveActions={moveActions} />
@@ -794,7 +795,7 @@ function ConnectionItem({
             onSelect={() => onDelete(connection.id)}
             data-testid="context-connection-delete"
           >
-            <Trash2 size={14} /> Delete
+            <Trash2 size={ICON_SIZE.sm} /> Delete
           </MenuItem>
         </ContextMenuContent>
       </ContextMenuRoot>
@@ -816,7 +817,7 @@ function ConnectionMoveItems({
     <>
       <MenuSub>
         <MenuSubTrigger data-testid="context-connection-move-folder">
-          <FolderInput size={14} /> Move to folder
+          <FolderInput size={ICON_SIZE.sm} /> Move to folder
         </MenuSubTrigger>
         <MenuSubContent data-testid="context-connection-move-folder-submenu">
           <MenuItem
@@ -824,7 +825,7 @@ function ConnectionMoveItems({
             onSelect={() => moveToFolder(connection.id, null)}
             data-testid="context-connection-move-folder-root"
           >
-            <Folder size={14} /> Top level
+            <Folder size={ICON_SIZE.sm} /> Top level
             {atRoot && <span className="ui-menu__hint">current</span>}
           </MenuItem>
           {folderTargets.length > 0 && <MenuSeparator />}
@@ -837,7 +838,7 @@ function ConnectionMoveItems({
                 onSelect={() => moveToFolder(connection.id, target.id)}
                 data-testid={`context-connection-move-folder-${target.id}`}
               >
-                <Folder size={14} /> {target.label}
+                <Folder size={ICON_SIZE.sm} /> {target.label}
                 {isCurrent && <span className="ui-menu__hint">current</span>}
               </MenuItem>
             );
@@ -849,7 +850,7 @@ function ConnectionMoveItems({
         onSelect={() => moveBy(connection.id, -1)}
         data-testid="context-connection-move-up"
       >
-        <ArrowUp size={14} /> Move up
+        <ArrowUp size={ICON_SIZE.sm} /> Move up
         <span className="ui-menu__hint">{moveShortcutHint("Up")}</span>
       </MenuItem>
       <MenuItem
@@ -857,7 +858,7 @@ function ConnectionMoveItems({
         onSelect={() => moveBy(connection.id, 1)}
         data-testid="context-connection-move-down"
       >
-        <ArrowDown size={14} /> Move down
+        <ArrowDown size={ICON_SIZE.sm} /> Move down
         <span className="ui-menu__hint">{moveShortcutHint("Down")}</span>
       </MenuItem>
     </>
@@ -1824,7 +1825,7 @@ export function ConnectionList() {
                       variant="ghost"
                       size="sm"
                       iconOnly
-                      icon={<Plus size={16} />}
+                      icon={<Plus size={ICON_SIZE.md} />}
                       onClick={handleNewAgent}
                       aria-label="New remote agent"
                       data-testid="connection-list-new-agent"
@@ -1927,7 +1928,7 @@ export function ConnectionList() {
                 customIcon={draggingConnection.icon}
                 iconColor={draggingConnection.iconColor}
                 iconEmoji={draggingConnection.iconEmoji}
-                size={16}
+                size={ICON_SIZE.md}
               />
               <span>{draggingConnection.name}</span>
             </div>
@@ -1941,13 +1942,13 @@ export function ConnectionList() {
                 customIcon={draggingAgentDef.icon}
                 iconColor={draggingAgentDef.iconColor}
                 iconEmoji={draggingAgentDef.iconEmoji}
-                size={16}
+                size={ICON_SIZE.md}
               />
               <span>{draggingAgentDef.name}</span>
             </div>
           ) : draggingAgentName ? (
             <div className="connection-tree__drag-overlay">
-              <Server size={14} />
+              <Server size={ICON_SIZE.sm} />
               <span>{draggingAgentName}</span>
             </div>
           ) : null}
@@ -2157,10 +2158,10 @@ function RootDropZone({
       </ContextMenuTrigger>
       <ContextMenuContent onCloseAutoFocus={newFolderMenu.onCloseAutoFocus}>
         <MenuItem onSelect={onNewConnection} data-testid="context-root-new-connection">
-          <Plus size={14} /> New connection
+          <Plus size={ICON_SIZE.sm} /> New connection
         </MenuItem>
         <MenuItem onSelect={newFolderMenu.request} data-testid="context-root-new-folder">
-          <FolderPlus size={14} /> New folder
+          <FolderPlus size={ICON_SIZE.sm} /> New folder
         </MenuItem>
       </ContextMenuContent>
     </ContextMenuRoot>

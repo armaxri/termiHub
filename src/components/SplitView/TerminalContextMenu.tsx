@@ -28,6 +28,7 @@ import { isWindows } from "@/utils/platform";
 import { errorMessage } from "@/utils/errorMessage";
 import { useTerminalRightClickRouting } from "./terminalRightClick";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /**
  * Copy a terminal selection to the OS clipboard, clearing the selection only
  * once the write succeeds. A failed clipboard IPC must not silently drop the
@@ -201,39 +202,39 @@ export function TerminalContextMenu({
             onSelect={() => copySelectionToClipboard(tabId)}
             data-testid="terminal-context-copy-selection"
           >
-            <Copy size={14} /> Copy selection
+            <Copy size={ICON_SIZE.sm} /> Copy selection
           </MenuItem>
         )}
         <MenuItem onSelect={() => pasteToTerminal(tabId)} data-testid="terminal-context-paste">
-          <ClipboardPaste size={14} /> Paste
+          <ClipboardPaste size={ICON_SIZE.sm} /> Paste
         </MenuItem>
         <MenuItem
           onSelect={() => copyTerminalToClipboard(tabId)}
           data-testid="terminal-context-copy-all"
         >
-          <ClipboardCopy size={14} /> Copy all
+          <ClipboardCopy size={ICON_SIZE.sm} /> Copy all
         </MenuItem>
         <MenuSeparator />
         <MenuItem onSelect={onRename} data-testid="tab-context-rename">
-          <Pencil size={14} /> Rename
+          <Pencil size={ICON_SIZE.sm} /> Rename
         </MenuItem>
         <MenuSeparator />
         <MenuItem onSelect={() => saveTerminalToFile(tabId)}>
-          <FileDown size={14} /> Save to file
+          <FileDown size={ICON_SIZE.sm} /> Save to file
         </MenuItem>
         <MenuItem onSelect={() => clearTerminal(tabId)}>
-          <Eraser size={14} /> Clear terminal
+          <Eraser size={ICON_SIZE.sm} /> Clear terminal
         </MenuItem>
         <MenuSeparator />
         <MenuCheckboxItem checked={horizontalScrolling} onSelect={onToggleHorizontalScrolling}>
           <MenuItemIndicator>
-            <Check size={14} />
+            <Check size={ICON_SIZE.sm} />
           </MenuItemIndicator>
-          <ArrowRightLeft size={14} /> Horizontal scrolling
+          <ArrowRightLeft size={ICON_SIZE.sm} /> Horizontal scrolling
         </MenuCheckboxItem>
         <MenuSeparator />
         <MenuItem onSelect={onSetColor}>
-          <Palette size={14} /> Set color…
+          <Palette size={ICON_SIZE.sm} /> Set color…
         </MenuItem>
       </ContextMenuContent>
     </ContextMenuRoot>

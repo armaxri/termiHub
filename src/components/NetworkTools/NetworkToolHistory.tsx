@@ -11,6 +11,7 @@ import { NetworkRunDetailDialog } from "./NetworkRunDetailDialog";
 import { runsToJson } from "./runHistory";
 import { formatRunTime, runLocationLabel, RUN_STATUS_LABEL, TOOL_LABEL } from "./runHistoryFormat";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface NetworkToolHistoryProps {
   tool: NetworkHistoryTool;
   /**
@@ -83,7 +84,7 @@ export function NetworkToolHistory({ tool, onRerun, rerunDisabled }: NetworkTool
           onClick={() => setExpanded((v) => !v)}
           data-testid="network-history-toggle"
         >
-          <Chevron size={14} aria-hidden="true" />
+          <Chevron size={ICON_SIZE.sm} aria-hidden="true" />
           History ({runs.length})
         </button>
         {expanded && runs.length > 0 && (
@@ -91,7 +92,7 @@ export function NetworkToolHistory({ tool, onRerun, rerunDisabled }: NetworkTool
             <Button
               variant="ghost"
               size="xs"
-              icon={<Braces size={12} />}
+              icon={<Braces size={ICON_SIZE.xs} />}
               onClick={() => exportNetworkResults(`${tool}-history`, runsToJson(runs), "json")}
               data-testid="network-history-export"
             >
@@ -100,7 +101,7 @@ export function NetworkToolHistory({ tool, onRerun, rerunDisabled }: NetworkTool
             <Button
               variant="ghost"
               size="xs"
-              icon={<Trash2 size={12} />}
+              icon={<Trash2 size={ICON_SIZE.xs} />}
               onClick={() => setConfirmClear(true)}
               data-testid="network-history-clear"
             >
@@ -143,7 +144,7 @@ export function NetworkToolHistory({ tool, onRerun, rerunDisabled }: NetworkTool
                     variant="ghost"
                     size="xs"
                     iconOnly
-                    icon={<Eye size={12} />}
+                    icon={<Eye size={ICON_SIZE.xs} />}
                     aria-label="View run"
                     title="View run"
                     onClick={() => setViewing(run)}
@@ -154,7 +155,7 @@ export function NetworkToolHistory({ tool, onRerun, rerunDisabled }: NetworkTool
                       variant="ghost"
                       size="xs"
                       iconOnly
-                      icon={<RotateCcw size={12} />}
+                      icon={<RotateCcw size={ICON_SIZE.xs} />}
                       aria-label="Re-run with the same parameters"
                       title="Re-run with the same parameters"
                       disabled={rerunDisabled}
@@ -166,7 +167,7 @@ export function NetworkToolHistory({ tool, onRerun, rerunDisabled }: NetworkTool
                     variant="ghost"
                     size="xs"
                     iconOnly
-                    icon={<Trash2 size={12} />}
+                    icon={<Trash2 size={ICON_SIZE.xs} />}
                     aria-label="Delete run"
                     title="Delete run"
                     errorToast={false}

@@ -19,6 +19,7 @@ import { guideTerminalInstall } from "./guideTerminalInstall";
 import { errorMessage } from "@/utils/errorMessage";
 import { subscribeGuarded, useTauriSubscription } from "@/hooks/useTauriListener";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /**
  * Stable id of the connect-time "X11 forwarding unavailable" toast (#5079), so
  * a burst of failing connects (e.g. restoring several X11 tabs) updates one
@@ -291,7 +292,7 @@ export function XServerConnectConsent() {
     return (
       <div className="x-server-setup__consent" data-testid="x-server-connect-consent-body">
         <p className="x-server-setup__lead">
-          <AppWindow className="x-server-setup__lead-icon" size={16} aria-hidden />
+          <AppWindow className="x-server-setup__lead-icon" size={ICON_SIZE.md} aria-hidden />
           This connection forwards remote GUI apps over SSH (X11), which need a local X server to
           open as native windows.
         </p>

@@ -13,6 +13,7 @@ import {
 } from "@/utils/tunnelHost";
 import type { PairStatus } from "@/utils/tunnelChain";
 import { tunnelRowTooltip } from "./tunnelRowTooltip";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./TunnelListItem.css";
 
 interface TunnelListItemProps {
@@ -149,7 +150,7 @@ export function TunnelListItem({
     <>
       {companionRedundant && onRemoveCompanion && (
         <span className="tunnel-item__redundant" data-testid={`tunnel-redundant-${tunnel.id}`}>
-          <AlertTriangle size={11} className="tunnel-item__redundant-icon" />
+          <AlertTriangle size={ICON_SIZE.xs} className="tunnel-item__redundant-icon" />
           <span>Linked hop is now redundant.</span>
           <button
             type="button"
@@ -175,7 +176,11 @@ export function TunnelListItem({
       onNextStep={onNextStep}
       extras={extras}
       className={nested ? "tunnel-item--nested" : undefined}
-      nameMark={nested && <Link2 size={12} className="tunnel-item__link-icon" aria-hidden="true" />}
+      nameMark={
+        nested && (
+          <Link2 size={ICON_SIZE.xs} className="tunnel-item__link-icon" aria-hidden="true" />
+        )
+      }
       rowRef={rowRef}
       rowProps={rowProps}
     />

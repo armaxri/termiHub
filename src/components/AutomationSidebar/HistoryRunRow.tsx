@@ -13,6 +13,7 @@ import {
   toleratedText,
 } from "./historyFormat";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Props of {@link HistoryRunRow}. */
 export interface HistoryRunRowProps {
   /** The run record to show. */
@@ -54,7 +55,7 @@ export function HistoryRunRow({ run, schedule, expanded, onToggle }: HistoryRunR
         onClick={() => onToggle(run.id)}
       >
         <ChevronRight
-          size={12}
+          size={ICON_SIZE.xs}
           aria-hidden="true"
           className={
             expanded

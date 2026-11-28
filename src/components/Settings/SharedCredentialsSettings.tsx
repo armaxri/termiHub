@@ -17,6 +17,7 @@ import {
 import "./CredentialVault.css";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** "Used by 2 connections" / "Not used". */
 export function usageSummary(usages: NamedCredentialUsage[]): string {
   if (usages.length === 0) return "Not used";
@@ -148,7 +149,7 @@ export function SharedCredentialsSettings() {
           <Button
             variant="secondary"
             size="sm"
-            icon={<Plus size={14} />}
+            icon={<Plus size={ICON_SIZE.sm} />}
             disabled={unavailable !== null}
             onClick={() => void open({ kind: "create" })}
             data-testid="shared-credentials-create"
@@ -192,7 +193,7 @@ function SharedCredentialRow({
   const { credential, usages } = entry;
   return (
     <li className="shared-credentials__row" data-testid={`shared-credential-${credential.id}`}>
-      <KeyRound size={14} className="shared-credentials__icon" aria-hidden />
+      <KeyRound size={ICON_SIZE.sm} className="shared-credentials__icon" aria-hidden />
       <div className="shared-credentials__text">
         <span className="shared-credentials__name">{credential.name}</span>
         <span
@@ -206,7 +207,7 @@ function SharedCredentialRow({
         <Button
           variant="ghost"
           size="sm"
-          icon={<Pencil size={13} />}
+          icon={<Pencil size={ICON_SIZE.xs} />}
           onClick={onRename}
           aria-label={`Rename ${credential.name}`}
           data-testid={`shared-credential-rename-${credential.id}`}
@@ -214,7 +215,7 @@ function SharedCredentialRow({
         <Button
           variant="ghost"
           size="sm"
-          icon={<RefreshCw size={13} />}
+          icon={<RefreshCw size={ICON_SIZE.xs} />}
           disabled={disabled}
           onClick={onRotate}
           aria-label={`Change the secret of ${credential.name}`}
@@ -223,7 +224,7 @@ function SharedCredentialRow({
         <Button
           variant="ghost"
           size="sm"
-          icon={<Trash2 size={13} />}
+          icon={<Trash2 size={ICON_SIZE.xs} />}
           onClick={onDelete}
           aria-label={`Delete ${credential.name}`}
           data-testid={`shared-credential-delete-${credential.id}`}

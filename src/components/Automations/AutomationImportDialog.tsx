@@ -4,6 +4,7 @@ import { Button, Modal } from "@/components/ui";
 import type { AutomationImport, ImportedEntry } from "@/services/automationFileIo";
 import { joinWords } from "@/utils/joinWords";
 import { EXPERIMENTAL_SETTING_PATH } from "@/utils/experimentalSetting";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./AutomationImportDialog.css";
 
 /** Props for {@link AutomationImportDialog}. */
@@ -112,9 +113,9 @@ export function AutomationImportDialog({ result, onClose, onShow }: AutomationIm
                 data-state={partly ? "partly" : "imported"}
               >
                 {partly ? (
-                  <TriangleAlert size={14} aria-hidden="true" />
+                  <TriangleAlert size={ICON_SIZE.sm} aria-hidden="true" />
                 ) : (
-                  <Check size={14} aria-hidden="true" />
+                  <Check size={ICON_SIZE.sm} aria-hidden="true" />
                 )}
                 <div>
                   <p>
@@ -139,7 +140,7 @@ export function AutomationImportDialog({ result, onClose, onShow }: AutomationIm
               data-testid={`automation-import-refused-${name}`}
               data-state="refused"
             >
-              <Ban size={14} aria-hidden="true" />
+              <Ban size={ICON_SIZE.sm} aria-hidden="true" />
               <div>
                 <p>
                   <strong>{name}</strong>: not imported

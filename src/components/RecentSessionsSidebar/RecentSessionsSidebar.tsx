@@ -20,6 +20,7 @@ import { connectionString } from "./connectionString";
 import "./RecentSessionsSidebar.css";
 import { errorMessage } from "@/utils/errorMessage";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /**
  * Searchable text of a recent session: its title, dedup key, and connection
  * type. Passed to {@link useListFilter} — the recent-sessions entries carry
@@ -150,7 +151,7 @@ export function RecentSessionsSidebar() {
           {
             id: "clear",
             label: "Clear all history",
-            icon: <Trash2 size={14} />,
+            icon: <Trash2 size={ICON_SIZE.sm} />,
             onClick: () => setConfirmClear(true),
             disabled: history.length === 0,
             iconOnly: true,

@@ -16,6 +16,7 @@ import { isImeComposing } from "@/utils/imeComposition";
 import type { UnlockWaiter } from "@/store/slices/credentialStoreSlice";
 import { unlockWaitingText } from "./unlockWaitingText";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface UnlockDialogProps {
   open: boolean;
   /** Closing the dialog any other way than unlocking cancels the request. */
@@ -295,7 +296,7 @@ export function UnlockDialog({
           <div className="unlock-dialog__biometric-row">
             <Button
               variant="secondary"
-              icon={<Fingerprint size={14} />}
+              icon={<Fingerprint size={ICON_SIZE.sm} />}
               onClick={() => void handleBiometricUnlock()}
               disabled={biometricPending}
               data-testid="unlock-dialog-biometric"

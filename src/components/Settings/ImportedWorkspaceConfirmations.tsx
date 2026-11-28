@@ -15,6 +15,7 @@ import { compareNames } from "@/utils/locale";
 import type { WorkspaceSummary } from "@/types/workspace";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Where a confirmed key is held in a saved workspace. */
 interface KeyUsage {
   workspaceName: string;
@@ -178,7 +179,7 @@ export function ImportedWorkspaceConfirmations() {
             <Button
               variant="danger"
               size="sm"
-              icon={<Trash2 size={14} />}
+              icon={<Trash2 size={ICON_SIZE.sm} />}
               onClick={() => setPending({ scope: "all" })}
               data-testid="imported-confirmations-revoke-all"
             >
@@ -226,7 +227,7 @@ export function ImportedWorkspaceConfirmations() {
                     variant="ghost"
                     size="sm"
                     iconOnly
-                    icon={<Trash2 size={14} />}
+                    icon={<Trash2 size={ICON_SIZE.sm} />}
                     aria-label={`Revoke confirmation for ${label}`}
                     onClick={() => setPending({ scope: "one", key: row.key, label })}
                     data-testid={`imported-confirmation-revoke-${row.key}`}

@@ -14,6 +14,7 @@ import {
 } from "@/types/transfer";
 import { formatElapsed } from "@/utils/formatters";
 import { TransferEntryRow } from "./TransferEntry";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./TransferQueue.css";
 
 /** Build the header summary (`2 active · 1 queued · 1 done · 1 failed`). */
@@ -139,7 +140,7 @@ export function TransferQueue() {
   return (
     <div className="transfer-queue" data-testid="transfer-queue" {...TOAST_AVOID_PROPS}>
       <div className="transfer-queue__header">
-        <ArrowDownUp size={13} />
+        <ArrowDownUp size={ICON_SIZE.xs} />
         <span className="transfer-queue__title">Transfers</span>
         <span className="transfer-queue__summary" data-testid="transfer-queue-summary">
           {summary}
@@ -152,7 +153,7 @@ export function TransferQueue() {
               size="sm"
               aria-label="Minimize transfer panel"
               data-testid="transfer-minimize"
-              icon={<Minus size={14} />}
+              icon={<Minus size={ICON_SIZE.sm} />}
               onClick={() => setMinimized(true)}
             />
           </Tooltip>

@@ -20,6 +20,7 @@ import {
   type AutomationStepKind,
 } from "./stepMeta";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Props of {@link AddStepItems}. */
 interface AddStepItemsProps {
   /** A step of the chosen kind was asked for. */
@@ -39,7 +40,7 @@ export function AddStepItems({ onAdd, nestedIn, below }: AddStepItemsProps) {
     return (
       <MenuItem
         key={kind}
-        icon={<Icon size={14} />}
+        icon={<Icon size={ICON_SIZE.sm} />}
         hint={stepKindDescription(kind)}
         onSelect={() => onAdd(kind)}
         data-testid={
@@ -99,7 +100,12 @@ export function AddStepMenu({ nestedIn, before, onAdd, onAdded }: AddStepMenuPro
     <DropdownMenuRoot>
       <DropdownMenuTrigger asChild>
         {before === undefined ? (
-          <Button variant="secondary" size="sm" icon={<Plus size={14} />} data-testid={testIdBase}>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<Plus size={ICON_SIZE.sm} />}
+            data-testid={testIdBase}
+          >
             Add step
           </Button>
         ) : (
@@ -110,7 +116,7 @@ export function AddStepMenu({ nestedIn, before, onAdd, onAdded }: AddStepMenuPro
             aria-label={`Add a step before step ${before + 1}`}
             data-testid={`automation-editor-insert-step${place}-${before}`}
           >
-            <Plus size={12} aria-hidden="true" />
+            <Plus size={ICON_SIZE.xs} aria-hidden="true" />
             <span className="automation-steps__insert-label">Add step here</span>
           </button>
         )}

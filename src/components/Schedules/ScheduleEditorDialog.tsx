@@ -54,6 +54,7 @@ import { t } from "@/i18n/catalog";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import { localProcessBlockedReason } from "@/utils/localProcessGate";
 import { remapConnectionIdList } from "@/utils/connectionIdChanges";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./Schedules.css";
 
 export interface ScheduleEditorDialogProps {
@@ -318,7 +319,7 @@ export function ScheduleEditorDialog({
     >
       <div className="schedule-editor__form" data-testid="schedule-editor-form" {...rootProps}>
         <p className="schedule-editor__note" data-testid="schedule-editor-only-while-open">
-          <Info size={14} aria-hidden="true" />
+          <Info size={ICON_SIZE.sm} aria-hidden="true" />
           {t("schedule.onlyWhileOpen")}
         </p>
         <div className="schedule-editor__row">

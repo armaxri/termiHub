@@ -2,6 +2,7 @@ import { Unplug } from "lucide-react";
 import { Button } from "@/components/ui";
 import { t, tf } from "@/i18n/catalog";
 import { deletedConnectionLabel } from "@/utils/deletedConnection";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./DeletedConnections.css";
 
 /** Props of {@link DeletedConnections}. */
@@ -30,7 +31,7 @@ export function DeletedConnections({ ids, onRemove, testIdPrefix }: DeletedConne
             key={id}
             data-testid={`${testIdPrefix}-deleted-${index}`}
           >
-            <Unplug size={14} aria-hidden="true" />
+            <Unplug size={ICON_SIZE.sm} aria-hidden="true" />
             <span className="deleted-connection__name">{label}</span>
             <Button
               variant="ghost"

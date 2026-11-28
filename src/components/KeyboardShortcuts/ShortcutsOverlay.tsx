@@ -7,6 +7,7 @@ import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import { isShortcutCategoryVisible } from "@/utils/experimentalTypes";
 import { ShortcutCategory, ShortcutScope, KeyBinding } from "@/types/keybindings";
 import { getDefaultBindings, formatActionBindings } from "@/services/keybindings";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./ShortcutsOverlay.css";
 
 /**
@@ -103,7 +104,7 @@ export function ShortcutsOverlay({ open, onOpenChange }: ShortcutsOverlayProps) 
         <Button
           variant="secondary"
           size="sm"
-          icon={<Pencil size={14} />}
+          icon={<Pencil size={ICON_SIZE.sm} />}
           onClick={handleEditShortcuts}
           data-testid="shortcuts-overlay-edit"
         >

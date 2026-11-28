@@ -5,6 +5,7 @@ import { getThirdPartyNotices } from "@/services/api";
 import { frontendLog } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
 import { Button, EmptyState, Modal } from "@/components/ui";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./ThirdPartyNoticesDialog.css";
 
 /** Online attribution page, shown when a build does not bundle the notices. */
@@ -73,7 +74,7 @@ export function ThirdPartyNoticesDialog({ open, onOpenChange }: ThirdPartyNotice
         <Button
           variant="secondary"
           size="sm"
-          icon={<ExternalLink size={13} />}
+          icon={<ExternalLink size={ICON_SIZE.xs} />}
           onClick={handleViewOnline}
           data-testid="third-party-notices-online"
         >

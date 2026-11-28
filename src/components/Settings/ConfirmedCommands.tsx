@@ -11,6 +11,7 @@ import { errorMessage } from "@/utils/errorMessage";
 import { getBasename } from "@/utils/paths";
 import { showExactly } from "@/utils/showExactly";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** A command as one short line: its program's name and what it is given. */
 export function commandLine(command: ConfirmedLocalCommand): string {
   if (command.path === undefined) return "A command confirmed in an earlier version";
@@ -123,7 +124,7 @@ export function ConfirmedCommands() {
                   variant="ghost"
                   size="sm"
                   iconOnly
-                  icon={<Trash2 size={14} />}
+                  icon={<Trash2 size={ICON_SIZE.sm} />}
                   aria-label={`Revoke ${commandLine(command)}`}
                   onClick={() => void revoke(group.automationId, command.key)}
                   data-testid={`confirmed-command-revoke-${command.key}`}

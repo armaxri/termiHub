@@ -4,6 +4,7 @@ import { Button, Input, Tooltip } from "@/components/ui";
 import { CollapsingBreadcrumbs } from "./FileBrowserBreadcrumbs";
 import { isImeComposing } from "@/utils/imeComposition";
 import { eventMatchesSingleBinding } from "@/services/keybindings";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./FileBrowserPathBar.css";
 
 /**
@@ -169,7 +170,7 @@ export const FileBrowserPathBar = forwardRef<FileBrowserPathBarHandle, FileBrows
               variant="ghost"
               size="xs"
               iconOnly
-              icon={<Copy size={12} />}
+              icon={<Copy size={ICON_SIZE.xs} />}
               className="file-browser__path-copy"
               aria-label="Copy path"
               onClick={onCopyPath}

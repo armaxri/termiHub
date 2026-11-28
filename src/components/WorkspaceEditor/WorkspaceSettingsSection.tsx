@@ -13,6 +13,7 @@ import {
 } from "@/services/workspaceSettings";
 import type { WorkspaceEnvVar, WorkspaceSettings } from "@/types/workspace";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Select sentinel for "no override" (Radix Select rejects an empty value). */
 const INHERIT = "__inherit__";
 
@@ -160,7 +161,7 @@ export function WorkspaceSettingsSection({ value, onChange }: WorkspaceSettingsS
                   onClick={() => updateEnv(envVars.filter((_, i) => i !== index))}
                   data-testid={`workspace-settings-env-remove-${index}`}
                 >
-                  <X size={12} />
+                  <X size={ICON_SIZE.xs} />
                 </Button>
               </Tooltip>
             </div>
@@ -173,7 +174,7 @@ export function WorkspaceSettingsSection({ value, onChange }: WorkspaceSettingsS
             onClick={() => updateEnv([...envVars, { key: "", value: "" }])}
             data-testid="workspace-settings-env-add"
           >
-            <Plus size={12} />
+            <Plus size={ICON_SIZE.xs} />
             Add variable
           </Button>
         </div>

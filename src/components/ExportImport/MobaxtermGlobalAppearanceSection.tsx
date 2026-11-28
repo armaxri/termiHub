@@ -8,6 +8,7 @@ import {
 } from "@/services/mobaxtermGlobalAppearance";
 import { dedupeThemeName } from "@/themes/customThemes";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface MobaxtermGlobalAppearanceSectionProps {
   /** MobaXterm's parsed global colors, font and cursor. */
   global: MobaxtermGlobalAppearance;
@@ -91,7 +92,7 @@ export function MobaxtermGlobalAppearanceSection({
               <li key={change.key} className="mobaxterm-import__change">
                 <span className="mobaxterm-import__change-label">{change.label}</span>
                 <span>{change.before}</span>
-                <ArrowRight size={12} aria-label="becomes" />
+                <ArrowRight size={ICON_SIZE.xs} aria-label="becomes" />
                 <span className="mobaxterm-import__change-after">{change.after}</span>
               </li>
             ))}

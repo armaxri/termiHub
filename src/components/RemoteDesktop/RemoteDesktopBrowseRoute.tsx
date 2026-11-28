@@ -4,6 +4,7 @@ import {
   useRemoteDesktopBrowseStore,
 } from "@/store/remoteDesktopBrowseStore";
 import { browseRoute } from "./fileTransfer";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./RemoteDesktopBrowseRoute.css";
 
 interface RemoteDesktopBrowseRouteProps {
@@ -28,9 +29,9 @@ export function RemoteDesktopBrowseRoute({ sessionId }: RemoteDesktopBrowseRoute
       data-testid="remote-desktop-browse-route"
     >
       {channel.sameHost ? (
-        <MonitorUp size={14} aria-hidden />
+        <MonitorUp size={ICON_SIZE.sm} aria-hidden />
       ) : (
-        <AlertTriangle size={14} aria-hidden />
+        <AlertTriangle size={ICON_SIZE.sm} aria-hidden />
       )}
       <span>
         <code>{browseRoute(channel)}</code>

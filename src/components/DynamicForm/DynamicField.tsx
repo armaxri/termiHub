@@ -28,6 +28,7 @@ import { backendErrorMessage } from "@/utils/backendErrorCode";
 import { itemMatchesQuery } from "@/hooks/useListFilter";
 import { textFieldsMatchQuery } from "@/utils/searchMatching";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface DynamicFieldProps {
   field: SettingsField;
   value: unknown;
@@ -580,7 +581,7 @@ function NoticeField({
       role="note"
       data-testid={testIdBase}
     >
-      <Icon size={14} aria-hidden="true" />
+      <Icon size={ICON_SIZE.sm} aria-hidden="true" />
       <span>{field.description}</span>
     </div>
   );
@@ -626,7 +627,7 @@ function FieldHelp({ field, testIdBase }: { field: SettingsField; testIdBase: st
         size="sm"
         iconOnly
         className="settings-form__help"
-        icon={<HelpCircle size={13} />}
+        icon={<HelpCircle size={ICON_SIZE.xs} />}
         onClick={(e) => {
           e.preventDefault();
           setDialogOpen(true);
@@ -869,7 +870,7 @@ function SelectField({
             size="sm"
             iconOnly
             className="settings-form__help"
-            icon={<HelpCircle size={13} />}
+            icon={<HelpCircle size={ICON_SIZE.xs} />}
             aria-label={`About ${chosenLabel}`}
             aria-expanded={moreOpen}
             aria-controls={linesId}
@@ -1094,7 +1095,7 @@ function DockerContainerField({
           aria-label="Refresh container list"
           data-testid={`${testIdBase}-refresh`}
         >
-          <RefreshCw size={14} aria-hidden="true" />
+          <RefreshCw size={ICON_SIZE.sm} aria-hidden="true" />
         </Button>
       </div>
       {list.status === "loading" && (
@@ -1395,14 +1396,14 @@ function KeyValueListField({ value, onChange, testIdBase }: FieldProps & { testI
             aria-label="Remove"
             data-testid={`${testIdBase}-remove-${index}`}
           >
-            <X size={14} />
+            <X size={ICON_SIZE.sm} />
           </Button>
         </div>
       ))}
       <Button
         variant="ghost"
         size="sm"
-        icon={<Plus size={14} />}
+        icon={<Plus size={ICON_SIZE.sm} />}
         onClick={handleAdd}
         data-testid={`${testIdBase}-add`}
       >
@@ -1520,14 +1521,14 @@ function ObjectListField({
             aria-label="Remove"
             data-testid={`${testIdBase}-remove-${index}`}
           >
-            <X size={14} />
+            <X size={ICON_SIZE.sm} />
           </Button>
         </div>
       ))}
       <Button
         variant="ghost"
         size="sm"
-        icon={<Plus size={14} />}
+        icon={<Plus size={ICON_SIZE.sm} />}
         onClick={handleAdd}
         data-testid={`${testIdBase}-add`}
       >

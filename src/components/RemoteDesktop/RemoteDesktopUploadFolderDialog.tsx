@@ -6,6 +6,7 @@ import { errorMessage } from "@/utils/errorMessage";
 import type { RemoteFolderListing } from "./browseRemoteFiles";
 import { parentDir } from "@/utils/paths";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface RemoteDesktopUploadFolderDialogProps {
   /** Whether the dialog is open (controlled). */
   open: boolean;
@@ -107,7 +108,7 @@ export function RemoteDesktopUploadFolderDialog({
           </Button>
           <Button
             variant="primary"
-            icon={<Upload size={14} />}
+            icon={<Upload size={ICON_SIZE.sm} />}
             onClick={handleSubmit}
             disabled={!trimmed}
             data-testid="remote-desktop-upload-folder-submit"
@@ -141,7 +142,7 @@ export function RemoteDesktopUploadFolderDialog({
         )}
         {list.status === "error" && (
           <div className="rd-folder-picker__status" role="alert">
-            <AlertCircle size={14} aria-hidden />
+            <AlertCircle size={ICON_SIZE.sm} aria-hidden />
             <span>{list.message}</span>
           </div>
         )}
@@ -153,7 +154,7 @@ export function RemoteDesktopUploadFolderDialog({
                   variant="ghost"
                   size="sm"
                   fullWidth
-                  icon={<ArrowUp size={14} />}
+                  icon={<ArrowUp size={ICON_SIZE.sm} />}
                   onClick={() => load(parentDir(list.listing.path))}
                   data-testid="remote-desktop-folder-picker-up"
                 >
@@ -167,7 +168,7 @@ export function RemoteDesktopUploadFolderDialog({
                   variant="ghost"
                   size="sm"
                   fullWidth
-                  icon={<Folder size={14} />}
+                  icon={<Folder size={ICON_SIZE.sm} />}
                   onClick={() => load(folder.path)}
                   data-testid="remote-desktop-folder-picker-entry"
                 >

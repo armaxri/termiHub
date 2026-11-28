@@ -3,6 +3,7 @@ import { Folder, Check, X } from "lucide-react";
 import { Button, Input, Tooltip } from "@/components/ui";
 import { isImeComposing } from "@/utils/imeComposition";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /**
  * How the inline input was dismissed without committing: Escape, the Cancel
  * button, or focus leaving it. A caller returns focus to the tree row on the
@@ -69,7 +70,7 @@ export function InlineFolderInput({
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
       >
         <span className="connection-tree__chevron-spacer" aria-hidden />
-        <Folder size={16} />
+        <Folder size={ICON_SIZE.md} />
         <Input
           className="connection-tree__inline-input"
           type="text"
@@ -95,7 +96,7 @@ export function InlineFolderInput({
             variant="ghost"
             size="xs"
             iconOnly
-            icon={<Check size={14} />}
+            icon={<Check size={ICON_SIZE.sm} />}
             onMouseDown={(e) => {
               e.preventDefault();
               submit();
@@ -109,7 +110,7 @@ export function InlineFolderInput({
             variant="ghost"
             size="xs"
             iconOnly
-            icon={<X size={14} />}
+            icon={<X size={ICON_SIZE.sm} />}
             onMouseDown={(e) => {
               e.preventDefault();
               onCancel("button");

@@ -14,6 +14,7 @@ import {
   useBottomBannerStore,
 } from "@/components/BottomBanners";
 import { errorMessage } from "@/utils/errorMessage";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./Diagnostics.css";
 
 /** Treat a missing or malformed reply as "no notices" rather than crash. */
@@ -107,7 +108,7 @@ export function AgentCrashReportNotice() {
       tone="warning"
       role="status"
       data-testid={`agent-crash-notice-${notice.agentId}`}
-      icon={<AlertTriangle size={16} />}
+      icon={<AlertTriangle size={ICON_SIZE.md} />}
       title={<>Agent “{agentName(notice.agentId)}” crashed since it was last connected.</>}
       description={
         <>

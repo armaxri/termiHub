@@ -14,6 +14,7 @@ import { listSpawnOptions, type SpawnOptions } from "@/services/api";
 import type { ContainerRuntime, SpawnChoice, SpawnTarget } from "@/types/spawn";
 import { frontendLog } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./SpawnPicker.css";
 
 /**
@@ -200,7 +201,7 @@ export function SpawnPicker({
     return (
       <section className="spawn-picker__section">
         <h3 className="ui-section-label spawn-picker__section-label">{title}</h3>
-        {renderRow(id, "New container…", <Container size={14} />, "mounts directory")}
+        {renderRow(id, "New container…", <Container size={ICON_SIZE.sm} />, "mounts directory")}
         {selected === id ? (
           <div
             className="spawn-picker__container-form"
@@ -283,7 +284,7 @@ export function SpawnPicker({
       }
     >
       <div className="spawn-picker__path" data-testid="spawn-picker-path">
-        <Folder size={14} aria-hidden="true" />
+        <Folder size={ICON_SIZE.sm} aria-hidden="true" />
         <span className="spawn-picker__path-text">{location || "."}</span>
       </div>
 
@@ -304,7 +305,7 @@ export function SpawnPicker({
             <section className="spawn-picker__section">
               <h3 className="ui-section-label spawn-picker__section-label">Local shells</h3>
               {options.shells.map((shell) =>
-                renderRow(localRowId(shell), shell, <Terminal size={14} />)
+                renderRow(localRowId(shell), shell, <Terminal size={ICON_SIZE.sm} />)
               )}
             </section>
           ) : null}
@@ -313,7 +314,7 @@ export function SpawnPicker({
             <section className="spawn-picker__section">
               <h3 className="ui-section-label spawn-picker__section-label">WSL</h3>
               {options.wslDistros.map((distro) =>
-                renderRow(wslRowId(distro), distro, <Box size={14} />)
+                renderRow(wslRowId(distro), distro, <Box size={ICON_SIZE.sm} />)
               )}
             </section>
           ) : null}

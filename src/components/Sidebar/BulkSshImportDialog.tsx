@@ -10,6 +10,7 @@ import {
   resolveImportFolderId,
   ROOT_FOLDER_VALUE,
 } from "@/services/sshConfigImport";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./BulkSshImportDialog.css";
 
 interface BulkSshImportDialogProps {
@@ -146,7 +147,7 @@ export function BulkSshImportDialog({
       {state.status === "error" && (
         <EmptyState
           variant="panel"
-          icon={<AlertTriangle size={20} aria-hidden />}
+          icon={<AlertTriangle size={ICON_SIZE.lg} aria-hidden />}
           title="Could not read ~/.ssh/config."
           role="alert"
           data-testid="bulk-ssh-import-error"
@@ -156,7 +157,7 @@ export function BulkSshImportDialog({
       {state.status === "ready" && connections.length === 0 && (
         <EmptyState
           variant="panel"
-          icon={<Server size={20} aria-hidden />}
+          icon={<Server size={ICON_SIZE.lg} aria-hidden />}
           title="No hosts were found in ~/.ssh/config."
           data-testid="bulk-ssh-import-empty"
         />

@@ -20,6 +20,7 @@ import { SettingsField } from "./SettingsField";
 import { errorMessage } from "@/utils/errorMessage";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 type FileLogLevel = NonNullable<AppSettings["fileLogLevel"]>;
 
 /** Sentinel value for the "platform default" shell option (Radix Select forbids empty-string item values). */
@@ -234,7 +235,7 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
                 <Button
                   variant="secondary"
                   size="sm"
-                  icon={<ClipboardCopy size={14} />}
+                  icon={<ClipboardCopy size={ICON_SIZE.sm} />}
                   onClick={handleCopyDebugInfo}
                   data-testid="settings-copy-debug-info"
                 >

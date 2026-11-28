@@ -1,6 +1,7 @@
 import { Copy } from "lucide-react";
 import { Button, Tooltip } from "@/components/ui";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Combined view of a built-in mapping row (shown in the reference table). */
 export interface BuiltInRow {
   pattern: string;
@@ -60,7 +61,7 @@ export function FileTypeBuiltInTable({ rows, userMappings, onCopy }: FileTypeBui
                     variant="ghost"
                     size="sm"
                     iconOnly
-                    icon={<Copy size={14} />}
+                    icon={<Copy size={ICON_SIZE.sm} />}
                     onClick={() => onCopy(pattern, language)}
                     aria-label={`Copy "${pattern}" into the add form`}
                     data-testid={`file-type-copy-${pattern}`}

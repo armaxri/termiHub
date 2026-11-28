@@ -7,6 +7,7 @@ import { useTerminalRegistry } from "./TerminalRegistry";
 import "./TerminalSearchBar.css";
 import { isImeComposing } from "@/utils/imeComposition";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface TerminalSearchBarProps {
   tabId: string;
 }
@@ -116,7 +117,7 @@ export function TerminalSearchBar({ tabId }: TerminalSearchBarProps) {
         <Button
           variant={caseSensitive ? "secondary" : "ghost"}
           size="sm"
-          icon={<CaseSensitive size={14} />}
+          icon={<CaseSensitive size={ICON_SIZE.sm} />}
           onClick={() => setCaseSensitive(!caseSensitive)}
           aria-label="Match case"
           aria-pressed={caseSensitive}
@@ -126,7 +127,7 @@ export function TerminalSearchBar({ tabId }: TerminalSearchBarProps) {
         <Button
           variant={wholeWord ? "secondary" : "ghost"}
           size="sm"
-          icon={<WholeWord size={14} />}
+          icon={<WholeWord size={ICON_SIZE.sm} />}
           onClick={() => setWholeWord(!wholeWord)}
           aria-label="Match whole word"
           aria-pressed={wholeWord}
@@ -136,7 +137,7 @@ export function TerminalSearchBar({ tabId }: TerminalSearchBarProps) {
         <Button
           variant={useRegex ? "secondary" : "ghost"}
           size="sm"
-          icon={<Regex size={14} />}
+          icon={<Regex size={ICON_SIZE.sm} />}
           onClick={() => setUseRegex(!useRegex)}
           aria-label="Use regular expression"
           aria-pressed={useRegex}
@@ -146,7 +147,7 @@ export function TerminalSearchBar({ tabId }: TerminalSearchBarProps) {
         <Button
           variant="ghost"
           size="sm"
-          icon={<ChevronUp size={14} />}
+          icon={<ChevronUp size={ICON_SIZE.sm} />}
           onClick={handleFindPrevious}
           aria-label="Previous match"
         />
@@ -155,7 +156,7 @@ export function TerminalSearchBar({ tabId }: TerminalSearchBarProps) {
         <Button
           variant="ghost"
           size="sm"
-          icon={<ChevronDown size={14} />}
+          icon={<ChevronDown size={ICON_SIZE.sm} />}
           onClick={handleFindNext}
           aria-label="Next match"
         />
@@ -164,7 +165,7 @@ export function TerminalSearchBar({ tabId }: TerminalSearchBarProps) {
         <Button
           variant="ghost"
           size="sm"
-          icon={<X size={14} />}
+          icon={<X size={ICON_SIZE.sm} />}
           onClick={handleClose}
           aria-label="Close search"
         />

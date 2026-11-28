@@ -11,8 +11,8 @@
 
 .close-window-decision__lead-icon {
   flex: 0 0 auto;
-  width: 18px;
-  height: 18px;
+  width: var(--icon-md);
+  height: var(--icon-md);
   margin-top: 1px;
   color: var(--color-warning);
 }
@@ -46,8 +46,8 @@
 
 .close-window-decision__row-icon {
   flex: 0 0 auto;
-  width: 16px;
-  height: 16px;
+  width: var(--icon-md);
+  height: var(--icon-md);
   color: var(--text-secondary);
 }
 
@@ -92,8 +92,8 @@
 .close-window-decision__pill .li,
 .close-window-decision__row-icon.li,
 .close-window-decision__lead-icon.li {
-  width: 14px;
-  height: 14px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
 }
 
 .close-window-decision__pill--detach {
@@ -147,8 +147,8 @@
 
 .close-window-decision__secrets-icon.li {
   flex: 0 0 auto;
-  width: 14px;
-  height: 14px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
   margin-top: var(--spacing-xxs);
   color: var(--color-warning);
 }

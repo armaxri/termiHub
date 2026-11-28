@@ -2,6 +2,7 @@ import { CircleDot, KeyRound } from "lucide-react";
 import { Button } from "@/components/ui";
 import { t } from "@/i18n/catalog";
 import { useAppStore } from "@/store/appStore";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./Recording.css";
 
 /**
@@ -22,7 +23,7 @@ export function RecordingBar() {
     const target = recording.intoEditor ? `“${recording.intoEditor}”` : "the new automation";
     return (
       <div className="recording-bar recording-bar--active" data-testid="recording-bar-editor">
-        <CircleDot size={14} aria-hidden="true" />
+        <CircleDot size={ICON_SIZE.sm} aria-hidden="true" />
         <span className="recording-bar__text" role="status">
           Recording into {target}: type in {recording.tabTitle}.
           {recording.atPrompt && ` ${t("recording.promptNote")}`}
@@ -41,7 +42,7 @@ export function RecordingBar() {
   if (recording?.atPrompt) {
     return (
       <div className="recording-bar" data-testid="recording-bar-prompt">
-        <KeyRound size={14} aria-hidden="true" />
+        <KeyRound size={ICON_SIZE.sm} aria-hidden="true" />
         <span className="recording-bar__text" role="status">
           {t("recording.promptNote")}
         </span>
@@ -52,7 +53,7 @@ export function RecordingBar() {
   if (!recording && take && !take.forEditor && !saveOpen) {
     return (
       <div className="recording-bar" data-testid="recording-bar-unsaved">
-        <CircleDot size={14} aria-hidden="true" />
+        <CircleDot size={ICON_SIZE.sm} aria-hidden="true" />
         <span className="recording-bar__text">
           The recording in {take.tabTitle} is not saved. It is lost when you close termiHub.
         </span>

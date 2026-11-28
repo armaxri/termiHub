@@ -17,6 +17,7 @@ import {
   Tooltip,
 } from "@/components/ui";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Props for {@link AgentMoreMenu}. */
 export interface AgentMoreMenuProps {
   agentId: string;
@@ -59,7 +60,7 @@ export function AgentMoreMenu({
             variant="ghost"
             size="sm"
             iconOnly
-            icon={<MoreHorizontal size={16} />}
+            icon={<MoreHorizontal size={ICON_SIZE.md} />}
             aria-label={`More actions for ${agentName}`}
             data-testid={`agent-more-${agentId}`}
           />
@@ -71,30 +72,30 @@ export function AgentMoreMenu({
         data-testid={`agent-more-menu-${agentId}`}
       >
         <MenuItem onSelect={onNewFolder} data-testid={`agent-new-folder-${agentId}`}>
-          <FolderPlus size={14} />
+          <FolderPlus size={ICON_SIZE.sm} />
           New folder
         </MenuItem>
         <MenuItem onSelect={onRefresh} data-testid={`agent-refresh-${agentId}`}>
-          <RefreshCw size={14} />
+          <RefreshCw size={ICON_SIZE.sm} />
           Refresh sessions
         </MenuItem>
         <MenuItem onSelect={onRunningSessions} data-testid={`agent-running-sessions-${agentId}`}>
-          <Terminal size={14} />
+          <Terminal size={ICON_SIZE.sm} />
           Running sessions…
         </MenuItem>
         {canUpdate && (
           <MenuItem onSelect={onUpdate} data-testid={`agent-update-${agentId}`}>
-            <ArrowUpCircle size={14} />
+            <ArrowUpCircle size={ICON_SIZE.sm} />
             Update agent…
           </MenuItem>
         )}
         <MenuSeparator />
         <MenuItem onSelect={onDisconnect} data-testid={`agent-disconnect-${agentId}`}>
-          <Unplug size={14} />
+          <Unplug size={ICON_SIZE.sm} />
           Disconnect (detach)
         </MenuItem>
         <MenuItem onSelect={onShutdown} data-testid={`agent-shutdown-${agentId}`}>
-          <Power size={14} />
+          <Power size={ICON_SIZE.sm} />
           Shutdown (stop remote)
         </MenuItem>
       </DropdownMenuContent>

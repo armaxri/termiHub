@@ -4,6 +4,7 @@ import type { HttpCheckResult } from "@/types/network";
 import { resolveUiLocale } from "@/utils/locale";
 import { LatencyChart } from "./LatencyChart";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** How many of the newest checks the "Recent Checks" table lists. */
 const TABLE_ROWS = 20;
 
@@ -59,7 +60,7 @@ export function HttpMonitorChecks({ history, intervalMs, onExport }: HttpMonitor
         <Button
           variant="secondary"
           size="sm"
-          icon={<Download size={14} />}
+          icon={<Download size={ICON_SIZE.sm} />}
           onClick={onExport}
           data-testid="http-monitor-export"
         >

@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { MenuItem, MenuSeparator } from "@/components/ui";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Everything a row's menus can do with one automation. */
 export interface AutomationRowActions {
   /** Run on the active terminal (or ask where, without one). */
@@ -61,7 +62,7 @@ export function AutomationRowMenu({
     <>
       {running ? (
         <MenuItem
-          icon={<Square size={14} />}
+          icon={<Square size={ICON_SIZE.sm} />}
           onSelect={() => actions.onStop(id)}
           data-testid={`automation-menu-stop-${id}`}
         >
@@ -69,7 +70,7 @@ export function AutomationRowMenu({
         </MenuItem>
       ) : (
         <MenuItem
-          icon={<Play size={14} />}
+          icon={<Play size={ICON_SIZE.sm} />}
           disabled={blocked}
           onSelect={() => actions.onRun(id)}
           data-testid={`automation-menu-run-${id}`}
@@ -78,7 +79,7 @@ export function AutomationRowMenu({
         </MenuItem>
       )}
       <MenuItem
-        icon={<ListChecks size={14} />}
+        icon={<ListChecks size={ICON_SIZE.sm} />}
         disabled={running || blocked}
         onSelect={() => actions.onRunOn(id)}
         data-testid={`automation-menu-run-on-${id}`}
@@ -86,14 +87,14 @@ export function AutomationRowMenu({
         Run on…
       </MenuItem>
       <MenuItem
-        icon={<CalendarClock size={14} />}
+        icon={<CalendarClock size={ICON_SIZE.sm} />}
         onSelect={() => actions.onSchedule(id)}
         data-testid={`automation-menu-schedule-${id}`}
       >
         Schedule…
       </MenuItem>
       <MenuItem
-        icon={<History size={14} />}
+        icon={<History size={ICON_SIZE.sm} />}
         onSelect={() => actions.onShowHistory(id)}
         data-testid={`automation-menu-history-${id}`}
       >
@@ -101,14 +102,14 @@ export function AutomationRowMenu({
       </MenuItem>
       <MenuSeparator />
       <MenuItem
-        icon={<Pencil size={14} />}
+        icon={<Pencil size={ICON_SIZE.sm} />}
         onSelect={() => actions.onEdit(id)}
         data-testid={`automation-menu-edit-${id}`}
       >
         Edit…
       </MenuItem>
       <MenuItem
-        icon={<Copy size={14} />}
+        icon={<Copy size={ICON_SIZE.sm} />}
         onSelect={() => actions.onDuplicate(id)}
         data-testid={`automation-menu-duplicate-${id}`}
       >
@@ -116,7 +117,7 @@ export function AutomationRowMenu({
       </MenuItem>
       {canUseInNew ? (
         <MenuItem
-          icon={<Plus size={14} />}
+          icon={<Plus size={ICON_SIZE.sm} />}
           onSelect={() => actions.onUseInNew(id)}
           data-testid={`automation-menu-use-in-new-${id}`}
         >
@@ -124,7 +125,7 @@ export function AutomationRowMenu({
         </MenuItem>
       ) : null}
       <MenuItem
-        icon={<Download size={14} />}
+        icon={<Download size={ICON_SIZE.sm} />}
         onSelect={() => actions.onExport(id)}
         data-testid={`automation-menu-export-${id}`}
       >
@@ -132,7 +133,7 @@ export function AutomationRowMenu({
       </MenuItem>
       <MenuSeparator />
       <MenuItem
-        icon={<Trash2 size={14} />}
+        icon={<Trash2 size={ICON_SIZE.sm} />}
         danger
         onSelect={() => actions.onDelete(id)}
         data-testid={`automation-menu-delete-${id}`}

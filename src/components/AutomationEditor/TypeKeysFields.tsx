@@ -11,6 +11,7 @@ import { MoreKeys } from "./MoreKeys";
 import { useStepEditor } from "./stepEditorContext";
 import { TYPING_SPEEDS, typingSpeedLabel } from "./stepMeta";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Key rows rendered before "Show all": a long recording has hundreds. */
 export const SHOWN_KEY_ROWS = 50;
 
@@ -158,7 +159,7 @@ export function TypeKeysFields({ draft, step, path, stepNumber, onChange }: Type
         <Button
           variant="ghost"
           size="sm"
-          icon={<Plus size={12} />}
+          icon={<Plus size={ICON_SIZE.xs} />}
           onClick={() => setKeysAndFocus([...keys, newKeyDraft(false)], -1)}
           data-testid={`automation-editor-keys-add-${path}`}
         >
@@ -289,7 +290,7 @@ function KeyRow({
           variant="ghost"
           size="sm"
           aria-label={`Add Enter to ${label}`}
-          icon={<CornerDownLeft size={12} />}
+          icon={<CornerDownLeft size={ICON_SIZE.xs} />}
           onClick={() => insertEnter(draft.text.length, draft.text.length)}
           data-testid={`automation-editor-keys-enter-${id}`}
         >
@@ -318,7 +319,7 @@ function KeyRow({
               iconOnly
               aria-label={`Move ${label} up`}
               disabled={number === 1}
-              icon={<ArrowUp size={12} />}
+              icon={<ArrowUp size={ICON_SIZE.xs} />}
               onClick={() => onMove(-1)}
               data-testid={`automation-editor-keys-up-${id}`}
             />
@@ -328,7 +329,7 @@ function KeyRow({
               iconOnly
               aria-label={`Move ${label} down`}
               disabled={last}
-              icon={<ArrowDown size={12} />}
+              icon={<ArrowDown size={ICON_SIZE.xs} />}
               onClick={() => onMove(1)}
               data-testid={`automation-editor-keys-down-${id}`}
             />
@@ -338,7 +339,7 @@ function KeyRow({
               iconOnly
               aria-label={`Delete ${label}`}
               disabled={!onDelete}
-              icon={<Trash2 size={12} />}
+              icon={<Trash2 size={ICON_SIZE.xs} />}
               onClick={() => onDelete?.()}
               data-testid={`automation-editor-keys-delete-${id}`}
             />

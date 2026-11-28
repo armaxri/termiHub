@@ -10,6 +10,7 @@ import {
 import type { FileSortKey, SortDirection } from "@/utils/fileBrowserNav";
 import { MenuTick } from "./FileBrowserActionMenu";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** The file list's sort: column and direction. */
 export interface FileSort {
   key: FileSortKey;
@@ -59,14 +60,14 @@ export function FileSortSubmenu({ sort, onSort }: FileSortSubmenuProps) {
   return (
     <MenuSub>
       <MenuSubTrigger
-        icon={<ArrowDownUp size={14} />}
+        icon={<ArrowDownUp size={ICON_SIZE.sm} />}
         hint={
           <span className="file-sort-menu__current" data-testid="file-browser-sort-current">
             {current}
             {sort.dir === "asc" ? (
-              <ChevronUp size={10} aria-hidden="true" />
+              <ChevronUp size={ICON_SIZE.xs} aria-hidden="true" />
             ) : (
-              <ChevronDown size={10} aria-hidden="true" />
+              <ChevronDown size={ICON_SIZE.xs} aria-hidden="true" />
             )}
           </span>
         }

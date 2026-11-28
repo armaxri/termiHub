@@ -1,5 +1,6 @@
 import { Monitor, Server } from "lucide-react";
 import type { FileBrowserHost } from "@/utils/fileBrowserHost";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./FileBrowserHostLabel.css";
 
 /** Props for {@link FileBrowserHostLabel}. */
@@ -23,7 +24,7 @@ export function FileBrowserHostLabel({ host }: FileBrowserHostLabelProps) {
       data-host-kind={host.kind}
       title={host.label}
     >
-      <Icon size={12} className="file-browser-host__icon" aria-hidden="true" />
+      <Icon size={ICON_SIZE.xs} className="file-browser-host__icon" aria-hidden="true" />
       <span className="file-browser-host__label">{host.label}</span>
     </div>
   );

@@ -4,6 +4,7 @@ import { useSavedConnection } from "@/hooks/useSavedConnection";
 import { useAgentDefinition } from "@/hooks/useAgentDefinition";
 import { readConfigString } from "@/utils/connectionConfigFields";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface TabConnectionIconProps {
   tab: Pick<TerminalTab, "config" | "connectionId">;
   size?: number;
@@ -16,7 +17,7 @@ interface TabConnectionIconProps {
  * icon, icon colour and emoji are looked up live, so an edit in the connection
  * editor shows on open tabs immediately; otherwise the type icon is drawn.
  */
-export function TabConnectionIcon({ tab, size = 14, className }: TabConnectionIconProps) {
+export function TabConnectionIcon({ tab, size = ICON_SIZE.sm, className }: TabConnectionIconProps) {
   const saved = useSavedConnection(tab.connectionId);
   const isAgentSession = tab.config.type === "remote-session";
   const agentDef = useAgentDefinition(

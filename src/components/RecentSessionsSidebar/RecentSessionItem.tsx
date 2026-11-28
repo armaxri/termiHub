@@ -16,6 +16,7 @@ import { sessionTypeBadge } from "@/utils/sessionHistoryTitle";
 import type { SessionHistoryEntry } from "@/types/sessionHistory";
 import { t, tf } from "@/i18n/catalog";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /**
  * The recent-session row's tooltip lines (#5770): the connection type, when
  * it was last used, how often, and whether it is saved as a connection. The
@@ -81,7 +82,7 @@ export function RecentSessionItem({
           onDoubleClick={() => onConnect(entry)}
           status={
             <span className="recent-sessions__item-icon" aria-hidden="true">
-              <ConnectionIcon config={entry.config} size={15} />
+              <ConnectionIcon config={entry.config} size={ICON_SIZE.sm} />
             </span>
           }
           actions={
@@ -93,7 +94,7 @@ export function RecentSessionItem({
                   iconOnly
                   aria-label="Connect"
                   data-testid={`recent-session-connect-${key}`}
-                  icon={<Plug size={12} />}
+                  icon={<Plug size={ICON_SIZE.xs} />}
                   onClick={(e) => {
                     e.stopPropagation();
                     onConnect(entry);
@@ -107,7 +108,7 @@ export function RecentSessionItem({
                   iconOnly
                   aria-label={entry.pinned ? "Unpin" : "Pin to top"}
                   data-testid={`recent-session-pin-${key}`}
-                  icon={entry.pinned ? <PinOff size={12} /> : <Pin size={12} />}
+                  icon={entry.pinned ? <PinOff size={ICON_SIZE.xs} /> : <Pin size={ICON_SIZE.xs} />}
                   onClick={(e) => {
                     e.stopPropagation();
                     onTogglePin(entry);
@@ -121,7 +122,7 @@ export function RecentSessionItem({
                   iconOnly
                   aria-label="Remove from history"
                   data-testid={`recent-session-remove-${key}`}
-                  icon={<Trash2 size={12} />}
+                  icon={<Trash2 size={ICON_SIZE.xs} />}
                   onClick={(e) => {
                     e.stopPropagation();
                     onRemove(entry);
@@ -136,7 +137,7 @@ export function RecentSessionItem({
                 className="recent-sessions__item-meta"
                 data-testid={`recent-session-meta-${key}`}
               >
-                <Pin size={10} className="recent-sessions__item-pin" aria-hidden="true" />
+                <Pin size={ICON_SIZE.xs} className="recent-sessions__item-pin" aria-hidden="true" />
                 <span>{t("recent.marker.pinned")}</span>
               </span>
             ) : undefined
@@ -148,40 +149,40 @@ export function RecentSessionItem({
           onSelect={() => onConnect(entry)}
           data-testid={`recent-session-menu-connect-${key}`}
         >
-          <Plug size={14} /> Connect
+          <Plug size={ICON_SIZE.sm} /> Connect
         </MenuItem>
         <MenuItem
           onSelect={() => onConnectInNewPanel(entry)}
           data-testid={`recent-session-menu-connect-new-panel-${key}`}
         >
-          <SplitSquareHorizontal size={14} /> Connect in new panel
+          <SplitSquareHorizontal size={ICON_SIZE.sm} /> Connect in new panel
         </MenuItem>
         <MenuSeparator />
         <MenuItem
           onSelect={() => onTogglePin(entry)}
           data-testid={`recent-session-menu-pin-${key}`}
         >
-          {entry.pinned ? <PinOff size={14} /> : <Pin size={14} />}{" "}
+          {entry.pinned ? <PinOff size={ICON_SIZE.sm} /> : <Pin size={ICON_SIZE.sm} />}{" "}
           {entry.pinned ? "Unpin" : "Pin to top"}
         </MenuItem>
         <MenuItem
           onSelect={() => onSaveAsConnection(entry)}
           data-testid={`recent-session-menu-save-${key}`}
         >
-          <Save size={14} /> Save as connection…
+          <Save size={ICON_SIZE.sm} /> Save as connection…
         </MenuItem>
         <MenuSeparator />
         <MenuItem
           onSelect={() => onCopyString(entry)}
           data-testid={`recent-session-menu-copy-${key}`}
         >
-          <Copy size={14} /> Copy connection string
+          <Copy size={ICON_SIZE.sm} /> Copy connection string
         </MenuItem>
         <MenuItem
           onSelect={() => onRemove(entry)}
           data-testid={`recent-session-menu-remove-${key}`}
         >
-          <Trash2 size={14} /> Remove from history
+          <Trash2 size={ICON_SIZE.sm} /> Remove from history
         </MenuItem>
       </ContextMenuContent>
     </ContextMenuRoot>

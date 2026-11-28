@@ -5,6 +5,7 @@ import { showSchedulesInSidebar } from "@/components/AutomationSidebar/automatio
 import { useScheduleTrouble } from "@/components/Schedules/useScheduleTrouble";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** "3 schedules, 2 on", "1 schedule, off", "No schedules yet". */
 export function schedulesSummary(total: number, on: number, paused: boolean): string {
   if (total === 0) return "No schedules yet.";
@@ -51,7 +52,7 @@ export function SchedulesSettings() {
         <Button
           variant={trouble ? "primary" : "secondary"}
           size="sm"
-          icon={<CalendarClock size={14} />}
+          icon={<CalendarClock size={ICON_SIZE.sm} />}
           onClick={showSchedulesInSidebar}
           data-testid="schedules-settings-open"
         >

@@ -22,6 +22,7 @@ import {
   signalName,
   signalOptionLabel,
 } from "./killSignals";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./StatusBar.css";
 
 /** Props for {@link ProcessTablePanel}. */
@@ -190,7 +191,7 @@ export function ProcessTablePanel({
               <Button
                 variant="secondary"
                 size="sm"
-                icon={<RotateCw size={14} />}
+                icon={<RotateCw size={ICON_SIZE.sm} />}
                 onClick={() => refresh(true)}
                 data-testid="monitoring-processes-retry"
               >
@@ -266,7 +267,7 @@ export function ProcessTablePanel({
                       size="xs"
                       iconOnly
                       aria-label={`Kill ${p.name} (pid ${p.pid})`}
-                      icon={<Skull size={14} />}
+                      icon={<Skull size={ICON_SIZE.sm} />}
                       onClick={() => {
                         setKillSignal(DEFAULT_KILL_SIGNAL);
                         setKillTarget(p);
@@ -285,7 +286,7 @@ export function ProcessTablePanel({
         open={killTarget !== null}
         variant="danger"
         title={t("process.kill.title")}
-        icon={<Skull size={18} />}
+        icon={<Skull size={ICON_SIZE.md} />}
         message={
           killTarget
             ? tf("process.kill.message", {

@@ -1,5 +1,6 @@
 import { LockOpen } from "lucide-react";
 import { t } from "@/i18n/catalog";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./UnencryptedBadge.css";
 
 interface UnencryptedBadgeProps {
@@ -36,7 +37,7 @@ export function UnencryptedBadge({ className, compact = false, ...rest }: Unencr
         title={`${label}: ${t("session.unencrypted.tooltip")}`}
         data-testid={rest["data-testid"]}
       >
-        <LockOpen size={12} aria-hidden />
+        <LockOpen size={ICON_SIZE.xs} aria-hidden />
       </span>
     );
   }
@@ -46,7 +47,7 @@ export function UnencryptedBadge({ className, compact = false, ...rest }: Unencr
       title={t("session.unencrypted.tooltip")}
       data-testid={rest["data-testid"]}
     >
-      <LockOpen size={11} aria-hidden />
+      <LockOpen size={ICON_SIZE.xs} aria-hidden />
       {label}
     </span>
   );

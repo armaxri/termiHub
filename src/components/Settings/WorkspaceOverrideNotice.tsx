@@ -8,6 +8,7 @@ import {
   type WorkspaceOverridableKey,
 } from "@/services/workspaceSettings";
 import { errorMessage } from "@/utils/errorMessage";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./WorkspaceOverrideNotice.css";
 
 interface WorkspaceOverrideNoticeProps {
@@ -42,7 +43,7 @@ export function WorkspaceOverrideNotice({ settingKey, label }: WorkspaceOverride
       role="status"
       data-testid={`workspace-override-${settingKey}`}
     >
-      <Layers className="workspace-override-notice__icon" size={13} aria-hidden="true" />
+      <Layers className="workspace-override-notice__icon" size={ICON_SIZE.xs} aria-hidden="true" />
       <span className="workspace-override-notice__text">
         Overridden in workspace <strong>{workspace.name}</strong> — the value below applies when no
         workspace overrides it.

@@ -26,6 +26,7 @@ import {
   usePluginUpdateStore,
 } from "@/plugins/pluginUpdateStore";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /**
  * Searchable text of a plugin: its manifest name and short description
  * (#5789). Module-level so the {@link useListFilter} memo stays stable.
@@ -224,7 +225,7 @@ export function PluginManagerView() {
             variant="ghost"
             size="sm"
             fullWidth
-            icon={<RefreshCw size={14} />}
+            icon={<RefreshCw size={ICON_SIZE.sm} />}
             onClick={handleCheckUpdates}
             disabled={checkingAll}
             errorToast={false}
@@ -237,7 +238,7 @@ export function PluginManagerView() {
           variant="secondary"
           size="sm"
           fullWidth
-          icon={<FileUp size={14} />}
+          icon={<FileUp size={ICON_SIZE.sm} />}
           onClick={handlePickFile}
           data-testid="plugin-install-from-file"
         >

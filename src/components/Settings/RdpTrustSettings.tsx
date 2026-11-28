@@ -6,6 +6,7 @@ import { frontendLog } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface RdpTrustSettingsProps {
   visibleFields?: Set<string>;
 }
@@ -112,7 +113,7 @@ export function RdpTrustSettings({ visibleFields }: RdpTrustSettingsProps) {
                         variant="ghost"
                         size="sm"
                         iconOnly
-                        icon={<Trash2 size={14} />}
+                        icon={<Trash2 size={ICON_SIZE.sm} />}
                         onClick={() => handleForgetFingerprint(h.host, fp)}
                         errorToast={false}
                         aria-label={`Revoke certificate ${fp} for ${h.host}`}

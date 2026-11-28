@@ -12,6 +12,7 @@ import {
   type IsolationBadge,
 } from "./nativePluginSandbox";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Props for {@link NativePluginSandboxStatus}. */
 export interface NativePluginSandboxStatusProps {
   /** The installed plugin (its manifest drives the access chips). */
@@ -23,22 +24,22 @@ export interface NativePluginSandboxStatusProps {
 }
 
 const BADGE_ICONS: Record<IsolationBadge["tone"], ReactNode> = {
-  ok: <ShieldCheck size={14} aria-hidden="true" />,
-  warning: <ShieldAlert size={14} aria-hidden="true" />,
-  error: <ShieldX size={14} aria-hidden="true" />,
-  checking: <ShieldAlert size={14} aria-hidden="true" />,
+  ok: <ShieldCheck size={ICON_SIZE.sm} aria-hidden="true" />,
+  warning: <ShieldAlert size={ICON_SIZE.sm} aria-hidden="true" />,
+  error: <ShieldX size={ICON_SIZE.sm} aria-hidden="true" />,
+  checking: <ShieldAlert size={ICON_SIZE.sm} aria-hidden="true" />,
 };
 
 const CHIP_ICONS: Record<string, ReactNode> = {
-  network: <Globe size={12} />,
-  data: <Folder size={12} />,
-  "declared-files": <Folder size={12} />,
-  files: <Folder size={12} />,
-  programs: <Cpu size={12} />,
+  network: <Globe size={ICON_SIZE.xs} />,
+  data: <Folder size={ICON_SIZE.xs} />,
+  "declared-files": <Folder size={ICON_SIZE.xs} />,
+  files: <Folder size={ICON_SIZE.xs} />,
+  programs: <Cpu size={ICON_SIZE.xs} />,
 };
 
 function chipIcon(chip: AccessChip): ReactNode {
-  return CHIP_ICONS[chip.id] ?? <Box size={12} />;
+  return CHIP_ICONS[chip.id] ?? <Box size={ICON_SIZE.xs} />;
 }
 
 /**
@@ -76,7 +77,7 @@ export function NativePluginSandboxStatus({
             className="settings-panel__status-indicator settings-panel__status-indicator--checking native-plugin-sandbox__indicator"
             data-testid={`native-plugin-process-${id}`}
           >
-            <Activity size={14} aria-hidden="true" /> {process}
+            <Activity size={ICON_SIZE.sm} aria-hidden="true" /> {process}
           </span>
         )}
       </div>

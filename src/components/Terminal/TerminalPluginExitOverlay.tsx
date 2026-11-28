@@ -7,6 +7,7 @@ import { usePluginSandbox } from "@/store/usePluginSandbox";
 import { findLeafByTab } from "@/utils/panelTree";
 import { Button, ContentOverlay } from "@/components/ui";
 import { DisconnectStrip } from "./DisconnectStrip";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./TerminalDisconnectOverlay.css";
 
 /** Props for {@link TerminalPluginExitOverlay}. */
@@ -94,7 +95,7 @@ export function TerminalPluginExitOverlay({
         data-testid="terminal-plugin-exit"
         icon={
           <MonitorX
-            size={16}
+            size={ICON_SIZE.md}
             className="terminal-disconnect-overlay__icon terminal-disconnect-overlay__icon--error"
           />
         }
@@ -110,7 +111,7 @@ export function TerminalPluginExitOverlay({
             <Button
               variant="primary"
               size="sm"
-              icon={<RotateCcw size={14} />}
+              icon={<RotateCcw size={ICON_SIZE.sm} />}
               onClick={handleRestart}
               disabled={process?.autoDisabled !== undefined}
               data-testid="terminal-plugin-exit-restart-btn"

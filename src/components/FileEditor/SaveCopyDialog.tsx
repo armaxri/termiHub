@@ -3,6 +3,7 @@ import { Copy } from "lucide-react";
 import { Modal, Button, Field, Input } from "@/components/ui";
 import { isImeComposing } from "@/utils/imeComposition";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 export interface SaveCopyDialogProps {
   /** Whether the dialog is open (controlled). */
   open: boolean;
@@ -75,7 +76,7 @@ export function SaveCopyDialog({
           </Button>
           <Button
             variant="primary"
-            icon={<Copy size={14} />}
+            icon={<Copy size={ICON_SIZE.sm} />}
             onClick={handleSubmit}
             disabled={!trimmed || busy}
             data-testid="save-copy-submit"

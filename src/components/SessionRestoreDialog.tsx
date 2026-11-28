@@ -3,6 +3,7 @@ import { AlertTriangle } from "lucide-react";
 import { Checkbox, ConfirmDialog } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import type { RestoreTabInfo } from "@/utils/restoreMode";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./SessionRestoreDialog.css";
 
 /**
@@ -100,7 +101,7 @@ export function SessionRestoreDialog(): React.ReactElement | null {
                   className="session-restore__tab-warning"
                   data-testid={`session-restore-tab-warning-${index}`}
                 >
-                  <AlertTriangle size={14} aria-hidden="true" />
+                  <AlertTriangle size={ICON_SIZE.sm} aria-hidden="true" />
                   <span className="session-restore__tab-warning-text">
                     {tab.unreachableReason ?? "unavailable"}
                   </span>

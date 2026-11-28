@@ -5,6 +5,7 @@ import { interpretersAmong } from "@/services/localProcessApi";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface AllowedProgramsProps {
   programs: string[];
   onRemove: (program: string) => void;
@@ -50,7 +51,7 @@ export function AllowedPrograms({ programs, onRemove }: AllowedProgramsProps) {
                     className="settings-panel__list-item-meta allowed-programs__warning"
                     data-testid={`workflow-allowlist-interpreter-${program}`}
                   >
-                    <AlertTriangle size={14} aria-hidden="true" />
+                    <AlertTriangle size={ICON_SIZE.sm} aria-hidden="true" />
                     Runs whatever it is told to: your automations can run any command with it.
                   </span>
                 )}
@@ -59,7 +60,7 @@ export function AllowedPrograms({ programs, onRemove }: AllowedProgramsProps) {
                 variant="ghost"
                 size="sm"
                 iconOnly
-                icon={<Trash2 size={14} />}
+                icon={<Trash2 size={ICON_SIZE.sm} />}
                 aria-label={`Remove ${program} from the allowlist`}
                 onClick={() => onRemove(program)}
                 data-testid={`workflow-allowlist-remove-${program}`}

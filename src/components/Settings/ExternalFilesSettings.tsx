@@ -12,6 +12,7 @@ import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import { errorMessage } from "@/utils/errorMessage";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /**
  * External connection file management, extracted from SettingsPanel. Only the
  * shared connection files live here: the host-monitoring toggles moved to
@@ -123,7 +124,7 @@ export function ExternalFilesSettings() {
               size="sm"
               icon={
                 <RefreshCw
-                  size={14}
+                  size={ICON_SIZE.sm}
                   className={reloading ? "settings-panel__spin motion-essential-spinner" : ""}
                 />
               }
@@ -138,7 +139,7 @@ export function ExternalFilesSettings() {
             <Button
               variant="secondary"
               size="sm"
-              icon={<FilePlus2 size={14} />}
+              icon={<FilePlus2 size={ICON_SIZE.sm} />}
               onClick={() => setShowCreatePrompt((v) => !v)}
               title="Create a new external connection file from your current connections"
             >
@@ -147,7 +148,7 @@ export function ExternalFilesSettings() {
             <Button
               variant="primary"
               size="sm"
-              icon={<Plus size={14} />}
+              icon={<Plus size={ICON_SIZE.sm} />}
               onClick={handleAddFile}
               title="Add external connection file"
               data-testid="external-files-add"
@@ -213,7 +214,7 @@ export function ExternalFilesSettings() {
                     variant="ghost"
                     size="sm"
                     iconOnly
-                    icon={<Trash2 size={14} />}
+                    icon={<Trash2 size={ICON_SIZE.sm} />}
                     onClick={() => handleRemoveFile(file.path)}
                     aria-label="Remove file"
                   />

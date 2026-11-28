@@ -2,6 +2,7 @@ import React from "react";
 import { useDraggable } from "@dnd-kit/core";
 import { ChevronDown, ChevronRight, Folder } from "lucide-react";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /**
  * Shared row primitives for the connection + agent sidebar trees.
  *
@@ -169,12 +170,12 @@ export const TreeFolderRow = React.forwardRef<HTMLButtonElement, TreeFolderRowPr
         title={rest.title ?? containsActiveLabel}
       >
         <Chevron
-          size={16}
+          size={ICON_SIZE.md}
           className="connection-tree__chevron"
           aria-hidden
           data-testid={testId ? `${testId}-chevron` : undefined}
         />
-        {icon ?? <Folder size={16} />}
+        {icon ?? <Folder size={ICON_SIZE.md} />}
         <span
           className="connection-tree__label"
           data-testid={testId ? `${testId}-label` : undefined}

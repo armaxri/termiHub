@@ -6,6 +6,7 @@ import { connectTypeLabel } from "@/utils/connectStages";
 import { ConnectFailureActions } from "@/components/Terminal/ConnectFailure";
 import { graphicalStages } from "./graphicalStages";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface RemoteDesktopFirstFrameOverlayProps {
   host: string;
   /** `"rdp"` or `"vnc"`, for the type chip. */
@@ -62,7 +63,7 @@ export function RemoteDesktopFirstFrameOverlay({
   const common = {
     target: host,
     typeLabel: connectTypeLabel(protocol),
-    typeIcon: <Monitor size={20} aria-hidden />,
+    typeIcon: <Monitor size={ICON_SIZE.lg} aria-hidden />,
     details: via ? [`via SSH ${via}`] : undefined,
     startedAt,
   };
@@ -111,7 +112,7 @@ export function RemoteDesktopFirstFrameOverlay({
           <Button
             variant="secondary"
             size="sm"
-            icon={<Ban size={14} />}
+            icon={<Ban size={ICON_SIZE.sm} />}
             onClick={onAbort}
             data-testid="remote-desktop-first-frame-abort"
           >

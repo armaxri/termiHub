@@ -6,6 +6,7 @@ import { monitorLastResult, monitorRowMarker } from "./monitorRow";
 import "@/components/ServiceListItem/ServiceListItem.css";
 import type { MonitorNextStep, MonitorRunActions } from "./monitorRow";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface HttpMonitorRowProps {
   monitor: HttpMonitorState;
   /** The machine it runs on, by name; `undefined` for this computer (#6039). */
@@ -95,7 +96,7 @@ export function HttpMonitorRow({
         <Button
           variant="ghost"
           size="sm"
-          icon={<LineChart size={13} />}
+          icon={<LineChart size={ICON_SIZE.xs} />}
           onClick={() => onShow(id)}
           aria-label={`Show checks for ${m.config.url}`}
           data-testid={`monitor-show-${id}`}
@@ -106,7 +107,7 @@ export function HttpMonitorRow({
           <Button
             variant="ghost"
             size="sm"
-            icon={<Pause size={13} />}
+            icon={<Pause size={ICON_SIZE.xs} />}
             onClick={() => onPause(id)}
             aria-label={`Pause monitoring ${m.config.url}`}
           >
@@ -117,7 +118,7 @@ export function HttpMonitorRow({
           <Button
             variant="ghost"
             size="sm"
-            icon={<Play size={13} />}
+            icon={<Play size={ICON_SIZE.xs} />}
             onClick={() => onResume(id)}
             aria-label={`Resume monitoring ${m.config.url}`}
             data-testid={`monitor-resume-${id}`}
@@ -129,7 +130,7 @@ export function HttpMonitorRow({
           <Button
             variant="ghost"
             size="sm"
-            icon={<StopCircle size={13} />}
+            icon={<StopCircle size={ICON_SIZE.xs} />}
             onClick={() => onStop(id)}
             aria-label={`Stop monitoring ${m.config.url}`}
           >
@@ -139,7 +140,7 @@ export function HttpMonitorRow({
         <Button
           variant="ghost"
           size="sm"
-          icon={<Trash2 size={13} />}
+          icon={<Trash2 size={ICON_SIZE.xs} />}
           onClick={() => onRemove(id)}
           aria-label={`Delete monitor ${m.config.url}`}
           data-testid={`monitor-remove-${id}`}

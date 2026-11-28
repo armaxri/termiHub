@@ -11,6 +11,7 @@ import type { RemoteAgentDefinition } from "@/types/connection";
 import type { AccessLogEntry, DetailedServerStats, TopEntry } from "@/types/embeddedServer";
 import type { HostChoice } from "@/utils/hostChoice";
 import { isAgentHost } from "@/utils/runLocation";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./ServerAccessLog.css";
 
 /** The agent a server is hosted on, when it runs on one (#3453). */
@@ -264,7 +265,7 @@ export function ServerAccessLog({ serverId, live, hostAgent }: Props) {
         <Button
           variant="ghost"
           size="xs"
-          icon={<Copy size={12} />}
+          icon={<Copy size={ICON_SIZE.xs} />}
           disabled={visible.length === 0}
           aria-label={t("server.activity.copy.label")}
           onClick={handleCopy}
@@ -275,7 +276,7 @@ export function ServerAccessLog({ serverId, live, hostAgent }: Props) {
         <Button
           variant="ghost"
           size="xs"
-          icon={<Trash2 size={12} />}
+          icon={<Trash2 size={ICON_SIZE.xs} />}
           errorToast={false}
           aria-label={t("server.activity.clear.label")}
           onClick={handleClear}

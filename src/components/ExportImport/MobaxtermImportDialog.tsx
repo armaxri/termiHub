@@ -30,6 +30,7 @@ import {
 import { MobaxtermGlobalAppearanceSection } from "./MobaxtermGlobalAppearanceSection";
 import { MobaxtermHostKeyList } from "./MobaxtermHostKeyList";
 import { MobaxtermSessionList } from "./MobaxtermSessionList";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "../Sidebar/BulkSshImportDialog.css";
 import "./MobaxtermImportDialog.css";
 
@@ -289,7 +290,7 @@ export function MobaxtermImportDialog({
             <Button
               variant="secondary"
               size="sm"
-              icon={<FolderOpen size={14} aria-hidden />}
+              icon={<FolderOpen size={ICON_SIZE.sm} aria-hidden />}
               onClick={handleChooseFile}
               data-testid="mobaxterm-import-choose-file"
             >
@@ -310,7 +311,7 @@ export function MobaxtermImportDialog({
         {state.status === "error" && (
           <EmptyState
             variant="panel"
-            icon={<AlertTriangle size={20} aria-hidden />}
+            icon={<AlertTriangle size={ICON_SIZE.lg} aria-hidden />}
             title="Could not read that file."
             description={state.message}
             role="alert"
@@ -324,7 +325,7 @@ export function MobaxtermImportDialog({
           !globalAppearance && (
             <EmptyState
               variant="panel"
-              icon={<FileSearch size={20} aria-hidden />}
+              icon={<FileSearch size={ICON_SIZE.lg} aria-hidden />}
               title="No saved MobaXterm sessions were found in this file."
               data-testid="mobaxterm-import-empty"
             />
@@ -334,7 +335,7 @@ export function MobaxtermImportDialog({
           <ul className="mobaxterm-import__file-notes" data-testid="mobaxterm-import-file-notes">
             {state.notes.map((note) => (
               <li key={note} className="mobaxterm-import__note">
-                <AlertTriangle size={12} aria-hidden />
+                <AlertTriangle size={ICON_SIZE.xs} aria-hidden />
                 {note}
               </li>
             ))}

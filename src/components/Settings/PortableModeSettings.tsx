@@ -10,6 +10,7 @@ import { frontendWarn } from "@/utils/frontendLog";
 import "./PortableModeSettings.css";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 const PORTABLE_FILES = [
   "connections.json",
   "settings.json",
@@ -223,7 +224,7 @@ export function PortableModeSettings() {
           className={`portable-mode__kv-value ${isPortableMode ? "portable-mode__kv-value--active" : "portable-mode__kv-value--inactive"}`}
           data-testid="portable-mode-status"
         >
-          <HardDrive size={14} />
+          <HardDrive size={ICON_SIZE.sm} />
           {isPortableMode ? "Active" : "Inactive (installed mode)"}
         </span>
       </div>
@@ -241,7 +242,7 @@ export function PortableModeSettings() {
           </div>
 
           <div className="portable-mode__info-box">
-            <Info size={14} />
+            <Info size={ICON_SIZE.sm} />
             <span>
               termiHub detected a <code>portable.marker</code> file or <code>data/</code> directory
               next to the executable and is storing all data in the data/ directory alongside the
@@ -255,9 +256,12 @@ export function PortableModeSettings() {
               {configFiles.map((f) => (
                 <li key={f.name} className="portable-mode__file-item">
                   {f.present ? (
-                    <CheckCircle2 size={13} className="portable-mode__file-icon--present" />
+                    <CheckCircle2
+                      size={ICON_SIZE.xs}
+                      className="portable-mode__file-icon--present"
+                    />
                   ) : (
-                    <XCircle size={13} className="portable-mode__file-icon--absent" />
+                    <XCircle size={ICON_SIZE.xs} className="portable-mode__file-icon--absent" />
                   )}
                   <span className="portable-mode__file-name">{f.name}</span>
                   <span className="portable-mode__file-status">
@@ -272,7 +276,7 @@ export function PortableModeSettings() {
 
       {!isPortableMode && (
         <div className="portable-mode__info-box">
-          <Info size={14} />
+          <Info size={ICON_SIZE.sm} />
           <span>
             termiHub is running in installed mode. To enable portable mode, place a{" "}
             <code>portable.marker</code> file or <code>data/</code> directory next to the executable
@@ -286,7 +290,11 @@ export function PortableModeSettings() {
           className={`portable-mode__result ${migrationResult.success ? "portable-mode__result--success" : "portable-mode__result--error"}`}
           data-testid="migration-result"
         >
-          {migrationResult.success ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
+          {migrationResult.success ? (
+            <CheckCircle2 size={ICON_SIZE.sm} />
+          ) : (
+            <XCircle size={ICON_SIZE.sm} />
+          )}
           {migrationResult.message}
         </div>
       )}

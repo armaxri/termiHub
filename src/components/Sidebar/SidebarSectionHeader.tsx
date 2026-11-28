@@ -1,6 +1,7 @@
 import React from "react";
 import { ChevronRight } from "lucide-react";
 import { TruncatedText } from "@/components/ui";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./SidebarSectionHeader.css";
 
 /** The disclosure state of a collapsible section. */
@@ -76,7 +77,7 @@ export const SidebarSectionHeader = React.forwardRef<HTMLElement, SidebarSection
             data-testid={collapse.testId}
           >
             <ChevronRight
-              size={12}
+              size={ICON_SIZE.xs}
               aria-hidden="true"
               className={
                 collapse.expanded

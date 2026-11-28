@@ -3,6 +3,7 @@ import { FileDown, Server, AlertTriangle } from "lucide-react";
 import { Modal, EmptyState } from "@/components/ui";
 import type { JumpHostConfig, SshConfigImportHost } from "@/types/connection";
 import { importSshConfigHosts } from "@/services/api";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./SshConfigImportDialog.css";
 
 interface SshConfigImportDialogProps {
@@ -81,7 +82,7 @@ export function SshConfigImportDialog({
       {state.status === "error" && (
         <EmptyState
           variant="panel"
-          icon={<AlertTriangle size={20} aria-hidden />}
+          icon={<AlertTriangle size={ICON_SIZE.lg} aria-hidden />}
           title="Could not read ~/.ssh/config."
           role="alert"
           data-testid="ssh-config-import-error"
@@ -91,7 +92,7 @@ export function SshConfigImportDialog({
       {state.status === "ready" && state.hosts.length === 0 && (
         <EmptyState
           variant="panel"
-          icon={<Server size={20} aria-hidden />}
+          icon={<Server size={ICON_SIZE.lg} aria-hidden />}
           title="No hosts with a ProxyJump were found in ~/.ssh/config."
           data-testid="ssh-config-import-empty"
         />
@@ -107,7 +108,7 @@ export function SshConfigImportDialog({
                 onClick={() => handleSelect(host)}
                 data-testid={`ssh-config-import-host-${host.name}`}
               >
-                <FileDown size={14} aria-hidden className="ssh-config-import__row-icon" />
+                <FileDown size={ICON_SIZE.sm} aria-hidden className="ssh-config-import__row-icon" />
                 <span className="ssh-config-import__row-text">
                   <span className="ssh-config-import__row-name">{host.name}</span>
                   <span className="ssh-config-import__row-chain">

@@ -45,6 +45,7 @@ import { isShortcutCategoryVisible } from "@/utils/experimentalTypes";
 import "./KeyboardSettings.css";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /**
  * Searchable text of a keybinding: its label, action id, category, and its
  * currently-effective combo string. Module-level so the {@link useListFilter}
@@ -463,7 +464,7 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
         <Button
           variant="secondary"
           size="sm"
-          icon={<RotateCcw size={14} />}
+          icon={<RotateCcw size={ICON_SIZE.sm} />}
           onClick={handleResetAll}
           data-testid="keyboard-settings-reset-all"
           title="Restore the built-in defaults, which are chosen to avoid common shell, tmux, vim, and SSH conflicts on Windows and Linux."
@@ -473,7 +474,7 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
         <Button
           variant="secondary"
           size="sm"
-          icon={<Download size={14} />}
+          icon={<Download size={ICON_SIZE.sm} />}
           onClick={() =>
             void exportCheatSheet(cheatSheetAllPlatforms ? "all" : "current", { experimental })
           }
@@ -497,7 +498,7 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
         <Button
           variant="secondary"
           size="sm"
-          icon={<FileDown size={14} />}
+          icon={<FileDown size={ICON_SIZE.sm} />}
           onClick={handleExportJson}
           data-testid="keyboard-settings-export-json"
           title="Export your custom keyboard shortcuts to a JSON file"
@@ -507,7 +508,7 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
         <Button
           variant="secondary"
           size="sm"
-          icon={<Upload size={14} />}
+          icon={<Upload size={ICON_SIZE.sm} />}
           onClick={handleImportJson}
           data-testid="keyboard-settings-import-json"
           title="Import keyboard shortcuts from a JSON file, replacing your custom bindings"

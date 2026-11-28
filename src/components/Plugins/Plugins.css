@@ -87,8 +87,8 @@
 
 .plugin-row__icon {
   display: inline-flex;
-  width: 15px;
-  height: 15px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
   flex: 0 0 auto;
   color: var(--text-secondary);
 }
@@ -246,8 +246,8 @@
 }
 
 .plugin-detail__item-icon {
-  width: 15px;
-  height: 15px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
   flex: 0 0 auto;
   color: var(--text-accent);
 }
@@ -312,8 +312,8 @@
 }
 
 .plugin-detail__error-icon {
-  width: 16px;
-  height: 16px;
+  width: var(--icon-md);
+  height: var(--icon-md);
   color: var(--color-error);
   flex: 0 0 auto;
   margin-top: 1px;
@@ -353,8 +353,8 @@
 }
 
 .plugin-install__banner-icon {
-  width: 16px;
-  height: 16px;
+  width: var(--icon-md);
+  height: var(--icon-md);
   color: var(--banner-tone);
   flex: 0 0 auto;
   margin-top: 1px;
@@ -401,8 +401,8 @@
 }
 
 .plugin-install__native-icon {
-  width: 16px;
-  height: 16px;
+  width: var(--icon-md);
+  height: var(--icon-md);
   color: var(--color-warning);
   flex: 0 0 auto;
   margin-top: 1px;
@@ -453,8 +453,8 @@
 }
 
 .plugin-install__file svg {
-  width: 14px;
-  height: 14px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
   flex: 0 0 auto;
 }
 
@@ -476,8 +476,8 @@
 }
 
 .plugin-install__perm-icon {
-  width: 16px;
-  height: 16px;
+  width: var(--icon-md);
+  height: var(--icon-md);
   color: var(--color-warning);
   flex: 0 0 auto;
   margin-top: 1px;
@@ -516,8 +516,8 @@
 }
 
 .plugin-access-diff__icon {
-  width: 14px;
-  height: 14px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
   flex: 0 0 auto;
   margin-top: 1px;
   color: var(--banner-tone, var(--text-secondary));
@@ -611,8 +611,8 @@
 }
 
 .plugin-update__icon {
-  width: 16px;
-  height: 16px;
+  width: var(--icon-md);
+  height: var(--icon-md);
   flex: 0 0 auto;
   margin-top: 1px;
 }
@@ -667,8 +667,8 @@
 }
 
 .plugin-platforms__icon {
-  width: 14px;
-  height: 14px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
   flex: 0 0 auto;
   color: var(--text-secondary);
 }

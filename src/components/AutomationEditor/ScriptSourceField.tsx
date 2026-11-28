@@ -11,6 +11,7 @@ import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { errorMessage } from "@/utils/errorMessage";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface ScriptSourceFieldProps {
   /** Unique id/testid suffix for this step's fields. */
   path: string;
@@ -94,7 +95,7 @@ export function ScriptSourceField({
       {sourcePath !== undefined && (
         <>
           <div className="automation-step__source-path">
-            <FileText size={12} aria-hidden="true" />
+            <FileText size={ICON_SIZE.xs} aria-hidden="true" />
             <code data-testid={`automation-editor-step-source-path-${path}`}>{sourcePath}</code>
           </div>
           <p
@@ -108,13 +109,13 @@ export function ScriptSourceField({
           >
             {confirmed ? (
               <>
-                <ShieldCheck size={12} aria-hidden="true" /> Read from this file on every run.
-                Editing the script below detaches the file.
+                <ShieldCheck size={ICON_SIZE.xs} aria-hidden="true" /> Read from this file on every
+                run. Editing the script below detaches the file.
               </>
             ) : (
               <>
-                <ShieldAlert size={12} aria-hidden="true" /> Not confirmed on this machine. This
-                step will not read the file or run until you confirm or re-pick it.
+                <ShieldAlert size={ICON_SIZE.xs} aria-hidden="true" /> Not confirmed on this
+                machine. This step will not read the file or run until you confirm or re-pick it.
               </>
             )}
           </p>

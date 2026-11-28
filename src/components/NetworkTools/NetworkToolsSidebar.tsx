@@ -44,6 +44,7 @@ import {
 } from "./monitorRow";
 import { errorMessage } from "@/utils/errorMessage";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /**
  * How often the sidebar re-evaluates monitor ages/staleness. The backend poller
  * only emits on each check, so without this tick a long-interval monitor's
@@ -65,7 +66,7 @@ function QuickAction({ label, tool }: QuickActionProps) {
       size="sm"
       fullWidth
       className="network-sidebar__list-action"
-      icon={<Play size={12} />}
+      icon={<Play size={ICON_SIZE.xs} />}
       onClick={() => openNetworkDiagnosticTab(tool)}
       data-testid={`network-quick-action-${tool}`}
     >
@@ -171,7 +172,7 @@ function MonitorRow({
           className="network-sidebar__monitor-stale"
           data-testid={`monitor-stale-${config.id}`}
         >
-          <AlertTriangle size={10} aria-hidden="true" />
+          <AlertTriangle size={ICON_SIZE.xs} aria-hidden="true" />
           {marker.label}
         </span>
       </Tooltip>
@@ -215,7 +216,7 @@ function MonitorRow({
               aria-label={`Open monitor ${label}`}
               aria-describedby={marker ? markerId : undefined}
               data-testid={`monitor-open-${config.id}`}
-              icon={<Activity size={12} />}
+              icon={<Activity size={ICON_SIZE.xs} />}
               onClick={act(onOpen)}
             />
           </Tooltip>
@@ -226,7 +227,7 @@ function MonitorRow({
                 size="sm"
                 iconOnly
                 aria-label="Pause monitor"
-                icon={<Pause size={12} />}
+                icon={<Pause size={ICON_SIZE.xs} />}
                 onClick={act(onPause)}
               />
             </Tooltip>
@@ -238,7 +239,7 @@ function MonitorRow({
                 size="sm"
                 iconOnly
                 aria-label="Resume monitor"
-                icon={<Play size={12} />}
+                icon={<Play size={ICON_SIZE.xs} />}
                 onClick={act(onResume)}
               />
             </Tooltip>
@@ -250,7 +251,7 @@ function MonitorRow({
                 size="sm"
                 iconOnly
                 aria-label="Stop monitor"
-                icon={<StopCircle size={12} />}
+                icon={<StopCircle size={ICON_SIZE.xs} />}
                 onClick={act(onStop)}
               />
             </Tooltip>
@@ -261,7 +262,7 @@ function MonitorRow({
               size="sm"
               iconOnly
               aria-label="Delete monitor"
-              icon={<Trash2 size={12} />}
+              icon={<Trash2 size={ICON_SIZE.xs} />}
               onClick={act(onRemove)}
             />
           </Tooltip>
@@ -272,7 +273,11 @@ function MonitorRow({
           {/* Where it runs, always; a long name is cut at its end (F-009 round 2). */}
           <Tooltip content={tf("monitor.tooltip.runsOn", { machine: where })} side="right">
             <span className="service-row__machine" data-testid={`monitor-machine-${config.id}`}>
-              <HardDrive size={11} className="service-row__machine-icon" aria-hidden="true" />
+              <HardDrive
+                size={ICON_SIZE.xs}
+                className="service-row__machine-icon"
+                aria-hidden="true"
+              />
               <span className="network-sidebar__monitor-where">{where}</span>
             </span>
           </Tooltip>
@@ -486,7 +491,7 @@ export function NetworkToolsSidebar() {
               size="sm"
               iconOnly
               aria-label="Refresh monitors"
-              icon={<RefreshCw size={11} />}
+              icon={<RefreshCw size={ICON_SIZE.xs} />}
               onClick={refreshMonitors}
             />
           </Tooltip>
@@ -513,7 +518,7 @@ export function NetworkToolsSidebar() {
           size="sm"
           fullWidth
           className="network-sidebar__list-action"
-          icon={<Plus size={12} />}
+          icon={<Plus size={ICON_SIZE.xs} />}
           onClick={() => openNetworkDiagnosticTab("http-monitor")}
           data-testid="network-new-monitor"
         >

@@ -17,6 +17,7 @@ import { sessionTypeBadge } from "@/utils/sessionHistoryTitle";
 import { newId } from "@/services/transport/ids";
 import { errorMessage } from "@/utils/errorMessage";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Sentinel for the "No folder" option (Radix Select forbids empty-string item values). */
 const NO_FOLDER = "__no_folder__";
 
@@ -205,7 +206,7 @@ export function SaveAsConnectionDialog({
       </Field>
       <Field label="Icon" htmlFor="save-as-connection-icon-picker">
         <div className="recent-sessions__save-icon-row">
-          {icon && <IconByName name={icon} size={18} />}
+          {icon && <IconByName name={icon} size={ICON_SIZE.md} />}
           <Button
             id="save-as-connection-icon-picker"
             variant="secondary"

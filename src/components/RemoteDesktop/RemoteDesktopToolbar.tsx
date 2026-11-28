@@ -15,6 +15,7 @@ import { SCALE_MODE_LABELS } from "@/types/remoteDesktop";
 import { monitorLabel } from "./monitorLayout";
 import { useReleaseChordLabel } from "./releaseChord";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface RemoteDesktopToolbarProps {
   /** Host label (badge). */
   host: string;
@@ -118,7 +119,7 @@ export function RemoteDesktopToolbar({
       data-revealed={revealed ? "true" : undefined}
     >
       <span className="rd-toolbar__host">
-        <Monitor size={14} />
+        <Monitor size={ICON_SIZE.sm} />
         {host}
       </span>
       {!viewOnly &&
@@ -129,7 +130,7 @@ export function RemoteDesktopToolbar({
             data-testid="remote-desktop-release-hint"
             data-state="captured"
           >
-            <Keyboard size={14} aria-hidden />
+            <Keyboard size={ICON_SIZE.sm} aria-hidden />
             Keyboard to remote · <kbd>{releaseChord}</kbd> release
           </span>
         ) : (
@@ -152,7 +153,7 @@ export function RemoteDesktopToolbar({
           variant="ghost"
           size="sm"
           iconOnly
-          icon={<Keyboard size={14} />}
+          icon={<Keyboard size={ICON_SIZE.sm} />}
           title="Send Ctrl+Alt+Del"
           onClick={onSendCtrlAltDel}
           data-testid="remote-desktop-cad"
@@ -162,7 +163,7 @@ export function RemoteDesktopToolbar({
         variant="ghost"
         size="sm"
         iconOnly
-        icon={<Clipboard size={14} />}
+        icon={<Clipboard size={ICON_SIZE.sm} />}
         title="Clipboard"
         onClick={onToggleClipboard}
         data-testid="remote-desktop-clipboard-btn"
@@ -173,7 +174,7 @@ export function RemoteDesktopToolbar({
             variant="ghost"
             size="sm"
             iconOnly
-            icon={<FolderOpen size={14} />}
+            icon={<FolderOpen size={ICON_SIZE.sm} />}
             title={filesTitle}
             aria-label="Files"
             aria-pressed={filesOpen}
@@ -190,7 +191,7 @@ export function RemoteDesktopToolbar({
       <Button
         variant="ghost"
         size="sm"
-        icon={<Scaling size={14} />}
+        icon={<Scaling size={ICON_SIZE.sm} />}
         title={scaleTitle}
         aria-label={scaleTitle}
         onClick={onCycleScaleMode}
@@ -203,7 +204,7 @@ export function RemoteDesktopToolbar({
         <Button
           variant="ghost"
           size="sm"
-          icon={<Columns2 size={14} />}
+          icon={<Columns2 size={ICON_SIZE.sm} />}
           title={viewportTitle(monitors, viewport)}
           aria-label={viewportTitle(monitors, viewport)}
           onClick={onCycleViewport}
@@ -216,7 +217,7 @@ export function RemoteDesktopToolbar({
         variant="ghost"
         size="sm"
         iconOnly
-        icon={<Maximize size={14} />}
+        icon={<Maximize size={ICON_SIZE.sm} />}
         title="Fullscreen"
         onClick={onToggleFullscreen}
         data-testid="remote-desktop-fullscreen"
@@ -225,14 +226,14 @@ export function RemoteDesktopToolbar({
         variant="danger"
         size="sm"
         iconOnly
-        icon={<LogOut size={14} />}
+        icon={<LogOut size={ICON_SIZE.sm} />}
         title="Disconnect"
         onClick={onDisconnect}
         data-testid="remote-desktop-disconnect"
       />
       {viewOnly && (
         <span className="rd-toolbar__badge" data-testid="remote-desktop-viewonly">
-          <EyeOff size={14} />
+          <EyeOff size={ICON_SIZE.sm} />
           View only
         </span>
       )}

@@ -3,6 +3,7 @@ import { Ban, Check, CircleAlert, Clock, X } from "lucide-react";
 import { ContentOverlay } from "./ContentOverlay";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import { formatElapsed } from "@/utils/formatters";
+import { ICON_SIZE } from "./iconSize";
 import "./ui.css";
 
 /** Where one connect stage stands. */
@@ -89,9 +90,9 @@ const RING_R = 28;
 const RING_C = 2 * Math.PI * RING_R;
 
 const RESTING_ICON: Record<"failed" | "timeout" | "aborted", React.ReactNode> = {
-  failed: <CircleAlert size={26} aria-hidden />,
-  timeout: <Clock size={26} aria-hidden />,
-  aborted: <Ban size={26} aria-hidden />,
+  failed: <CircleAlert size={ICON_SIZE.xl} aria-hidden />,
+  timeout: <Clock size={ICON_SIZE.xl} aria-hidden />,
+  aborted: <Ban size={ICON_SIZE.xl} aria-hidden />,
 };
 
 const RESTING_HEADING: Record<"failed" | "timeout" | "aborted", string> = {
@@ -187,8 +188,8 @@ function StageStepper({ stages }: { stages: ConnectStage[] }) {
           aria-current={s.state === "active" ? "step" : undefined}
         >
           <span className="ui-connect-progress__step-dot" aria-hidden>
-            {s.state === "done" && <Check size={10} strokeWidth={3} />}
-            {s.state === "failed" && <X size={10} strokeWidth={3} />}
+            {s.state === "done" && <Check size={ICON_SIZE.xs} strokeWidth={3} />}
+            {s.state === "failed" && <X size={ICON_SIZE.xs} strokeWidth={3} />}
           </span>
           <span className="ui-connect-progress__step-label">{s.label}</span>
         </li>

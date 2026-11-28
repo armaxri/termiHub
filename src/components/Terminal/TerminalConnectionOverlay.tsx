@@ -34,6 +34,7 @@ import { ConnectErrorDetails, ConnectFailureHint } from "./ConnectFailure";
 import { markTerminalRefocusPending } from "./terminalRefocus";
 import { MAX_AGENT_SPAWN_ATTEMPTS } from "./terminalConnectionPlan";
 import { reconnectAttemptLabel } from "@/utils/reconnectStatus";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./TerminalConnectionOverlay.css";
 
 interface TerminalConnectionOverlayProps {
@@ -225,7 +226,7 @@ export function TerminalConnectionOverlay({
     <Button
       size="sm"
       variant="secondary"
-      icon={<Ban size={14} />}
+      icon={<Ban size={ICON_SIZE.sm} />}
       onClick={handleAbort}
       data-testid="terminal-connection-abort-btn"
     >
@@ -236,7 +237,7 @@ export function TerminalConnectionOverlay({
     <Button
       size="sm"
       variant="secondary"
-      icon={<Zap size={14} />}
+      icon={<Zap size={ICON_SIZE.sm} />}
       onClick={onClick}
       data-testid="terminal-connection-retry-now-btn"
     >
@@ -396,7 +397,7 @@ export function TerminalConnectionOverlay({
               <Button
                 size="sm"
                 variant="primary"
-                icon={<KeyRound size={14} />}
+                icon={<KeyRound size={ICON_SIZE.sm} />}
                 onClick={handleRetry}
                 data-testid="terminal-connection-review-key-btn"
               >
@@ -406,7 +407,7 @@ export function TerminalConnectionOverlay({
               <Button
                 size="sm"
                 variant="primary"
-                icon={<RefreshCw size={14} />}
+                icon={<RefreshCw size={ICON_SIZE.sm} />}
                 onClick={handleRetry}
                 data-testid="terminal-connection-retry-btn"
               >
@@ -417,7 +418,7 @@ export function TerminalConnectionOverlay({
               <Button
                 size="sm"
                 variant="secondary"
-                icon={<Pencil size={14} />}
+                icon={<Pencil size={ICON_SIZE.sm} />}
                 onClick={handleEdit}
                 data-testid="terminal-connection-edit-btn"
               >
@@ -427,7 +428,7 @@ export function TerminalConnectionOverlay({
             <Button
               size="sm"
               variant="ghost"
-              icon={<X size={14} />}
+              icon={<X size={ICON_SIZE.sm} />}
               onClick={handleCancel}
               data-testid="terminal-connection-cancel-btn"
             >

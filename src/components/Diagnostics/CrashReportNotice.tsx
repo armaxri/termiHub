@@ -15,6 +15,7 @@ import {
   useBottomBannerStore,
 } from "@/components/BottomBanners";
 import { errorMessage } from "@/utils/errorMessage";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./Diagnostics.css";
 
 /**
@@ -97,7 +98,7 @@ export function CrashReportNotice() {
       tone="warning"
       role="status"
       data-testid="crash-report-notice"
-      icon={<AlertTriangle size={16} />}
+      icon={<AlertTriangle size={ICON_SIZE.md} />}
       title="termiHub closed unexpectedly last time."
       description="A crash report was saved on this computer. Nothing was sent anywhere."
       footnote={

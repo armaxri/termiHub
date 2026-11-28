@@ -13,6 +13,7 @@ import { useElementWidth } from "@/hooks/useElementWidth";
 import { getBasename } from "@/utils/paths";
 import { ActionMenuEntry, InlineMenuButton, keepFieldFocus } from "./FileBrowserActionMenu";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Menu section of a {@link FileBrowserAction}; sections are split by separators. */
 export type FileBrowserActionGroup = "navigate" | "terminal" | "create" | "view" | "open";
 
@@ -242,7 +243,7 @@ export function FileBrowserActions({
               variant="ghost"
               size="sm"
               iconOnly
-              icon={<MoreHorizontal size={14} />}
+              icon={<MoreHorizontal size={ICON_SIZE.sm} />}
               aria-label={overflowLabel}
               className="file-browser__actions-overflow"
               data-testid="file-browser-more-actions"
@@ -268,7 +269,7 @@ export function FileBrowserActions({
               title={folder}
               data-testid="file-browser-more-menu-folder"
             >
-              <Folder size={14} aria-hidden="true" />
+              <Folder size={ICON_SIZE.sm} aria-hidden="true" />
               <span className="file-browser__menu-folder-name">{getBasename(folder)}</span>
             </MenuLabel>
           )}

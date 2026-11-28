@@ -2,6 +2,7 @@ import { Pause, Play, X, RotateCw, ListX, FolderOpen } from "lucide-react";
 import { Button, Tooltip } from "@/components/ui";
 import type { TransferQueueState } from "@/types/transfer";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Props for {@link TransferControls}. */
 export interface TransferControlsProps {
   /** Current lifecycle state, driving which controls are shown. */
@@ -25,7 +26,7 @@ export interface TransferControlsProps {
   revealLabel?: string;
 }
 
-const ICON = 14;
+const ICON = ICON_SIZE.sm;
 
 /**
  * State-appropriate action buttons for one Transfer Queue row (#1337).

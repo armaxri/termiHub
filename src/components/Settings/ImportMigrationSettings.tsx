@@ -18,6 +18,7 @@ import "./ImportMigrationSettings.css";
 import { AutomationFileSettings } from "./AutomationFileSettings";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 type Discovery = { status: "checking" } | { status: "found"; path: string } | { status: "none" };
 
 /**
@@ -120,7 +121,7 @@ export function ImportMigrationSettings() {
           <Button
             variant="secondary"
             size="sm"
-            icon={<FileDown size={14} />}
+            icon={<FileDown size={ICON_SIZE.sm} />}
             onClick={() => setSshImportOpen(true)}
             data-testid="import-migration-ssh-config-btn"
           >
@@ -139,7 +140,7 @@ export function ImportMigrationSettings() {
           <Button
             variant="secondary"
             size="sm"
-            icon={<FileSpreadsheet size={14} />}
+            icon={<FileSpreadsheet size={ICON_SIZE.sm} />}
             onClick={() => void handleImportCsv()}
             data-testid="import-migration-csv-btn"
           >
@@ -158,7 +159,7 @@ export function ImportMigrationSettings() {
           <Button
             variant="secondary"
             size="sm"
-            icon={<Upload size={14} />}
+            icon={<Upload size={ICON_SIZE.sm} />}
             onClick={() => void handleImportJson()}
             data-testid="import-migration-json-import-btn"
           >
@@ -167,7 +168,7 @@ export function ImportMigrationSettings() {
           <Button
             variant="secondary"
             size="sm"
-            icon={<Download size={14} />}
+            icon={<Download size={ICON_SIZE.sm} />}
             onClick={() => setExportDialogOpen(true)}
             data-testid="import-migration-json-export-btn"
           >
@@ -200,7 +201,7 @@ export function ImportMigrationSettings() {
           <Button
             variant="secondary"
             size="sm"
-            icon={<FileInput size={14} />}
+            icon={<FileInput size={ICON_SIZE.sm} />}
             onClick={() => setMobaxtermImportOpen(true)}
             data-testid="import-migration-mobaxterm-btn"
           >
@@ -219,7 +220,7 @@ export function ImportMigrationSettings() {
           <Button
             variant="secondary"
             size="sm"
-            icon={<Archive size={14} />}
+            icon={<Archive size={ICON_SIZE.sm} />}
             onClick={() => openSettingsTab({ category: "backup" })}
             data-testid="import-migration-backup-link"
           >

@@ -4,6 +4,7 @@ import { Tooltip } from "@/components/ui";
 import { useScheduleTrouble } from "@/components/Schedules/useScheduleTrouble";
 import { showSchedulesInSidebar } from "@/components/AutomationSidebar/automationSections";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /**
  * Status-bar indicator for scheduled runs (PROD-043): "N schedules on"
  * while any schedule is enabled — scheduled runs type into remote hosts
@@ -37,7 +38,7 @@ export function ScheduleStatus() {
         data-testid="schedule-status"
         onClick={showSchedulesInSidebar}
       >
-        <CalendarClock size={12} />
+        <CalendarClock size={ICON_SIZE.xs} />
         {label}
       </button>
     </Tooltip>

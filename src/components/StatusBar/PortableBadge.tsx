@@ -1,6 +1,7 @@
 import { HardDrive } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /**
  * Status bar badge shown when termiHub is running in portable mode.
  * Displays the portable data directory path as a tooltip on hover.
@@ -17,7 +18,7 @@ export function PortableBadge() {
       title={portableDataDir ? `Portable mode — data: ${portableDataDir}` : "Portable mode"}
       data-testid="portable-badge"
     >
-      <HardDrive size={12} />
+      <HardDrive size={ICON_SIZE.xs} />
       Portable
     </span>
   );
