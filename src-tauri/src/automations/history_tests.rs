@@ -312,5 +312,8 @@ fn manager_bounds_the_starters_name() {
         ..run("big", &at(0, 0))
     };
     let listed = manager.record_at(big, now()).unwrap();
-    assert_eq!(listed[0].started_by_name.as_ref().unwrap().chars().count(), 200);
+    assert_eq!(
+        listed[0].started_by_name.as_ref().unwrap().chars().count(),
+        200
+    );
 }
