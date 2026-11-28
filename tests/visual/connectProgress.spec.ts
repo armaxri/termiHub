@@ -29,6 +29,36 @@ test("the connect-progress prototype renders every phase in Dark and Light", asy
     const cells = page.locator("[data-testid=connect-progress-cell]");
     await expect(cells, `${theme}: one panel per phase`).toHaveCount(8);
 
+    // No blank card (#6167): every phase shows a heading and something under it.
+    // A connecting card fades in after a short grace delay, so poll until the
+    // gallery settles; a card that stays blank fails.
+    const blankCards = () =>
+      page.evaluate(() =>
+        Array.from(document.querySelectorAll<HTMLElement>("[data-testid=connect-progress-cell]"))
+          .map((cell) => {
+            const name = cell.querySelector("figcaption")?.textContent?.trim() || "?";
+            const overlay = cell.querySelector<HTMLElement>(".ui-content-overlay");
+            const heading = overlay?.querySelector<HTMLElement>(".ui-content-overlay__heading");
+            const visible = (el: HTMLElement | null | undefined) =>
+              !!el &&
+              el.getBoundingClientRect().height > 0 &&
+              getComputedStyle(el).visibility !== "hidden" &&
+              Number(getComputedStyle(el).opacity) > 0;
+            const headingText = heading?.innerText.trim() ?? "";
+            const bodyText = overlay ? overlay.innerText.replace(headingText, "").trim() : "";
+            const problems = [
+              !visible(overlay) && "no visible card",
+              (!visible(heading) || headingText === "") && "no heading",
+              bodyText === "" && "no body",
+            ].filter(Boolean);
+            return problems.length ? `${name}: ${problems.join(", ")}` : null;
+          })
+          .filter((problem): problem is string => problem !== null)
+      );
+    await expect
+      .poll(blankCards, { message: `${theme}: every card has a heading and a body`, timeout: 5000 })
+      .toEqual([]);
+
     const overflowing = await page.evaluate(() =>
       Array.from(document.querySelectorAll<HTMLElement>(".ui-content-overlay"))
         .filter(

@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Callable, Iterable, Mapping, Optional, Sequence
 from urllib.parse import unquote, urlparse
 
-from .base import OsInput, OsInputUnavailable, OsWindow, drag_path
+from .base import HostUnavailable, OsInput, OsInputUnavailable, OsWindow, drag_path
 
 _GTK_SCRIPT = r"""
 import json, os, shutil, sys
@@ -130,7 +130,7 @@ def gtk_python() -> str:
         python = candidate if os.path.isabs(candidate) else shutil.which(candidate)
         if python and os.path.exists(python) and _has_gtk(python):
             return python
-    raise OsInputUnavailable(
+    raise HostUnavailable(
         "no Python with PyGObject/GTK 3 for the XDND partner windows "
         "(apt install python3-gi gir1.2-gtk-3.0)"
     )

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   ArrowRight,
@@ -82,6 +82,10 @@ export function CloseWindowDecisionDialog() {
   const endStartingConnects = useAppStore((s) => s.endStartingConnects);
   const moveWindowSessionsToWindow = useAppStore((s) => s.moveWindowSessionsToWindow);
   const [targetLabel, setTargetLabel] = useState<string | undefined>(undefined);
+  // Move is the safe, primary action (multi-window concept, #6164): the dialog
+  // starts on it, so Enter keeps the sessions. Without it, the Modal starts on
+  // the first control of the body, never on the destructive one.
+  const moveRef = useRef<HTMLButtonElement>(null);
 
   if (!request) return null;
 
@@ -223,6 +227,7 @@ export function CloseWindowDecisionDialog() {
               } would discard.`
       }
       data-testid="close-window-decision-dialog"
+      initialFocusRef={showMove && !moveBlocked ? moveRef : undefined}
       footer={
         <>
           <Button
@@ -257,6 +262,7 @@ export function CloseWindowDecisionDialog() {
           </Button>
           {showMove && (
             <Button
+              ref={moveRef}
               variant="primary"
               onClick={handleMove}
               disabled={moveBlocked}

@@ -379,10 +379,21 @@ class Driver:
         return response.get("value")
 
     # ── Interaction ──────────────────────────────────────────────────────────
-    def click(self, test_id: str) -> None:
-        self._call({"action": "click", "testId": test_id})
+    def click(self, test_id: str, force: bool = False) -> None:
+        """Click the element with ``test_id`` as a user would (#6149).
 
-    def double_click(self, test_id: str) -> None:
+        The app waits briefly for the element to mount and become clickable,
+        then refuses — naming the reason — a target that is disabled,
+        ``aria-disabled``, inert, hidden or covered at its centre. Pass
+        ``force=True`` only to click such a control on purpose, e.g. an invalid
+        form's aria-disabled Save, which then shows every reason (#5917).
+        """
+        command: dict = {"action": "click", "testId": test_id}
+        if force:
+            command["force"] = True
+        self._call(command)
+
+    def double_click(self, test_id: str, force: bool = False) -> None:
         """Double-click the element with ``test_id`` — the "activate" gesture.
 
         Opens a connection's session from the sidebar (``ConnectionList``'s
@@ -390,9 +401,13 @@ class Driver:
         prompt), enters a directory in the file browser, or opens a file in the
         editor. A single :meth:`click` cannot reach ``onDoubleClick`` handlers;
         this dispatches the full sequence a real double-click produces (two click
-        rounds + ``dblclick``).
+        rounds + ``dblclick``). It refuses what :meth:`click` refuses, and takes
+        the same ``force``.
         """
-        self._call({"action": "doubleClick", "testId": test_id})
+        command: dict = {"action": "doubleClick", "testId": test_id}
+        if force:
+            command["force"] = True
+        self._call(command)
 
     def resize_window(self, width: float, height: float) -> None:
         """Resize the app window to ``width`` × ``height`` logical pixels.

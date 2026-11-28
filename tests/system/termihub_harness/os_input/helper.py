@@ -21,7 +21,7 @@ import threading
 import time
 from typing import Optional
 
-from .base import OsInputUnavailable
+from .base import HostUnavailable, OsInputUnavailable
 
 _TK_SCRIPT = r"""
 import json, sys, tkinter as tk
@@ -83,7 +83,7 @@ def helper_command(geometry: tuple[int, int, int, int]) -> list[str]:
     for python in (sys.executable, shutil.which("python3")):
         if python and _has_tkinter(python):
             return [python, "-c", _TK_SCRIPT, *args]
-    raise OsInputUnavailable(
+    raise HostUnavailable(
         "no Python with tkinter for the helper window (apt install python3-tk)"
     )
 

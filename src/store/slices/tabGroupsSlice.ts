@@ -1,4 +1,5 @@
 import { StateCreator } from "zustand";
+import { recordClosedTab, reopenPayloadForTab } from "@/utils/closedTabStack";
 
 import type { AppState } from "../appStore";
 import { beginRestoreGuard, collectRestoreCohort } from "../restoreHelpers";
@@ -19,6 +20,9 @@ import {
   tabContentFromGroups,
 } from "../layoutHelpers";
 import { TerminalTab, TabGroup } from "@/types/terminal";
+import type { DropEdge } from "@/types/terminal";
+import { toast } from "@/components/ui";
+import { moveTabAcrossGroups } from "../crossGroupMove";
 import {
   openWindow,
   releaseSession,
@@ -35,7 +39,9 @@ import { buildTabGroupsFromWorkspace } from "@/utils/workspaceLayout";
 import { newId } from "@/services/transport/ids";
 import { frontendLog } from "@/utils/frontendLog";
 import {
+  canSplitLeaf,
   createLeafPanel,
+  edgeToSplit,
   findLeaf,
   getAllLeaves,
   updateLeaf,
@@ -89,6 +95,21 @@ export interface TabGroupsSlice {
 
   /** Move a tab from the active group into a different tab group. */
   moveTabToGroup: (tabId: string, fromPanelId: string, targetGroupId: string) => void;
+
+  /**
+   * Move a tab out of the group a drag started in, after a dwell on a chip
+   * switched the view (#6201): into a panel of the visible group (stacked on
+   * `center`, split off on an edge), or into another group's first panel.
+   * A no-op when the source is the visible group.
+   */
+  moveTabToGroupPanel: (
+    tabId: string,
+    fromGroupId: string,
+    fromPanelId: string,
+    toGroupId: string,
+    toPanelId: string | null,
+    edge: DropEdge
+  ) => void;
 
   /** Create a new tab group and move a tab from the active group into it atomically. */
   addTabGroupWithTab: (tabId: string, fromPanelId: string) => void;
@@ -185,6 +206,8 @@ export const createTabGroupsSlice: StateCreator<AppState, [], [], TabGroupsSlice
       const releasedSessions = new Set<string>();
       const closingTabIdSet = new Set(closingTabIds);
       for (const tab of closingTabs) {
+        // Reopen closed tab can bring it back (#6161).
+        recordClosedTab(reopenPayloadForTab(tab));
         // Lifecycle record + broadcast membership (#4313).
         releaseTabFromSharedRegions(get, tab.id);
         // On-disconnect workflow triggers (#3791) — checked before the tab
@@ -329,6 +352,40 @@ export const createTabGroupsSlice: StateCreator<AppState, [], [], TabGroupsSlice
         postLayoutSnapshot(prev, next),
         layoutCoupledRollback(prev, next)
       );
+    },
+
+    moveTabToGroupPanel: (tabId, fromGroupId, fromPanelId, toGroupId, toPanelId, edge) => {
+      const prev = get();
+      const pre = currentLayoutSnapshot(prev);
+      const layout = curLayout();
+      // The same soft guard as an in-group edge drop (PROD-060).
+      if (
+        toGroupId === layout.activeTabGroupId &&
+        toPanelId !== null &&
+        edgeToSplit(edge) &&
+        !canSplitLeaf(layout.rootPanel, toPanelId)
+      ) {
+        toast.error("Pane too small to split further");
+        return;
+      }
+      let moved = false;
+      const next = setLayoutLocal((state) => {
+        const result = moveTabAcrossGroups(state, {
+          tabId,
+          fromGroupId,
+          fromPanelId,
+          toGroupId,
+          toPanelId,
+          edge,
+        });
+        if (!result) return state;
+        moved = true;
+        return result;
+      });
+      if (!moved) return;
+      // One settled-tree replace, as for moveTabToGroup (#2712).
+      mirrorLayoutMove(pre, postLayoutSnapshot(prev, next));
+      get().refreshBroadcastMembership();
     },
 
     moveTabToGroup: (tabId, fromPanelId, targetGroupId) => {

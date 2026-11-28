@@ -428,6 +428,7 @@ The most-used default shortcuts:
 | New local terminal             | `` Cmd+Shift+` ``             | `` Ctrl+Shift+` ``                  |
 | Close active tab               | `Cmd+W`                       | `Ctrl+Shift+W`                      |
 | Next / previous tab            | `Ctrl+Tab` / `Ctrl+Shift+Tab` | `Ctrl+Tab` / `Ctrl+Shift+Tab`       |
+| Reopen closed tab              | `Ctrl+Cmd+T`                  | `Alt+Shift+T`                       |
 | Command palette                | `Cmd+P` / `Cmd+Shift+P`       | `Ctrl+Shift+P`                      |
 | Find in terminal               | `Cmd+F`                       | `Ctrl+Shift+F`                      |
 | Jump to previous / next prompt | `Cmd+Up` / `Cmd+Down`         | `Ctrl+Shift+Up` / `Ctrl+Shift+Down` |

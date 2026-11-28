@@ -786,14 +786,17 @@ jobs:
         # worker, the harness uses the uncontended deadlines.
         #
         # !cancelled(): runs even when the bulk step failed, so a bulk red never
-        # hides these grades. Same --reruns policy as the bulk step. Own skip
+        # hides these grades. --reruns 0 (#6148): a grade is honest on its first
+        # attempt, and an environment refusal (no injection allowed, a foreign
+        # termiHub, a host that cannot inject) ends the step once, naming the
+        # lane and the cause, instead of failing every test. Own skip
         # guard lanes (`os-input-macos` / `os-input-windows`): the platform-only
         # OS-input skips are counted here, not in the bulk baselines.
         if: runner.os != 'Linux' && !cancelled()
         shell: bash
         env:
           TERMIHUB_SKIP_GUARD_LANE: ${{ matrix.os == 'macos-latest' && 'os-input-macos' || 'os-input-windows' }}
-        run: ./tests/system/pytest.sh -m integration tests/test_os_input_desktop.py tests/test_os_input_keyboard.py tests/test_os_input_pointer.py tests/test_os_input_macos_app.py tests/test_os_input_native_drag.py -n 1 --dist loadscope -v --durations=25 --reruns 2 --reruns-delay 1 -r aR --rerun-show-tracebacks
+        run: ./tests/system/pytest.sh -m integration tests/test_os_input_desktop.py tests/test_os_input_keyboard.py tests/test_os_input_pointer.py tests/test_os_input_macos_app.py tests/test_os_input_native_drag.py -n 1 --dist loadscope -v --durations=25 --reruns 0 -r aR
 
       - name: macOS Quit delivery probe (debug bundle)
         # The macOS release smoke quits the installed app by clicking its own

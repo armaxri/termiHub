@@ -265,11 +265,13 @@ class TestProductRunAgentRows(
     def test_30_not_installed_is_a_next_step(self):
         with self.step(
             "agent-rows.not-installed",
-            "An agent whose host has no agent yet: a neutral dialog naming the host, starting "
-            "on Set up agent; a neutral row with Set up agent (#5851, R-094, R-095)",
-            expect="#5851: the dialog 'Agent not installed on 127.0.0.1' with a blue info icon "
-            "(no red triangle) and Set up agent focused; then the row with a grey dot, an "
-            "upload icon and 'The agent is not installed on … yet. Set up agent'",
+            "An agent whose host has no agent yet: a neutral row with Set up agent and no "
+            "dialog opened by itself; its Details opens a neutral dialog naming the host, "
+            "starting on Set up agent (#5851, R-094, R-095, #6184)",
+            expect="#5851: the dialog 'Agent not installed on 127.0.0.1' (opened from the "
+            "row's Details) with a blue info icon (no red triangle) and Set up agent focused; "
+            "then the row with a grey dot, an upload icon and 'The agent is not installed on "
+            "… yet. Set up agent'",
         ):
             native = self.need_native()
             name = f"Missing agent {self.tag}"
@@ -278,7 +280,10 @@ class TestProductRunAgentRows(
             missing = native.session_home / "agent-rows-missing" / "termihub-agent"
             self.set_agent_path(agent["id"], str(missing))
             self.connect_agent(name)
-            title = self.wait_connection_error_title()
+            self.wait_connect_failure(name)
+            # #6184: the row says it; no dialog opens by itself.
+            auto_opened = self.connection_error_present()
+            title = self.open_connect_failure_details(name)
             dialog = {
                 "title": title.strip(),
                 "icon": self.driver.get_attribute("connection-error-icon", "data-icon"),
@@ -296,6 +301,8 @@ class TestProductRunAgentRows(
             self.dismiss_connection_error_if_present()
             problems = not_installed_dialog_problems(dialog, host=SSH_HOST,
                                                      enter_opens_setup=opened)
+            if auto_opened:
+                problems.append("the error dialog opened by itself after the connect (#6184)")
 
             self._expand(agent["id"])
             row = read_agent_row(self.driver, agent["id"])

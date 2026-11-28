@@ -1,4 +1,6 @@
+import { useMemo } from "react";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
+import type { LocalProcessSwitches } from "@/utils/localProcessGate";
 
 /**
  * Returns whether experimental features are enabled.
@@ -12,4 +14,12 @@ import { useProjectedSettings } from "@/store/useProjectedSettings";
  */
 export function useExperimentalFeatures(): boolean {
   return useProjectedSettings().experimentalFeaturesEnabled ?? false;
+}
+
+/** The two switches a local program needs (#6178), as the settings say now. */
+export function useLocalProcessSwitches(): LocalProcessSwitches {
+  const settings = useProjectedSettings();
+  const experimental = settings.experimentalFeaturesEnabled ?? false;
+  const localPrograms = settings.workflowLocalProcessEnabled === true;
+  return useMemo(() => ({ experimental, localPrograms }), [experimental, localPrograms]);
 }

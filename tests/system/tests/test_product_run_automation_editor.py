@@ -423,7 +423,8 @@ class TestProductRunAutomationEditor(
             self.shot(label="prompt")
             self.driver.click("unsaved-changes-cancel")
             self.wait(lambda: not self.unsaved_prompt_open(), what="the prompt to close")
-            self.driver.click("automation-editor-save")
+            # The invalid keys leave Save aria-disabled; a click shows why (#5917).
+            self.driver.click("automation-editor-save", force=True)
             self.wait(
                 lambda: self.driver.exists("automation-editor-keys-error-0-0"),
                 what="why the keys cannot be saved",

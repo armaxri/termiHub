@@ -186,10 +186,8 @@ class TestProductRunAgentLifecycleStates(
             agent_id = agent["id"]
             self.state["agent_id"] = agent_id
             self.connect_agent(self.name)
-            self.wait_connection_error_title()
-            self.wait(lambda: self.driver.exists(self.ERROR_SETUP_AGENT),
-                      what="'Set up agent' in the error")
-            self.driver.click(self.ERROR_SETUP_AGENT)
+            self.wait_connect_failure(self.name)
+            self.click_failure_step(self.name, "setup")
             self.wait_setup_ready()
             self.driver.type(self.SETUP_REMOTE_PATH, str(self._target()))
             self.start_local_agent_setup(str(binary))

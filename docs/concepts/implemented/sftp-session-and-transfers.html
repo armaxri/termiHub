@@ -128,6 +128,17 @@
           <strong>L1, L2, D1, D3</strong>). This concept designs the fix for both, concept-first,
           before any code is written.
         </p>
+        <blockquote>
+          <p>
+          <strong>Since then (synced 2026-11-28, #6164).</strong> The goals hold, reached by a
+          different path. The standalone UUID-keyed <code>SftpManager</code> was retired (#2104,
+          #2314): browsing and transfers use the owning session's own file browser, so no SFTP
+          session can outlive its tab or the app. Transfers run on the transfer registry, off the
+          session lock, with <code>transfer-progress</code> events, pause, cancel and retry, and
+          the queue is durable and resumable (PROD-0011/0012, #3199). The Non-Goals' "no
+          resumable transfers" is superseded. See the Sync Ledger.
+        </p>
+        </blockquote>
         <p>
           <strong>Orphaned, invisible, unkillable sessions.</strong> The Rust
           <code>SftpManager</code> already holds <em>N</em> sessions in a
@@ -183,7 +194,11 @@
             toast wiring (D2) are separate audit gaps — related but out of this issue's L1/L2/D1/D3
             scope. They get their own follow-ups.
           </li>
-          <li>No resumable / restartable transfers, no transfer queue reordering UI in this pass.</li>
+          <li>
+            No transfer queue reordering UI in this pass. (<em>Superseded:</em> "no resumable /
+            restartable transfers" was a non-goal here; later work made the queue durable and
+            resumable — PROD-0011/0012, #3199.)
+          </li>
           <li>
             No change to the agent-side (remote) file browser — this concept targets the desktop
             <code>SftpManager</code> path (<code>src-tauri/src/files/sftp.rs</code>).
@@ -1023,9 +1038,9 @@ sequenceDiagram
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> never (not implemented) ·
-          <strong>Status:</strong> diverged (design-only, from audit
-          <code>docs/audits/sftp-file-browser-state-machine.md</code>)
+          <strong>Last synced:</strong> 2026-11-28 at commit <code>695e6bb04</code> (#6164) ·
+          <strong>Status:</strong> in sync — the goals hold by a later design (rows 1–2), and
+          resumable transfers are now part of it (row 5)
         </p>
         <div class="table-wrap">
           <table>
@@ -1043,38 +1058,53 @@ sequenceDiagram
                 <td>1</td>
                 <td>L1 — keyed frontend session map, close on tab-close/host-switch, per-session Kill</td>
                 <td>
-                  Single slot (<code>sftpSessionId</code>/<code>sftpConnectedHost</code>);
-                  <code>closeTab</code> never closes SFTP; OC shows one host-derived row
+                  Superseded: the <code>SftpManager</code> session model was retired (#2104, #2314).
+                  Browsing and transfers use the owning session's file browser, so a separate SFTP
+                  session cannot be orphaned; closing the tab closes it with the session
                 </td>
-                <td>Missing</td>
-                <td>Implement S1, then re-sync</td>
+                <td>Design reality</td>
+                <td>Concept edited (overview note)</td>
               </tr>
               <tr>
                 <td>2</td>
                 <td>L2 — <code>SftpManager::close_all()</code> wired to window Destroyed / app exit</td>
                 <td>
-                  No <code>close_all</code>; <code>Destroyed</code> handler cleans tunnels / servers /
-                  X / HTTP monitors but not SFTP
+                  Superseded with L1: no SFTP-only connection exists to close; app teardown ends the
+                  sessions (<code>run_app_teardown</code> in <code>src-tauri/src/lib.rs</code>)
                 </td>
-                <td>Missing</td>
-                <td>Implement S1, then re-sync</td>
+                <td>Design reality</td>
+                <td>Concept edited (overview note)</td>
               </tr>
               <tr>
                 <td>3</td>
                 <td>D1 — chunked, cancellable transfers off the session mutex (dedicated channel)</td>
                 <td>
-                  <code>read_file</code>/<code>write_file</code> buffer whole file in RAM under the
-                  session <code>Mutex</code>; no cancel token
+                  <code>session_download</code>/<code>session_upload</code> enqueue on the transfer
+                  registry and run on their own channel without the session lock (#1245);
+                  <code>transfer_cancel</code>/<code>pause</code>/<code>resume</code>
                 </td>
-                <td>Missing</td>
-                <td>Implement S2, then re-sync</td>
+                <td>Match</td>
+                <td>—</td>
               </tr>
               <tr>
                 <td>4</td>
-                <td>D3 — <code>transfer-progress</code> events + rendered progress/Cancel (OC + footer)</td>
-                <td>No progress event anywhere; transfers invisible</td>
-                <td>Missing</td>
-                <td>Implement S2, then re-sync</td>
+                <td>D3 — transfer-progress events + rendered progress/Cancel (OC + footer)</td>
+                <td>
+                  <code>transfer-progress</code> events; the transfer queue panel and Open
+                  Connections list each in-flight transfer with Cancel (#1247)
+                </td>
+                <td>Match</td>
+                <td>—</td>
+              </tr>
+              <tr>
+                <td>5</td>
+                <td>Non-goal: no resumable / restartable transfers</td>
+                <td>
+                  The queue is durable and resumes from the stored offset, re-attaching the session
+                  (PROD-0011/0012, <code>files/transfer/relaunch.rs</code>, #3199)
+                </td>
+                <td>Undocumented</td>
+                <td>Concept edited: the non-goal is marked superseded</td>
               </tr>
             </tbody>
           </table>

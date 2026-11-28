@@ -60,6 +60,10 @@ function EdgeZone({
     <div
       ref={setNodeRef}
       data-testid={`panel-drop-edge-${panelId}-${edge}`}
+      // Read by a drop after a dwell switched groups, which no droppable of
+      // this group's DndContext sees (#6201).
+      data-drop-panel={panelId}
+      data-drop-edge={edge}
       data-drop-over={isOver ? "true" : "false"}
       className={`panel-drop-zone__edge panel-drop-zone__edge--${edge}`}
     />
@@ -90,6 +94,8 @@ function CenterZone({
     <div
       ref={setNodeRef}
       data-testid={`panel-drop-center-${panelId}`}
+      data-drop-panel={panelId}
+      data-drop-edge="center"
       data-drop-over={isOver ? "true" : "false"}
       className="panel-drop-zone__center"
     />

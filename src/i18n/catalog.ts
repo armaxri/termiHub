@@ -211,6 +211,7 @@ const en = {
   "schedule.editAutomation": "Edit the automation",
   "schedule.confirm.does": "What it types there ({steps}):",
   "schedule.short.localProcess": "it needs experimental features",
+  "schedule.short.localPrograms": "local programs are off in Security",
   "schedule.short.waits": "a step waits for you",
   "schedule.short.missing": "it asks for a value",
   "schedule.next.missed":
@@ -684,15 +685,14 @@ const en = {
   "automation.triggers.toggleOff": "Turn off the triggers of {name}",
   "automation.triggers.toggleOn": "Turn on the triggers of {name}",
   "automation.triggers.toggleFailed": "The triggers of “{name}” could not be changed",
-  "automation.importedInPart":
-    "Imported in part: left out {parts}, which this version does not know.",
+  "automation.importedInPart": "Imported in part: left out {parts}.",
   "automation.importedCheck": "Check it",
   "automation.missingCallee": "Step {step} runs an automation that is not in your library.",
   "automation.missingCalleeChoose": "Choose one",
-  "automation.importedNote":
-    "Imported in part, without {parts}, which this version does not know. Check what it does, then save it.",
+  "automation.importedNote": "Imported in part, without {parts}. Check what it does, then save it.",
   "automation.blockedShort.unknown": "needs a newer termiHub",
   "automation.blockedShort.local": "needs experimental features",
+  "automation.blockedShort.localPrograms": "local programs are off in Security",
   "automation.replace.title": "Run “{name}”?",
   "automation.replace.message": "{running}. Running this stops that there; it is not resumed.",
   "automation.replace.one": "“{name}” is running in {where}, {progress}",
@@ -734,6 +734,8 @@ const en = {
     "Step {step} runs “{name}”, which has a step ({kind}) from a newer termiHub. Update termiHub or delete the step.",
   "automation.blocked.localProcess":
     "It starts a program on this computer, which is experimental. Turn on {path}.",
+  "automation.blocked.localPrograms":
+    "It starts a program on this computer, and {path} is off. Turn it on.",
   "automation.blocked.label": "Cannot run. Edit {name}",
   "automation.marker.blocked": "Cannot run",
   "automation.marker.waiting": "Waiting for you",

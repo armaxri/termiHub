@@ -27,6 +27,8 @@ const NAMED_CONTROLS: Record<string, string> = {
 function formatControlChar(ch: string): string {
   const named = NAMED_CONTROLS[ch];
   if (named) return named;
+  const ctrl = ctrlLetter(ch);
+  if (ctrl) return ctrl;
   const code = ch.codePointAt(0) ?? 0;
   if (code < 0x20) {
     // Caret notation: control char + 0x40 (e.g. 0x03 → "^C").
@@ -34,6 +36,20 @@ function formatControlChar(ch: string): string {
   }
   if (code === 0x7f) return "^?";
   return `\\x${code.toString(16).padStart(2, "0")}`;
+}
+
+/** The Control key glyph, as on the key itself. */
+const CTRL = "⌃";
+
+/**
+ * `⌃C` for Ctrl+C: a Ctrl+letter key (0x01–0x1a) as the collapsed step and the
+ * open step both write it (live review editor-1); `null` for any other character.
+ * Tab, LF and Enter have names of their own.
+ */
+function ctrlLetter(ch: string): string | null {
+  const code = ch.codePointAt(0) ?? 0;
+  if (code < 0x01 || code > 0x1a || ch === "\t" || ch === "\n" || ch === "\r") return null;
+  return `${CTRL}${String.fromCharCode(code + 0x40)}`;
 }
 
 /**
@@ -112,6 +128,7 @@ const ESCAPE_OUT: Record<string, string> = {
   "⏎": "\\⏎",
   "⇥": "\\⇥",
   "⎋": "\\⎋",
+  [CTRL]: `\\${CTRL}`,
 };
 
 /** The glyphs a key is written as. */
@@ -126,6 +143,7 @@ const ESCAPE_IN: Record<string, string> = {
   "⏎": "⏎",
   "⇥": "⇥",
   "⎋": "⎋",
+  [CTRL]: CTRL,
 };
 
 /**
@@ -140,6 +158,11 @@ export function escapeMacroStepData(data: string): string {
     const named = ESCAPE_OUT[ch];
     if (named) {
       out += named;
+      continue;
+    }
+    const ctrl = ctrlLetter(ch);
+    if (ctrl) {
+      out += ctrl;
       continue;
     }
     const code = ch.codePointAt(0) ?? 0;
@@ -161,6 +184,12 @@ export function parseMacroStepText(text: string): MacroStepParseResult {
   let out = "";
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
+    // ⌃ and a letter is that Ctrl key; a ⌃ alone is itself.
+    if (ch === CTRL && /^[A-Za-z]$/.test(text[i + 1] ?? "")) {
+      out += String.fromCharCode(text[i + 1].toUpperCase().charCodeAt(0) - 0x40);
+      i += 1;
+      continue;
+    }
     if (ch !== "\\") {
       out += GLYPH_IN[ch] ?? ch;
       continue;

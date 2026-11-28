@@ -1363,12 +1363,27 @@ export function AgentNode({
     } catch (err) {
       const classified = classifyAgentError(err);
       setConnectionError(classified);
-      setErrorDialogOpen(true);
       // A failed attempt (not one the user canceled) turns the row red (#5621);
       // a host without the agent yet is a next step, not a failure (#5851).
       if (!connectCanceledRef.current) {
         const notInstalled = classified.category === "agent-missing";
         setRowFailure((s) => ({ ...s, failed: !notInstalled, notInstalled }));
+        // No dialog opens by itself (#6184): the row says why with the next
+        // step, and a failure also toasts, naming the agent, with Details for
+        // the full error. A host without the agent is no failure: its row
+        // offers Set up agent.
+        if (!notInstalled) {
+          toast.error(`Could not connect to ${agent.name}`, {
+            description: agentFailureReason(classified, agent.config.host).text,
+            action: {
+              label: "Details",
+              onClick: () => {
+                setConnectionError(classified);
+                setErrorDialogOpen(true);
+              },
+            },
+          });
+        }
       }
     } finally {
       setConnecting(false);

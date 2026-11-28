@@ -11,7 +11,7 @@ import {
   StatusDot,
 } from "@/components/ui";
 import type { RadioGroupOption } from "@/components/ui";
-import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
+import { useLocalProcessSwitches } from "@/hooks/useExperimentalFeatures";
 import { useAppStore } from "@/store/appStore";
 import { WORKFLOW_FANOUT_CONCURRENCY } from "@/store/slices/workflowFanout";
 import {
@@ -161,10 +161,10 @@ export function RunTargetsDialog({
   const count = tabIds.length;
   const terminalOf = new Map(options.terminals.map((t) => [t.id, t]));
   const library = useAppStore((s) => s.automations);
-  const experimental = useExperimentalFeatures();
+  const localSwitches = useLocalProcessSwitches();
   const automation = library.find((a) => a.id === automationId);
   const blocked = automation
-    ? runBlockedReason(automation, (id) => library.find((a) => a.id === id), experimental)
+    ? runBlockedReason(automation, (id) => library.find((a) => a.id === id), localSwitches)
     : null;
   const canRun = selected !== null && selected.stepCount > 0 && count > 0 && blocked === null;
   const needsConfirm = count > 1;

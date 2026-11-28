@@ -9,7 +9,9 @@ import { join, relative, sep } from "node:path";
 import { expect, it } from "vitest";
 
 const SRC = join(__dirname, "..");
-const GATE = /useExperimentalFeatures\(|experimentalFeaturesOn\(|experimentalFeaturesEnabled/;
+// The local-program switches (#6178) carry the experimental one with them.
+const GATE =
+  /useExperimentalFeatures\(|experimentalFeaturesOn\(|experimentalFeaturesEnabled|useLocalProcessSwitches\(|localProcessSwitchesNow\(/;
 
 /** Code that shows, starts or runs automations, schedules included. */
 const AUTOMATION_CODE =

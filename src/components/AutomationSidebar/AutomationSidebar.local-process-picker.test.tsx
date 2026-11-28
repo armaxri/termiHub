@@ -172,6 +172,25 @@ describe("run picker and the local-process gate (#5988)", () => {
     }
   });
 
+  it("security off: the row says so, and a run is refused before anything is typed (#6178)", async () => {
+    seedSettings({ experimentalFeaturesEnabled: true, workflowLocalProcessEnabled: false });
+    await act(async () => root.render(withTooltip(<AutomationSidebar />)));
+    await flushAsync();
+    expect(q("automation-start-w1")).toBeNull();
+    expect(q("automation-blocked-reason-w1")?.textContent).toContain(
+      "Allow automations to run local programs"
+    );
+    await act(async () => useAppStore.getState().runAutomation("w1", { targetTabIds: ["tab-a"] }));
+    expect(toast.error).toHaveBeenCalledWith(
+      "Automation “Build” was not run",
+      expect.objectContaining({
+        description: expect.stringContaining("Allow automations to run local programs"),
+      })
+    );
+    expect(injected).toEqual([]);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["parallel", true],
     ["one after another", false],

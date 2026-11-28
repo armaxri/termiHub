@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { closeTabsGuarded, tabsToClose } from "@/utils/closeTabs";
 import { SortableContext, horizontalListSortingStrategy } from "@dnd-kit/sortable";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useAppStore } from "@/store/appStore";
@@ -269,6 +270,16 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
               isDirty={editorDirtyTabs[tab.id] ?? false}
               tabColor={tabColors[tab.id]}
               onRename={() => setRenameTabId(tab.id)}
+              onCloseOthers={
+                tabs.length > 1
+                  ? () => closeTabsGuarded(panelId, tabsToClose({ tabs }, tab.id, "others"))
+                  : undefined
+              }
+              onCloseToRight={
+                index < tabs.length - 1
+                  ? () => closeTabsGuarded(panelId, tabsToClose({ tabs }, tab.id, "right"))
+                  : undefined
+              }
               onSetColor={() => setColorPickerTabId(tab.id)}
               onDisconnect={
                 // Explicit Disconnect (UX-015) is only offered when the tab holds a
