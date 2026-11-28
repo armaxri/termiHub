@@ -28,6 +28,7 @@ import {
 } from "@/components/ui";
 import { getActionAccelerator } from "@/services/keybindings";
 import { ActivityBarItem } from "./ActivityBarItem";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import { OPTIONAL_ITEMS, REQUIRED_ITEMS, isViewOffBySetting } from "./activityBarItems";
 import "./ActivityBar.css";
 
@@ -93,7 +94,7 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
                 onClick={openLogViewerTab}
               >
                 {/* A file of text lines: the conventional log glyph (#5848, R-022). */}
-                <FileText size={24} strokeWidth={1.5} />
+                <FileText size={ICON_SIZE.xl} strokeWidth={1.5} />
               </button>
             </Tooltip>
             <DropdownMenuRoot>
@@ -105,7 +106,7 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
                     data-testid="activity-bar-settings"
                     data-icon="settings"
                   >
-                    <Settings size={24} strokeWidth={1.5} />
+                    <Settings size={ICON_SIZE.xl} strokeWidth={1.5} />
                   </button>
                 </DropdownMenuTrigger>
               </Tooltip>
@@ -119,7 +120,7 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
                   data-testid="settings-menu-open"
                   shortcut={getActionAccelerator("open-settings")}
                 >
-                  <Settings size={14} />
+                  <Settings size={ICON_SIZE.sm} />
                   Settings
                 </MenuItem>
                 <MenuItem
@@ -127,21 +128,21 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
                   data-testid="settings-menu-shortcuts"
                   shortcut={getActionAccelerator("show-shortcuts")}
                 >
-                  <Keyboard size={14} />
+                  <Keyboard size={ICON_SIZE.sm} />
                   Keyboard shortcuts
                 </MenuItem>
                 <MenuItem
                   onSelect={() => setLayoutDialogOpen(true)}
                   data-testid="settings-menu-customize-layout"
                 >
-                  <LayoutDashboard size={14} />
+                  <LayoutDashboard size={ICON_SIZE.sm} />
                   Customize layout…
                 </MenuItem>
                 <MenuItem
                   onSelect={() => setConnectionsModalOpen(true)}
                   data-testid="settings-menu-open-connections"
                 >
-                  <Activity size={14} />
+                  <Activity size={ICON_SIZE.sm} />
                   Open connections
                 </MenuItem>
                 <MenuSeparator />
@@ -149,21 +150,21 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
                   onSelect={() => openOverlayView("updates")}
                   data-testid="settings-menu-updates"
                 >
-                  <RefreshCw size={14} />
+                  <RefreshCw size={ICON_SIZE.sm} />
                   Updates
                 </MenuItem>
                 <MenuItem
                   onSelect={() => openDiagnosticsExport()}
                   data-testid="settings-menu-export-diagnostics"
                 >
-                  <FileArchive size={14} />
+                  <FileArchive size={ICON_SIZE.sm} />
                   Export diagnostics…
                 </MenuItem>
                 <MenuItem
                   onSelect={() => openOverlayView("about")}
                   data-testid="settings-menu-about"
                 >
-                  <Info size={14} />
+                  <Info size={ICON_SIZE.sm} />
                   About termiHub
                 </MenuItem>
               </DropdownMenuContent>

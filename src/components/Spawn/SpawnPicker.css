@@ -32,11 +32,6 @@
 
 .spawn-picker__section-label {
   margin: 0;
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  letter-spacing: var(--letter-spacing-label);
-  text-transform: uppercase;
-  color: var(--text-secondary);
 }
 
 .spawn-picker__row {

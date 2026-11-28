@@ -204,13 +204,15 @@ describe("ConnectionList — first-run empty state", () => {
     });
   });
 
-  it("keeps the full card when Remote agents is empty", async () => {
+  it("keeps the full empty state when Remote agents is empty", async () => {
     seedSettings({ ...baseSettings, experimentalFeaturesEnabled: true });
     seedAgentsRegion({ remoteAgents: [] });
     await render(root);
 
     const empty = container.querySelector('[data-testid="connections-empty-state"]');
     expect(empty?.className).not.toContain("connections-empty--compact");
-    expect(empty?.className).toContain("ui-empty--card");
+    // The sidebars share the inline variant (#6156); the full one keeps its action.
+    expect(empty?.className).toContain("ui-empty--inline");
+    expect(empty?.querySelector('[data-testid="connections-empty-new-connection"]')).not.toBeNull();
   });
 });

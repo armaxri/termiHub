@@ -4,6 +4,7 @@ import { useAppStore } from "@/store/appStore";
 import { useProjectedWorkflowRun } from "@/store/useProjectedWorkflowRun";
 import { Button, Tooltip, EmptyState } from "@/components/ui";
 import type { WorkflowRunOutputState } from "@/store/appStore";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./WorkflowRunOutput.css";
 
 /** Human-readable label + icon for each run-output status. */
@@ -82,7 +83,7 @@ export function WorkflowRunOutput() {
           data-status={run.status}
         >
           <meta.Icon
-            size={13}
+            size={ICON_SIZE.xs}
             className={`workflow-run-output__status-icon${
               isRunning ? " workflow-run-output__status-icon--spin motion-essential-spinner" : ""
             }`}
@@ -99,7 +100,7 @@ export function WorkflowRunOutput() {
               iconOnly
               aria-label="Stop the automation"
               data-testid="workflow-run-output-stop"
-              icon={<Square size={12} fill="currentColor" />}
+              icon={<Square size={ICON_SIZE.xs} fill="currentColor" />}
               onClick={() => cancelRun()}
             />
           </Tooltip>
@@ -111,7 +112,7 @@ export function WorkflowRunOutput() {
               iconOnly
               aria-label="Dismiss run output"
               data-testid="workflow-run-output-dismiss"
-              icon={<X size={12} />}
+              icon={<X size={ICON_SIZE.xs} />}
               onClick={dismiss}
             />
           </Tooltip>
@@ -119,7 +120,7 @@ export function WorkflowRunOutput() {
       </header>
 
       <div className="workflow-run-output__command" data-testid="workflow-run-output-command">
-        <Terminal size={11} aria-hidden="true" />
+        <Terminal size={ICON_SIZE.xs} aria-hidden="true" />
         <code title={commandLine}>{commandLine}</code>
       </div>
 

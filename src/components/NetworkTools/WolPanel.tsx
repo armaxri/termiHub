@@ -25,6 +25,7 @@ import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
 import { newId } from "@/services/transport/ids";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Wake-on-LAN diagnostic tab content. */
 export function WolPanel() {
   const [mac, setMac] = useState("");
@@ -150,7 +151,7 @@ export function WolPanel() {
           <Button
             variant="primary"
             size="sm"
-            icon={<Power size={14} />}
+            icon={<Power size={ICON_SIZE.sm} />}
             pendingLabel="Sending…"
             errorToast={false}
             type="submit"
@@ -214,7 +215,7 @@ export function WolPanel() {
       {error && <div className="network-panel__error">{error}</div>}
 
       {/* Saved Devices */}
-      <div className="network-panel__section-title">Saved devices</div>
+      <div className="ui-section-label network-panel__section-title">Saved devices</div>
       {savedDevices.length === 0 && (
         <EmptyState variant="panel" title="No saved devices" data-testid="wol-devices-empty" />
       )}
@@ -226,7 +227,7 @@ export function WolPanel() {
             <Button
               variant="ghost"
               size="sm"
-              icon={<Zap size={13} />}
+              icon={<Zap size={ICON_SIZE.xs} />}
               onClick={() => handleWakeDevice(device)}
               aria-label={`Wake ${device.name}`}
             />
@@ -235,7 +236,7 @@ export function WolPanel() {
             <Button
               variant="ghost"
               size="sm"
-              icon={<Trash2 size={13} />}
+              icon={<Trash2 size={ICON_SIZE.xs} />}
               onClick={() => handleDeleteDevice(device.id)}
               aria-label={`Delete ${device.name}`}
             />
@@ -246,7 +247,7 @@ export function WolPanel() {
       <Button
         variant="secondary"
         size="sm"
-        icon={<Save size={13} />}
+        icon={<Save size={ICON_SIZE.xs} />}
         onClick={openSaveModal}
         disabled={!canSend}
         data-testid="wol-save-device"
@@ -258,7 +259,7 @@ export function WolPanel() {
       <ConfirmDialog
         open={saveModalOpen}
         title="Save Wake-on-LAN device"
-        icon={<Save size={16} />}
+        icon={<Save size={ICON_SIZE.md} />}
         confirmLabel="Save"
         confirmVariant="primary"
         confirmDisabled={!canSaveDevice}

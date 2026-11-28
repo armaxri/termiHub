@@ -26,6 +26,7 @@ import {
 import { keepOffRow, RowLines } from "./AutomationRowLines";
 import { AutomationRowMenu, type AutomationRowActions } from "./AutomationRowMenu";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /**
  * How long a row stays marked after it is saved from an editor (#5687). The
  * `.automation-item--just-saved` fade in AutomationSidebar.css runs as long.
@@ -168,7 +169,11 @@ export function AutomationRow({
             role={iconOnly ? "img" : undefined}
             aria-label={iconOnly ? runningText : undefined}
           >
-            {waiting ? <Hand size={10} aria-hidden="true" /> : <Spinner size={10} label={null} />}
+            {waiting ? (
+              <Hand size={ICON_SIZE.xs} aria-hidden="true" />
+            ) : (
+              <Spinner size={ICON_SIZE.xs} label={null} />
+            )}
             {iconOnly ? null : runningText}
           </span>
         </Tooltip>
@@ -186,7 +191,7 @@ export function AutomationRow({
               actions.onEdit(id);
             }}
           >
-            <Ban size={10} aria-hidden="true" />
+            <Ban size={ICON_SIZE.xs} aria-hidden="true" />
             {compact ? null : t("automation.marker.blocked")}
           </button>
         </Tooltip>
@@ -204,7 +209,7 @@ export function AutomationRow({
               actions.onShowHistory(id);
             }}
           >
-            <AlertTriangle size={10} aria-hidden="true" />
+            <AlertTriangle size={ICON_SIZE.xs} aria-hidden="true" />
             {compact ? null : t("automation.marker.failed")}
           </button>
         </Tooltip>
@@ -220,7 +225,7 @@ export function AutomationRow({
         iconOnly={!several}
         aria-label={tf(several ? "automation.stop.allLabel" : "automation.stop.label", { name })}
         data-testid={`automation-stop-${id}`}
-        icon={<Square size={12} fill="currentColor" />}
+        icon={<Square size={ICON_SIZE.xs} fill="currentColor" />}
         onClick={(e) => {
           e.stopPropagation();
           actions.onStop(id);
@@ -245,7 +250,7 @@ export function AutomationRow({
         iconOnly
         aria-label={tf(runTarget ? "automation.run.label" : "automation.run.labelPick", { name })}
         data-testid={`automation-start-${id}`}
-        icon={<Play size={12} />}
+        icon={<Play size={ICON_SIZE.xs} />}
         onClick={(e) => {
           e.stopPropagation();
           actions.onRun(id);
@@ -265,7 +270,7 @@ export function AutomationRow({
         iconOnly
         aria-label={`Edit ${name}`}
         data-testid={`automation-edit-${id}`}
-        icon={<Pencil size={12} />}
+        icon={<Pencil size={ICON_SIZE.xs} />}
         onClick={(e) => {
           e.stopPropagation();
           actions.onEdit(id);
@@ -339,7 +344,7 @@ export function AutomationRow({
                       iconOnly
                       aria-label={tf("automation.more.label", { name })}
                       data-testid={`automation-more-${id}`}
-                      icon={<MoreHorizontal size={12} />}
+                      icon={<MoreHorizontal size={ICON_SIZE.xs} />}
                       onClick={(e) => e.stopPropagation()}
                     />
                   </DropdownMenuTrigger>

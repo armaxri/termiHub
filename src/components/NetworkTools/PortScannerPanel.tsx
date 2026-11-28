@@ -25,6 +25,7 @@ import { insertSortedByHost } from "@/utils/hostSort";
 import { HostOrderField } from "./HostOrderField";
 import { useHostOrder } from "./useHostOrder";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Probe count above which the scanner warns before starting. */
 const LARGE_SCAN_THRESHOLD = 1000;
 
@@ -217,7 +218,7 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
           <Button
             variant="secondary"
             size="sm"
-            icon={<Download size={14} />}
+            icon={<Download size={ICON_SIZE.sm} />}
             disabled={results.length === 0}
             onClick={handleExport}
             data-testid="port-scanner-export"
@@ -228,7 +229,7 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
             <Button
               variant="danger"
               size="sm"
-              icon={<StopCircle size={14} />}
+              icon={<StopCircle size={ICON_SIZE.sm} />}
               pendingLabel="Stopping…"
               errorToast={false}
               onClick={stop}
@@ -239,7 +240,7 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
             <Button
               variant="primary"
               size="sm"
-              icon={<Play size={14} />}
+              icon={<Play size={ICON_SIZE.sm} />}
               pendingLabel="Starting…"
               errorToast={false}
               type="submit"

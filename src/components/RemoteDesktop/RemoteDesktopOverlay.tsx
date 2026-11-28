@@ -23,6 +23,7 @@ import {
 } from "@/components/Terminal/ConnectFailure";
 import { graphicalStages } from "./graphicalStages";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface RemoteDesktopOverlayProps {
   state: GraphicalSessionState;
   host: string;
@@ -114,7 +115,7 @@ export function RemoteDesktopOverlay({
   const common = {
     target: host,
     typeLabel: connectTypeLabel(protocol),
-    typeIcon: <Monitor size={20} aria-hidden />,
+    typeIcon: <Monitor size={ICON_SIZE.lg} aria-hidden />,
     details: via ? [`via SSH ${via}`] : undefined,
     startedAt,
   };
@@ -146,7 +147,7 @@ export function RemoteDesktopOverlay({
             <Button
               variant="secondary"
               size="sm"
-              icon={<Ban size={14} />}
+              icon={<Ban size={ICON_SIZE.sm} />}
               onClick={onCancelConnect}
               data-testid="remote-desktop-cancel-connect"
             >
@@ -169,7 +170,12 @@ export function RemoteDesktopOverlay({
           attempt={{ current: Math.max(1, reconnectAttempt), max: MAX_RECONNECT_ATTEMPTS }}
           announcement={`${RECONNECTING_HEADING} ${attempt}`}
           actions={
-            <Button variant="secondary" size="sm" icon={<Ban size={14} />} onClick={onCancel}>
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<Ban size={ICON_SIZE.sm} />}
+              onClick={onCancel}
+            >
               Abort
             </Button>
           }
@@ -230,9 +236,12 @@ export function RemoteDesktopOverlay({
       <ContentOverlay
         icon={
           closed ? (
-            <Power size={30} className="rd-overlay__icon" />
+            <Power size={ICON_SIZE.hero} className="rd-overlay__icon" />
           ) : (
-            <AlertCircle size={30} className="rd-overlay__icon rd-overlay__icon--error" />
+            <AlertCircle
+              size={ICON_SIZE.hero}
+              className="rd-overlay__icon rd-overlay__icon--error"
+            />
           )
         }
         heading={heading}
@@ -255,7 +264,7 @@ export function RemoteDesktopOverlay({
             <Button
               variant="ghost"
               size="sm"
-              icon={<X size={14} />}
+              icon={<X size={ICON_SIZE.sm} />}
               onClick={onCloseTab}
               data-testid="remote-desktop-close-tab"
             >

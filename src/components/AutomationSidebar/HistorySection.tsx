@@ -9,6 +9,7 @@ import { HistoryGapRow } from "./HistoryGapRow";
 import { HistoryRunRow } from "./HistoryRunRow";
 import { mergeHistory, scheduleGaps, schedulesOfRuns } from "./historyEntries";
 import { automationFilterOptions, runsOfAutomation } from "./historyFormat";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./HistorySection.css";
 
 /** The select value that shows every automation's runs. */
@@ -130,7 +131,7 @@ export function HistorySection({ automationId, onFilterChange, collapse }: Histo
       <SidebarSectionHeader
         title="History"
         data-testid="automation-history-header"
-        icon={<History size={12} aria-hidden="true" />}
+        icon={<History size={ICON_SIZE.xs} aria-hidden="true" />}
         collapse={
           collapse
             ? {
@@ -158,7 +159,7 @@ export function HistorySection({ automationId, onFilterChange, collapse }: Histo
                 className="automation-history__clear"
                 aria-label="Clear history"
                 data-testid="automation-history-clear"
-                icon={<Trash2 size={12} />}
+                icon={<Trash2 size={ICON_SIZE.xs} />}
                 disabled={clearDisabled}
                 onClick={() => setConfirmClear(true)}
               >
@@ -185,7 +186,7 @@ export function HistorySection({ automationId, onFilterChange, collapse }: Histo
                 iconOnly
                 aria-label={`Clear filter: ${filterName}`}
                 data-testid="automation-history-show-all"
-                icon={<X size={12} />}
+                icon={<X size={ICON_SIZE.xs} />}
                 onClick={() => onFilterChange(null)}
               />
             </Tooltip>

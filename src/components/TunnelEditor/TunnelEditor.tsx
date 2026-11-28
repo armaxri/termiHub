@@ -69,6 +69,7 @@ import { t, tf } from "@/i18n/catalog";
 import { useConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
 import { errorMessage } from "@/utils/errorMessage";
 import { draftKey } from "@/utils/draftKey";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./TunnelEditor.css";
 
 interface TunnelEditorProps {
@@ -956,7 +957,11 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
             />
             <div className="tunnel-editor__endpoints" data-testid="tunnel-editor-endpoints">
               <div className="tunnel-editor__endpoints-host">
-                {isAgentHost(host) ? <Server size={13} /> : <Monitor size={13} />}
+                {isAgentHost(host) ? (
+                  <Server size={ICON_SIZE.xs} />
+                ) : (
+                  <Monitor size={ICON_SIZE.xs} />
+                )}
                 <span>
                   {t("tunnel.editor.runsOn")}{" "}
                   <strong>{tunnelHostMachine(host, hostAgentName)}</strong>

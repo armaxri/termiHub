@@ -1,5 +1,6 @@
 import { CircleDot } from "lucide-react";
 import { Tooltip } from "@/components/ui";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./Recording.css";
 
 /** Props of {@link TabRecordingBadge}. */
@@ -26,7 +27,7 @@ export function TabRecordingBadge({ tabId, onStop }: TabRecordingBadgeProps) {
         }}
         data-testid={`tab-recording-badge-${tabId}`}
       >
-        <CircleDot size={12} aria-hidden="true" />
+        <CircleDot size={ICON_SIZE.xs} aria-hidden="true" />
       </span>
     </Tooltip>
   );

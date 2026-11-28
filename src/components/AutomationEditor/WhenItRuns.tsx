@@ -32,6 +32,7 @@ import type { AutomationTrigger } from "@/types/generated/AutomationTrigger";
 import type { ScheduleView } from "@/types/schedule";
 import { TriggerCard } from "./TriggerCard";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** The trigger kinds, in the order the "Add trigger" menu offers them. */
 const AUTOMATION_TRIGGER_KINDS: readonly AutomationTriggerKind[] = [
   "hotkey",
@@ -128,8 +129,8 @@ export function WhenItRuns({
   return (
     <div ref={rootRef} className="automation-triggers" data-testid="automation-editor-when">
       <p className="automation-triggers__manual" data-testid="automation-editor-when-manual">
-        <Play size={14} aria-hidden="true" /> When you run it: from the sidebar, the command palette
-        or a terminal.
+        <Play size={ICON_SIZE.sm} aria-hidden="true" /> When you run it: from the sidebar, the
+        command palette or a terminal.
       </p>
       {triggers.length > 0 && (
         <Field
@@ -192,7 +193,7 @@ export function WhenItRuns({
           className="automation-triggers__schedule"
           data-testid={`automation-editor-schedule-${schedule.id}`}
         >
-          <CalendarClock size={14} aria-hidden="true" />
+          <CalendarClock size={ICON_SIZE.sm} aria-hidden="true" />
           <span className="automation-triggers__schedule-text">
             {schedule.name}: {describeRule(schedule.rule)} on {targets(schedule.targets).label}
             {schedule.enabled ? "" : ` · ${t("schedule.state.off")}`}
@@ -213,7 +214,7 @@ export function WhenItRuns({
           className="automation-triggers__schedule"
           data-testid="automation-editor-schedule-pending"
         >
-          <CalendarClock size={14} aria-hidden="true" />
+          <CalendarClock size={ICON_SIZE.sm} aria-hidden="true" />
           <span className="automation-triggers__schedule-text">
             On a schedule: set it up right after saving.
           </span>
@@ -238,7 +239,7 @@ export function WhenItRuns({
               ref={addRef}
               variant="secondary"
               size="sm"
-              icon={<Plus size={14} />}
+              icon={<Plus size={ICON_SIZE.sm} />}
               data-testid="automation-editor-add-trigger"
             >
               Add trigger
@@ -261,7 +262,7 @@ export function WhenItRuns({
               return (
                 <MenuItem
                   key={kind}
-                  icon={<Icon size={14} />}
+                  icon={<Icon size={ICON_SIZE.sm} />}
                   disabled={cannotStart(kind)}
                   hint={cannotStart(kind) ? cannotHint : t(TRIGGER_HINT[kind])}
                   onSelect={() => addTrigger(kind)}
@@ -273,7 +274,7 @@ export function WhenItRuns({
             })}
             <MenuSeparator />
             <MenuItem
-              icon={<CalendarClock size={14} />}
+              icon={<CalendarClock size={ICON_SIZE.sm} />}
               disabled={unattendedBlocked !== null}
               hint={unattendedBlocked !== null ? cannotHint : t("automation.triggerHint.schedule")}
               onSelect={addSchedule}

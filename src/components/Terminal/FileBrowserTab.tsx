@@ -36,6 +36,7 @@ import {
   restingConnectHeading,
   restingConnectPhase,
 } from "./ConnectFailure";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./FileBrowserTab.css";
 
 interface FileBrowserTabProps {
@@ -254,7 +255,7 @@ export function FileBrowserTab({ tabId, isVisible }: FileBrowserTabProps) {
 
   const connectingTarget = title || "the connection";
   const typeLabel = connectTypeLabel(identity.sessionType);
-  const typeIcon = <FolderOpen size={20} aria-hidden />;
+  const typeIcon = <FolderOpen size={ICON_SIZE.lg} aria-hidden />;
   const target = identity.target || connectingTarget;
 
   return (
@@ -280,7 +281,7 @@ export function FileBrowserTab({ tabId, isVisible }: FileBrowserTabProps) {
             <Button
               size="sm"
               variant="secondary"
-              icon={<Ban size={14} />}
+              icon={<Ban size={ICON_SIZE.sm} />}
               onClick={handleAbort}
               data-testid="file-browser-tab-abort"
             >
@@ -293,7 +294,7 @@ export function FileBrowserTab({ tabId, isVisible }: FileBrowserTabProps) {
 
       {phase === "connected" && (
         <ContentOverlay
-          icon={<FolderOpen size={32} className="file-browser-tab__icon" aria-hidden />}
+          icon={<FolderOpen size={ICON_SIZE.hero} className="file-browser-tab__icon" aria-hidden />}
           heading="No terminal for this connection"
           subheading={
             <>

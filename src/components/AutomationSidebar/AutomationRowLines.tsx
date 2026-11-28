@@ -6,6 +6,7 @@ import { describeLeftOut } from "@/services/automationFileIo";
 import type { AutomationRunTarget } from "./AutomationRow";
 import type { TriggerState } from "./automationRowInfo";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Props of {@link RowLines}. */
 export interface RowLinesProps {
   id: string;
@@ -66,7 +67,7 @@ export function RowLines({
               data-testid={`automation-target-${target.key}`}
               {...keepOffRow}
             >
-              {target.waiting && <Hand size={10} aria-hidden="true" />}
+              {target.waiting && <Hand size={ICON_SIZE.xs} aria-hidden="true" />}
               <button
                 type="button"
                 className="automation-item__where"
@@ -83,7 +84,7 @@ export function RowLines({
                   iconOnly
                   aria-label={tf("automation.stop.target", { target: target.label })}
                   data-testid={`automation-target-stop-${target.key}`}
-                  icon={<Square size={10} fill="currentColor" />}
+                  icon={<Square size={ICON_SIZE.xs} fill="currentColor" />}
                   onClick={target.onStop}
                 />
               )}
@@ -96,7 +97,7 @@ export function RowLines({
           className="automation-item__line automation-item__line--blocked"
           data-testid={`automation-blocked-reason-${id}`}
         >
-          <Ban size={10} aria-hidden="true" />
+          <Ban size={ICON_SIZE.xs} aria-hidden="true" />
           <span className="automation-item__line-text">{blocked}</span>
         </div>
       )}
@@ -106,7 +107,7 @@ export function RowLines({
           data-testid={`automation-imported-part-${id}`}
           {...keepOffRow}
         >
-          <TriangleAlert size={10} aria-hidden="true" />
+          <TriangleAlert size={ICON_SIZE.xs} aria-hidden="true" />
           <span className="automation-item__line-text">
             {tf("automation.importedInPart", { parts: describeLeftOut(importedInPart) })}{" "}
             <button
@@ -126,7 +127,7 @@ export function RowLines({
           data-testid={`automation-missing-callee-${id}`}
           {...keepOffRow}
         >
-          <TriangleAlert size={10} aria-hidden="true" />
+          <TriangleAlert size={ICON_SIZE.xs} aria-hidden="true" />
           <span className="automation-item__line-text">
             {tf("automation.missingCallee", { step: String(missingCalleeStep) })}{" "}
             <button
@@ -151,9 +152,9 @@ export function RowLines({
           }
         >
           {triggers.effective ? (
-            <Zap size={10} aria-hidden="true" />
+            <Zap size={ICON_SIZE.xs} aria-hidden="true" />
           ) : (
-            <ZapOff size={10} aria-hidden="true" />
+            <ZapOff size={ICON_SIZE.xs} aria-hidden="true" />
           )}
           <span
             className="automation-item__line-text"
@@ -177,7 +178,7 @@ export function RowLines({
       )}
       {nextRun !== null && (
         <div className="automation-item__line" data-testid={`automation-next-run-${id}`}>
-          <CalendarClock size={10} aria-hidden="true" />
+          <CalendarClock size={ICON_SIZE.xs} aria-hidden="true" />
           <span className="automation-item__line-text">{nextRun}</span>
         </div>
       )}

@@ -3,6 +3,7 @@ import { X } from "lucide-react";
 import { TOAST_AVOID_PROPS, Tooltip } from "@/components/ui";
 import { useTopNoticeInset } from "./topNoticeInset";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** The strip's tint: a calm end, a dropped link, or a failure. */
 export type DisconnectStripTone = "neutral" | "warning" | "error";
 
@@ -59,7 +60,7 @@ export function DisconnectStrip({
           aria-label={dismissLabel}
           data-testid="terminal-disconnect-dismiss-btn"
         >
-          <X size={14} />
+          <X size={ICON_SIZE.sm} />
         </button>
       </Tooltip>
     </div>

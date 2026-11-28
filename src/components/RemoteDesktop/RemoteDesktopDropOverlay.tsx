@@ -3,6 +3,7 @@ import { Spinner } from "@/components/ui";
 import type { RemoteDesktopFilesStatus } from "@/hooks/useRemoteDesktopFiles";
 import { routeVia, unavailableCopy } from "./fileTransfer";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface RemoteDesktopDropOverlayProps {
   /** The session's file side channel. */
   files: RemoteDesktopFilesStatus;
@@ -28,7 +29,7 @@ export function RemoteDesktopDropOverlay({
     const { channel } = files;
     return (
       <div className="rd-drop" data-testid="remote-desktop-drop-overlay" data-state="ready">
-        <Upload className="rd-drop__icon" size={28} aria-hidden />
+        <Upload className="rd-drop__icon" size={ICON_SIZE.xl} aria-hidden />
         <span className="rd-drop__title">Drop to upload {subject}</span>
         <span className="rd-drop__sub">
           to <code>{destDir ?? files.defaultDir}</code> on <code>{channel.host}</code>
@@ -64,7 +65,7 @@ export function RemoteDesktopDropOverlay({
     const secret = files.needsSecret.kind === "key_passphrase" ? "key passphrase" : "password";
     return (
       <div className="rd-drop" data-testid="remote-desktop-drop-overlay" data-state="needsSecret">
-        <Upload className="rd-drop__icon" size={28} aria-hidden />
+        <Upload className="rd-drop__icon" size={ICON_SIZE.xl} aria-hidden />
         <span className="rd-drop__title">Drop to upload {subject}</span>
         <span className="rd-drop__sub">
           to <code>{files.channel.host}</code> — you'll be asked for the {secret} of{" "}
@@ -87,7 +88,7 @@ export function RemoteDesktopDropOverlay({
       data-testid="remote-desktop-drop-overlay"
       data-state={files.status === "unavailable" ? files.reason : files.status}
     >
-      <Upload className="rd-drop__icon" size={28} aria-hidden />
+      <Upload className="rd-drop__icon" size={ICON_SIZE.xl} aria-hidden />
       <span className="rd-drop__title">{copy.title}</span>
       <span className="rd-drop__sub">{copy.hint}</span>
     </div>

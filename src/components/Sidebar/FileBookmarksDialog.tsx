@@ -6,6 +6,7 @@ import type { FileBookmark } from "@/types/fileBookmark";
 import { errorMessage } from "@/utils/errorMessage";
 import { isImeComposing } from "@/utils/imeComposition";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Props for {@link FileBookmarksDialog}. */
 export interface FileBookmarksDialogProps {
   open: boolean;
@@ -121,7 +122,7 @@ export function FileBookmarksDialog({
                 <Button
                   variant="ghost"
                   size="sm"
-                  icon={<FolderOpen size={14} />}
+                  icon={<FolderOpen size={ICON_SIZE.sm} />}
                   aria-label={`Open ${b.name}`}
                   onClick={() => onOpen(b.path)}
                   data-testid={`file-bookmark-open-${b.id}`}
@@ -131,7 +132,7 @@ export function FileBookmarksDialog({
                 <Button
                   variant="ghost"
                   size="sm"
-                  icon={<Pencil size={14} />}
+                  icon={<Pencil size={ICON_SIZE.sm} />}
                   aria-label={`Rename ${b.name}`}
                   onClick={() => startRename(b)}
                   data-testid={`file-bookmark-rename-${b.id}`}
@@ -141,7 +142,7 @@ export function FileBookmarksDialog({
                 <Button
                   variant="ghost"
                   size="sm"
-                  icon={<Trash2 size={14} />}
+                  icon={<Trash2 size={ICON_SIZE.sm} />}
                   aria-label={`Remove ${b.name}`}
                   onClick={() => void handleRemove(b)}
                   data-testid={`file-bookmark-remove-${b.id}`}

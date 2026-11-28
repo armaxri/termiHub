@@ -14,6 +14,7 @@ import {
 } from "./dropCopy";
 import { serialDeviceName } from "@/utils/serialDeviceName";
 import { useTopNoticeInset } from "./topNoticeInset";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./TerminalReconnectStrip.css";
 
 interface TerminalReconnectStripProps {
@@ -192,9 +193,13 @@ export function TerminalReconnectStrip({
     >
       <LiveRegion message={announcement} data-testid="terminal-reconnect-strip-announcement" />
       {waiting ? (
-        <WifiOff size={12} className="terminal-reconnect-strip__icon" aria-hidden="true" />
+        <WifiOff
+          size={ICON_SIZE.xs}
+          className="terminal-reconnect-strip__icon"
+          aria-hidden="true"
+        />
       ) : (
-        <Spinner size={12} label={null} className="terminal-reconnect-strip__icon" />
+        <Spinner size={ICON_SIZE.xs} label={null} className="terminal-reconnect-strip__icon" />
       )}
       <div className="terminal-reconnect-strip__text">
         <div className="terminal-reconnect-strip__line">

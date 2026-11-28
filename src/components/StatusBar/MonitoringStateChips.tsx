@@ -7,6 +7,7 @@ import {
   monitorUnsupportedTooltip,
 } from "@/utils/monitorStatusReason";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Props for {@link MonitoringStopped}. */
 export interface MonitoringStoppedProps {
   /** Restart monitoring for the active tab. */
@@ -29,7 +30,7 @@ export function MonitoringStopped({ onStart }: MonitoringStoppedProps) {
           data-testid="monitoring-start-btn"
           onClick={onStart}
         >
-          <Activity size={12} />
+          <Activity size={ICON_SIZE.xs} />
           Monitoring off
           <span className="monitoring-status__action">· Start monitoring</span>
         </button>
@@ -61,7 +62,7 @@ function UnavailableChip({
       data-reason={reason}
     >
       <span className="status-bar__item monitoring-status__muted">
-        <Info size={12} />
+        <Info size={ICON_SIZE.xs} />
         Monitoring unavailable · {short}
       </span>
       <button
@@ -70,7 +71,7 @@ function UnavailableChip({
         data-testid={`${testId}-retry`}
         onClick={onRetry}
       >
-        <RotateCw size={12} />
+        <RotateCw size={ICON_SIZE.xs} />
         Retry
       </button>
     </span>

@@ -30,6 +30,7 @@ import { RemoteDesktopClipboardImage } from "./RemoteDesktopClipboardImage";
 import { RemoteDesktopFirstFrameOverlay } from "./RemoteDesktopFirstFrameOverlay";
 import { sshTunnelVia } from "./graphicalStages";
 import { viewportsFor } from "./monitorLayout";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./RemoteDesktopTab.css";
 
 /**
@@ -592,7 +593,7 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
               variant="ghost"
               size="sm"
               iconOnly
-              icon={<X size={14} />}
+              icon={<X size={ICON_SIZE.sm} />}
               title="Close"
               onClick={() => setClipboardOpen(false)}
             />
@@ -650,7 +651,7 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
               <Button
                 variant="secondary"
                 size="sm"
-                icon={<FileDown size={14} />}
+                icon={<FileDown size={ICON_SIZE.sm} />}
                 onClick={handleCopyFilesToHost}
                 pendingLabel="Preparing…"
                 data-testid="remote-desktop-clipboard-copy-files"

@@ -4,6 +4,7 @@ import { TOAST_AVOID_FORM_PROPS, TOAST_AVOID_PROPS } from "@/components/ui";
 import { t, tf } from "@/i18n/catalog";
 import { focusRovingTab, rovingTabIndexFromKey } from "@/utils/rovingTablist";
 import type { EditorView } from "./editorView";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./ServiceEditor.css";
 
 interface ServiceEditorShellProps {
@@ -164,7 +165,11 @@ export function ServiceEditorWarning({
 }) {
   return (
     <div className="service-editor__warning" role="status" data-testid={testId}>
-      <AlertTriangle size={14} aria-hidden="true" className="service-editor__warning-icon" />
+      <AlertTriangle
+        size={ICON_SIZE.sm}
+        aria-hidden="true"
+        className="service-editor__warning-icon"
+      />
       <span>{children}</span>
     </div>
   );

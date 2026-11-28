@@ -12,6 +12,7 @@ import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 const RECORD_TYPES: DnsRecordType[] = [
   "A",
   "AAAA",
@@ -157,7 +158,7 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
           <Button
             variant="secondary"
             size="sm"
-            icon={<Download size={14} />}
+            icon={<Download size={ICON_SIZE.sm} />}
             disabled={records.length === 0}
             onClick={handleExport}
             data-testid="dns-export"
@@ -168,7 +169,7 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
             <Button
               variant="danger"
               size="sm"
-              icon={<StopCircle size={14} />}
+              icon={<StopCircle size={ICON_SIZE.sm} />}
               onClick={handleCancel}
               data-testid="dns-cancel"
             >
@@ -178,7 +179,7 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
           <Button
             variant="primary"
             size="sm"
-            icon={<Play size={14} />}
+            icon={<Play size={ICON_SIZE.sm} />}
             pendingLabel="Looking up…"
             errorToast={false}
             type="submit"

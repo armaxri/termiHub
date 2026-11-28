@@ -3,6 +3,7 @@ import { useAppStore } from "@/store/appStore";
 import { Button, ContentOverlay } from "@/components/ui";
 import { whatRunsByItself } from "@/services/savedConnectionTrust";
 import { describeImportedConnection } from "@/services/workspaceImportTrust";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./ImportedTabConfirmation.css";
 
 interface ImportedConnectionPromptProps {
@@ -36,7 +37,7 @@ export function ImportedConnectionPrompt({ tabId, isVisible }: ImportedConnectio
       data-testid="imported-connection-prompt"
     >
       <ContentOverlay
-        icon={<ShieldAlert size={32} className="imported-tab-confirm__icon" />}
+        icon={<ShieldAlert size={ICON_SIZE.hero} className="imported-tab-confirm__icon" />}
         heading={
           changed ? "Changed connection not yet confirmed" : "Imported connection not yet confirmed"
         }

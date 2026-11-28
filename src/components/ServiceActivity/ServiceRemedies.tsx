@@ -7,6 +7,7 @@ import { useAppStore } from "@/store/appStore";
 import type { ServiceModel } from "@/utils/serviceModel";
 import { fireAndForget } from "@/utils/frontendLog";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface ServiceRemediesProps {
   model: ServiceModel;
   /** The tunnel's SSH connection, for "Edit connection" and "Open a terminal". */
@@ -54,7 +55,7 @@ export function ServiceRemedies({ model, sshConnectionId, onLeave }: ServiceReme
       <Button
         variant="ghost"
         size="sm"
-        icon={<Activity size={12} />}
+        icon={<Activity size={ICON_SIZE.xs} />}
         onClick={() => open("activity")}
         data-testid={`${ids}-activity`}
       >

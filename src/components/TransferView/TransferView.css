@@ -74,7 +74,7 @@
   overflow: hidden;
   color: var(--text-primary);
   font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   text-overflow: ellipsis;
   white-space: nowrap;
 }

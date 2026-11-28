@@ -26,6 +26,7 @@ import {
   logFileDrag,
 } from "./fileDragDiagnostics";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface FileBrowserDndProviderProps {
   /**
    * Called when a row drag is released over a folder: `operation` is `copy`
@@ -310,7 +311,7 @@ export function FileBrowserDndProvider({
       <DragOverlay dropAnimation={null}>
         {dragging && (
           <div className="file-browser__drag-chip" data-testid="file-browser-drag-chip">
-            {copyMode ? <Copy size={12} /> : <MoveRight size={12} />}
+            {copyMode ? <Copy size={ICON_SIZE.xs} /> : <MoveRight size={ICON_SIZE.xs} />}
             <span>
               {copyMode ? "Copy" : "Move"} {describeEntries(dragging)}
             </span>

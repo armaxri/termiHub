@@ -12,6 +12,7 @@ import { Button, Tooltip, EmptyState, SearchInput } from "@/components/ui";
 import { useListFilter, type ListFilterFields } from "@/hooks/useListFilter";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface LanguagePackagesSettingsProps {
   visibleFields?: Set<string>;
 }
@@ -160,7 +161,7 @@ export function LanguagePackagesSettings({ visibleFields }: LanguagePackagesSett
                           variant="ghost"
                           size="sm"
                           iconOnly
-                          icon={<PackageMinus size={14} />}
+                          icon={<PackageMinus size={ICON_SIZE.sm} />}
                           onClick={() => handleUninstall(pkg.id)}
                           aria-label={`Uninstall ${pkg.name}`}
                           data-testid={`lang-pkg-uninstall-${pkg.id}`}
@@ -226,7 +227,7 @@ export function LanguagePackagesSettings({ visibleFields }: LanguagePackagesSett
                           variant="ghost"
                           size="sm"
                           iconOnly
-                          icon={<PackagePlus size={14} />}
+                          icon={<PackagePlus size={ICON_SIZE.sm} />}
                           onClick={() => handleInstall(pkg.id)}
                           aria-label={`Install ${pkg.name}`}
                           data-testid={`lang-pkg-install-${pkg.id}`}

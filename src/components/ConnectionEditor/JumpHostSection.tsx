@@ -9,6 +9,7 @@ import { JumpHostEntry } from "./JumpHostEntry";
 import { JumpHostPathDisplay } from "./JumpHostPathDisplay";
 import { SshConfigImportDialog } from "./SshConfigImportDialog";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface JumpHostSectionProps {
   /** Current `proxyJump` chain from the SSH connection settings. */
   value: JumpHostConfig[] | undefined;
@@ -122,7 +123,7 @@ export function JumpHostSection({
         variant="settings"
         layout="checkbox"
         label="Connect through a jump host"
-        labelIcon={<ArrowLeftRight size={13} aria-hidden />}
+        labelIcon={<ArrowLeftRight size={ICON_SIZE.xs} aria-hidden />}
         labelClassName="jump-host__toggle-label"
       >
         <Checkbox
@@ -139,7 +140,7 @@ export function JumpHostSection({
         onClick={() => setImportOpen(true)}
         data-testid="jump-host-import-open"
       >
-        <FileDown size={13} aria-hidden />
+        <FileDown size={ICON_SIZE.xs} aria-hidden />
         Import from ~/.ssh/config
       </button>
 
@@ -169,7 +170,7 @@ export function JumpHostSection({
             return (
               <div className="jump-host__card" key={i} data-testid={`jump-host-card-${i}`}>
                 <div className="jump-host__card-head">
-                  <span className="jump-host__card-title">
+                  <span className="ui-section-label jump-host__card-title">
                     Hop {i + 1} ({positionLabel(i, hops.length)})
                   </span>
                   <button
@@ -178,7 +179,7 @@ export function JumpHostSection({
                     onClick={() => removeHop(i)}
                     data-testid={`jump-host-remove-${i}`}
                   >
-                    <Trash2 size={13} aria-hidden />
+                    <Trash2 size={ICON_SIZE.xs} aria-hidden />
                     Remove
                   </button>
                 </div>
@@ -193,7 +194,7 @@ export function JumpHostSection({
             onClick={addHop}
             data-testid="jump-host-add-hop"
           >
-            <Plus size={13} aria-hidden />
+            <Plus size={ICON_SIZE.xs} aria-hidden />
             Add another hop
           </button>
 
@@ -217,7 +218,7 @@ export function JumpHostSection({
 
           {errors.length > 0 && (
             <div className="jump-host__errors" data-testid="jump-host-errors" role="alert">
-              <AlertTriangle size={13} aria-hidden />
+              <AlertTriangle size={ICON_SIZE.xs} aria-hidden />
               <ul className="jump-host__error-list">
                 {errors.map((e, i) => (
                   <li key={i}>{e}</li>

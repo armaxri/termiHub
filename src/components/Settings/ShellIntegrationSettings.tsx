@@ -43,6 +43,7 @@ import "./ShellIntegrationSettings.css";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
 import { SettingsField } from "./SettingsField";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** The Linux file managers rendered as install toggles, with their detection id. */
 const LINUX_MANAGERS: {
   key: keyof ShellIntegrationSettingsType["linuxFileManagers"];
@@ -257,7 +258,7 @@ export function ShellIntegrationSettings() {
         <Button
           variant="secondary"
           size="sm"
-          icon={<Plus size={14} />}
+          icon={<Plus size={ICON_SIZE.sm} />}
           onClick={openAddEntry}
           data-testid="shell-integration-add-entry"
         >
@@ -441,7 +442,7 @@ function SortableEntryRow({
         {...attributes}
         {...listeners}
       >
-        <GripVertical size={14} />
+        <GripVertical size={ICON_SIZE.sm} />
       </button>
       <span className="shell-integration__entry-idx">{index + 1}</span>
       <span className="shell-integration__entry-name">{entry.name}</span>
@@ -455,7 +456,7 @@ function SortableEntryRow({
             variant="ghost"
             size="sm"
             iconOnly
-            icon={<ArrowUp size={14} />}
+            icon={<ArrowUp size={ICON_SIZE.sm} />}
             onClick={onMoveUp}
             disabled={isFirst}
             aria-label={`Move ${entry.name} up`}
@@ -467,7 +468,7 @@ function SortableEntryRow({
             variant="ghost"
             size="sm"
             iconOnly
-            icon={<ArrowDown size={14} />}
+            icon={<ArrowDown size={ICON_SIZE.sm} />}
             onClick={onMoveDown}
             disabled={isLast}
             aria-label={`Move ${entry.name} down`}
@@ -479,7 +480,7 @@ function SortableEntryRow({
             variant="ghost"
             size="sm"
             iconOnly
-            icon={<Pencil size={14} />}
+            icon={<Pencil size={ICON_SIZE.sm} />}
             onClick={onEdit}
             aria-label="Edit entry"
             data-testid={`shell-integration-entry-edit-${entry.id}`}
@@ -490,7 +491,7 @@ function SortableEntryRow({
             variant="ghost"
             size="sm"
             iconOnly
-            icon={<Trash2 size={14} />}
+            icon={<Trash2 size={ICON_SIZE.sm} />}
             onClick={onDelete}
             aria-label="Delete entry"
             data-testid={`shell-integration-entry-delete-${entry.id}`}

@@ -68,7 +68,7 @@
   bottom: 0;
   width: 2px;
   background-color: var(--activity-bar-indicator);
-  border-radius: 0 2px 2px 0;
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
 }
 
 .activity-bar--right .activity-bar__indicator {

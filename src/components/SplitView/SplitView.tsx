@@ -147,6 +147,7 @@ export function readSessionType(config: unknown): string {
 
 export { copyTerminalSelection } from "./TerminalContextMenu";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /**
  * The file editor is code-split out of the main bundle (PERF-001). It statically
  * pulls in Monaco (`monaco-editor` + `@monaco-editor/react`) and, transitively,
@@ -492,29 +493,29 @@ export function SplitView() {
           icon={
             <>
               {zoomedTab.contentType === "settings" ? (
-                <SettingsIcon size={14} />
+                <SettingsIcon size={ICON_SIZE.sm} />
               ) : zoomedTab.contentType === "log-viewer" ? (
-                <FileText size={14} />
+                <FileText size={ICON_SIZE.sm} />
               ) : zoomedTab.contentType === "editor" ? (
-                <FileEdit size={14} />
+                <FileEdit size={ICON_SIZE.sm} />
               ) : zoomedTab.contentType === "connection-editor" ? (
-                <SquarePen size={14} />
+                <SquarePen size={ICON_SIZE.sm} />
               ) : zoomedTab.contentType === "tunnel-editor" ? (
-                <ArrowLeftRight size={14} />
+                <ArrowLeftRight size={ICON_SIZE.sm} />
               ) : zoomedTab.contentType === "server-editor" ? (
-                <FolderUp size={14} />
+                <FolderUp size={ICON_SIZE.sm} />
               ) : zoomedTab.contentType === "workspace-editor" ? (
-                <LayoutGrid size={14} />
+                <LayoutGrid size={ICON_SIZE.sm} />
               ) : zoomedTab.contentType === "network-diagnostic" ? (
-                <Stethoscope size={14} />
+                <Stethoscope size={ICON_SIZE.sm} />
               ) : zoomedTab.contentType === "transfer-view" ? (
-                <Columns2 size={14} />
+                <Columns2 size={ICON_SIZE.sm} />
               ) : zoomedTab.contentType === "plugin-detail" ? (
-                <Puzzle size={14} />
+                <Puzzle size={ICON_SIZE.sm} />
               ) : zoomedTab.contentType === "agent-error" ? (
-                <WifiOff size={14} />
+                <WifiOff size={ICON_SIZE.sm} />
               ) : (
-                <TabConnectionIcon tab={zoomedTab} size={14} />
+                <TabConnectionIcon tab={zoomedTab} size={ICON_SIZE.sm} />
               )}
             </>
           }
@@ -526,26 +527,26 @@ export function SplitView() {
                     onSelect={() => setZoomRenameOpen(true)}
                     data-testid="zoom-context-rename"
                   >
-                    <Pencil size={14} /> Rename
+                    <Pencil size={ICON_SIZE.sm} /> Rename
                   </MenuItem>
                   <MenuSeparator />
                   <MenuItem
                     onSelect={() => saveTerminalToFile(zoomedTabId)}
                     data-testid="zoom-context-save"
                   >
-                    <FileDown size={14} /> Save to file
+                    <FileDown size={ICON_SIZE.sm} /> Save to file
                   </MenuItem>
                   <MenuItem
                     onSelect={() => copyTerminalToClipboard(zoomedTabId)}
                     data-testid="zoom-context-copy"
                   >
-                    <ClipboardCopy size={14} /> Copy all
+                    <ClipboardCopy size={ICON_SIZE.sm} /> Copy all
                   </MenuItem>
                   <MenuItem
                     onSelect={() => clearTerminal(zoomedTabId)}
                     data-testid="zoom-context-clear"
                   >
-                    <Eraser size={14} /> Clear terminal
+                    <Eraser size={ICON_SIZE.sm} /> Clear terminal
                   </MenuItem>
                   <MenuSeparator />
                   <MenuCheckboxItem
@@ -559,9 +560,9 @@ export function SplitView() {
                     data-testid="zoom-context-horizontal-scroll"
                   >
                     <MenuItemIndicator>
-                      <Check size={14} />
+                      <Check size={ICON_SIZE.sm} />
                     </MenuItemIndicator>
-                    <ArrowRightLeft size={14} /> Horizontal scrolling
+                    <ArrowRightLeft size={ICON_SIZE.sm} /> Horizontal scrolling
                   </MenuCheckboxItem>
                   <MenuSeparator />
                 </>
@@ -570,7 +571,7 @@ export function SplitView() {
                 onSelect={() => setZoomColorPickerOpen(true)}
                 data-testid="zoom-context-set-color"
               >
-                <Palette size={14} /> Set color…
+                <Palette size={ICON_SIZE.sm} /> Set color…
               </MenuItem>
             </>
           }
@@ -886,7 +887,7 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
             className="split-view__file-drag-overlay"
             data-testid={`panel-file-drag-overlay-${panel.id}`}
           >
-            <FileInput size={24} />
+            <FileInput size={ICON_SIZE.xl} />
             <span>Drop to insert path</span>
           </div>
         )}
@@ -1306,9 +1307,9 @@ function TabDragOverlay({ tab }: { tab: TerminalTab }) {
   return (
     <div className="tab tab--drag-overlay">
       {NonTerminalIcon ? (
-        <NonTerminalIcon size={14} className="tab__icon" />
+        <NonTerminalIcon size={ICON_SIZE.sm} className="tab__icon" />
       ) : (
-        <TabConnectionIcon tab={tab} size={14} className="tab__icon" />
+        <TabConnectionIcon tab={tab} size={ICON_SIZE.sm} className="tab__icon" />
       )}
       <span className="tab__title">
         <span className="tab__title-head">{tab.title}</span>

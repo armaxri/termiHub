@@ -63,6 +63,7 @@ import { isUnencryptedSession } from "@/utils/unencryptedSession";
 import { UnencryptedBadge } from "@/components/UnencryptedBadge";
 import { splitTabTitle, tabTooltipTitle } from "@/utils/tabTitleTruncation";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Human-readable label for each connection status, used as the dot's tooltip. */
 const STATUS_LABELS: Record<TabStatus, string> = {
   connecting: "Connecting",
@@ -203,18 +204,18 @@ function TabMoveItems({
         onSelect={() => onMoveLeft?.()}
         data-testid="tab-context-move-left"
       >
-        <ArrowLeft size={14} /> Move left
+        <ArrowLeft size={ICON_SIZE.sm} /> Move left
       </MenuItem>
       <MenuItem
         disabled={!onMoveRight}
         onSelect={() => onMoveRight?.()}
         data-testid="tab-context-move-right"
       >
-        <ArrowRight size={14} /> Move right
+        <ArrowRight size={ICON_SIZE.sm} /> Move right
       </MenuItem>
       {onMoveToNewPanel && (
         <MenuItem onSelect={() => onMoveToNewPanel()} data-testid="tab-context-move-new-panel">
-          <SquareSplitHorizontal size={14} /> Move to new panel
+          <SquareSplitHorizontal size={ICON_SIZE.sm} /> Move to new panel
         </MenuItem>
       )}
     </>
@@ -350,7 +351,7 @@ export function Tab({
       onSelect={() => onFocusOwningWindow?.(controlledByWindow.label)}
       data-testid="tab-context-focus-owning-window"
     >
-      <AppWindow size={14} /> Focus {controlledByWindow.name}
+      <AppWindow size={ICON_SIZE.sm} /> Focus {controlledByWindow.name}
     </MenuItem>
   );
 
@@ -387,9 +388,13 @@ export function Tab({
       onKeyDown={handleKeyDown}
     >
       {NonTerminalIcon ? (
-        <NonTerminalIcon size={14} className="tab__icon" data-testid={`tab-icon-${tab.id}`} />
+        <NonTerminalIcon
+          size={ICON_SIZE.sm}
+          className="tab__icon"
+          data-testid={`tab-icon-${tab.id}`}
+        />
       ) : (
-        <TabConnectionIcon tab={tab} size={14} className="tab__icon" />
+        <TabConnectionIcon tab={tab} size={ICON_SIZE.sm} className="tab__icon" />
       )}
       {status &&
         (() => {
@@ -403,7 +408,7 @@ export function Tab({
               data-testid={`tab-state-dot-${tab.id}`}
             >
               <StatusIcon
-                size={11}
+                size={ICON_SIZE.xs}
                 aria-hidden
                 className={status === "connecting" ? "motion-essential-spinner" : undefined}
               />
@@ -443,7 +448,7 @@ export function Tab({
           title="Broadcast target"
           data-testid={`tab-broadcast-badge-${tab.id}`}
         >
-          <Radio size={12} aria-hidden />
+          <Radio size={ICON_SIZE.xs} aria-hidden />
         </span>
       )}
       {isRecording && <TabRecordingBadge tabId={tab.id} onStop={onStopRecording} />}
@@ -468,7 +473,7 @@ export function Tab({
             aria-label={`Taken over by ${controlledByWindow.name}; input and resize disabled here.`}
             data-testid={`tab-controlled-badge-${tab.id}`}
           >
-            <AppWindow size={12} aria-hidden />
+            <AppWindow size={ICON_SIZE.xs} aria-hidden />
           </span>
         </Tooltip>
       )}
@@ -523,7 +528,7 @@ export function Tab({
           }}
           data-testid={`tab-close-${tab.id}`}
         >
-          <X size={14} />
+          <X size={ICON_SIZE.sm} />
         </span>
       </Tooltip>
     </div>
@@ -535,13 +540,13 @@ export function Tab({
         <ContextMenuTrigger asChild>{tabElement}</ContextMenuTrigger>
         <ContextMenuContent>
           <MenuItem onSelect={() => onSetColor?.()} data-testid="tab-context-set-color">
-            <Palette size={14} /> Set color…
+            <Palette size={ICON_SIZE.sm} /> Set color…
           </MenuItem>
           <MenuSeparator />
           {moveItems}
           <MenuSeparator />
           <MenuItem onSelect={() => onClose()} data-testid="tab-context-close">
-            <X size={14} /> Close tab
+            <X size={ICON_SIZE.sm} /> Close tab
           </MenuItem>
         </ContextMenuContent>
       </ContextMenuRoot>
@@ -553,42 +558,42 @@ export function Tab({
       <ContextMenuTrigger asChild>{tabElement}</ContextMenuTrigger>
       <ContextMenuContent>
         <MenuItem onSelect={() => onRename?.()} data-testid="tab-context-rename">
-          <Pencil size={14} /> Rename
+          <Pencil size={ICON_SIZE.sm} /> Rename
         </MenuItem>
         {isRecording && onStopRecording && (
           <MenuItem onSelect={() => onStopRecording()} data-testid="tab-context-stop-recording">
-            <CircleStop size={14} /> Stop recording
+            <CircleStop size={ICON_SIZE.sm} /> Stop recording
           </MenuItem>
         )}
         {runningAutomation && onStopAutomation && (
           <MenuItem onSelect={() => onStopAutomation()} data-testid="tab-context-stop-automation">
-            <CircleStop size={14} /> Stop automation
+            <CircleStop size={ICON_SIZE.sm} /> Stop automation
           </MenuItem>
         )}
         {onDisconnect && (
           <>
             <MenuSeparator />
             <MenuItem onSelect={() => onDisconnect()} data-testid="tab-context-disconnect">
-              <Unplug size={14} /> Disconnect
+              <Unplug size={ICON_SIZE.sm} /> Disconnect
             </MenuItem>
           </>
         )}
         <MenuSeparator />
         {moveItems}
         <MenuItem onSelect={() => onMoveToNewWindow?.()} data-testid="tab-context-move-new-window">
-          <ExternalLink size={14} /> Move to new window
+          <ExternalLink size={ICON_SIZE.sm} /> Move to new window
         </MenuItem>
         {showMoveToExisting && (
           <MenuSub>
             <MenuSubTrigger data-testid="tab-context-move-window">
-              <AppWindow size={14} /> Move to window
+              <AppWindow size={ICON_SIZE.sm} /> Move to window
             </MenuSubTrigger>
             <MenuSubContent data-testid="tab-context-move-window-submenu">
               <MenuItem
                 onSelect={() => onMoveToNewWindow?.()}
                 data-testid="tab-context-move-window-new"
               >
-                <Plus size={14} /> New window
+                <Plus size={ICON_SIZE.sm} /> New window
               </MenuItem>
               <MenuSeparator />
               {pickerEntries.map((entry) => (
@@ -600,7 +605,7 @@ export function Tab({
                   }}
                   data-testid={`tab-context-move-window-${entry.label}`}
                 >
-                  <AppWindow size={14} /> {entry.name}
+                  <AppWindow size={ICON_SIZE.sm} /> {entry.name}
                   {entry.isCurrent ? (
                     <span className="ui-menu__hint">current</span>
                   ) : (
@@ -615,16 +620,16 @@ export function Tab({
         )}
         <MenuSeparator />
         <MenuItem onSelect={() => onSave?.()} data-testid="tab-context-save">
-          <FileDown size={14} /> Save to file
+          <FileDown size={ICON_SIZE.sm} /> Save to file
         </MenuItem>
         <MenuItem onSelect={() => onOpenInEditor?.()} data-testid="tab-context-open-in-editor">
-          <FileSearch size={14} /> Open in editor
+          <FileSearch size={ICON_SIZE.sm} /> Open in editor
         </MenuItem>
         <MenuItem onSelect={() => onCopyToClipboard?.()} data-testid="tab-context-copy">
-          <ClipboardCopy size={14} /> Copy all
+          <ClipboardCopy size={ICON_SIZE.sm} /> Copy all
         </MenuItem>
         <MenuItem onSelect={() => onClear?.()} data-testid="tab-context-clear">
-          <Eraser size={14} /> Clear terminal
+          <Eraser size={ICON_SIZE.sm} /> Clear terminal
         </MenuItem>
         <MenuSeparator />
         <MenuCheckboxItem
@@ -633,27 +638,27 @@ export function Tab({
           data-testid="tab-context-horizontal-scroll"
         >
           <MenuItemIndicator>
-            <Check size={14} />
+            <Check size={ICON_SIZE.sm} />
           </MenuItemIndicator>
-          <ArrowRightLeft size={14} /> Horizontal scrolling
+          <ArrowRightLeft size={ICON_SIZE.sm} /> Horizontal scrolling
         </MenuCheckboxItem>
         <MenuSeparator />
         <MenuItem onSelect={() => onSetColor?.()} data-testid="tab-context-set-color">
-          <Palette size={14} /> Set color…
+          <Palette size={ICON_SIZE.sm} /> Set color…
         </MenuItem>
         {focusOwningWindowItem}
         <MenuSeparator />
         <MenuItem onSelect={() => onClose()} data-testid="tab-context-close">
-          <X size={14} /> Close tab
+          <X size={ICON_SIZE.sm} /> Close tab
         </MenuItem>
         {onCloseOthers && (
           <MenuItem onSelect={() => onCloseOthers()} data-testid="tab-context-close-others">
-            <X size={14} /> Close others
+            <X size={ICON_SIZE.sm} /> Close others
           </MenuItem>
         )}
         {onCloseToRight && (
           <MenuItem onSelect={() => onCloseToRight()} data-testid="tab-context-close-right">
-            <X size={14} /> Close tabs to the right
+            <X size={ICON_SIZE.sm} /> Close tabs to the right
           </MenuItem>
         )}
       </ContextMenuContent>

@@ -3,6 +3,7 @@ import { MonitorX, RefreshCw } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSessionLifecycle } from "@/store/useSessionLifecycle";
 import { Button, ContentOverlay } from "@/components/ui";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./TerminalDisconnectOverlay.css";
 
 interface TerminalEvictedOverlayProps {
@@ -123,7 +124,7 @@ function EvictedOverlayView({
     >
       <ContentOverlay
         className="terminal-disconnect-overlay__body"
-        icon={<MonitorX size={32} className="terminal-disconnect-overlay__icon" />}
+        icon={<MonitorX size={ICON_SIZE.hero} className="terminal-disconnect-overlay__icon" />}
         heading={heading}
         subheading={subheading}
         // A state change, not a failure: the session is alive elsewhere (#4514).
@@ -133,7 +134,7 @@ function EvictedOverlayView({
           <Button
             variant="primary"
             size="sm"
-            icon={<RefreshCw size={14} />}
+            icon={<RefreshCw size={ICON_SIZE.sm} />}
             onClick={onReclaim}
             data-testid="terminal-evicted-reclaim-btn"
           >

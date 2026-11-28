@@ -125,6 +125,7 @@ import { errorMessage } from "@/utils/errorMessage";
 import { toastConnectCanceled } from "@/utils/connectCanceledToast";
 import { tf } from "@/i18n/catalog";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 const EMPTY_SESSIONS: AgentSessionInfo[] = [];
 const EMPTY_DEFINITIONS: AgentDefinitionInfo[] = [];
 const EMPTY_FOLDERS: AgentFolderInfo[] = [];
@@ -280,7 +281,7 @@ type AgentItemNavProps = Pick<
 >;
 
 /** Icon for a session/connection type string — the shared type glyph (#5622). */
-function SessionTypeIcon({ type, size = 14 }: { type: string; size?: number }) {
+function SessionTypeIcon({ type, size = ICON_SIZE.sm }: { type: string; size?: number }) {
   return <ConnectionTypeIcon type={type} size={size} />;
 }
 
@@ -446,7 +447,7 @@ function AgentConnectionItem({
             customIcon={definition.icon}
             iconColor={definition.iconColor}
             iconEmoji={definition.iconEmoji}
-            size={14}
+            size={ICON_SIZE.sm}
           />
           {definition.persistent && (
             <PersistentStateDot
@@ -492,7 +493,7 @@ function AgentConnectionItem({
                     variant="ghost"
                     size="xs"
                     iconOnly
-                    icon={<Play size={12} />}
+                    icon={<Play size={ICON_SIZE.xs} />}
                     aria-label="Start session"
                     data-testid={`persistent-start-${definition.id}`}
                     onClick={(e) => {
@@ -508,7 +509,7 @@ function AgentConnectionItem({
                       variant="ghost"
                       size="xs"
                       iconOnly
-                      icon={<Link size={12} />}
+                      icon={<Link size={ICON_SIZE.xs} />}
                       aria-label="Attach new tab"
                       data-testid={`persistent-attach-${definition.id}`}
                       onClick={(e) => {
@@ -522,7 +523,7 @@ function AgentConnectionItem({
                       variant="ghost"
                       size="xs"
                       iconOnly
-                      icon={<Square size={12} />}
+                      icon={<Square size={ICON_SIZE.xs} />}
                       aria-label="Stop session"
                       data-testid={`persistent-stop-${definition.id}`}
                       onClick={(e) => {
@@ -544,7 +545,7 @@ function AgentConnectionItem({
               onSelect={() => onStartPersistent(agentId, definition)}
               data-testid="context-agent-def-start-persistent"
             >
-              <Play size={14} />
+              <Play size={ICON_SIZE.sm} />
               Start session
             </MenuItem>
             <MenuSeparator />
@@ -556,7 +557,7 @@ function AgentConnectionItem({
               onSelect={() => onAttachPersistent(agentId, definition)}
               data-testid="context-agent-def-attach-persistent"
             >
-              <Link size={14} />
+              <Link size={ICON_SIZE.sm} />
               Attach new tab
             </MenuItem>
             <MenuItem
@@ -564,7 +565,7 @@ function AgentConnectionItem({
               onSelect={() => onStopPersistent(agentId, definition)}
               data-testid="context-agent-def-stop-persistent"
             >
-              <Square size={14} />
+              <Square size={ICON_SIZE.sm} />
               Stop session
             </MenuItem>
             <MenuSeparator />
@@ -572,19 +573,19 @@ function AgentConnectionItem({
         )}
         {!definition.persistent && (
           <MenuItem onSelect={() => onOpen(definition)}>
-            <Play size={14} />
+            <Play size={ICON_SIZE.sm} />
             Connect
           </MenuItem>
         )}
         <MenuItem onSelect={() => onEdit(definition)} data-testid="context-agent-def-edit">
-          <Pencil size={14} />
+          <Pencil size={ICON_SIZE.sm} />
           Edit
         </MenuItem>
         <MenuItem
           onSelect={() => onDuplicate(definition)}
           data-testid="context-agent-def-duplicate"
         >
-          <Copy size={14} />
+          <Copy size={ICON_SIZE.sm} />
           Duplicate
         </MenuItem>
         <MenuSeparator />
@@ -599,7 +600,7 @@ function AgentConnectionItem({
           onSelect={() => setConfirmingDelete(true)}
           data-testid="context-agent-def-delete"
         >
-          <Trash2 size={14} />
+          <Trash2 size={ICON_SIZE.sm} />
           Delete
         </MenuItem>
       </ContextMenuContent>
@@ -642,7 +643,7 @@ function AgentDefMoveToFolder({
   return (
     <MenuSub>
       <MenuSubTrigger data-testid="context-agent-def-move-folder">
-        <FolderInput size={14} /> Move to folder
+        <FolderInput size={ICON_SIZE.sm} /> Move to folder
       </MenuSubTrigger>
       <MenuSubContent data-testid="context-agent-def-move-folder-submenu">
         <MenuItem
@@ -650,7 +651,7 @@ function AgentDefMoveToFolder({
           onSelect={() => onMoveToFolder(definition.id, null)}
           data-testid="context-agent-def-move-folder-root"
         >
-          <Folder size={14} /> Top level
+          <Folder size={ICON_SIZE.sm} /> Top level
           {atRoot && <span className="ui-menu__hint">current</span>}
         </MenuItem>
         {folderTargets.length > 0 && <MenuSeparator />}
@@ -663,7 +664,7 @@ function AgentDefMoveToFolder({
               onSelect={() => onMoveToFolder(definition.id, target.id)}
               data-testid={`context-agent-def-move-folder-${target.id}`}
             >
-              <Folder size={14} /> {target.label}
+              <Folder size={ICON_SIZE.sm} /> {target.label}
               {isCurrent && <span className="ui-menu__hint">current</span>}
             </MenuItem>
           );
@@ -864,7 +865,7 @@ function AgentFolderNode({
           </ContextMenuTrigger>
           <ContextMenuContent onCloseAutoFocus={subfolderMenu.onCloseAutoFocus}>
             <MenuItem onSelect={() => onNewConnection(folder.id)}>
-              <Plus size={14} />
+              <Plus size={ICON_SIZE.sm} />
               New connection
             </MenuItem>
             <MenuItem
@@ -874,11 +875,11 @@ function AgentFolderNode({
                 if (!expanded) onToggleFolder(folder.id);
               }}
             >
-              <FolderPlus size={14} />
+              <FolderPlus size={ICON_SIZE.sm} />
               New subfolder
             </MenuItem>
             <MenuItem onSelect={startRename} data-testid="context-agent-folder-rename">
-              <Pencil size={14} />
+              <Pencil size={ICON_SIZE.sm} />
               Rename
             </MenuItem>
             <MenuSeparator />
@@ -887,7 +888,7 @@ function AgentFolderNode({
               onSelect={() => setConfirmingDelete(true)}
               data-testid="context-agent-folder-delete"
             >
-              <Trash2 size={14} />
+              <Trash2 size={ICON_SIZE.sm} />
               Delete folder
             </MenuItem>
           </ContextMenuContent>
@@ -1857,11 +1858,11 @@ export function AgentNode({
               className={`connection-list__group-row${agent.description ? " connection-list__group-row--described" : ""}`}
             >
               <button
-                className={AGENT_TOGGLE_CLASS}
+                className={`ui-section-label ${AGENT_TOGGLE_CLASS}`}
                 onClick={() => toggleRemoteAgent(agent.id)}
                 aria-keyshortcuts={treeRowKeyShortcuts({ rename: true, delete: true })}
               >
-                <Chevron size={16} className="connection-tree__chevron" />
+                <Chevron size={ICON_SIZE.md} className="connection-tree__chevron" />
                 <StatusDot
                   tone={rowPresentation.tone}
                   size="sm"
@@ -1869,7 +1870,7 @@ export function AgentNode({
                   title={rowPresentation.label}
                   testId={`agent-state-${agent.id}`}
                 />
-                <Server size={14} />
+                <Server size={ICON_SIZE.sm} />
                 {/* The name and the user's description (#5770) share one text
                     column, so the description starts exactly under the name,
                     like a connection row's (R-047, #5851). */}
@@ -1911,7 +1912,7 @@ export function AgentNode({
                       variant="ghost"
                       size="sm"
                       iconOnly
-                      icon={<XCircle size={16} />}
+                      icon={<XCircle size={ICON_SIZE.md} />}
                       onClick={() => void handleCancelConnect()}
                       aria-label="Cancel connect"
                       data-testid={`agent-cancel-connect-${agent.id}`}
@@ -1932,7 +1933,7 @@ export function AgentNode({
                     variant="ghost"
                     size="sm"
                     iconOnly
-                    icon={<RefreshCw size={14} />}
+                    icon={<RefreshCw size={ICON_SIZE.sm} />}
                     onClick={handleConnect}
                     aria-label="Reconnect"
                     title={agent.lastError ? `Reconnect — ${agent.lastError}` : "Reconnect"}
@@ -1949,7 +1950,7 @@ export function AgentNode({
                     variant="ghost"
                     size="sm"
                     iconOnly
-                    icon={<Play size={14} />}
+                    icon={<Play size={ICON_SIZE.sm} />}
                     onClick={handleConnect}
                     aria-label="Connect"
                     title="Connect"
@@ -1974,7 +1975,7 @@ export function AgentNode({
                     variant="ghost"
                     size="sm"
                     iconOnly
-                    icon={<Upload size={14} />}
+                    icon={<Upload size={ICON_SIZE.sm} />}
                     onClick={() => setSetupDialogOpen(true)}
                     aria-label="Set up agent"
                     title={`Set up the agent on ${agent.config.host}`}
@@ -1992,7 +1993,7 @@ export function AgentNode({
                       variant="ghost"
                       size="sm"
                       iconOnly
-                      icon={<Plus size={16} />}
+                      icon={<Plus size={ICON_SIZE.md} />}
                       onClick={() => handleNewConnection(null)}
                       aria-label="New connection"
                       data-testid={`agent-new-connection-${agent.id}`}
@@ -2027,7 +2028,7 @@ export function AgentNode({
               onSelect={() => void handleCancelConnect()}
               data-testid="context-agent-cancel-connect"
             >
-              <XCircle size={14} />
+              <XCircle size={ICON_SIZE.sm} />
               Cancel connect
             </MenuItem>
           ) : !isConnected && !isReconnecting ? (
@@ -2038,33 +2039,33 @@ export function AgentNode({
                 disabled={setupPhase === "installing"}
                 data-testid="context-agent-connect"
               >
-                <Play size={14} />
+                <Play size={ICON_SIZE.sm} />
                 Connect
               </MenuItem>
               <MenuItem onSelect={() => setSetupDialogOpen(true)} data-testid="context-agent-setup">
-                <Upload size={14} />
+                <Upload size={ICON_SIZE.sm} />
                 Set up agent…
               </MenuItem>
             </>
           ) : (
             <>
               <MenuItem onSelect={handleDisconnectFromMenu} data-testid="context-agent-disconnect">
-                <Unplug size={14} />
+                <Unplug size={ICON_SIZE.sm} />
                 Disconnect (detach)
               </MenuItem>
               <MenuItem onSelect={handleShutdownFromMenu} data-testid="context-agent-shutdown">
-                <Power size={14} />
+                <Power size={ICON_SIZE.sm} />
                 Shutdown (stop remote)
               </MenuItem>
               <MenuItem onSelect={handleRefresh} data-testid="context-agent-refresh">
-                <RefreshCw size={14} />
+                <RefreshCw size={ICON_SIZE.sm} />
                 Refresh sessions
               </MenuItem>
               <MenuItem
                 onSelect={() => setRunningSessionsOpen(true)}
                 data-testid="context-agent-running-sessions"
               >
-                <Terminal size={14} />
+                <Terminal size={ICON_SIZE.sm} />
                 Running sessions…
               </MenuItem>
               {isConnected && canUpdateAgent && (
@@ -2072,13 +2073,13 @@ export function AgentNode({
                   onSelect={() => void handleOpenUpdate()}
                   data-testid="context-agent-update"
                 >
-                  <ArrowUpCircle size={14} />
+                  <ArrowUpCircle size={ICON_SIZE.sm} />
                   Update agent…
                 </MenuItem>
               )}
               <MenuSeparator />
               <MenuItem onSelect={handleNewShellSession} data-testid="context-agent-new-shell">
-                <Terminal size={14} />
+                <Terminal size={ICON_SIZE.sm} />
                 New shell session
               </MenuItem>
               <AgentNewSerialSessionItem
@@ -2092,7 +2093,7 @@ export function AgentNode({
                 onSelect={() => handleNewConnection(null)}
                 data-testid="context-agent-new-connection"
               >
-                <Plus size={14} />
+                <Plus size={ICON_SIZE.sm} />
                 New connection
               </MenuItem>
               <MenuItem
@@ -2103,7 +2104,7 @@ export function AgentNode({
                 }}
                 data-testid="context-agent-new-folder"
               >
-                <FolderPlus size={14} />
+                <FolderPlus size={ICON_SIZE.sm} />
                 New folder
               </MenuItem>
             </>
@@ -2116,7 +2117,7 @@ export function AgentNode({
                 onSelect={() => onMoveBy(agent.id, -1)}
                 data-testid="context-agent-move-up"
               >
-                <ArrowUp size={14} />
+                <ArrowUp size={ICON_SIZE.sm} />
                 Move up
                 <span className="ui-menu__hint">{moveShortcutHint("Up")}</span>
               </MenuItem>
@@ -2125,7 +2126,7 @@ export function AgentNode({
                 onSelect={() => onMoveBy(agent.id, 1)}
                 data-testid="context-agent-move-down"
               >
-                <ArrowDown size={14} />
+                <ArrowDown size={ICON_SIZE.sm} />
                 Move down
                 <span className="ui-menu__hint">{moveShortcutHint("Down")}</span>
               </MenuItem>
@@ -2136,7 +2137,7 @@ export function AgentNode({
             onSelect={() => openConnectionEditorTab(agent.id)}
             data-testid="context-agent-edit"
           >
-            <Pencil size={14} />
+            <Pencil size={ICON_SIZE.sm} />
             Edit
           </MenuItem>
           <MenuItem
@@ -2144,7 +2145,7 @@ export function AgentNode({
             onSelect={() => setConfirmingDelete(true)}
             data-testid="context-agent-delete"
           >
-            <Trash2 size={14} />
+            <Trash2 size={ICON_SIZE.sm} />
             Delete
           </MenuItem>
         </ContextMenuContent>
@@ -2256,7 +2257,7 @@ export function AgentNode({
                   className="agent-node__hint agent-node__hint--reconnecting"
                   style={{ paddingLeft: 24 }}
                 >
-                  <RefreshCw size={12} />
+                  <RefreshCw size={ICON_SIZE.xs} />
                   Reconnecting…
                 </div>
               )}
@@ -2265,7 +2266,7 @@ export function AgentNode({
               {agentSessions.length > 0 && (
                 <>
                   <div className="agent-node__section-label" style={{ paddingLeft: 24 }}>
-                    <Zap size={12} />
+                    <Zap size={ICON_SIZE.xs} />
                     Active sessions
                   </div>
                   {agentSessions.map((session) => {
@@ -2304,7 +2305,7 @@ export function AgentNode({
                             title="Open in a tab"
                             data-testid={`agent-session-open-${session.sessionId}`}
                           >
-                            <AppWindow size={12} aria-hidden="true" />
+                            <AppWindow size={ICON_SIZE.xs} aria-hidden="true" />
                           </span>
                         )}
                         {/* Names, not settings (#5770): a running session is

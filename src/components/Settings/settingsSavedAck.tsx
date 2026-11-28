@@ -1,6 +1,7 @@
 import { createContext, useContext } from "react";
 import { Check } from "lucide-react";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /**
  * Inline "Saved" feedback for auto-saved settings (#5562).
  *
@@ -46,7 +47,7 @@ export function SettingsSavedMark() {
       data-testid="settings-saved-mark"
       aria-hidden="true"
     >
-      <Check size={12} />
+      <Check size={ICON_SIZE.xs} />
       Saved
     </span>
   );

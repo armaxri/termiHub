@@ -10,6 +10,7 @@ import {
   type SessionEndNotice,
 } from "./dropCopy";
 import { SESSION_END_ICONS } from "./sessionEndIcons";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./TerminalViewModeBanner.css";
 
 interface TerminalViewModeBannerProps {
@@ -99,7 +100,7 @@ export function TerminalViewModeBanner({ tabId, cause, notice }: TerminalViewMod
       {/* The banner can appear without the disconnect overlay (the user ended
           the agent, #4309), so announce its state politely (#4331). */}
       <LiveRegion message={announcement} data-testid="terminal-view-mode-announcement" />
-      <Icon size={12} className="terminal-view-mode-banner__icon" aria-hidden />
+      <Icon size={ICON_SIZE.xs} className="terminal-view-mode-banner__icon" aria-hidden />
       <span className="terminal-view-mode-banner__text">
         <span className="terminal-view-mode-banner__label" data-testid="terminal-view-mode-label">
           <span className="terminal-view-mode-banner__heading">{heading}</span>{" "}
@@ -114,7 +115,7 @@ export function TerminalViewModeBanner({ tabId, cause, notice }: TerminalViewMod
       <Button
         variant="primary"
         size="sm"
-        icon={restart ? <RotateCcw size={11} /> : <RefreshCw size={11} />}
+        icon={restart ? <RotateCcw size={ICON_SIZE.xs} /> : <RefreshCw size={ICON_SIZE.xs} />}
         onClick={handleReconnect}
         title={reconnectTitle}
         data-testid="terminal-view-mode-reconnect-btn"

@@ -17,6 +17,7 @@ import type { TerminalExitInfo } from "@/types/terminal";
 import type { TabStatus } from "@/utils/tabStatus";
 import { t } from "@/i18n/catalog";
 import { DisconnectStrip, type DisconnectStripTone } from "./DisconnectStrip";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./TerminalDisconnectOverlay.css";
 
 /**
@@ -235,7 +236,7 @@ export function AgentSetupTabStrip({
         data-testid="agent-setup-tab-strip"
         icon={
           <Icon
-            size={16}
+            size={ICON_SIZE.md}
             className={`terminal-disconnect-overlay__icon terminal-disconnect-overlay__icon--${iconTone}`}
           />
         }
@@ -251,7 +252,7 @@ export function AgentSetupTabStrip({
           <Button
             variant="primary"
             size="sm"
-            icon={<X size={14} />}
+            icon={<X size={ICON_SIZE.sm} />}
             onClick={handleClose}
             data-testid="agent-setup-tab-close-btn"
           >

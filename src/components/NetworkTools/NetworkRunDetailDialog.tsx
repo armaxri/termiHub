@@ -6,6 +6,7 @@ import { exportNetworkResults } from "./exportResults";
 import { runToCsv, runsToJson } from "./runHistory";
 import { formatRunTime, runLocationLabel, RUN_STATUS_LABEL, TOOL_LABEL } from "./runHistoryFormat";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface NetworkRunDetailDialogProps {
   /** The run to show; the dialog is closed when `null`. */
   run: NetworkToolRun | null;
@@ -50,7 +51,7 @@ export function NetworkRunDetailDialog({
           <Button
             variant="secondary"
             size="sm"
-            icon={<Download size={14} />}
+            icon={<Download size={ICON_SIZE.sm} />}
             disabled={!result}
             onClick={() => exportNetworkResults(baseName, runToCsv(run))}
             data-testid="network-run-detail-export-csv"
@@ -60,7 +61,7 @@ export function NetworkRunDetailDialog({
           <Button
             variant="secondary"
             size="sm"
-            icon={<Braces size={14} />}
+            icon={<Braces size={ICON_SIZE.sm} />}
             onClick={() => exportNetworkResults(baseName, runsToJson([run]), "json")}
             data-testid="network-run-detail-export-json"
           >
@@ -70,7 +71,7 @@ export function NetworkRunDetailDialog({
             <Button
               variant="primary"
               size="sm"
-              icon={<RotateCcw size={14} />}
+              icon={<RotateCcw size={ICON_SIZE.sm} />}
               onClick={() => {
                 onRerun(run);
                 onClose();

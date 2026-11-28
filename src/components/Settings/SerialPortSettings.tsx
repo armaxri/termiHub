@@ -9,6 +9,7 @@ import { getPlatform, type Platform } from "@/utils/platform";
 import { t, tf } from "@/i18n/catalog";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface SerialPortSettingsProps {
   visibleFields?: Set<string>;
   /**
@@ -141,7 +142,9 @@ export function SerialPortSettings({
           <Button
             variant="ghost"
             size="sm"
-            icon={expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            icon={
+              expanded ? <ChevronDown size={ICON_SIZE.sm} /> : <ChevronRight size={ICON_SIZE.sm} />
+            }
             aria-expanded={expanded}
             aria-controls={listId}
             onClick={() => setExpanded((v) => !v)}
@@ -180,7 +183,7 @@ export function SerialPortSettings({
                         variant="ghost"
                         size="sm"
                         iconOnly
-                        icon={<Trash2 size={14} />}
+                        icon={<Trash2 size={ICON_SIZE.sm} />}
                         onClick={() => handleDelete(p.prefix)}
                         aria-label="Remove custom prefix"
                       />
@@ -208,7 +211,7 @@ export function SerialPortSettings({
             <Button
               variant="primary"
               size="sm"
-              icon={<Plus size={14} />}
+              icon={<Plus size={ICON_SIZE.sm} />}
               onClick={handleAdd}
               disabled={!newPrefix.trim()}
             >

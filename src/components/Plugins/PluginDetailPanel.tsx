@@ -23,6 +23,7 @@ import { PluginPlatformList } from "./PluginPlatformList";
 import { PluginUpdateSection } from "./PluginUpdateSection";
 import { currentIndexOffer, usePluginUpdateStore } from "@/plugins/pluginUpdateStore";
 import { usePluginHostPlatform } from "@/hooks/usePluginHostPlatform";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./Plugins.css";
 
 /** Props for {@link PluginDetailPanel}. */
@@ -117,7 +118,7 @@ export function PluginDetailPanel({ meta, isVisible }: PluginDetailPanelProps) {
     <div className="plugin-detail" data-testid="plugin-detail">
       <div className="plugin-detail__head">
         <div className={`plugin-detail__icon${isError ? " plugin-detail__icon--error" : ""}`}>
-          <TypeIcon size={22} aria-hidden="true" />
+          <TypeIcon size={ICON_SIZE.lg} aria-hidden="true" />
         </div>
         <div>
           <div className="plugin-detail__name">
@@ -160,7 +161,7 @@ export function PluginDetailPanel({ meta, isVisible }: PluginDetailPanelProps) {
 
       {!isInvalidManifest && (
         <div className="plugin-detail__block" data-testid="plugin-detail-extension-points">
-          <div className="plugin-detail__section-title">Extension points</div>
+          <div className="ui-section-label plugin-detail__section-title">Extension points</div>
           <div className="plugin-detail__list">
             {points.map((point) => {
               const Icon = point.icon;
@@ -185,14 +186,14 @@ export function PluginDetailPanel({ meta, isVisible }: PluginDetailPanelProps) {
 
       {platforms && (
         <div className="plugin-detail__block">
-          <div className="plugin-detail__section-title">Supported platforms</div>
+          <div className="ui-section-label plugin-detail__section-title">Supported platforms</div>
           <PluginPlatformList support={platforms} testIdBase="plugin-detail" />
         </div>
       )}
 
       {manifest.permissions.length > 0 && (
         <div className="plugin-detail__block">
-          <div className="plugin-detail__section-title">Permissions</div>
+          <div className="ui-section-label plugin-detail__section-title">Permissions</div>
           <div className="plugin-detail__list">
             {manifest.permissions.map((perm) => (
               <div className="plugin-detail__item" key={perm}>
@@ -214,7 +215,7 @@ export function PluginDetailPanel({ meta, isVisible }: PluginDetailPanelProps) {
         {isInvalidManifest ? null : isError ? (
           <Button
             variant="primary"
-            icon={<Power size={14} />}
+            icon={<Power size={ICON_SIZE.sm} />}
             onClick={() => enablePlugin(manifest.id)}
             data-testid="plugin-action-retry"
           >
@@ -223,7 +224,7 @@ export function PluginDetailPanel({ meta, isVisible }: PluginDetailPanelProps) {
         ) : isEnabled ? (
           <Button
             variant="secondary"
-            icon={<Power size={14} />}
+            icon={<Power size={ICON_SIZE.sm} />}
             onClick={() => disablePlugin(manifest.id)}
             data-testid="plugin-action-disable"
           >
@@ -232,7 +233,7 @@ export function PluginDetailPanel({ meta, isVisible }: PluginDetailPanelProps) {
         ) : (
           <Button
             variant="primary"
-            icon={<Power size={14} />}
+            icon={<Power size={ICON_SIZE.sm} />}
             onClick={() => enablePlugin(manifest.id)}
             data-testid="plugin-action-enable"
           >
@@ -243,7 +244,7 @@ export function PluginDetailPanel({ meta, isVisible }: PluginDetailPanelProps) {
         {showSettings && (
           <Button
             variant="secondary"
-            icon={<SlidersHorizontal size={14} />}
+            icon={<SlidersHorizontal size={ICON_SIZE.sm} />}
             onClick={() => openSettingsTab({ category: "plugins", pluginId: manifest.id })}
             data-testid="plugin-action-settings"
           >
@@ -253,7 +254,7 @@ export function PluginDetailPanel({ meta, isVisible }: PluginDetailPanelProps) {
 
         <Button
           variant="danger"
-          icon={<Trash2 size={14} />}
+          icon={<Trash2 size={ICON_SIZE.sm} />}
           onClick={() => setConfirmUninstall(true)}
           data-testid="plugin-action-uninstall"
         >

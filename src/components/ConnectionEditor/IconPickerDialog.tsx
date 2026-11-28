@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { Modal, Button, SearchInput, EmptyState } from "@/components/ui";
 import { useListFilter, type ListFilterFields } from "@/hooks/useListFilter";
 import { getIconCatalog, IconByName, type IconCatalogEntry } from "@/utils/connectionIcons";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./IconPickerDialog.css";
 
 interface IconPickerDialogProps {
@@ -85,7 +86,7 @@ export function IconPickerDialog({
             title={entry.displayName}
             data-testid={`icon-picker-cell-${entry.name}`}
           >
-            <IconByName name={entry.name} size={20} />
+            <IconByName name={entry.name} size={ICON_SIZE.lg} />
           </button>
         ))}
         {filtered.length === 0 && <EmptyState title="No icons match your search." />}

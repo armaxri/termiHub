@@ -8,6 +8,7 @@ import { BackupRestoreDialog } from "@/components/Settings/BackupRestoreDialog";
 import { ConnectionIcon } from "@/utils/connectionIcons";
 import { connectSavedConnection } from "@/utils/connectSavedConnection";
 import { pickRecentConnections } from "@/utils/recentConnections";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./EmptyWindowState.css";
 
 /** How many connections the compact state of an empty panel lists. */
@@ -80,7 +81,7 @@ export function EmptyWindowState({ panelId }: EmptyWindowStateProps = {}) {
       <EmptyState
         variant="card"
         role={undefined}
-        icon={compact ? undefined : <AppWindow size={28} strokeWidth={1.5} />}
+        icon={compact ? undefined : <AppWindow size={ICON_SIZE.xl} strokeWidth={1.5} />}
         title={compact ? "This panel is empty" : "This window is empty"}
         description={
           <>
@@ -106,7 +107,7 @@ export function EmptyWindowState({ panelId }: EmptyWindowStateProps = {}) {
               <Button
                 variant="primary"
                 size="sm"
-                icon={<Plus size={14} />}
+                icon={<Plus size={ICON_SIZE.sm} />}
                 onClick={() => {
                   if (panelId !== undefined) addLocalShellTab({ panelId });
                   else addLocalShellTab();
@@ -120,7 +121,7 @@ export function EmptyWindowState({ panelId }: EmptyWindowStateProps = {}) {
                   <Button
                     variant="secondary"
                     size="sm"
-                    icon={<Network size={14} />}
+                    icon={<Network size={ICON_SIZE.sm} />}
                     onClick={() => openConnectionEditorTab("new")}
                     data-testid="empty-window-new-connection"
                   >
@@ -129,7 +130,7 @@ export function EmptyWindowState({ panelId }: EmptyWindowStateProps = {}) {
                   <Button
                     variant="secondary"
                     size="sm"
-                    icon={<Upload size={14} />}
+                    icon={<Upload size={ICON_SIZE.sm} />}
                     onClick={() => setRestoreOpen(true)}
                     data-testid="empty-window-restore"
                   >
@@ -161,7 +162,7 @@ export function EmptyWindowState({ panelId }: EmptyWindowStateProps = {}) {
                         customIcon={connection.icon}
                         iconColor={connection.iconColor}
                         iconEmoji={connection.iconEmoji}
-                        size={14}
+                        size={ICON_SIZE.sm}
                       />
                     }
                     onClick={() => {

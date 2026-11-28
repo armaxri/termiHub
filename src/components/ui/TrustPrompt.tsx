@@ -6,6 +6,7 @@ import { Button } from "./Button";
 import { toast } from "./Toast";
 import { errorMessage } from "@/utils/errorMessage";
 import { FingerprintGlyph } from "./FingerprintGlyph";
+import { ICON_SIZE } from "./iconSize";
 import "./ui.css";
 
 /**
@@ -233,11 +234,11 @@ export function TrustPrompt({
         <span className="ui-trust-prompt__title">
           {changed ? (
             <ShieldAlert
-              size={16}
+              size={ICON_SIZE.md}
               className="ui-trust-prompt__title-icon ui-trust-prompt__title-icon--warn"
             />
           ) : (
-            <ShieldCheck size={16} className="ui-trust-prompt__title-icon" />
+            <ShieldCheck size={ICON_SIZE.md} className="ui-trust-prompt__title-icon" />
           )}
           {changed ? changedTitle : unknownTitle}
         </span>
@@ -300,7 +301,11 @@ export function TrustPrompt({
       <div className="ui-trust-prompt__body">
         {changed && (
           <div className="ui-trust-prompt__warning" role="alert" data-testid={warningTestId}>
-            <ShieldAlert size={16} className="ui-trust-prompt__warning-icon" aria-hidden="true" />
+            <ShieldAlert
+              size={ICON_SIZE.md}
+              className="ui-trust-prompt__warning-icon"
+              aria-hidden="true"
+            />
             <span>
               The {changedWarningSubject} <strong>changed</strong> since you last trusted it. This
               can mean the server was reinstalled — or that someone is intercepting the connection.
@@ -353,7 +358,7 @@ export function TrustPrompt({
                     className="ui-trust-prompt__copy"
                     aria-label={`Copy ${fact.copyNoun ?? fact.label.toLowerCase()}`}
                     data-testid={fact.copyTestId}
-                    icon={<Copy size={13} aria-hidden="true" />}
+                    icon={<Copy size={ICON_SIZE.xs} aria-hidden="true" />}
                     onClick={() => copyFact(fact)}
                   />
                 )}

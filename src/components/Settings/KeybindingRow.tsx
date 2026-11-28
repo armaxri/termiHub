@@ -15,6 +15,7 @@ import { recordModifierOnlyChord, type ModifierOnlyRejection } from "./modifierO
 import { recordedKeyFromEvent } from "./keybindingRecorder";
 import { SettingDefaultMarker } from "./SettingDefaultMarker";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Why a recording was refused: a modifier-only rule (#4524) or a dead key (#5842). */
 export type RecordRejection = ModifierOnlyRejection | "dead-key";
 
@@ -326,7 +327,7 @@ export function KeybindingRow({
                     variant="ghost"
                     size="sm"
                     iconOnly
-                    icon={<X size={12} />}
+                    icon={<X size={ICON_SIZE.xs} />}
                     onClick={handleUnbind}
                     aria-label={`Clear shortcut for ${binding.label}`}
                     data-testid={`keybinding-unbind-${binding.action}`}

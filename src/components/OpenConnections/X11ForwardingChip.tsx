@@ -3,6 +3,7 @@ import { Chip } from "@/components/ui";
 import type { X11ForwardingMode } from "@/types/generated/X11ForwardingMode";
 import type { X11ForwardingReason } from "@/types/generated/X11ForwardingReason";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** What the chip shows for one {@link X11ForwardingMode}. */
 interface X11ModeCopy {
   label: string;
@@ -119,9 +120,9 @@ export function x11ChipHint(mode: X11ForwardingMode, reason?: X11ForwardingReaso
 }
 
 const ICONS = {
-  ok: <MonitorCog size={12} />,
-  fallback: <AlertTriangle size={12} />,
-  failed: <MonitorX size={12} />,
+  ok: <MonitorCog size={ICON_SIZE.xs} />,
+  fallback: <AlertTriangle size={ICON_SIZE.xs} />,
+  failed: <MonitorX size={ICON_SIZE.xs} />,
 } as const;
 
 /** Props for {@link X11ForwardingChip}. */

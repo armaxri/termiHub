@@ -12,6 +12,7 @@ import { useElementWidth } from "@/hooks/useElementWidth";
 import { collapseCrumbs, splitPathSegments, type PathCrumb } from "@/utils/fileBrowserNav";
 import { useFileDropTarget } from "./fileBrowserDnd";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Props for {@link CollapsingBreadcrumbs}. */
 export interface CollapsingBreadcrumbsProps {
   /** The path currently shown by the file browser. */
@@ -51,7 +52,7 @@ function CrumbText({ label, truncated }: { label: string; truncated?: boolean })
   if (label === "/") {
     return (
       <>
-        <HardDrive size={12} className="file-browser__crumb-root" aria-hidden />
+        <HardDrive size={ICON_SIZE.xs} className="file-browser__crumb-root" aria-hidden />
         <span className="sr-only">/</span>
       </>
     );
@@ -123,7 +124,7 @@ function Crumb({
 
 /** Separator chevron between segments. */
 function Sep() {
-  return <ChevronRight size={11} className="file-browser__crumb-sep" aria-hidden />;
+  return <ChevronRight size={ICON_SIZE.xs} className="file-browser__crumb-sep" aria-hidden />;
 }
 
 /** The "…" segment: a menu of the folded ancestors, nearest the root first. */
@@ -156,7 +157,7 @@ function CollapsedCrumbs({
         {hidden.map((crumb) => (
           <MenuItem
             key={crumb.path}
-            icon={<Folder size={14} />}
+            icon={<Folder size={ICON_SIZE.sm} />}
             onSelect={() => onNavigate(crumb.path)}
             title={crumb.path}
             data-testid={`${testIdPrefix}-crumb-menu-${crumb.label}`}
@@ -168,7 +169,7 @@ function CollapsedCrumbs({
           <>
             <MenuSeparator />
             <MenuItem
-              icon={<Copy size={14} />}
+              icon={<Copy size={ICON_SIZE.sm} />}
               onSelect={onCopyPath}
               data-testid={`${testIdPrefix}-crumb-menu-copy-path`}
             >

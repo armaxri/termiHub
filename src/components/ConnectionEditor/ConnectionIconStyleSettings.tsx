@@ -5,6 +5,7 @@ import { ColorPickerDialog } from "@/components/Terminal/ColorPickerDialog";
 import { useIconSurfaces } from "@/hooks/useIconSurfaces";
 import { EmojiPickerDialog } from "./EmojiPickerDialog";
 import { ICON_COLOR_PALETTE, isHexIconColor, resolveIconColor } from "@/utils/connectionIconStyle";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 // The swatch styles live with the editor; imported here so the folder
 // Appearance dialog (#5020) gets them without the editor mounted.
 import "./ConnectionEditor.css";
@@ -70,7 +71,7 @@ export function ConnectionIconStyleSettings({
               onClick={() => onIconColorChange(undefined)}
               data-testid="icon-color-swatch-default"
             >
-              <Ban size={14} aria-hidden="true" />
+              <Ban size={ICON_SIZE.sm} aria-hidden="true" />
             </button>
             {ICON_COLOR_PALETTE.map((entry) => (
               <button
@@ -106,7 +107,7 @@ export function ConnectionIconStyleSettings({
                   style={{ backgroundColor: resolveIconColor(customHex, surfaces) }}
                 />
               ) : (
-                <Pipette size={14} aria-hidden="true" />
+                <Pipette size={ICON_SIZE.sm} aria-hidden="true" />
               )}
             </button>
           </div>
@@ -142,7 +143,7 @@ export function ConnectionIconStyleSettings({
               onClick={() => setEmojiPickerOpen(true)}
               data-testid="connection-editor-choose-icon-emoji"
             >
-              <Smile size={14} aria-hidden="true" /> Choose…
+              <Smile size={ICON_SIZE.sm} aria-hidden="true" /> Choose…
             </Button>
             {iconEmoji && (
               <Button

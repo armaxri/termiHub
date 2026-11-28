@@ -2,6 +2,7 @@ import { Plus, Trash2 } from "lucide-react";
 import { Button, Field, Input } from "@/components/ui";
 import type { AutomationStep } from "@/types/generated/AutomationStep";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Props of {@link LocalProcessFields}. */
 export interface LocalProcessFieldsProps {
   step: Extract<AutomationStep, { kind: "run-local-process" }>;
@@ -56,7 +57,7 @@ export function LocalProcessFields({
                 size="sm"
                 iconOnly
                 aria-label={`Remove argument ${i + 1}`}
-                icon={<Trash2 size={12} />}
+                icon={<Trash2 size={ICON_SIZE.xs} />}
                 onClick={() => setArgs(args.filter((_, j) => j !== i))}
                 data-testid={`automation-editor-step-arg-remove-${path}-${i}`}
               />
@@ -65,7 +66,7 @@ export function LocalProcessFields({
           <Button
             variant="secondary"
             size="sm"
-            icon={<Plus size={12} />}
+            icon={<Plus size={ICON_SIZE.xs} />}
             onClick={() => setArgs([...args, ""])}
             data-testid={`automation-editor-step-arg-add-${path}`}
           >

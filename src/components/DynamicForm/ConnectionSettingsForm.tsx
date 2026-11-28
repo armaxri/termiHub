@@ -15,6 +15,7 @@ import { savedConnectionValues } from "./savedConnectionValues";
 import { storedSecretState, type StoredSecretsControl } from "./storedSecrets";
 import { SAVE_PASSWORD_KEY } from "@/utils/credentialStorageCopy";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /**
  * The settings key whose secret has its own credential entries (the
  * "Password saved" hint); every other password field is a field secret.
@@ -589,7 +590,7 @@ function CollapsibleGroupSection({
         data-testid={`form-group-${group.key}-toggle`}
       >
         <ChevronRight
-          size={14}
+          size={ICON_SIZE.sm}
           className="settings-panel__category-chevron"
           data-open={open || undefined}
           aria-hidden="true"

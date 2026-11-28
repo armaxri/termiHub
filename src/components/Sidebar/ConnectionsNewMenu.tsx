@@ -10,6 +10,7 @@ import {
 } from "@/components/ui";
 import { useOpenAfterMenuClose } from "./useOpenAfterMenuClose";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Props for {@link ConnectionsNewMenu}. */
 export interface ConnectionsNewMenuProps {
   /** Opens the new-connection editor. */
@@ -43,13 +44,13 @@ export function ConnectionsNewMenu({
           <Button
             variant="ghost"
             size="sm"
-            icon={<Plus size={14} />}
+            icon={<Plus size={ICON_SIZE.sm} />}
             aria-label="New"
             className="connection-list__new-menu"
             data-testid="connection-list-new-menu"
           >
             New
-            <ChevronDown size={12} aria-hidden="true" />
+            <ChevronDown size={ICON_SIZE.xs} aria-hidden="true" />
           </Button>
         </DropdownMenuTrigger>
       </Tooltip>
@@ -60,14 +61,14 @@ export function ConnectionsNewMenu({
         data-testid="connection-list-new-menu-content"
       >
         <MenuItem
-          icon={<Plus size={14} />}
+          icon={<Plus size={ICON_SIZE.sm} />}
           onSelect={onNewConnection}
           data-testid="connection-list-new-connection"
         >
           New connection
         </MenuItem>
         <MenuItem
-          icon={<FolderPlus size={14} />}
+          icon={<FolderPlus size={ICON_SIZE.sm} />}
           onSelect={newFolder.request}
           data-testid="connection-list-new-folder"
         >
@@ -75,7 +76,7 @@ export function ConnectionsNewMenu({
         </MenuItem>
         <MenuSeparator />
         <MenuItem
-          icon={<FileInput size={14} />}
+          icon={<FileInput size={ICON_SIZE.sm} />}
           onSelect={onImport}
           data-testid="connection-list-open-import-settings"
         >

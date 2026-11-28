@@ -11,6 +11,7 @@ import {
 import { useProjectedSessionLifecycleMaps } from "@/store/useSessionLifecycle";
 import { formatTimeOfDay } from "@/utils/formatters";
 import { showTerminal } from "@/utils/showTerminal";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./WaitingRunBar.css";
 
 /** What to do now: in the terminal, or first to see it. */
@@ -85,9 +86,9 @@ export function WaitingRunBar() {
             data-testid={`automation-wait-${wait.tabId}`}
           >
             {wait.stillAsking ? (
-              <KeyRound size={14} aria-hidden="true" />
+              <KeyRound size={ICON_SIZE.sm} aria-hidden="true" />
             ) : (
-              <Hand size={14} aria-hidden="true" />
+              <Hand size={ICON_SIZE.sm} aria-hidden="true" />
             )}
             <span className="waiting-run__text" role="status">
               <span className="waiting-run__title">

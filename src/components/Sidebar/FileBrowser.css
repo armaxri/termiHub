@@ -24,7 +24,7 @@
   border: 2px dashed var(--text-accent);
   color: var(--text-accent);
   font-size: var(--font-size-sm);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   pointer-events: none;
   z-index: var(--z-sticky);
 }
@@ -208,7 +208,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--font-size-2xs);
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
   font-style: italic;
 }
@@ -249,7 +249,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: right;
-  font-size: var(--font-size-2xs);
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
 }
 
@@ -270,7 +270,7 @@
     var(--control-height-sm) + var(--spacing-sm) + var(--file-list-modified-space) +
       var(--file-list-size-space)
   );
-  font-size: var(--font-size-2xs);
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
   opacity: 0;
   pointer-events: none;
@@ -506,10 +506,6 @@
   display: inline-flex;
   align-items: center;
   gap: var(--spacing-xxs);
-  font-size: var(--font-size-2xs);
-  text-transform: uppercase;
-  letter-spacing: var(--letter-spacing-label);
-  color: var(--text-secondary);
   background: transparent;
   cursor: pointer;
   transition: color var(--transition-fast);
@@ -635,7 +631,7 @@
   padding: var(--spacing-xs) var(--spacing-sm);
   text-align: center;
   color: var(--text-secondary);
-  font-weight: 400;
+  font-weight: var(--font-weight-normal);
 }
 
 .permissions-dialog__grid th[scope="row"] {

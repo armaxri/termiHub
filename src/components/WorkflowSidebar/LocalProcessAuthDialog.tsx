@@ -6,6 +6,7 @@ import { joinWords } from "@/utils/joinWords";
 import { showExactly } from "@/utils/showExactly";
 import { useAppStore } from "@/store/appStore";
 import type { LocalProcessPromptState } from "@/store/slices/workflowsSlice";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./LocalProcessAuthDialog.css";
 
 /** Why the user is asked, above the command. */
@@ -136,7 +137,7 @@ export function LocalProcessAuthDialog() {
       {prompt && (
         <div className="local-process-auth">
           <p className="local-process-auth__lead" data-testid="local-process-auth-lead">
-            <AlertTriangle size={16} className="local-process-auth__icon" />
+            <AlertTriangle size={ICON_SIZE.md} className="local-process-auth__icon" />
             {imported ? (
               <span>{lead(prompt)}</span>
             ) : (

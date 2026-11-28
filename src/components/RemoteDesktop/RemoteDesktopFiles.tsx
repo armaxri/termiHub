@@ -18,6 +18,7 @@ import { routeCarrier, unavailableCopy } from "./fileTransfer";
 import { RemoteDesktopUploadFolderDialog } from "./RemoteDesktopUploadFolderDialog";
 import { listRemoteFolders } from "./browseRemoteFiles";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface RemoteDesktopFilesProps {
   /** The graphical session (its transfers are listed). */
   sessionId: string;
@@ -52,7 +53,7 @@ function RouteStatus({
     const { channel } = files;
     return (
       <div className="rd-files__route" data-testid="remote-desktop-files-route">
-        <ShieldCheck size={14} aria-hidden />
+        <ShieldCheck size={ICON_SIZE.sm} aria-hidden />
         <span>
           <code>{destDir ?? files.defaultDir}</code> on <code>{channel.host}</code> ·{" "}
           {routeCarrier(channel)}
@@ -73,12 +74,12 @@ function RouteStatus({
   }
   return (
     <div className="rd-files__route rd-files__route--warn" data-testid="remote-desktop-files-route">
-      <AlertTriangle size={14} aria-hidden />
+      <AlertTriangle size={ICON_SIZE.sm} aria-hidden />
       <span>{files.message}</span>
       <Button
         variant="ghost"
         size="xs"
-        icon={<RefreshCw size={12} />}
+        icon={<RefreshCw size={ICON_SIZE.xs} />}
         onClick={onRetry}
         data-testid="remote-desktop-files-retry"
       >
@@ -127,7 +128,7 @@ export function RemoteDesktopFiles({
           variant="ghost"
           size="sm"
           iconOnly
-          icon={<X size={14} />}
+          icon={<X size={ICON_SIZE.sm} />}
           title="Close"
           onClick={onClose}
           data-testid="remote-desktop-files-close"
@@ -139,7 +140,7 @@ export function RemoteDesktopFiles({
           variant="ghost"
           size="sm"
           fullWidth
-          icon={<Upload size={14} />}
+          icon={<Upload size={ICON_SIZE.sm} />}
           disabled={!ready}
           onClick={() => onUpload()}
           pendingLabel="Uploading…"
@@ -152,7 +153,7 @@ export function RemoteDesktopFiles({
           variant="ghost"
           size="sm"
           fullWidth
-          icon={<FolderOpen size={14} />}
+          icon={<FolderOpen size={ICON_SIZE.sm} />}
           disabled={!ready}
           onClick={() => setFolderOpen(true)}
           data-testid="remote-desktop-files-upload-folder"
@@ -163,7 +164,7 @@ export function RemoteDesktopFiles({
           variant="ghost"
           size="sm"
           fullWidth
-          icon={<Download size={14} />}
+          icon={<Download size={ICON_SIZE.sm} />}
           disabled={!ready}
           onClick={onBrowse}
           data-testid="remote-desktop-files-browse"

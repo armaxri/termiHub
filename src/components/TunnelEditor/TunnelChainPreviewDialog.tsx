@@ -1,5 +1,6 @@
 import { Link2, Monitor, Plug, Server, Info } from "lucide-react";
 import { Button, Field, Modal, Select, Toggle } from "@/components/ui";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./TunnelChainPreviewDialog.css";
 
 /**
@@ -69,7 +70,7 @@ export function TunnelChainPreviewDialog({
       onOpenChange={onOpenChange}
       title={
         <span className="tunnel-chain-preview__title">
-          <Link2 size={15} aria-hidden="true" /> Chain a hop to this computer
+          <Link2 size={ICON_SIZE.sm} aria-hidden="true" /> Chain a hop to this computer
         </span>
       }
       description="Preview the companion desktop tunnel before creating it."
@@ -85,7 +86,7 @@ export function TunnelChainPreviewDialog({
           </Button>
           <Button
             variant="primary"
-            icon={<Link2 size={13} />}
+            icon={<Link2 size={ICON_SIZE.xs} />}
             onClick={onConfirm}
             disabled={!canCreate}
             data-testid="tunnel-chain-confirm"
@@ -102,17 +103,17 @@ export function TunnelChainPreviewDialog({
 
       <ul className="tunnel-chain-preview__endpoints" data-testid="tunnel-chain-endpoints">
         <li>
-          <Monitor size={13} aria-hidden="true" />
+          <Monitor size={ICON_SIZE.xs} aria-hidden="true" />
           <span>
             Companion listens <code>{companionListen}</code> on this computer
           </span>
         </li>
         <li>
-          <Plug size={13} aria-hidden="true" />
+          <Plug size={ICON_SIZE.xs} aria-hidden="true" />
           <span>Via the agent&rsquo;s SSH connection {agentName}</span>
         </li>
         <li>
-          <Server size={13} aria-hidden="true" />
+          <Server size={ICON_SIZE.xs} aria-hidden="true" />
           <span>
             Forwards to the parent&rsquo;s port <code>{companionForwards}</code> on {agentName}
           </span>
@@ -140,7 +141,7 @@ export function TunnelChainPreviewDialog({
       </div>
 
       <p className="tunnel-chain-preview__note" data-testid="tunnel-chain-note">
-        <Info size={13} aria-hidden="true" />
+        <Info size={ICON_SIZE.xs} aria-hidden="true" />
         <span>
           This adds a second linked tunnel. It appears under the parent and is removed when the
           parent is removed.

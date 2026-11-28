@@ -9,6 +9,7 @@ import { errorMessage } from "@/utils/errorMessage";
 import "./AboutSettings.css";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 const GITHUB_URL = "https://github.com/armaxri/termiHub";
 const LICENSE_URL = "https://github.com/armaxri/termiHub/blob/main/LICENSE";
 /** The full privacy notice (`docs/privacy.md`); `PRIVACY.md` at the repo root links to it. */
@@ -90,7 +91,7 @@ export function AboutSettings() {
           <Button
             variant="secondary"
             size="sm"
-            icon={<Github size={13} />}
+            icon={<Github size={ICON_SIZE.xs} />}
             onClick={handleGitHub}
             data-testid="about-github-link"
           >
@@ -99,7 +100,7 @@ export function AboutSettings() {
           <Button
             variant="secondary"
             size="sm"
-            icon={<ExternalLink size={13} />}
+            icon={<ExternalLink size={ICON_SIZE.xs} />}
             onClick={handleLicense}
             data-testid="about-license-link"
           >
@@ -108,7 +109,7 @@ export function AboutSettings() {
           <Button
             variant="secondary"
             size="sm"
-            icon={<ScrollText size={13} />}
+            icon={<ScrollText size={ICON_SIZE.xs} />}
             onClick={handleThirdPartyLicenses}
             data-testid="about-third-party-licenses-link"
           >
@@ -117,7 +118,7 @@ export function AboutSettings() {
           <Button
             variant="secondary"
             size="sm"
-            icon={<Shield size={13} />}
+            icon={<Shield size={ICON_SIZE.xs} />}
             onClick={handlePrivacy}
             data-testid="about-privacy-link"
           >

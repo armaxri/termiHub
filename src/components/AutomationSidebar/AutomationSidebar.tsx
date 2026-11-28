@@ -29,6 +29,7 @@ import { useAutomationSections } from "./automationSections";
 import { useAutomationEditors } from "./useAutomationEditors";
 import { useAutomationFiles } from "@/components/Automations/useAutomationFiles";
 import { useRunningAutomations } from "./useRunningAutomations";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./AutomationSidebar.css";
 
 /**
@@ -269,21 +270,21 @@ export function AutomationSidebar() {
             id: "new",
             label: "New automation",
             shortLabel: "New",
-            icon: <Plus size={12} />,
+            icon: <Plus size={ICON_SIZE.xs} />,
             primary: true,
             testId: "automation-new-btn",
             menu: [
               {
                 id: "steps",
                 label: "Step by step…",
-                icon: <ListPlus size={14} />,
+                icon: <ListPlus size={ICON_SIZE.sm} />,
                 onSelect: newFromSteps,
                 testId: "automation-new-steps",
               },
               {
                 id: "keys",
                 label: "Typed keystrokes…",
-                icon: <Keyboard size={14} />,
+                icon: <Keyboard size={ICON_SIZE.sm} />,
                 onSelect: newFromKeys,
                 testId: "automation-new-keys",
               },
@@ -291,7 +292,7 @@ export function AutomationSidebar() {
               {
                 id: "files",
                 label: "Import or export…",
-                icon: <ArrowDownUp size={14} />,
+                icon: <ArrowDownUp size={ICON_SIZE.sm} />,
                 onSelect: () => openSettingsTab({ category: "import" }),
                 testId: "automation-files-btn",
               },
@@ -310,12 +311,12 @@ export function AutomationSidebar() {
                       : `Record what you type in ${runTarget}`,
                   icon: recording ? (
                     <Square
-                      size={12}
+                      size={ICON_SIZE.xs}
                       fill="currentColor"
                       className="automation-sidebar__stop-recording"
                     />
                   ) : (
-                    <CircleDot size={12} />
+                    <CircleDot size={ICON_SIZE.xs} />
                   ),
                   // Without a terminal it opens one (B-028).
                   onClick:
@@ -346,7 +347,7 @@ export function AutomationSidebar() {
               <>
                 <Button
                   size="sm"
-                  icon={<CircleDot size={14} />}
+                  icon={<CircleDot size={ICON_SIZE.sm} />}
                   onClick={
                     !recording && runTarget === null
                       ? () => void recordInNewTerminal()
@@ -363,7 +364,7 @@ export function AutomationSidebar() {
                 <Button
                   variant="secondary"
                   size="sm"
-                  icon={<ListPlus size={14} />}
+                  icon={<ListPlus size={ICON_SIZE.sm} />}
                   onClick={newFromSteps}
                   data-testid="automation-empty-new-btn"
                 >

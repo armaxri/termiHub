@@ -9,6 +9,7 @@ import {
 import type { PluginIndexEntryView } from "@/types/plugin";
 import { Button } from "@/components/ui";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Props for {@link PluginCatalogEntryCard}. */
 export interface PluginCatalogEntryCardProps {
   view: PluginIndexEntryView;
@@ -129,7 +130,7 @@ export function PluginCatalogEntryCard({
             title="Runs native code in a sandboxed plugin process. Needs “Enable native plugins” turned on in “Settings → Plugins” and a per-plugin trust acknowledgement."
             data-testid={`plugin-catalog-native-${entry.id}`}
           >
-            <Cpu size={12} aria-hidden="true" /> Native
+            <Cpu size={ICON_SIZE.xs} aria-hidden="true" /> Native
           </span>
         )}
         <span className="plugin-catalog__entry-author">by {entry.author}</span>
@@ -146,7 +147,7 @@ export function PluginCatalogEntryCard({
               data-testid={`plugin-catalog-${b.key}-${entry.id}`}
               data-tone={b.tone}
             >
-              <Icon size={12} aria-hidden="true" /> {b.label}
+              <Icon size={ICON_SIZE.xs} aria-hidden="true" /> {b.label}
             </span>
           );
         })}
@@ -158,7 +159,7 @@ export function PluginCatalogEntryCard({
             data-testid={`plugin-catalog-status-${entry.id}`}
           >
             {view.installStatus === "updateAvailable" && !current && (
-              <CircleArrowUp size={12} aria-hidden="true" />
+              <CircleArrowUp size={ICON_SIZE.xs} aria-hidden="true" />
             )}
             {status}
           </span>
@@ -174,7 +175,7 @@ export function PluginCatalogEntryCard({
         <Button
           variant={installable ? "primary" : "secondary"}
           size="sm"
-          icon={<Download size={14} />}
+          icon={<Download size={ICON_SIZE.sm} />}
           disabled={!installable}
           title={installable ? undefined : view.blockedReason}
           onClick={() => onInstall(view)}

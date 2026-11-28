@@ -9,6 +9,7 @@ import {
 } from "@/components/ui";
 import { DEFAULT_MONITORING_INTERVAL_MS, MONITORING_INTERVAL_OPTIONS } from "@/types/monitoring";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Format a refresh interval (ms) as a spaced label like "2 s" (#5628). */
 export function formatRefreshInterval(ms: number): string {
   return `${ms / 1000} s`;
@@ -37,7 +38,7 @@ export function MonitoringRefreshSubmenu({
   return (
     <MenuSub>
       <MenuSubTrigger
-        icon={<Timer size={14} />}
+        icon={<Timer size={ICON_SIZE.sm} />}
         disabled={!enabled}
         data-testid="monitoring-refresh-trigger"
       >
@@ -53,7 +54,7 @@ export function MonitoringRefreshSubmenu({
               data-testid={`monitoring-interval-${opt}`}
             >
               <MenuItemIndicator className="monitoring-menu__radio-indicator">
-                <Check size={14} />
+                <Check size={ICON_SIZE.sm} />
               </MenuItemIndicator>
               <span className="monitoring-menu__radio-label">
                 {formatRefreshInterval(opt)}

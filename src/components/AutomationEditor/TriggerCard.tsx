@@ -10,6 +10,7 @@ import { OnOutputMatchTriggerDetail, type OutputMatchErrors } from "./OnOutputMa
 import { triggerKindIcon, triggerKindLabel } from "./stepMeta";
 import { TriggerConnectionPicker } from "./TriggerConnectionPicker";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Props of {@link TriggerCard}. */
 export interface TriggerCardProps {
   trigger: AutomationTrigger;
@@ -45,7 +46,7 @@ export function TriggerCard({
       data-testid={`automation-editor-trigger-${index}`}
     >
       <div className="automation-triggers__card-header">
-        <Icon size={14} />
+        <Icon size={ICON_SIZE.sm} />
         <span
           className="automation-triggers__kind"
           data-kind={trigger.kind}
@@ -58,7 +59,7 @@ export function TriggerCard({
           size="sm"
           iconOnly
           aria-label={`Remove the ${label} trigger`}
-          icon={<Trash2 size={12} />}
+          icon={<Trash2 size={ICON_SIZE.xs} />}
           onClick={onRemove}
           data-testid={`automation-editor-trigger-remove-${index}`}
         />

@@ -13,6 +13,7 @@ import type { TunnelConfig } from "@/types/tunnel";
 import { errorMessage } from "@/utils/errorMessage";
 import { TUNNEL_TYPE_KINDS, tunnelTypeHelp } from "@/utils/tunnelTypeHelp";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface ConnectionPortForwardingSectionProps {
   /**
    * Id of the saved SSH connection being edited, or `undefined` for a
@@ -141,7 +142,7 @@ export function ConnectionPortForwardingSection({
           <Button
             variant="secondary"
             size="sm"
-            icon={<Plus size={13} aria-hidden />}
+            icon={<Plus size={ICON_SIZE.xs} aria-hidden />}
             onClick={() => openTunnelEditorTab(null, { sshConnectionId: connectionId })}
             data-testid="connection-port-forwarding-add"
           >

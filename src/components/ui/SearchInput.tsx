@@ -1,6 +1,7 @@
 import { forwardRef } from "react";
 import { Search, X } from "lucide-react";
 import { Input, type InputProps } from "./Input";
+import { ICON_SIZE } from "./iconSize";
 import "./ui.css";
 
 /**
@@ -61,7 +62,7 @@ export const SearchInput = forwardRef<HTMLInputElement, SearchInputProps>(functi
 
   return (
     <div className={wrapperClasses}>
-      <Search size={14} className="ui-search-input__icon" aria-hidden="true" />
+      <Search size={ICON_SIZE.sm} className="ui-search-input__icon" aria-hidden="true" />
       <Input
         ref={ref}
         type="search"
@@ -77,7 +78,7 @@ export const SearchInput = forwardRef<HTMLInputElement, SearchInputProps>(functi
           data-testid={clearTestId}
           onClick={() => onValueChange("")}
         >
-          <X size={14} aria-hidden="true" />
+          <X size={ICON_SIZE.sm} aria-hidden="true" />
         </button>
       ) : null}
     </div>

@@ -9,6 +9,7 @@ import type { NativeAckInfo } from "@/types/generated/NativeAckInfo";
 import { NativePluginSandboxStatus } from "./NativePluginSandboxStatus";
 import { accessChips, isolationBadge, layerName, missingLayerWarning } from "./nativePluginSandbox";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /**
  * Whether a native plugin was built for an ABI that predates the build-toolchain
  * record (native ABI 1.0, #3576). termiHub cannot verify such a plugin's
@@ -134,7 +135,7 @@ export function NativePluginRow({
     <Button
       variant="secondary"
       size="sm"
-      icon={<ShieldCheck size={14} />}
+      icon={<ShieldCheck size={ICON_SIZE.sm} />}
       onClick={() => (accessStale ? setReviewAccess(true) : onTrust(plugin, legacyAbi))}
       disabled={!nativeEnabled}
       errorToast={false}
@@ -152,7 +153,7 @@ export function NativePluginRow({
     <Button
       variant="secondary"
       size="sm"
-      icon={<ShieldAlert size={14} />}
+      icon={<ShieldAlert size={ICON_SIZE.sm} />}
       onClick={() => setConfirmReduced(true)}
       disabled={!nativeEnabled}
       data-testid={`native-plugin-load-reduced-${id}`}
@@ -165,7 +166,7 @@ export function NativePluginRow({
     <Button
       variant="secondary"
       size="sm"
-      icon={<RotateCcw size={14} />}
+      icon={<RotateCcw size={ICON_SIZE.sm} />}
       onClick={() =>
         // Re-enable has no sessions to end: a disabled plugin is not running.
         !reenable && sessions > 0 ? setConfirmEnd("restart") : onRestart(plugin, reenable)
@@ -181,7 +182,7 @@ export function NativePluginRow({
     <Button
       variant="ghost"
       size="sm"
-      icon={<ShieldX size={14} />}
+      icon={<ShieldX size={ICON_SIZE.sm} />}
       onClick={() => (sessions > 0 ? setConfirmEnd("revoke") : onRevoke(plugin))}
       errorToast={false}
       aria-label={`Revoke trust for ${name}`}
@@ -270,7 +271,7 @@ export function NativePluginRow({
         description={`Missing sandbox layers: ${missing.map(layerName).join(", ")}`}
         confirmLabel="Load with reduced isolation"
         confirmVariant="primary"
-        confirmIcon={<ShieldAlert size={14} />}
+        confirmIcon={<ShieldAlert size={ICON_SIZE.sm} />}
         confirmErrorToast={false}
         confirmOnEnter={false}
         onConfirm={handleConfirmReduced}
@@ -285,7 +286,13 @@ export function NativePluginRow({
         message={`This ends its ${openSessionsLabel(sessions)}.`}
         confirmLabel={confirmEnd === "revoke" ? "Revoke" : "Restart"}
         confirmVariant="danger"
-        confirmIcon={confirmEnd === "revoke" ? <ShieldX size={14} /> : <RotateCcw size={14} />}
+        confirmIcon={
+          confirmEnd === "revoke" ? (
+            <ShieldX size={ICON_SIZE.sm} />
+          ) : (
+            <RotateCcw size={ICON_SIZE.sm} />
+          )
+        }
         confirmErrorToast={false}
         onConfirm={handleConfirmEnd}
         onCancel={() => setConfirmEnd(null)}
@@ -304,7 +311,7 @@ export function NativePluginRow({
         }
         confirmLabel="Trust & load"
         confirmVariant="primary"
-        confirmIcon={<ShieldCheck size={14} />}
+        confirmIcon={<ShieldCheck size={ICON_SIZE.sm} />}
         confirmErrorToast={false}
         confirmOnEnter={false}
         onConfirm={handleConfirmReview}

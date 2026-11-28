@@ -12,6 +12,7 @@ import {
 } from "@/services/sshConfigImport";
 import { buildTemplatedConnections, isHostTemplate } from "@/services/fleetOnboard";
 import { compareNames } from "@/utils/locale";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./BulkSshImportDialog.css";
 import "./FleetOnboardDialog.css";
 
@@ -152,14 +153,14 @@ export function FleetOnboardDialog({
       {noTemplates ? (
         <EmptyState
           variant="panel"
-          icon={<Server size={20} aria-hidden />}
+          icon={<Server size={ICON_SIZE.lg} aria-hidden />}
           title="Create a host-based connection (e.g. SSH or Telnet) first, then use it as a template to onboard hosts in bulk."
           data-testid="fleet-onboard-no-templates"
         />
       ) : rows.length === 0 ? (
         <EmptyState
           variant="panel"
-          icon={<Server size={20} aria-hidden />}
+          icon={<Server size={ICON_SIZE.lg} aria-hidden />}
           title={<>No hosts to onboard from {sourceLabel}.</>}
           data-testid="fleet-onboard-empty"
         />

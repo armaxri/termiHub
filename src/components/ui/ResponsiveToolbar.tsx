@@ -16,6 +16,7 @@ import {
 } from "./Menu";
 import { Tooltip } from "./Tooltip";
 import { toast } from "./Toast";
+import { ICON_SIZE } from "./iconSize";
 import "./ui.css";
 
 /**
@@ -339,7 +340,7 @@ export function ResponsiveToolbar({
                 variant="ghost"
                 size="sm"
                 iconOnly
-                icon={<MoreHorizontal size={14} />}
+                icon={<MoreHorizontal size={ICON_SIZE.sm} />}
                 aria-label={overflowLabel}
                 className="ui-toolbar__overflow"
                 data-testid={overflowTestId}
@@ -388,14 +389,14 @@ export function ResponsiveToolbar({
             tabIndex={-1}
           >
             {action.shortLabel ?? action.label}
-            {action.menu ? <ChevronDown size={12} /> : null}
+            {action.menu ? <ChevronDown size={ICON_SIZE.xs} /> : null}
           </Button>
         ))}
         <Button
           variant="ghost"
           size="sm"
           iconOnly
-          icon={<MoreHorizontal size={14} />}
+          icon={<MoreHorizontal size={ICON_SIZE.sm} />}
           disabled
           tabIndex={-1}
           aria-label="measure"
@@ -428,7 +429,7 @@ function InlineAction({ action, showLabel, tooltipSide }: InlineActionProps) {
       {showLabel ? (
         <>
           {action.shortLabel ?? action.label}
-          {action.menu ? <ChevronDown size={12} /> : null}
+          {action.menu ? <ChevronDown size={ICON_SIZE.xs} /> : null}
         </>
       ) : undefined}
     </Button>

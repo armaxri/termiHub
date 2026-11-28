@@ -3,6 +3,7 @@ import { useAppStore } from "@/store/appStore";
 import { Button, Progress, toast } from "@/components/ui";
 import { errorMessage } from "@/utils/errorMessage";
 import { downloadLabel } from "./installRoute";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./AppUpdateInstallActions.css";
 
 /** Props for {@link AppUpdateInstallActions}. */
@@ -59,7 +60,7 @@ export function AppUpdateInstallActions({ testIdPrefix }: AppUpdateInstallAction
       <Button
         variant="primary"
         size="sm"
-        icon={<RotateCw size={12} />}
+        icon={<RotateCw size={ICON_SIZE.xs} />}
         onClick={handleRestart}
         disabled={install.phase === "restarting"}
         title="termiHub restarts on the new version; open sessions are closed."
@@ -74,7 +75,7 @@ export function AppUpdateInstallActions({ testIdPrefix }: AppUpdateInstallAction
     <Button
       variant="primary"
       size="sm"
-      icon={<Download size={12} />}
+      icon={<Download size={ICON_SIZE.xs} />}
       onClick={handleDownload}
       data-testid={`${testIdPrefix}-download`}
     >

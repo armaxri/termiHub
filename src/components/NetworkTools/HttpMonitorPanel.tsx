@@ -46,6 +46,7 @@ import { frontendLog } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
 import { ITEM_DESCRIPTION_MAX_LENGTH, normalizeItemDescription } from "@/utils/itemDescription";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** How many of the newest checks the chart shows (and loads from history). */
 const MAX_HISTORY = 120;
 
@@ -443,7 +444,7 @@ export function HttpMonitorPanel() {
             <Button
               variant="ghost"
               size="sm"
-              icon={<RefreshCw size={14} />}
+              icon={<RefreshCw size={ICON_SIZE.sm} />}
               onClick={loadMonitors}
               aria-label="Refresh monitor list"
             />
@@ -462,7 +463,7 @@ export function HttpMonitorPanel() {
             <Button
               variant="danger"
               size="sm"
-              icon={<StopCircle size={14} />}
+              icon={<StopCircle size={ICON_SIZE.sm} />}
               pendingLabel="Stopping…"
               errorToast={false}
               onClick={handleStop}
@@ -474,7 +475,7 @@ export function HttpMonitorPanel() {
             <Button
               variant="primary"
               size="sm"
-              icon={<Play size={14} />}
+              icon={<Play size={ICON_SIZE.sm} />}
               pendingLabel="Starting…"
               errorToast={false}
               type="submit"
@@ -638,7 +639,7 @@ export function HttpMonitorPanel() {
       {/* All monitors (running, paused, and stopped-but-listed) */}
       {monitors.length > 0 && (
         <>
-          <div className="network-panel__section-title">Monitors</div>
+          <div className="ui-section-label network-panel__section-title">Monitors</div>
           {monitors.map((m) => {
             // Where it runs is stored with it (#6039).
             const location = hostChoice(m.config.host);

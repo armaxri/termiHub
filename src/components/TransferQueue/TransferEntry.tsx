@@ -5,6 +5,7 @@ import { formatBytes, formatElapsed } from "@/utils/formatters";
 import { TransferControls } from "./TransferControls";
 import { revealDownload, revealDownloadLabel, revealableDownloadPath } from "./revealDownload";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Props for {@link TransferEntryRow}. */
 export interface TransferEntryProps {
   /** The transfer to render. */
@@ -136,7 +137,7 @@ export function TransferEntryRow({
       <div className="transfer-row transfer-row--compact" data-testid="transfer-row">
         <div className="transfer-row__compact-head">
           <span className="transfer-row__dir" title={dirTitle} aria-label={dirTitle}>
-            {isUpload ? <ArrowUp size={12} /> : <ArrowDown size={12} />}
+            {isUpload ? <ArrowUp size={ICON_SIZE.xs} /> : <ArrowDown size={ICON_SIZE.xs} />}
           </span>
           <span className="transfer-row__name" title={entry.name} data-testid="transfer-row-name">
             {entry.name}
@@ -152,7 +153,7 @@ export function TransferEntryRow({
               title={entry.error}
               data-testid="transfer-row-status"
             >
-              {state === "queued" && <Clock size={12} />}
+              {state === "queued" && <Clock size={ICON_SIZE.xs} />}
               {status}
             </span>
           )}
@@ -172,7 +173,7 @@ export function TransferEntryRow({
   return (
     <div className="transfer-row" data-testid="transfer-row">
       <span className="transfer-row__dir" title={dirTitle} aria-label={dirTitle}>
-        {isUpload ? <ArrowUp size={14} /> : <ArrowDown size={14} />}
+        {isUpload ? <ArrowUp size={ICON_SIZE.sm} /> : <ArrowDown size={ICON_SIZE.sm} />}
       </span>
 
       <span className="transfer-row__name" title={entry.name} data-testid="transfer-row-name">
@@ -215,7 +216,7 @@ export function TransferEntryRow({
         title={entry.error}
         data-testid="transfer-row-status"
       >
-        {state === "queued" && <Clock size={12} />}
+        {state === "queued" && <Clock size={ICON_SIZE.xs} />}
         {status}
       </span>
 

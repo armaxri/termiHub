@@ -37,6 +37,7 @@ import {
   TOGGLE_SESSION_LOGGING_EVENT,
 } from "@/services/contextCommands";
 import { t } from "@/i18n/catalog";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./TerminalView.css";
 
 /**
@@ -277,7 +278,7 @@ export function TerminalView() {
                   variant="ghost"
                   size="sm"
                   iconOnly
-                  icon={<Plus size={16} />}
+                  icon={<Plus size={ICON_SIZE.md} />}
                   onClick={handleNewTerminal}
                   aria-label={newTerminalTitle}
                   data-icon="plus"
@@ -289,7 +290,7 @@ export function TerminalView() {
                   variant="ghost"
                   size="sm"
                   iconOnly
-                  icon={<SquareSplitHorizontal size={16} />}
+                  icon={<SquareSplitHorizontal size={ICON_SIZE.md} />}
                   onClick={handleSplitHorizontal}
                   aria-label={splitRightTitle}
                   data-icon="split-right"
@@ -301,7 +302,7 @@ export function TerminalView() {
                   variant="ghost"
                   size="sm"
                   iconOnly
-                  icon={<SquareSplitVertical size={16} />}
+                  icon={<SquareSplitVertical size={ICON_SIZE.md} />}
                   onClick={handleSplitVertical}
                   aria-label={splitDownTitle}
                   data-icon="split-down"
@@ -314,7 +315,7 @@ export function TerminalView() {
                     variant="ghost"
                     size="sm"
                     iconOnly
-                    icon={<X size={16} />}
+                    icon={<X size={ICON_SIZE.md} />}
                     onClick={handleClosePanel}
                     aria-label={closePanelTitle}
                     data-icon="close-panel"
@@ -335,7 +336,7 @@ export function TerminalView() {
                 size="sm"
                 iconOnly
                 className={!sidebarCollapsed ? "terminal-view__toolbar-action--active" : undefined}
-                icon={<PanelLeft size={16} />}
+                icon={<PanelLeft size={ICON_SIZE.md} />}
                 onClick={toggleSidebar}
                 aria-label={sidebarToggleTitle}
                 aria-pressed={!sidebarCollapsed}

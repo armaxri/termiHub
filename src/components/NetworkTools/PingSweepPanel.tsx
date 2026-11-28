@@ -25,6 +25,7 @@ import { insertSortedByHost } from "@/utils/hostSort";
 import { HostOrderField } from "./HostOrderField";
 import { useHostOrder } from "./useHostOrder";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Host count above which the sweep warns before starting. */
 const LARGE_SWEEP_THRESHOLD = 1024;
 
@@ -198,7 +199,7 @@ export function PingSweepPanel({ prefillHost }: PingSweepPanelProps) {
             <Button
               variant="danger"
               size="sm"
-              icon={<StopCircle size={14} />}
+              icon={<StopCircle size={ICON_SIZE.sm} />}
               pendingLabel="Stopping…"
               errorToast={false}
               onClick={stop}
@@ -210,7 +211,7 @@ export function PingSweepPanel({ prefillHost }: PingSweepPanelProps) {
             <Button
               variant="primary"
               size="sm"
-              icon={<Play size={14} />}
+              icon={<Play size={ICON_SIZE.sm} />}
               pendingLabel="Starting…"
               errorToast={false}
               type="submit"

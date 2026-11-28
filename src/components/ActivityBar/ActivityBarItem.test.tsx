@@ -66,4 +66,15 @@ describe("ActivityBarItem", () => {
     });
     expect(onClick).toHaveBeenCalledTimes(1);
   });
+
+  it("marks only the active item as the current page (#6155)", () => {
+    render({ label: "Files", isActive: true, onClick: vi.fn() });
+    expect(query("activity-bar-files")?.getAttribute("aria-current")).toBe("page");
+    // The active bar is decoration: hidden from assistive tech, never focusable.
+    const bar = container.querySelector(".activity-bar__indicator");
+    expect(bar?.getAttribute("aria-hidden")).toBe("true");
+    expect(bar?.hasAttribute("tabindex")).toBe(false);
+    render({ label: "Files", isActive: false, onClick: vi.fn() });
+    expect(query("activity-bar-files")?.hasAttribute("aria-current")).toBe(false);
+  });
 });

@@ -18,6 +18,7 @@ import {
   nextStepAfter,
 } from "./historyFormat";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Props of {@link HistoryRunDetails}. */
 export interface HistoryRunDetailsProps {
   /** The run record to show. */
@@ -110,7 +111,7 @@ export function HistoryRunDetails({ run, schedule, id }: HistoryRunDetailsProps)
             <Button
               variant="secondary"
               size="sm"
-              icon={<Pencil size={12} />}
+              icon={<Pencil size={ICON_SIZE.xs} />}
               onClick={() => openEditor(automation, false)}
               data-testid={`automation-run-edit-${run.id}`}
             >
@@ -119,7 +120,7 @@ export function HistoryRunDetails({ run, schedule, id }: HistoryRunDetailsProps)
             <Button
               variant="secondary"
               size="sm"
-              icon={<Play size={12} />}
+              icon={<Play size={ICON_SIZE.xs} />}
               onClick={() => openRunPicker(automation.id)}
               data-testid={`automation-run-again-${run.id}`}
             >
@@ -133,7 +134,7 @@ export function HistoryRunDetails({ run, schedule, id }: HistoryRunDetailsProps)
           <Button
             variant="ghost"
             size="sm"
-            icon={<SquareTerminal size={12} />}
+            icon={<SquareTerminal size={ICON_SIZE.xs} />}
             onClick={() => showTerminal(run.tabId ?? "")}
             data-testid={`automation-run-show-${run.id}`}
           >

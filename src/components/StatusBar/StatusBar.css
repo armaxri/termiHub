@@ -418,13 +418,13 @@
   margin-left: var(--spacing-xs);
   padding: 0 var(--spacing-xs);
   border-radius: var(--radius-sm);
-  font-size: var(--font-size-2xs);
-  font-weight: 600;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
   line-height: 14px;
   vertical-align: middle;
   background: var(--color-badge-dev);
   color: var(--text-on-accent);
-  letter-spacing: 0.03em;
+  letter-spacing: var(--letter-spacing-label);
 }
 
 /* Process table (PROD-0028): the process list + kill panel. Grid rows keep the

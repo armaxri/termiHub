@@ -4,6 +4,7 @@ import { ExternalAgentFile } from "@/types/terminal";
 import { Button, Input, Toggle } from "@/components/ui";
 import { isImeComposing } from "@/utils/imeComposition";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface AgentExternalFilesSettingsProps {
   files: ExternalAgentFile[];
   onChange: (files: ExternalAgentFile[]) => void;
@@ -76,7 +77,7 @@ export function AgentExternalFilesSettings({ files, onChange }: AgentExternalFil
                 variant="ghost"
                 size="sm"
                 iconOnly
-                icon={<Trash2 size={14} />}
+                icon={<Trash2 size={ICON_SIZE.sm} />}
                 onClick={() => handleRemove(file.path)}
                 title="Remove file"
                 aria-label="Remove file"
@@ -103,7 +104,7 @@ export function AgentExternalFilesSettings({ files, onChange }: AgentExternalFil
         <Button
           variant="secondary"
           size="sm"
-          icon={<Plus size={12} />}
+          icon={<Plus size={ICON_SIZE.xs} />}
           onClick={handleAdd}
           disabled={!newPath.trim()}
           data-testid="agent-external-file-add"

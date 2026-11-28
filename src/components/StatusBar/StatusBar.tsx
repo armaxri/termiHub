@@ -106,6 +106,7 @@ import { sshTunnelVia } from "@/components/RemoteDesktop/graphicalStages";
 import { isFrozenMonitorBadge, monitorStatusBadge } from "@/utils/reconnectStatus";
 import { errorMessage } from "@/utils/errorMessage";
 import { itemMatchesQuery } from "@/hooks/useListFilter";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./StatusBar.css";
 
 const INDENT_SIZES = [1, 2, 4, 8] as const;
@@ -272,7 +273,7 @@ function WindowIndicator() {
 
   return (
     <span className="status-bar__item" data-testid="status-bar-window" title={name}>
-      <AppWindow size={13} />
+      <AppWindow size={ICON_SIZE.xs} />
       {name}
     </span>
   );
@@ -338,7 +339,7 @@ function RemoteDesktopStatus() {
       data-testid="status-bar-remote-desktop"
       title={`Remote desktop: ${label}`}
     >
-      <Monitor size={13} />
+      <Monitor size={ICON_SIZE.xs} />
       {label}
     </span>
   );
@@ -398,7 +399,7 @@ function HighlightingIndicator() {
         data-testid="status-bar-highlighting"
         onClick={() => setSessionHighlighting(sessionId, !effective)}
       >
-        <Highlighter size={12} />
+        <Highlighter size={ICON_SIZE.xs} />
         Highlighting: {effective ? "ON" : "OFF"}
       </button>
     </Tooltip>
@@ -460,7 +461,7 @@ function ServicesIndicator() {
         data-testid="services-indicator"
         onClick={showServicesView}
       >
-        <Server size={12} />
+        <Server size={ICON_SIZE.xs} />
         {text.join(" · ")}
       </button>
     </Tooltip>
@@ -493,7 +494,7 @@ function PluginsIndicator() {
         data-testid="plugins-indicator"
         onClick={() => setSidebarView("plugins")}
       >
-        <Puzzle size={12} aria-hidden="true" />
+        <Puzzle size={ICON_SIZE.xs} aria-hidden="true" />
         {text}
       </button>
     </Tooltip>
@@ -535,7 +536,7 @@ function PersistentSessionsIndicator() {
         data-testid="persistent-sessions-indicator"
         onClick={() => setSidebarView("connections")}
       >
-        <InfinityIcon size={12} />
+        <InfinityIcon size={ICON_SIZE.xs} />
         {runningCount}
       </button>
     </Tooltip>
@@ -570,11 +571,11 @@ function AgentUpdatesIndicator() {
         data-testid="agent-updates-indicator"
         onClick={() => setSidebarView("connections")}
       >
-        <HardDrive size={12} />
+        <HardDrive size={ICON_SIZE.xs} />
         {agentLabel}
         {updatesAvailable > 0 && (
           <span className="status-bar__agent-updates" data-testid="agent-updates-count">
-            <ArrowUpCircle size={11} />
+            <ArrowUpCircle size={ICON_SIZE.xs} />
             {updatesAvailable}
           </span>
         )}
@@ -865,7 +866,7 @@ function MonitoringStatus() {
                 data-testid="monitoring-cancel-btn"
                 onClick={handleCancel}
               >
-                <X size={12} />
+                <X size={ICON_SIZE.xs} />
                 Cancel
               </button>
             </Tooltip>
@@ -890,7 +891,7 @@ function MonitoringStatus() {
               data-testid="monitoring-retry-btn"
               onClick={handleRetry}
             >
-              <RotateCw size={12} />
+              <RotateCw size={ICON_SIZE.xs} />
               Retry
             </button>
           </Tooltip>
@@ -959,7 +960,7 @@ function MonitoringStatus() {
           title="Monitoring is paused — collection is stopped but the connection stays open."
           data-testid="monitoring-paused"
         >
-          <Pause size={12} />
+          <Pause size={ICON_SIZE.xs} />
           Paused
         </span>
       )}
@@ -979,7 +980,7 @@ function MonitoringStatus() {
             data-reason={monitoringStatusReason ?? undefined}
             onClick={handleRetry}
           >
-            <RotateCw size={12} />
+            <RotateCw size={ICON_SIZE.xs} />
             {monitorOfflineLabel(monitoringStatusReason)} · Retry
           </button>
         </Tooltip>
@@ -1003,7 +1004,7 @@ function MonitoringStatus() {
               title="Monitoring data is stale — the connection dropped and the numbers below are frozen at their last-known values."
               data-testid="monitoring-stale"
             >
-              <AlertTriangle size={12} />
+              <AlertTriangle size={ICON_SIZE.xs} />
               Stale
             </span>
           )}
@@ -1232,7 +1233,7 @@ function MonitoringDetailDropdown({
             }
             data-testid="monitoring-host"
           >
-            {showSpinner ? <Spinner size="xs" label={null} /> : <Activity size={12} />}
+            {showSpinner ? <Spinner size="xs" label={null} /> : <Activity size={ICON_SIZE.xs} />}
             {host}
           </button>
         </DropdownMenuTrigger>
@@ -1264,7 +1265,7 @@ function MonitoringDetailDropdown({
               <MonitoringMetricRows blocks={metricBlocks} />
               {/* Open the fuller history panel with larger time-series charts. */}
               <MenuItem onSelect={() => setHistoryOpen(true)} data-testid="monitoring-history-open">
-                <LineChart size={14} />
+                <LineChart size={ICON_SIZE.sm} />
                 View history
               </MenuItem>
               <MenuSeparator />
@@ -1288,7 +1289,7 @@ function MonitoringDetailDropdown({
                 // The stats fallback cannot list processes (#3202): say so
                 // rather than open a panel that can only fail.
                 <MenuItem disabled data-testid="monitoring-processes-unavailable">
-                  <ListTree size={14} />
+                  <ListTree size={ICON_SIZE.sm} />
                   {unavailableTitle("Processes", stats)}
                 </MenuItem>
               ) : (
@@ -1296,7 +1297,7 @@ function MonitoringDetailDropdown({
                   onSelect={() => setProcessesOpen(true)}
                   data-testid="monitoring-processes-open"
                 >
-                  <ListTree size={14} />
+                  <ListTree size={ICON_SIZE.sm} />
                   View processes
                 </MenuItem>
               )}
@@ -1312,7 +1313,7 @@ function MonitoringDetailDropdown({
             <MenuItem
               onSelect={() => onSetPaused(false)}
               disabled={!monitorKey}
-              icon={<Play size={14} />}
+              icon={<Play size={ICON_SIZE.sm} />}
               description={RESUME_DESCRIPTION}
               data-testid="monitoring-resume-btn"
             >
@@ -1322,7 +1323,7 @@ function MonitoringDetailDropdown({
             <MenuItem
               onSelect={() => onSetPaused(true)}
               disabled={!monitorKey}
-              icon={<Pause size={14} />}
+              icon={<Pause size={ICON_SIZE.sm} />}
               description={PAUSE_DESCRIPTION}
               data-testid="monitoring-pause-btn"
             >
@@ -1337,7 +1338,7 @@ function MonitoringDetailDropdown({
               disabled={!monitorKey}
               data-testid="monitoring-cancel-btn"
             >
-              <X size={14} />
+              <X size={ICON_SIZE.sm} />
               Cancel connect
             </MenuItem>
           )}
@@ -1349,7 +1350,7 @@ function MonitoringDetailDropdown({
               {/* An unsupported host is permanent: a Retry could only fail (#5628). */}
               {statusReason !== "unsupported" && (
                 <MenuItem onSelect={onRetry} data-testid="monitoring-retry-btn">
-                  <RotateCw size={14} />
+                  <RotateCw size={ICON_SIZE.sm} />
                   Retry
                 </MenuItem>
               )}
@@ -1370,7 +1371,7 @@ function MonitoringDetailDropdown({
           {/* Only the readings stop, never the session (#5750), so not "Disconnect". */}
           <MenuItem
             onSelect={onStop}
-            icon={<CircleStop size={14} data-testid="monitoring-stop-icon" />}
+            icon={<CircleStop size={ICON_SIZE.sm} data-testid="monitoring-stop-icon" />}
             description={STOP_DESCRIPTION}
             data-testid="monitoring-stop"
           >

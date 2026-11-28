@@ -6,6 +6,7 @@ import { formatRate } from "@/utils/formatters";
 import type { MonitorHistories } from "@/store/useMonitorHistory";
 import { MetricSparkline } from "./MetricSparkline";
 import { buildMetricBlocks, latestValue, type MetricBlock } from "./monitoringHistoryModel";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./StatusBar.css";
 
 /** Props for {@link MonitoringHistoryPanel}. */
@@ -88,7 +89,7 @@ export function MonitoringHistoryPanel({
                 />
               ) : (
                 <div className="monitoring-history__pending" role="status">
-                  <LineChart size={14} aria-hidden="true" />
+                  <LineChart size={ICON_SIZE.sm} aria-hidden="true" />
                   Waiting for data…
                 </div>
               )}

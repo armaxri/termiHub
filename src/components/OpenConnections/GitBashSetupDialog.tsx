@@ -5,6 +5,7 @@ import { GIT_FOR_WINDOWS_WINGET_COMMAND } from "@/utils/gitBashSetup";
 import { guideGitForWindowsInstall, openGitForWindowsDownload } from "./guideGitBashInstall";
 import { errorMessage } from "@/utils/errorMessage";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface GitBashSetupDialogProps {
   /** Whether the dialog is open (controlled). */
   open: boolean;
@@ -67,14 +68,14 @@ export function GitBashSetupDialog({
           </Button>
           <Button
             variant="ghost"
-            icon={<Download size={16} aria-hidden />}
+            icon={<Download size={ICON_SIZE.md} aria-hidden />}
             onClick={handleDownload}
             data-testid="git-bash-setup-download"
           >
             Open git-scm.com
           </Button>
           <Button
-            icon={<Terminal size={16} aria-hidden />}
+            icon={<Terminal size={ICON_SIZE.md} aria-hidden />}
             onClick={handleInstall}
             data-testid="git-bash-setup-install"
           >

@@ -3,6 +3,7 @@ import { Modal } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { UpdateSettings } from "./UpdateSettings";
 import { AboutSettings } from "./AboutSettings";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./OverlayViewPanel.css";
 
 const VIEW_META = {
@@ -29,7 +30,7 @@ export function OverlayViewPanel() {
       data-testid="overlay-view"
       title={
         <span className="overlay-view__title-row">
-          <Icon size={14} className="overlay-view__icon" />
+          <Icon size={ICON_SIZE.sm} className="overlay-view__icon" />
           {label}
         </span>
       }

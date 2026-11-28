@@ -67,6 +67,7 @@ import { errorMessage } from "@/utils/errorMessage";
 import { getBasename } from "@/utils/paths";
 import { modKeyAccelerator } from "@/services/keybindings";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Maximum number of sudo-password attempts before falling back to the error banner. */
 const MAX_SUDO_ATTEMPTS = 3;
 
@@ -1612,7 +1613,7 @@ export function FileEditor({
     return (
       <div className={`file-editor ${!isVisible ? "file-editor--hidden" : ""}`}>
         <div className="file-editor__error" data-testid="file-editor-error">
-          <AlertCircle size={20} />
+          <AlertCircle size={ICON_SIZE.lg} />
           <span>Failed to load file: {error}</span>
         </div>
       </div>
@@ -1626,7 +1627,7 @@ export function FileEditor({
     return (
       <div className={`file-editor ${!isVisible ? "file-editor--hidden" : ""}`}>
         <div className="file-editor__large-file" data-testid="file-editor-large-file-guard">
-          <FileWarning size={28} className="file-editor__large-file-icon" />
+          <FileWarning size={ICON_SIZE.xl} className="file-editor__large-file-icon" />
           <div className="file-editor__large-file-title">This file is large</div>
           <p className="file-editor__large-file-text">
             {fileName} is {formatBytes(pendingLargeFile.size)}. Opening it in the editor loads the
@@ -1635,7 +1636,7 @@ export function FileEditor({
           <Button
             variant="secondary"
             size="sm"
-            icon={<FileEdit size={14} />}
+            icon={<FileEdit size={ICON_SIZE.sm} />}
             onClick={handleOpenLargeFile}
             data-testid="file-editor-large-file-open"
           >
@@ -1660,7 +1661,7 @@ export function FileEditor({
         <div className="file-editor__path">
           {meta.isRemote && (
             <span className="file-editor__remote-badge" data-testid="file-editor-remote-badge">
-              <Globe size={12} />
+              <Globe size={ICON_SIZE.xs} />
               Remote
             </span>
           )}
@@ -1674,7 +1675,7 @@ export function FileEditor({
                   : "Read-only — you don't have write access to this file"
               }
             >
-              <Lock size={12} />
+              <Lock size={ICON_SIZE.xs} />
               Read-only
             </span>
           )}
@@ -1684,7 +1685,7 @@ export function FileEditor({
               data-testid="file-editor-ftp-badge"
               title={FTP_EDIT_LIMITS}
             >
-              <Info size={12} />
+              <Info size={ICON_SIZE.xs} />
               FTP
             </span>
           )}
@@ -1694,13 +1695,13 @@ export function FileEditor({
               data-testid="file-editor-sudo-badge"
               title="Elevated (sudo) edit mode — saves are written with root privileges"
             >
-              <ShieldCheck size={12} />
+              <ShieldCheck size={ICON_SIZE.xs} />
               sudo
             </span>
           )}
           {isUnsavedScratch && (
             <span className="file-editor__remote-badge" data-testid="file-editor-scratch-badge">
-              <FileEdit size={12} />
+              <FileEdit size={ICON_SIZE.xs} />
               Unsaved
             </span>
           )}
@@ -1712,7 +1713,7 @@ export function FileEditor({
           <Button
             variant="secondary"
             size="sm"
-            icon={<ShieldCheck size={14} />}
+            icon={<ShieldCheck size={ICON_SIZE.sm} />}
             onClick={handleSaveClick}
             disabled={!isDirty}
             pendingLabel="Saving…"
@@ -1726,7 +1727,7 @@ export function FileEditor({
           <Button
             variant="secondary"
             size="sm"
-            icon={<Save size={14} />}
+            icon={<Save size={ICON_SIZE.sm} />}
             onClick={handleSaveClick}
             disabled={!isDirty || sftpOnlyReadonly || listingReadonly}
             pendingLabel="Saving…"
@@ -1750,7 +1751,7 @@ export function FileEditor({
           role="status"
           data-testid="file-editor-readonly-banner"
         >
-          <Lock size={14} />
+          <Lock size={ICON_SIZE.sm} />
           <span className="file-editor__readonly-banner-text">
             {sftpOnlyReadonly
               ? "This file is read-only and sudo elevation isn't available on this connection. Save a copy to a writable path or download the file locally instead."
@@ -1763,7 +1764,7 @@ export function FileEditor({
               <Button
                 variant="secondary"
                 size="sm"
-                icon={<Copy size={14} />}
+                icon={<Copy size={ICON_SIZE.sm} />}
                 onClick={() => setSaveCopyDialogOpen(true)}
                 title="Write the current contents to a writable remote path"
                 data-testid="file-editor-save-copy"
@@ -1773,7 +1774,7 @@ export function FileEditor({
               <Button
                 variant="secondary"
                 size="sm"
-                icon={<Download size={14} />}
+                icon={<Download size={ICON_SIZE.sm} />}
                 onClick={handleDownloadCopy}
                 title="Download this file to your computer"
                 data-testid="file-editor-download"
@@ -1786,7 +1787,7 @@ export function FileEditor({
             variant="ghost"
             size="sm"
             iconOnly
-            icon={<X size={14} />}
+            icon={<X size={ICON_SIZE.sm} />}
             onClick={() => setReadonlyBannerDismissed(true)}
             title="Dismiss"
             aria-label="Dismiss read-only notice"
@@ -1800,7 +1801,7 @@ export function FileEditor({
           role="status"
           data-testid="file-editor-ftp-note"
         >
-          <Info size={14} />
+          <Info size={ICON_SIZE.sm} />
           <span className="file-editor__readonly-banner-text">
             {`The FTP server didn't report whether you can write to this file, so a save may be rejected. ${FTP_EDIT_LIMITS}`}
           </span>
@@ -1808,7 +1809,7 @@ export function FileEditor({
             variant="ghost"
             size="sm"
             iconOnly
-            icon={<X size={14} />}
+            icon={<X size={ICON_SIZE.sm} />}
             onClick={() => setFtpNoteDismissed(true)}
             title="Dismiss"
             aria-label="Dismiss FTP editing note"
@@ -1822,7 +1823,7 @@ export function FileEditor({
           role="status"
           data-testid="file-editor-disk-changed-banner"
         >
-          <AlertCircle size={14} />
+          <AlertCircle size={ICON_SIZE.sm} />
           <span className="file-editor__disk-changed-banner-text">
             This file changed on disk while you have unsaved changes. Your edits are kept and
             nothing was overwritten.
@@ -1830,7 +1831,7 @@ export function FileEditor({
           <Button
             variant="secondary"
             size="sm"
-            icon={<RotateCcw size={14} />}
+            icon={<RotateCcw size={ICON_SIZE.sm} />}
             onClick={handleReloadFromDisk}
             title="Discard your unsaved edits and load the version on disk"
             data-testid="file-editor-disk-changed-reload"
@@ -1840,7 +1841,7 @@ export function FileEditor({
           <Button
             variant="secondary"
             size="sm"
-            icon={<FileEdit size={14} />}
+            icon={<FileEdit size={ICON_SIZE.sm} />}
             onClick={handleKeepMyChanges}
             title="Keep your unsaved edits; ignore the on-disk change until you next save"
             data-testid="file-editor-disk-changed-keep"
@@ -1851,7 +1852,7 @@ export function FileEditor({
             variant="ghost"
             size="sm"
             iconOnly
-            icon={<X size={14} />}
+            icon={<X size={ICON_SIZE.sm} />}
             onClick={handleKeepMyChanges}
             title="Dismiss"
             aria-label="Dismiss on-disk change notice"
@@ -1865,7 +1866,7 @@ export function FileEditor({
           role="status"
           data-testid="file-editor-large-reload-banner"
         >
-          <FileWarning size={14} />
+          <FileWarning size={ICON_SIZE.sm} />
           <span className="file-editor__disk-changed-banner-text">
             This file grew to {formatBytes(largeReloadSize)} on disk and was not reloaded
             automatically to avoid freezing the editor.
@@ -1873,7 +1874,7 @@ export function FileEditor({
           <Button
             variant="secondary"
             size="sm"
-            icon={<RotateCcw size={14} />}
+            icon={<RotateCcw size={ICON_SIZE.sm} />}
             onClick={handleReloadLargeFile}
             title="Load the current on-disk contents despite the size"
             data-testid="file-editor-large-reload-anyway"
@@ -1884,7 +1885,7 @@ export function FileEditor({
             variant="ghost"
             size="sm"
             iconOnly
-            icon={<X size={14} />}
+            icon={<X size={ICON_SIZE.sm} />}
             onClick={() => setLargeReloadSize(null)}
             title="Dismiss"
             aria-label="Dismiss large-file reload notice"
@@ -1894,13 +1895,13 @@ export function FileEditor({
       )}
       {saveError && (
         <div className="file-editor__save-error" role="alert" data-testid="file-editor-save-error">
-          <AlertCircle size={14} />
+          <AlertCircle size={ICON_SIZE.sm} />
           <span className="file-editor__save-error-text">{saveError}</span>
           {canRetryWithSudo && (
             <Button
               variant="secondary"
               size="sm"
-              icon={<ShieldCheck size={14} />}
+              icon={<ShieldCheck size={ICON_SIZE.sm} />}
               onClick={() => {
                 setSaveError(null);
                 void saveElevated();
@@ -1915,7 +1916,7 @@ export function FileEditor({
             variant="ghost"
             size="sm"
             iconOnly
-            icon={<X size={14} />}
+            icon={<X size={ICON_SIZE.sm} />}
             onClick={() => setSaveError(null)}
             title="Dismiss"
             aria-label="Dismiss save error"

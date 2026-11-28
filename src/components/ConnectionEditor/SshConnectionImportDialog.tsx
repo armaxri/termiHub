@@ -3,6 +3,7 @@ import { FileDown, Server, AlertTriangle } from "lucide-react";
 import { Modal, EmptyState } from "@/components/ui";
 import type { JumpHostConfig, SshConfigImportConnection } from "@/types/connection";
 import { importSshConfigConnections } from "@/services/api";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./SshConfigImportDialog.css";
 
 interface SshConnectionImportDialogProps {
@@ -88,7 +89,7 @@ export function SshConnectionImportDialog({
       {state.status === "error" && (
         <EmptyState
           variant="panel"
-          icon={<AlertTriangle size={20} aria-hidden />}
+          icon={<AlertTriangle size={ICON_SIZE.lg} aria-hidden />}
           title="Could not read ~/.ssh/config."
           role="alert"
           data-testid="ssh-connection-import-error"
@@ -98,7 +99,7 @@ export function SshConnectionImportDialog({
       {state.status === "ready" && state.connections.length === 0 && (
         <EmptyState
           variant="panel"
-          icon={<Server size={20} aria-hidden />}
+          icon={<Server size={ICON_SIZE.lg} aria-hidden />}
           title="No hosts were found in ~/.ssh/config."
           data-testid="ssh-connection-import-empty"
         />
@@ -114,7 +115,7 @@ export function SshConnectionImportDialog({
                 onClick={() => handleSelect(conn)}
                 data-testid={`ssh-connection-import-host-${conn.name}`}
               >
-                <FileDown size={14} aria-hidden className="ssh-config-import__row-icon" />
+                <FileDown size={ICON_SIZE.sm} aria-hidden className="ssh-config-import__row-icon" />
                 <span className="ssh-config-import__row-text">
                   <span className="ssh-config-import__row-name">{conn.name}</span>
                   <span className="ssh-config-import__row-chain">

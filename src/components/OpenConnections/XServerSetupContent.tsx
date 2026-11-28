@@ -7,6 +7,7 @@ import type { XServerError, XServerProgress } from "@/types/xserver";
 import "./XServerSetupDialog.css";
 import { errorMessage } from "@/utils/errorMessage";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Which screen of the setup flow is showing. */
 export type XServerSetupPhase = "consent" | "provisioning" | "error";
 
@@ -198,7 +199,7 @@ export function XServerSetupContent({
             <Button
               variant="ghost"
               iconOnly
-              icon={<Copy size={16} aria-hidden />}
+              icon={<Copy size={ICON_SIZE.md} aria-hidden />}
               aria-label="Copy command"
               title="Copy command"
               data-testid={`${testIdPrefix}-copy-command`}

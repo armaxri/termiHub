@@ -13,6 +13,7 @@ import { SettingsSectionHeading } from "./SettingsSectionHeading";
 import { SettingsHelpTip } from "./SettingsHelpTip";
 import { FileTypeLanguagePicker } from "./FileTypeLanguagePicker";
 import { FileTypeBuiltInTable, type BuiltInRow } from "./FileTypeBuiltInTable";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./FileTypeSettings.css";
 
 const ALL_BUILT_IN_ROWS: BuiltInRow[] = [
@@ -168,7 +169,7 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
                   <Button
                     variant="danger"
                     size="sm"
-                    icon={<RotateCcw size={14} />}
+                    icon={<RotateCcw size={ICON_SIZE.sm} />}
                     onClick={() => setConfirmingReset(true)}
                     title="Remove all custom mappings"
                     data-testid="file-type-reset-all"
@@ -216,7 +217,7 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
               <Button
                 variant="primary"
                 size="sm"
-                icon={<Plus size={14} />}
+                icon={<Plus size={ICON_SIZE.sm} />}
                 onClick={handleAdd}
                 disabled={!newPattern.trim() || !newLanguage.trim()}
                 data-testid="file-type-add-btn"
@@ -269,7 +270,7 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
                         variant="ghost"
                         size="sm"
                         iconOnly
-                        icon={<Trash2 size={14} />}
+                        icon={<Trash2 size={ICON_SIZE.sm} />}
                         onClick={() => handleRemove(pattern)}
                         aria-label={`Remove mapping for ${pattern}`}
                         data-testid={`file-type-remove-${pattern}`}
@@ -289,7 +290,13 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
             <Button
               variant="ghost"
               size="sm"
-              icon={builtInsOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              icon={
+                builtInsOpen ? (
+                  <ChevronDown size={ICON_SIZE.sm} />
+                ) : (
+                  <ChevronRight size={ICON_SIZE.sm} />
+                )
+              }
               aria-expanded={builtInsOpen}
               aria-controls={builtInListId}
               onClick={() => setBuiltInsOpen((v) => !v)}
@@ -303,8 +310,11 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
               <div id={builtInListId} className="file-type-settings__builtins">
                 <p className="settings-panel__description">
                   These apply automatically. Click{" "}
-                  <Copy size={11} style={{ display: "inline", verticalAlign: "middle" }} /> to copy
-                  one into the form above and change it.
+                  <Copy
+                    size={ICON_SIZE.xs}
+                    style={{ display: "inline", verticalAlign: "middle" }}
+                  />{" "}
+                  to copy one into the form above and change it.
                 </p>
                 <SearchInput
                   size="sm"

@@ -25,6 +25,7 @@ import { markTerminalRefocusPending } from "./terminalRefocus";
 import { TerminalPluginExitOverlay } from "./TerminalPluginExitOverlay";
 import { TerminalReconnectStrip } from "./TerminalReconnectStrip";
 import { SESSION_END_ICONS } from "./sessionEndIcons";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./TerminalDisconnectOverlay.css";
 
 interface TerminalDisconnectOverlayProps {
@@ -201,7 +202,7 @@ export function TerminalDisconnectOverlay({
           data-testid="terminal-session-lost"
           icon={
             <Unplug
-              size={16}
+              size={ICON_SIZE.md}
               className="terminal-disconnect-overlay__icon terminal-disconnect-overlay__icon--error"
             />
           }
@@ -216,7 +217,7 @@ export function TerminalDisconnectOverlay({
             <Button
               variant="primary"
               size="sm"
-              icon={<Plus size={14} />}
+              icon={<Plus size={ICON_SIZE.sm} />}
               onClick={handleStartNewShell}
               data-testid="terminal-session-lost-new-shell-btn"
             >
@@ -265,7 +266,7 @@ export function TerminalDisconnectOverlay({
           className="terminal-disconnect-overlay__body"
           icon={
             <AlertTriangle
-              size={16}
+              size={ICON_SIZE.md}
               className="terminal-disconnect-overlay__icon terminal-disconnect-overlay__icon--error"
             />
           }
@@ -289,7 +290,7 @@ export function TerminalDisconnectOverlay({
             <Button
               variant="primary"
               size="sm"
-              icon={<RefreshCw size={14} />}
+              icon={<RefreshCw size={ICON_SIZE.sm} />}
               onClick={handleReconnect}
               data-testid="terminal-disconnect-reconnect-btn"
             >
@@ -337,7 +338,7 @@ export function TerminalDisconnectOverlay({
         className="terminal-disconnect-overlay__body"
         icon={
           <EndIcon
-            size={16}
+            size={ICON_SIZE.md}
             className={`terminal-disconnect-overlay__icon terminal-disconnect-overlay__icon--${notice.kind}`}
             data-testid={`terminal-disconnect-icon-${notice.kind}`}
           />
@@ -350,7 +351,13 @@ export function TerminalDisconnectOverlay({
           <Button
             variant="primary"
             size="sm"
-            icon={notice.action === "restart" ? <RotateCcw size={14} /> : <RefreshCw size={14} />}
+            icon={
+              notice.action === "restart" ? (
+                <RotateCcw size={ICON_SIZE.sm} />
+              ) : (
+                <RefreshCw size={ICON_SIZE.sm} />
+              )
+            }
             onClick={handleReconnect}
             data-testid="terminal-disconnect-reconnect-btn"
             data-action={notice.action}

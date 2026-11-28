@@ -40,6 +40,7 @@ import { useServicesView } from "./servicesView";
 import { TunnelListItem } from "./TunnelListItem";
 import { useFileServerActions } from "./useFileServerActions";
 import { useTunnelActions } from "./useTunnelActions";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./ServicesSidebar.css";
 
 /**
@@ -171,7 +172,7 @@ export function ServicesSidebar() {
     ...items.map((entry) => ({
       id: entry.id,
       label: <NewEntryLabel entry={entry} />,
-      icon: <entry.icon size={14} />,
+      icon: <entry.icon size={ICON_SIZE.sm} />,
       onSelect: entry.open,
       testId: `service-new-${entry.id}`,
     })),
@@ -238,7 +239,7 @@ export function ServicesSidebar() {
           {
             id: "new",
             label: t("service.new"),
-            icon: <Plus size={14} />,
+            icon: <Plus size={ICON_SIZE.sm} />,
             primary: true,
             testId: "service-new-btn",
             menu,
@@ -246,7 +247,7 @@ export function ServicesSidebar() {
           {
             id: "stop-all",
             label: t("service.stopAll"),
-            icon: <Square size={14} />,
+            icon: <Square size={ICON_SIZE.sm} />,
             disabled: stoppable.length === 0,
             onClick: stopAll,
             testId: "services-stop-all",
@@ -254,7 +255,7 @@ export function ServicesSidebar() {
           {
             id: "open-connections",
             label: t("service.openConnections"),
-            icon: <Activity size={14} />,
+            icon: <Activity size={ICON_SIZE.sm} />,
             onClick: () => setOpenConnections(true),
             testId: "services-open-connections",
           },
@@ -489,7 +490,7 @@ function GroupHeader({ row, onToggle, rowRef, rowProps }: GroupHeaderProps) {
         onKeyDown={onKeyDown}
         data-testid={`service-group-${row.kind === "tunnel" ? "tunnels" : "file-servers"}`}
       >
-        <Chevron size={14} aria-hidden="true" />
+        <Chevron size={ICON_SIZE.sm} aria-hidden="true" />
         <span className="services-sidebar__group-name">{t(GROUP_LABEL[row.kind])}</span>
         <span className="services-sidebar__group-count">
           {row.shown !== undefined
@@ -559,7 +560,7 @@ function AgentHeader({ row, onConnect, onKeepAll, rowRef, rowProps }: AgentHeade
       data-testid={`service-agent-${row.agentId}`}
     >
       <span className="services-sidebar__agent-name">
-        <HardDrive size={12} aria-hidden="true" />
+        <HardDrive size={ICON_SIZE.xs} aria-hidden="true" />
         <MiddleEllipsis text={row.name} />
       </span>
       <span className="services-sidebar__agent-text">
@@ -655,7 +656,7 @@ function NewButtons({ groups }: { groups: ReturnType<typeof newServiceGroups> })
               variant="secondary"
               fullWidth
               className="services-sidebar__start-button"
-              icon={<entry.icon size={14} />}
+              icon={<entry.icon size={ICON_SIZE.sm} />}
               onClick={entry.open}
               data-testid={`services-empty-${entry.id}`}
             >

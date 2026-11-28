@@ -10,6 +10,7 @@ import { nextStepAfterGap } from "./historyFormat";
 import { useRevealWhenOpened } from "./useRevealWhenOpened";
 import type { ScheduleGap } from "./historyEntries";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Props of {@link HistoryGapRow}. */
 export interface HistoryGapRowProps {
   gap: ScheduleGap;
@@ -46,7 +47,7 @@ export function HistoryGapRow({ gap, expanded, onToggle }: HistoryGapRowProps) {
         onClick={() => onToggle(gap.id)}
       >
         <ChevronRight
-          size={12}
+          size={ICON_SIZE.xs}
           aria-hidden="true"
           className={
             expanded
@@ -89,7 +90,7 @@ export function HistoryGapRow({ gap, expanded, onToggle }: HistoryGapRowProps) {
             <Button
               variant="secondary"
               size="sm"
-              icon={<Pencil size={12} />}
+              icon={<Pencil size={ICON_SIZE.xs} />}
               onClick={() => openScheduleEditor({ scheduleId: gap.scheduleId })}
               data-testid={`automation-gap-edit-${gap.id}`}
             >
@@ -98,7 +99,7 @@ export function HistoryGapRow({ gap, expanded, onToggle }: HistoryGapRowProps) {
             <Button
               variant="secondary"
               size="sm"
-              icon={<Play size={12} />}
+              icon={<Play size={ICON_SIZE.xs} />}
               onClick={() => openRunPicker(gap.automationId)}
               data-testid={`automation-gap-run-${gap.id}`}
             >

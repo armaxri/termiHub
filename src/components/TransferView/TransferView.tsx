@@ -18,6 +18,7 @@ import { frontendLog } from "@/utils/frontendLog";
 import { transferRemoteOptions } from "@/utils/transferViewRemotes";
 import { TransferPane, type PaneDragData, type PaneDropData } from "./TransferPane";
 import { usePaneListing } from "./usePaneListing";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./TransferView.css";
 
 /** Props for {@link TransferView}. */
@@ -190,7 +191,7 @@ export function TransferView({ meta, isVisible }: TransferViewProps) {
               <Button
                 variant="secondary"
                 size="sm"
-                icon={<ArrowRight size={14} />}
+                icon={<ArrowRight size={ICON_SIZE.sm} />}
                 aria-label="Copy selected local items to the remote folder"
                 aria-keyshortcuts="F5"
                 disabled={!connected || localToRemote.length === 0}
@@ -202,7 +203,7 @@ export function TransferView({ meta, isVisible }: TransferViewProps) {
               <Button
                 variant="secondary"
                 size="sm"
-                icon={<ArrowLeft size={14} />}
+                icon={<ArrowLeft size={ICON_SIZE.sm} />}
                 aria-label="Copy selected remote items to the local folder"
                 aria-keyshortcuts="F5"
                 disabled={!connected || remoteToLocal.length === 0}

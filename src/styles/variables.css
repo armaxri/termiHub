@@ -234,7 +234,7 @@
      (former 8/9px → 2xs 10px, former 15px → xl 16px) to give the scale a
      rhythm. tokenDiscipline.test.ts forbids new raw `font-size: Npx` in
      component CSS — add or reuse a tier here instead. */
-  --font-size-2xs: 10px; /* caption / badge / count — smallest tier */
+  --font-size-2xs: 10px; /* count badges only (#6156); headers and badges use xs */
   --font-size-xs: 11px;
   --font-size-sm: 12px;
   --font-size-md: 13px;
@@ -247,6 +247,7 @@
   --font-weight-normal: 400;
   --font-weight-medium: 500;
   --font-weight-semibold: 600;
+  --font-weight-bold: 700;
 
   /* Letter spacing */
   --letter-spacing-ui: -0.008em;
@@ -272,6 +273,15 @@
   --focus-ring-width: 2px;
   --focus-ring-offset: 2px;
 
+  /* Icon sizes (#6157): the same scale as ICON_SIZE in
+     src/components/ui/iconSize.ts, for glyphs sized in CSS. */
+  --icon-xs: 12px;
+  --icon-sm: 14px;
+  --icon-md: 16px;
+  --icon-lg: 20px;
+  --icon-xl: 24px;
+  --icon-hero: 32px;
+
   /* Border radius */
   --radius-xs: 2px;
   --radius-sm: 4px;
@@ -280,6 +290,8 @@
   --radius-xl: 14px;
   /* Fully rounded — pill badges, progress bars, circular indicators. */
   --radius-full: 999px;
+  /* A circle (dots, avatars): half of each side, whatever the size. */
+  --radius-circle: 50%;
 
   /* Control heights */
   --control-height-sm: 24px;

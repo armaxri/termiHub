@@ -16,6 +16,7 @@ import {
   type ConnectionErrorKind,
 } from "@/utils/connectionErrorHints";
 import { t } from "@/i18n/catalog";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./TerminalConnectionOverlay.css";
 
 /**
@@ -54,7 +55,7 @@ export function ConnectErrorDetails({ error }: { error: string }) {
           variant="ghost"
           iconOnly
           size="sm"
-          icon={<Copy size={14} aria-hidden />}
+          icon={<Copy size={ICON_SIZE.sm} aria-hidden />}
           aria-label={t("connection.details.copy")}
           title={t("connection.details.copy")}
           data-testid="terminal-connection-error-copy-btn"
@@ -79,7 +80,7 @@ function CommandBlock({ command, testId }: { command: string; testId?: string })
         variant="ghost"
         iconOnly
         size="sm"
-        icon={<Copy size={14} aria-hidden />}
+        icon={<Copy size={ICON_SIZE.sm} aria-hidden />}
         aria-label="Copy command"
         title="Copy command"
         data-testid={testId}
@@ -166,7 +167,7 @@ export function ConnectFailureActions({
       <Button
         size="sm"
         variant="primary"
-        icon={<RefreshCw size={14} />}
+        icon={<RefreshCw size={ICON_SIZE.sm} />}
         onClick={onRetry}
         data-testid={testIds.retry}
       >
@@ -176,7 +177,7 @@ export function ConnectFailureActions({
         <Button
           size="sm"
           variant="secondary"
-          icon={<Pencil size={14} />}
+          icon={<Pencil size={ICON_SIZE.sm} />}
           onClick={onEdit}
           data-testid={testIds.edit}
         >
@@ -186,7 +187,7 @@ export function ConnectFailureActions({
       <Button
         size="sm"
         variant="ghost"
-        icon={<X size={14} />}
+        icon={<X size={ICON_SIZE.sm} />}
         onClick={onClose}
         data-testid={testIds.close}
       >

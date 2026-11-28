@@ -7,6 +7,7 @@ import { WorkspaceTabDef } from "@/types/workspace";
 import { itemMatchesQuery } from "@/hooks/useListFilter";
 import { useComboboxListNav } from "@/hooks/useComboboxListNav";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface ConnectionPickerProps {
   onSelect: (tab: WorkspaceTabDef) => void;
   onCancel: () => void;
@@ -220,7 +221,7 @@ export function ConnectionPicker({ onSelect, onCancel }: ConnectionPickerProps) 
                         <div className="connection-picker__agent-header">
                           <span className="connection-picker__item-name">{agent.name}</span>
                           <AlertTriangle
-                            size={13}
+                            size={ICON_SIZE.xs}
                             className="connection-picker__agent-warning-icon"
                             aria-hidden="true"
                           />

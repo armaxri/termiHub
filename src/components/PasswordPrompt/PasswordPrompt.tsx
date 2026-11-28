@@ -15,6 +15,7 @@ import {
 import { credentialStorageNeedsChoice } from "@/utils/credentialStorageChoice";
 import { isUnencryptedTransport } from "@/utils/unencryptedSession";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /**
  * Global dialog that prompts the user for an SSH password at connect time.
  *
@@ -213,7 +214,11 @@ export function PasswordPrompt() {
         </p>
         {unencrypted && (
           <p className="password-prompt__unencrypted" data-testid="password-prompt-unencrypted">
-            <LockOpen size={14} aria-hidden className="password-prompt__unencrypted-icon" />
+            <LockOpen
+              size={ICON_SIZE.sm}
+              aria-hidden
+              className="password-prompt__unencrypted-icon"
+            />
             {t("passwordPrompt.unencrypted")}
           </p>
         )}

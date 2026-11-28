@@ -9,6 +9,7 @@ import { frontendLog } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /**
  * Settings → Plugins → Trusted publishers (#2036). Lists every publisher key the
  * trust store holds — bundled first-party keys (immutable) and user-pinned keys
@@ -91,7 +92,7 @@ export function TrustedPublishersSettings() {
                       variant="ghost"
                       size="sm"
                       iconOnly
-                      icon={<Trash2 size={14} />}
+                      icon={<Trash2 size={ICON_SIZE.sm} />}
                       onClick={() => handleRevoke(p)}
                       errorToast={false}
                       aria-label={`Revoke trust for ${p.label}`}

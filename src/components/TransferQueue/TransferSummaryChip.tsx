@@ -7,6 +7,7 @@ import { isTerminalTransferState, type TransferEntry } from "@/types/transfer";
 import { getBasename } from "@/utils/paths";
 import { showTransferSummary } from "./transferSummaryVisibility";
 import { latestRevealableDownload, revealDownload, revealDownloadLabel } from "./revealDownload";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./TransferQueue.css";
 
 /** Props for {@link TransferSummaryChip}. */
@@ -76,7 +77,7 @@ export function TransferSummaryChip({ sessionId }: TransferSummaryChipProps) {
           data-testid="file-browser-transfer-summary"
           onClick={() => setMinimized(false)}
         >
-          <ArrowDownUp size={12} aria-hidden="true" />
+          <ArrowDownUp size={ICON_SIZE.xs} aria-hidden="true" />
           <span className="transfer-summary-chip__label">{summarizeSessionTransfers(entries)}</span>
         </button>
       </Tooltip>
@@ -88,7 +89,7 @@ export function TransferSummaryChip({ sessionId }: TransferSummaryChipProps) {
             className="transfer-summary-chip__reveal"
             data-testid="file-browser-transfer-reveal"
             aria-label={`${revealLabel}: ${revealName}`}
-            icon={<FolderOpen size={12} aria-hidden="true" />}
+            icon={<FolderOpen size={ICON_SIZE.xs} aria-hidden="true" />}
             onClick={() => revealDownload(revealPath)}
           >
             {revealLabel}

@@ -42,7 +42,7 @@
 
 .recovery-dialog__file-name {
   font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
   font-family: var(--font-mono);
 }

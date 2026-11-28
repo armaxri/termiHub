@@ -23,6 +23,7 @@ import {
 } from "./stepMeta";
 import { StepRowMenu } from "./StepRowMenu";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Props of {@link StepRow}. */
 export interface StepRowProps {
   draft: StepDraft;
@@ -118,7 +119,7 @@ export function StepRow({
           onKeyDown={handleGripKey}
           aria-label={`Reorder step ${index + 1}`}
         >
-          <GripVertical size={14} />
+          <GripVertical size={ICON_SIZE.sm} />
         </button>
         <span className="automation-step__index">{index + 1}</span>
         <button
@@ -130,7 +131,7 @@ export function StepRow({
           data-testid={`automation-editor-step-toggle-${path}`}
         >
           <ChevronRight
-            size={14}
+            size={ICON_SIZE.sm}
             className={
               open
                 ? "automation-step__chevron automation-step__chevron--open"
@@ -138,7 +139,7 @@ export function StepRow({
             }
             aria-hidden="true"
           />
-          <Icon size={14} />
+          <Icon size={ICON_SIZE.sm} />
           <span
             className="automation-step__kind"
             data-testid={`automation-editor-step-kind-${path}`}
@@ -160,7 +161,7 @@ export function StepRow({
             )}
             {blocked !== null && (
               <span className="automation-step__blocked">
-                <TriangleAlert size={12} aria-hidden="true" /> Will not run
+                <TriangleAlert size={ICON_SIZE.xs} aria-hidden="true" /> Will not run
               </span>
             )}
           </span>

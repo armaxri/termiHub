@@ -1,6 +1,7 @@
 import { Network, Plus } from "lucide-react";
 import { Button, EmptyState } from "@/components/ui";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** The compact line, which points at the header's "New" menu (#5848). */
 export const COMPACT_EMPTY_TEXT = "No saved connections. Add one with “New” above.";
 
@@ -49,9 +50,8 @@ export function ConnectionsEmptyState({
 
   return (
     <EmptyState
-      variant="card"
       role={null}
-      icon={<Network size={28} strokeWidth={1.5} />}
+      icon={<Network size={ICON_SIZE.md} aria-hidden />}
       title="No connections yet"
       description="Create your first connection to get started."
       data-testid="connections-empty-state"
@@ -59,7 +59,7 @@ export function ConnectionsEmptyState({
         <Button
           variant="primary"
           size="sm"
-          icon={<Plus size={14} />}
+          icon={<Plus size={ICON_SIZE.sm} />}
           onClick={onNewConnection}
           data-testid="connections-empty-new-connection"
         >

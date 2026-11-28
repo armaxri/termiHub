@@ -25,6 +25,7 @@ import {
 import { AddStepItems } from "./AddStepMenu";
 import type { AutomationStepKind } from "./stepMeta";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Props of {@link StepRowMenu}. */
 export interface StepRowMenuProps {
   /** Path of the step (`0`, `2-then-1`). */
@@ -72,7 +73,7 @@ export function StepRowMenu({
           variant="ghost"
           size="sm"
           iconOnly
-          icon={<MoreHorizontal size={14} />}
+          icon={<MoreHorizontal size={ICON_SIZE.sm} />}
           aria-label={`More options for step ${index + 1}`}
           data-testid={`automation-editor-step-more-${path}`}
         />
@@ -91,7 +92,7 @@ export function StepRowMenu({
       >
         {onSpeed && (
           <MenuItem
-            icon={<Gauge size={14} />}
+            icon={<Gauge size={ICON_SIZE.sm} />}
             onSelect={later(onSpeed)}
             data-testid={`automation-editor-step-speed-menu-${path}`}
           >
@@ -100,7 +101,7 @@ export function StepRowMenu({
         )}
         {onFailure && (
           <MenuItem
-            icon={<ShieldAlert size={14} />}
+            icon={<ShieldAlert size={ICON_SIZE.sm} />}
             onSelect={later(onFailure)}
             data-testid={`automation-editor-step-failure-menu-${path}`}
           >
@@ -110,7 +111,7 @@ export function StepRowMenu({
         {(onSpeed || onFailure) && <MenuSeparator />}
         <MenuSub>
           <MenuSubTrigger
-            icon={<Plus size={14} />}
+            icon={<Plus size={ICON_SIZE.sm} />}
             data-testid={`automation-editor-step-add-below-${path}`}
           >
             Add step below
@@ -124,7 +125,7 @@ export function StepRowMenu({
           </MenuSubContent>
         </MenuSub>
         <MenuItem
-          icon={<ArrowUp size={14} />}
+          icon={<ArrowUp size={ICON_SIZE.sm} />}
           disabled={index === 0}
           onSelect={() => onMove(-1)}
           data-testid={`automation-editor-step-up-${path}`}
@@ -132,7 +133,7 @@ export function StepRowMenu({
           Move up
         </MenuItem>
         <MenuItem
-          icon={<ArrowDown size={14} />}
+          icon={<ArrowDown size={ICON_SIZE.sm} />}
           disabled={index === total - 1}
           onSelect={() => onMove(1)}
           data-testid={`automation-editor-step-down-${path}`}
@@ -140,7 +141,7 @@ export function StepRowMenu({
           Move down
         </MenuItem>
         <MenuItem
-          icon={<Copy size={14} />}
+          icon={<Copy size={ICON_SIZE.sm} />}
           onSelect={later(onDuplicate)}
           data-testid={`automation-editor-step-duplicate-${path}`}
         >
@@ -148,7 +149,7 @@ export function StepRowMenu({
         </MenuItem>
         <MenuItem
           danger
-          icon={<Trash2 size={14} />}
+          icon={<Trash2 size={ICON_SIZE.sm} />}
           onSelect={later(onDelete)}
           data-testid={`automation-editor-step-delete-${path}`}
         >

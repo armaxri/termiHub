@@ -14,6 +14,7 @@ import { errorMessage } from "@/utils/errorMessage";
 import { t, tf } from "@/i18n/catalog";
 import type { BiometricUnlockStatus } from "@/types/credential";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** User-facing message for a failed enable attempt. */
 export function enableErrorMessage(err: unknown, methodLabel: string): string {
   if (!isBiometricUnlockError(err)) return errorMessage(err);
@@ -190,7 +191,7 @@ export function BiometricUnlockSettings() {
               type="submit"
               variant="primary"
               size="sm"
-              icon={<Fingerprint size={14} />}
+              icon={<Fingerprint size={ICON_SIZE.sm} />}
               onClick={handleEnable}
               errorToast={false}
               pendingLabel={`Waiting for ${label}…`}

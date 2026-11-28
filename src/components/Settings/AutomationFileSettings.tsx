@@ -7,6 +7,7 @@ import type { AutomationImport } from "@/services/automationFileIo";
 import { useAppStore } from "@/store/appStore";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Settings → Import & migration → automations (#5818, slice 11). */
 export function AutomationFileSettings() {
   const empty = useAppStore((s) => s.automations.length === 0);
@@ -31,7 +32,7 @@ export function AutomationFileSettings() {
         <Button
           variant="secondary"
           size="sm"
-          icon={<Upload size={14} />}
+          icon={<Upload size={ICON_SIZE.sm} />}
           onClick={() => files.importFile(setImported)}
           data-testid="import-migration-automations-import-btn"
         >
@@ -40,7 +41,7 @@ export function AutomationFileSettings() {
         <Button
           variant="secondary"
           size="sm"
-          icon={<Download size={14} />}
+          icon={<Download size={ICON_SIZE.sm} />}
           onClick={files.exportAll}
           disabled={empty}
           data-testid="import-migration-automations-export-btn"

@@ -4,6 +4,7 @@ import { MenuItem } from "@/components/ui";
 import { listAgentSerialPorts } from "@/services/api";
 import { useSerialPortRescan } from "@/components/DynamicForm/useSerialPortRescan";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface AgentNewSerialSessionItemProps {
   agentId: string;
   /** The agent's connect-time `availableSerialPorts` snapshot. */
@@ -52,7 +53,7 @@ export function AgentNewSerialSessionItem({
 
   return (
     <MenuItem onSelect={() => onSelectPort(port)} data-testid="context-agent-new-serial">
-      <Cable size={14} />
+      <Cable size={ICON_SIZE.sm} />
       New serial session
       <span className="ui-menu__hint">{port}</span>
     </MenuItem>

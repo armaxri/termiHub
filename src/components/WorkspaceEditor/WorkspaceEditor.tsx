@@ -39,6 +39,7 @@ import { draftKey } from "@/utils/draftKey";
 import { findLeafByTab } from "@/utils/panelTree";
 import { rovingTabIndexFromKey, focusRovingTab } from "@/utils/rovingTablist";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface WorkspaceEditorProps {
   tabId: string;
   meta: WorkspaceEditorMeta;
@@ -492,7 +493,7 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
                         }}
                         data-testid={`workspace-group-close-${index}`}
                       >
-                        <X size={10} />
+                        <X size={ICON_SIZE.xs} />
                       </button>
                     </Tooltip>
                   </div>
@@ -507,7 +508,7 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
                   aria-keyshortcuts="F2"
                   data-testid="workspace-group-rename"
                 >
-                  <Pencil size={12} />
+                  <Pencil size={ICON_SIZE.xs} />
                 </button>
               </Tooltip>
               <Tooltip content="Add group" side="top">
@@ -518,7 +519,7 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
                   aria-label="Add group"
                   data-testid="workspace-group-add"
                 >
-                  <Plus size={12} />
+                  <Plus size={ICON_SIZE.xs} />
                 </button>
               </Tooltip>
             </div>
@@ -533,7 +534,7 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
                   aria-label="Add group"
                   data-testid="workspace-group-add"
                 >
-                  <Plus size={12} />
+                  <Plus size={ICON_SIZE.xs} />
                   Add group
                 </button>
               </Tooltip>

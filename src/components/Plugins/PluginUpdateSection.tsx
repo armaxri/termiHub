@@ -21,6 +21,7 @@ import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
 import { PluginInstallDialog } from "./PluginInstallDialog";
 import { reviewDownloadedPackage, type DownloadedPackageReview } from "./pluginDownloadReview";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./Plugins.css";
 
 /** Props for {@link PluginUpdateSection}. */
@@ -93,7 +94,7 @@ export function PluginUpdateSection({ plugin }: PluginUpdateSectionProps) {
 
   return (
     <div className="plugin-detail__block" data-testid="plugin-update">
-      <div className="plugin-detail__section-title">Updates</div>
+      <div className="ui-section-label plugin-detail__section-title">Updates</div>
 
       {checking && (
         <p className="plugin-update__line" data-testid="plugin-update-checking">
@@ -178,7 +179,7 @@ export function PluginUpdateSection({ plugin }: PluginUpdateSectionProps) {
         <Button
           variant="secondary"
           size="sm"
-          icon={<RefreshCw size={14} />}
+          icon={<RefreshCw size={ICON_SIZE.sm} />}
           onClick={handleCheck}
           disabled={checking}
           errorToast={false}
@@ -190,7 +191,7 @@ export function PluginUpdateSection({ plugin }: PluginUpdateSectionProps) {
           <Button
             variant="primary"
             size="sm"
-            icon={<Download size={14} />}
+            icon={<Download size={ICON_SIZE.sm} />}
             onClick={handleDownload}
             errorToast={false}
             data-testid={fromIndex ? "plugin-update-index-download" : "plugin-update-download"}
@@ -202,7 +203,7 @@ export function PluginUpdateSection({ plugin }: PluginUpdateSectionProps) {
           <Button
             variant="ghost"
             size="sm"
-            icon={<ExternalLink size={14} />}
+            icon={<ExternalLink size={ICON_SIZE.sm} />}
             onClick={() => handleChangelog(outcome.changelogUrl ?? "")}
             data-testid="plugin-update-changelog"
           >

@@ -19,6 +19,7 @@ import {
   MenuSeparator,
 } from "@/components/ui";
 import { withActionAccelerator } from "@/services/keybindings";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./TabGroupChips.css";
 
 /**
@@ -113,7 +114,7 @@ export function TabGroupChips() {
           data-new-group-btn="true"
           data-icon="tab-group"
         >
-          <Layers size={14} aria-hidden />
+          <Layers size={ICON_SIZE.sm} aria-hidden />
           {!showChips && <span className="tab-group-chips__add-text">{newTabGroupText}</span>}
         </button>
       </Tooltip>
@@ -233,7 +234,7 @@ function TabGroupChip({
               data-testid="tab-group-chip-close"
               aria-hidden
             >
-              <X size={12} />
+              <X size={ICON_SIZE.xs} />
             </span>
           )}
         </button>
@@ -243,7 +244,7 @@ function TabGroupChip({
           Rename
         </MenuItem>
         <MenuItem onSelect={onSetColor} data-testid="tab-group-ctx-color">
-          <Palette size={14} /> Set color…
+          <Palette size={ICON_SIZE.sm} /> Set color…
         </MenuItem>
         <MenuSeparator />
         <MenuItem
@@ -251,14 +252,14 @@ function TabGroupChip({
           onSelect={() => onMoveLeft?.()}
           data-testid="tab-group-ctx-move-left"
         >
-          <ArrowLeft size={14} /> Move left
+          <ArrowLeft size={ICON_SIZE.sm} /> Move left
         </MenuItem>
         <MenuItem
           disabled={!onMoveRight}
           onSelect={() => onMoveRight?.()}
           data-testid="tab-group-ctx-move-right"
         >
-          <ArrowRight size={14} /> Move right
+          <ArrowRight size={ICON_SIZE.sm} /> Move right
         </MenuItem>
         {canClose && (
           <>

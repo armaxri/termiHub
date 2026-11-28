@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { CircleHelp } from "lucide-react";
 import { Button, Tooltip, TooltipProvider } from "@/components/ui";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./SettingDefaultMarker.css";
 
 export interface SettingsHelpTipProps {
@@ -32,7 +33,7 @@ export function SettingsHelpTip({ name, children, "data-testid": testId }: Setti
           size="xs"
           iconOnly
           className="settings-help-tip"
-          icon={<CircleHelp size={13} aria-hidden="true" />}
+          icon={<CircleHelp size={ICON_SIZE.xs} aria-hidden="true" />}
           aria-label={`More about ${name.charAt(0).toLowerCase()}${name.slice(1)}`}
           data-testid={testId}
         />

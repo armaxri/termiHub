@@ -9,6 +9,7 @@ import {
   showMasterPasswordMismatch,
 } from "@/utils/masterPasswordValidation";
 import { MASTER_PASSWORD_NOT_RECOVERABLE_TEXT } from "@/utils/credentialStorageCopy";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./CredentialStorageChooser.css";
 
 interface MasterPasswordSetupFieldsProps {
@@ -73,7 +74,11 @@ export function MasterPasswordSetupFields({
   return (
     <>
       <p className="credential-storage-warning" role="note" data-testid={`${testIdPrefix}-warning`}>
-        <TriangleAlert size={14} className="credential-storage-warning__icon" aria-hidden="true" />
+        <TriangleAlert
+          size={ICON_SIZE.sm}
+          className="credential-storage-warning__icon"
+          aria-hidden="true"
+        />
         <span>{MASTER_PASSWORD_NOT_RECOVERABLE_TEXT}</span>
       </p>
       <Field
@@ -155,7 +160,7 @@ function ChecklistItem({ met, text, testId }: { met: boolean; text: string; test
       data-met={met || undefined}
       data-testid={testId}
     >
-      <Icon size={12} className="master-password-checklist__icon" aria-hidden="true" />
+      <Icon size={ICON_SIZE.xs} className="master-password-checklist__icon" aria-hidden="true" />
       <span>{text}</span>
       <span className="sr-only">{met ? " (done)" : " (not yet)"}</span>
     </li>

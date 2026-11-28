@@ -19,6 +19,7 @@ import type { FileBookmark } from "@/types/fileBookmark";
 import { errorMessage } from "@/utils/errorMessage";
 import { FileBookmarksDialog } from "./FileBookmarksDialog";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Props for {@link FileBookmarksMenu}. */
 export interface FileBookmarksMenuProps {
   /** The current connection's bookmark scope; `null` when it cannot be scoped. */
@@ -103,11 +104,11 @@ function BookmarkEntries({
     <>
       {current ? (
         <MenuItem onSelect={onRemoveCurrent} data-testid="file-bookmarks-remove-current">
-          <BookmarkMinus size={14} /> Remove bookmark for this folder
+          <BookmarkMinus size={ICON_SIZE.sm} /> Remove bookmark for this folder
         </MenuItem>
       ) : (
         <MenuItem disabled={!currentPath} onSelect={onAdd} data-testid="file-bookmarks-add">
-          <BookmarkPlus size={14} /> Bookmark this folder
+          <BookmarkPlus size={ICON_SIZE.sm} /> Bookmark this folder
         </MenuItem>
       )}
       <MenuSeparator />
@@ -126,9 +127,9 @@ function BookmarkEntries({
               data-testid={`file-bookmark-item-${b.id}`}
             >
               {b.id === current?.id ? (
-                <BookmarkCheck size={14} aria-hidden="true" />
+                <BookmarkCheck size={ICON_SIZE.sm} aria-hidden="true" />
               ) : (
-                <Bookmark size={14} aria-hidden="true" />
+                <Bookmark size={ICON_SIZE.sm} aria-hidden="true" />
               )}
               <span className="file-bookmarks__name">{b.name}</span>
             </MenuItem>
@@ -141,7 +142,7 @@ function BookmarkEntries({
         onSelect={onManage}
         data-testid="file-bookmarks-manage"
       >
-        <ListChecks size={14} /> Manage bookmarks…
+        <ListChecks size={ICON_SIZE.sm} /> Manage bookmarks…
       </MenuItem>
     </>
   );
@@ -174,7 +175,9 @@ export function FileBookmarksMenu({
             <Button
               variant="ghost"
               size="sm"
-              icon={current ? <BookmarkCheck size={14} /> : <Bookmark size={14} />}
+              icon={
+                current ? <BookmarkCheck size={ICON_SIZE.sm} /> : <Bookmark size={ICON_SIZE.sm} />
+              }
               aria-label={label}
               aria-pressed={current !== null}
               data-testid={testId}
@@ -248,7 +251,7 @@ export function FileBookmarksSubmenu({
   return (
     <MenuSub>
       <MenuSubTrigger
-        icon={current ? <BookmarkCheck size={14} /> : <Bookmark size={14} />}
+        icon={current ? <BookmarkCheck size={ICON_SIZE.sm} /> : <Bookmark size={ICON_SIZE.sm} />}
         data-testid={testId}
       >
         Bookmarks

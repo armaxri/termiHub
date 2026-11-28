@@ -5,6 +5,7 @@ import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { Button, ConfirmDialog, toast } from "@/components/ui";
 import { requestAgentDeferredUpdate, requestAgentUpdate } from "@/services/api";
 import { isExpectedApplyDisconnect } from "./expectedApplyDisconnect";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./AgentUpdateBanner.css";
 
 /** Props for {@link AgentUpdateBanner}. */
@@ -100,7 +101,7 @@ export function AgentUpdateMarker({ agentId }: AgentUpdateMarkerProps) {
       title={label}
       data-testid={`agent-update-marker-${agentId}`}
     >
-      <ArrowUpCircle size={14} aria-hidden="true" />
+      <ArrowUpCircle size={ICON_SIZE.sm} aria-hidden="true" />
     </span>
   );
 }
@@ -227,7 +228,11 @@ export function AgentUpdateBanner({
       data-testid={`agent-update-banner-${agentId}`}
     >
       <div className="agent-update-banner__head">
-        <ArrowUpCircle size={14} className="agent-update-banner__icon" aria-hidden="true" />
+        <ArrowUpCircle
+          size={ICON_SIZE.sm}
+          className="agent-update-banner__icon"
+          aria-hidden="true"
+        />
         <strong
           className="agent-update-banner__title"
           data-testid={`agent-update-banner-title-${agentId}`}

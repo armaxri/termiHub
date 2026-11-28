@@ -5,6 +5,7 @@ import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import "./SudoPromptDialog.css";
 import { isImeComposing } from "@/utils/imeComposition";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Caching choices returned alongside the entered password. */
 export interface SudoAuthorizeOptions {
   /** Keep the password in memory for the rest of this editor session. */
@@ -114,7 +115,7 @@ export function SudoPromptDialog({
           </Button>
           <Button
             variant="primary"
-            icon={<ShieldCheck size={14} />}
+            icon={<ShieldCheck size={ICON_SIZE.sm} />}
             onClick={handleSubmit}
             disabled={!password || busy}
             data-testid="sudo-prompt-submit"
@@ -129,15 +130,15 @@ export function SudoPromptDialog({
       </p>
       <dl className="sudo-prompt__facts">
         <div className="sudo-prompt__fact">
-          <dt>Host</dt>
+          <dt className="ui-section-label">Host</dt>
           <dd data-testid="sudo-prompt-host">{host}</dd>
         </div>
         <div className="sudo-prompt__fact">
-          <dt>User</dt>
+          <dt className="ui-section-label">User</dt>
           <dd data-testid="sudo-prompt-user">{user || "(default)"}</dd>
         </div>
         <div className="sudo-prompt__fact">
-          <dt>File</dt>
+          <dt className="ui-section-label">File</dt>
           <dd data-testid="sudo-prompt-target" title={targetPath}>
             {targetPath}
           </dd>

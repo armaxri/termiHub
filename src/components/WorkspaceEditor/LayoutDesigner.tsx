@@ -15,6 +15,7 @@ import {
 import { ConnectionPicker } from "./ConnectionPicker";
 import { isImeComposing } from "@/utils/imeComposition";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /**
  * Build a map from leaf node reference to its depth-first index.
  * This is computed once per layout change and passed through the tree,
@@ -181,7 +182,7 @@ function LayoutNodePreview({
     <div className="layout-split-container" data-testid={`layout-split-${node.direction}`}>
       <div className="layout-split-container__header">
         <span className="layout-split-container__label">
-          <DirectionIcon size={10} />
+          <DirectionIcon size={ICON_SIZE.xs} />
           {directionLabel}
         </span>
         <div className="layout-split-container__actions">
@@ -191,7 +192,7 @@ function LayoutNodePreview({
                 variant="secondary"
                 size="xs"
                 iconOnly
-                icon={<RotateCcw size={10} />}
+                icon={<RotateCcw size={ICON_SIZE.xs} />}
                 onClick={() => onUpdateSizes(node, null)}
                 aria-label="Reset to equal"
                 data-testid="layout-size-reset"
@@ -203,7 +204,7 @@ function LayoutNodePreview({
               variant="secondary"
               size="xs"
               iconOnly
-              icon={<SplitSquareHorizontal size={10} />}
+              icon={<SplitSquareHorizontal size={ICON_SIZE.xs} />}
               onClick={() => onSplitContainer(node, "horizontal")}
               aria-label="Split horizontal"
             />
@@ -213,7 +214,7 @@ function LayoutNodePreview({
               variant="secondary"
               size="xs"
               iconOnly
-              icon={<SplitSquareVertical size={10} />}
+              icon={<SplitSquareVertical size={ICON_SIZE.xs} />}
               onClick={() => onSplitContainer(node, "vertical")}
               aria-label="Split vertical"
             />
@@ -373,7 +374,7 @@ function LeafPanel({
               variant="secondary"
               size="xs"
               iconOnly
-              icon={<SplitSquareHorizontal size={10} />}
+              icon={<SplitSquareHorizontal size={ICON_SIZE.xs} />}
               onClick={(e) => {
                 e.stopPropagation();
                 onSplitH();
@@ -387,7 +388,7 @@ function LeafPanel({
               variant="secondary"
               size="xs"
               iconOnly
-              icon={<SplitSquareVertical size={10} />}
+              icon={<SplitSquareVertical size={ICON_SIZE.xs} />}
               onClick={(e) => {
                 e.stopPropagation();
                 onSplitV();
@@ -401,7 +402,7 @@ function LeafPanel({
               variant="secondary"
               size="xs"
               iconOnly
-              icon={<Plus size={10} />}
+              icon={<Plus size={ICON_SIZE.xs} />}
               onClick={(e) => {
                 e.stopPropagation();
                 onAddTab();
@@ -422,7 +423,7 @@ function LeafPanel({
               aria-label="Remove panel"
               data-testid={`layout-remove-leaf-${idx}`}
             >
-              <X size={10} />
+              <X size={ICON_SIZE.xs} />
             </button>
           </Tooltip>
         )}
@@ -450,7 +451,7 @@ function LeafPanel({
                   aria-label="Remove tab"
                   data-testid={`layout-remove-tab-${idx}-${tabIdx}`}
                 >
-                  <X size={10} />
+                  <X size={ICON_SIZE.xs} />
                 </button>
               </Tooltip>
             </div>

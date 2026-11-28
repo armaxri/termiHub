@@ -2,6 +2,7 @@ import React, { createContext, useContext } from "react";
 import * as RadixContextMenu from "@radix-ui/react-context-menu";
 import * as RadixDropdownMenu from "@radix-ui/react-dropdown-menu";
 import { ChevronRight } from "lucide-react";
+import { ICON_SIZE } from "./iconSize";
 import "./ui.css";
 
 /**
@@ -409,7 +410,7 @@ export const MenuSubTrigger = React.forwardRef<HTMLDivElement, MenuSubTriggerPro
         <RowBody icon={icon} hint={hint}>
           {children}
         </RowBody>
-        <ChevronRight size={14} className="ui-menu__sub-arrow" aria-hidden="true" />
+        <ChevronRight size={ICON_SIZE.sm} className="ui-menu__sub-arrow" aria-hidden="true" />
       </Trigger>
     );
   }

@@ -37,6 +37,7 @@ import { choiceHelp, type ChoiceValue } from "@/utils/choiceHelp";
 import "./AgentSetupDialog.css";
 import { errorMessage } from "@/utils/errorMessage";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface AgentSetupDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -448,7 +449,7 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
 
         {phase.kind === "detecting" && (
           <div className="agent-setup-dialog__detecting">
-            <Spinner size={24} label={null} />
+            <Spinner size={ICON_SIZE.xl} label={null} />
             <span className="agent-setup-dialog__detecting-label">
               Connecting and detecting architecture…
             </span>
@@ -457,7 +458,7 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
 
         {phase.kind === "running" && (
           <div className="agent-setup-dialog__running" data-testid="agent-setup-progress">
-            <Spinner size={24} label={null} />
+            <Spinner size={ICON_SIZE.xl} label={null} />
             <div className="agent-setup-dialog__running-text">
               <span className="agent-setup-dialog__running-step">{phase.step}</span>
               <span className="agent-setup-dialog__running-message">{phase.message}</span>

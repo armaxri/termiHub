@@ -5,6 +5,7 @@ import { useProjectedTransfers } from "@/store/useProjectedTransfers";
 import { isTerminalTransferState } from "@/types/transfer";
 import { isTransferSummaryShown, useTransferSummariesVersion } from "./transferSummaryVisibility";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /**
  * Minimized status-bar indicator for the Transfer Queue panel (#1337).
  *
@@ -41,7 +42,7 @@ export function TransferQueueIndicator() {
         data-testid="transfer-queue-indicator"
         onClick={() => setMinimized(false)}
       >
-        <ArrowDownUp size={12} />
+        <ArrowDownUp size={ICON_SIZE.xs} />
         {label}
         <span className="transfer-queue-indicator__count" aria-hidden="true">
           {count}

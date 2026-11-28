@@ -10,6 +10,7 @@ import {
   type AgentHostSessionInfo,
   type AgentHostSessionsResult,
 } from "@/services/api";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./AgentRunningSessionsDialog.css";
 
 /** Props for {@link AgentRunningSessionsDialog}. */
@@ -183,7 +184,7 @@ export function AgentRunningSessionsDialog({
           <Button
             variant="ghost"
             size="sm"
-            icon={<RefreshCw size={14} />}
+            icon={<RefreshCw size={ICON_SIZE.sm} />}
             onClick={() => void load()}
             data-testid="running-sessions-refresh"
           >

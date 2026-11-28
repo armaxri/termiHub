@@ -11,6 +11,7 @@ import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
 import { useRunLocationStore } from "@/store/runLocationStore";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Protocol-filter dropdown options. */
 const PROTOCOL_OPTIONS = [
   { value: "All", label: "All" },
@@ -138,7 +139,7 @@ export function OpenPortsPanel() {
           <Button
             variant="primary"
             size="sm"
-            icon={<RefreshCw size={14} />}
+            icon={<RefreshCw size={ICON_SIZE.sm} />}
             pendingLabel="Refreshing…"
             errorToast={false}
             onClick={handleRefresh}

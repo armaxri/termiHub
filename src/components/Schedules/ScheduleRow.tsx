@@ -16,6 +16,7 @@ import type { ScheduleView } from "@/types/schedule";
 import { describeRule } from "./scheduleForm";
 import { attemptTone, lastRunText, scheduleState, summarizeAttempt } from "./scheduleStatus";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Props of {@link ScheduleRow}. */
 export interface ScheduleRowProps {
   schedule: ScheduleView;
@@ -86,7 +87,7 @@ export function ScheduleRow({
               iconOnly
               aria-label={`Edit ${s.name}`}
               data-testid={`schedule-edit-${s.id}`}
-              icon={<Pencil size={12} />}
+              icon={<Pencil size={ICON_SIZE.xs} />}
               onClick={onEdit}
             />
           </Tooltip>
@@ -99,20 +100,20 @@ export function ScheduleRow({
                   iconOnly
                   aria-label={tf("schedule.menu.label", { name: s.name })}
                   data-testid={`schedule-more-${s.id}`}
-                  icon={<MoreHorizontal size={12} />}
+                  icon={<MoreHorizontal size={ICON_SIZE.xs} />}
                 />
               </DropdownMenuTrigger>
             </Tooltip>
             <DropdownMenuContent align="end" sideOffset={4}>
               <MenuItem
-                icon={<Pencil size={14} />}
+                icon={<Pencil size={ICON_SIZE.sm} />}
                 onSelect={onEdit}
                 data-testid={`schedule-menu-edit-${s.id}`}
               >
                 Edit…
               </MenuItem>
               <MenuItem
-                icon={<History size={14} />}
+                icon={<History size={ICON_SIZE.sm} />}
                 onSelect={onShowHistory}
                 data-testid={`schedule-menu-history-${s.id}`}
               >
@@ -120,7 +121,7 @@ export function ScheduleRow({
               </MenuItem>
               <MenuSeparator />
               <MenuItem
-                icon={<Trash2 size={14} />}
+                icon={<Trash2 size={ICON_SIZE.sm} />}
                 danger
                 onSelect={onDelete}
                 data-testid={`schedule-menu-delete-${s.id}`}

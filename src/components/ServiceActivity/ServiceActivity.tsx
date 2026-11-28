@@ -30,6 +30,7 @@ import {
   sinceOf,
 } from "./activityText";
 import { useServiceActivity } from "./useServiceActivity";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./ServiceActivity.css";
 
 interface ServiceActivityProps {
@@ -77,7 +78,7 @@ function ServiceActivity({
       key={action.id}
       variant={action.id === offered[0]?.id ? "secondary" : "ghost"}
       size="sm"
-      icon={<ActionIcon id={action.id} size={12} />}
+      icon={<ActionIcon id={action.id} size={ICON_SIZE.xs} />}
       // Copy changes nothing else on screen.
       successFlash={action.id === "copyAddress"}
       onClick={() => perform(action.id)}

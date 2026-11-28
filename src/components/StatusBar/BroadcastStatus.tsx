@@ -3,6 +3,7 @@ import { useAppStore } from "@/store/appStore";
 import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
 import { Tooltip } from "@/components/ui";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /**
  * Status-bar pill for the active broadcast session (#1957, epic #1954).
  *
@@ -49,7 +50,7 @@ export function BroadcastStatus() {
         data-testid="broadcast-status"
         onClick={stopBroadcast}
       >
-        <Radio size={12} />
+        <Radio size={ICON_SIZE.xs} />
         {label}
       </button>
     </Tooltip>

@@ -40,8 +40,8 @@
 
 .ui-btn__icon {
   display: inline-flex;
-  width: 15px;
-  height: 15px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
 }
 
 .ui-btn--sm {
@@ -177,7 +177,7 @@
   display: inline-flex;
   width: 14px;
   height: 14px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   border: 2px solid currentColor;
   border-right-color: transparent;
   animation: th-spin 0.7s linear infinite;
@@ -341,8 +341,8 @@
 
 .ui-field__hint-icon {
   display: inline-flex;
-  width: 12px;
-  height: 12px;
+  width: var(--icon-xs);
+  height: var(--icon-xs);
   flex-shrink: 0;
   margin-top: var(--spacing-xxs);
 }
@@ -357,8 +357,8 @@
 
 .ui-field__msg-icon {
   display: inline-flex;
-  width: 12px;
-  height: 12px;
+  width: var(--icon-xs);
+  height: var(--icon-xs);
   flex-shrink: 0;
 }
 
@@ -412,8 +412,8 @@
 
 .ui-select__icon {
   display: inline-flex;
-  width: 14px;
-  height: 14px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
   color: var(--text-secondary);
 }
 
@@ -492,9 +492,9 @@
 .ui-select__group-label {
   padding: var(--spacing-xs) var(--spacing-sm);
   font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--letter-spacing-label);
   color: var(--text-muted);
 }
 
@@ -701,7 +701,7 @@
   display: block;
   width: 14px;
   height: 14px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   background: var(--toggle-off-thumb);
   transform: translateX(2px);
   transition:
@@ -952,7 +952,7 @@
   align-items: center;
   gap: var(--spacing-xs);
   font-size: var(--font-size-sm);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   color: var(--text-primary);
 }
 
@@ -1036,7 +1036,7 @@
 
 .ui-tooltip__line:first-child {
   color: var(--text-primary);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 .ui-tooltip__arrow {
@@ -1169,8 +1169,8 @@
 }
 .ui-modal__close-icon {
   display: inline-flex;
-  width: 15px;
-  height: 15px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
 }
 
 .ui-modal__body {
@@ -1231,8 +1231,8 @@
 }
 .ui-modal__status-icon {
   flex-shrink: 0;
-  width: 14px;
-  height: 14px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
 }
 .ui-modal__status[data-kind="success"] .ui-modal__status-icon {
   color: var(--color-success);
@@ -1386,7 +1386,7 @@
   display: inline-block;
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   flex-shrink: 0;
   vertical-align: middle;
 }
@@ -1477,6 +1477,18 @@
   }
 }
 
+/* === Section label (#6156, UI-017) ===
+   The one look for a section, group or column label in a sidebar, panel or
+   dialog. Sentence case, as the copy style asks (#5848, R-088); the slight
+   tracking keeps 11px semibold text open. A component rule adds layout only
+   (margin, padding, flex) and, where a state needs it, a colour. */
+.ui-section-label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-label);
+  color: var(--text-secondary);
+}
+
 /* === EmptyState (UISF-002) ===
    The single empty-/loading-state primitive (src/components/ui/EmptyState.tsx),
    consolidating the per-component `.*__empty` blocks across lists, panels, and
@@ -1491,6 +1503,8 @@
 .ui-empty__title {
   margin: 0;
   font-size: var(--font-size-sm);
+  /* One title look in every variant but the card (#6156, UI-019). */
+  font-weight: var(--font-weight-medium);
   color: var(--text-secondary);
 }
 
@@ -1547,10 +1561,6 @@
   padding: var(--spacing-md);
   border: 1px dashed var(--border-primary);
   border-radius: var(--radius-md);
-}
-
-.ui-empty--panel .ui-empty__title {
-  color: var(--text-secondary);
 }
 
 /* Card: large centred call-to-action (icon badge + title + description + actions). */
@@ -2499,8 +2509,8 @@
 
 /* The type chip reuses the ring's glyph at chip size. */
 .ui-connect-progress__meta .ui-chip__icon svg {
-  width: 12px;
-  height: 12px;
+  width: var(--icon-xs);
+  height: var(--icon-xs);
 }
 
 /* An aborted attempt is the user's choice, not an error: its stopped stage is
@@ -2540,8 +2550,8 @@
 }
 .ui-inline-status__icon {
   flex-shrink: 0;
-  width: 14px;
-  height: 14px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
 }
 .ui-inline-status[data-kind="success"] .ui-inline-status__icon {
   color: var(--color-success);

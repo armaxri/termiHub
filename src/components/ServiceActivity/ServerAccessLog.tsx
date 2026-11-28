@@ -11,6 +11,7 @@ import type { RemoteAgentDefinition } from "@/types/connection";
 import type { AccessLogEntry, DetailedServerStats, TopEntry } from "@/types/embeddedServer";
 import type { HostChoice } from "@/utils/hostChoice";
 import { isAgentHost } from "@/utils/runLocation";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./ServerAccessLog.css";
 
 /** The agent a server is hosted on, when it runs on one (#3453). */
@@ -111,7 +112,7 @@ function StatsGrid({ stats, dropped }: { stats: DetailedServerStats; dropped: nu
     <dl className="server-activity__stats">
       {items.map(([label, value]) => (
         <div key={label} className="server-activity__stat">
-          <dt>{label}</dt>
+          <dt className="ui-section-label">{label}</dt>
           <dd data-testid={`server-activity-stat-${label.toLowerCase()}`}>{value}</dd>
         </div>
       ))}
@@ -123,7 +124,7 @@ function TopList({ title, items }: { title: string; items: TopEntry[] }) {
   if (items.length === 0) return null;
   return (
     <div className="server-activity__top">
-      <span className="server-activity__heading">{title}</span>
+      <span className="ui-section-label server-activity__heading">{title}</span>
       <ul>
         {items.map((item) => (
           <li key={item.key}>
@@ -229,7 +230,9 @@ export function ServerAccessLog({ serverId, live, hostAgent }: Props) {
     <>
       {stats && stats.currentTransfers.length > 0 && (
         <div className="server-activity__top" data-testid={`server-activity-transfers-${serverId}`}>
-          <span className="server-activity__heading">{t("server.activity.now")}</span>
+          <span className="ui-section-label server-activity__heading">
+            {t("server.activity.now")}
+          </span>
           <ul>
             {stats.currentTransfers.map((transfer) => (
               <li key={transfer.id} className="server-activity__transfer">
@@ -262,7 +265,7 @@ export function ServerAccessLog({ serverId, live, hostAgent }: Props) {
         <Button
           variant="ghost"
           size="xs"
-          icon={<Copy size={12} />}
+          icon={<Copy size={ICON_SIZE.xs} />}
           disabled={visible.length === 0}
           aria-label={t("server.activity.copy.label")}
           onClick={handleCopy}
@@ -273,7 +276,7 @@ export function ServerAccessLog({ serverId, live, hostAgent }: Props) {
         <Button
           variant="ghost"
           size="xs"
-          icon={<Trash2 size={12} />}
+          icon={<Trash2 size={ICON_SIZE.xs} />}
           errorToast={false}
           aria-label={t("server.activity.clear.label")}
           onClick={handleClear}

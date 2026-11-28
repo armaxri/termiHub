@@ -1,5 +1,6 @@
 import { ArrowRight } from "lucide-react";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface JumpHostPathDisplayProps {
   /** Ordered hop host labels, outermost → innermost. */
   hops: string[];
@@ -23,7 +24,9 @@ export function JumpHostPathDisplay({ hops, target }: JumpHostPathDisplayProps) 
           const isTarget = i === nodes.length - 1;
           return (
             <span className="jump-host__path-node-wrap" key={i}>
-              {i > 0 && <ArrowRight className="jump-host__path-arrow" size={12} aria-hidden />}
+              {i > 0 && (
+                <ArrowRight className="jump-host__path-arrow" size={ICON_SIZE.xs} aria-hidden />
+              )}
               <span
                 className={
                   isTarget

@@ -18,6 +18,7 @@ import { ScheduleRow } from "./ScheduleRow";
 import { ScheduleSwitchOn } from "./ScheduleSwitchOn";
 import { concernText, lastRunAttention } from "./scheduleStatus";
 import { useScheduleLabels } from "./useScheduleLabels";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./Schedules.css";
 
 /**
@@ -149,7 +150,7 @@ export function SchedulesSection({ showTitle = true, collapse }: SchedulesSectio
           variant="ghost"
           size="sm"
           iconOnly={compactHeader}
-          icon={paused ? <Play size={12} /> : <Pause size={12} />}
+          icon={paused ? <Play size={ICON_SIZE.xs} /> : <Pause size={ICON_SIZE.xs} />}
           aria-label={pauseLabel}
           onClick={() => handlePause(!paused)}
           data-paused={paused ? "true" : "false"}
@@ -180,7 +181,7 @@ export function SchedulesSection({ showTitle = true, collapse }: SchedulesSectio
           ref={headerRef}
           title="Schedules"
           // The header of the sidebar is narrow: words before the icon (B-028, B-037).
-          icon={collapse ? undefined : <CalendarClock size={12} aria-hidden="true" />}
+          icon={collapse ? undefined : <CalendarClock size={ICON_SIZE.xs} aria-hidden="true" />}
           suffix={suffix || undefined}
           collapse={
             collapse
@@ -204,7 +205,7 @@ export function SchedulesSection({ showTitle = true, collapse }: SchedulesSectio
                   iconOnly
                   aria-label="New schedule"
                   data-testid="schedules-new-btn"
-                  icon={<Plus size={12} />}
+                  icon={<Plus size={ICON_SIZE.xs} />}
                   onClick={openNew}
                 />
               </Tooltip>
@@ -218,7 +219,7 @@ export function SchedulesSection({ showTitle = true, collapse }: SchedulesSectio
               variant="secondary"
               size="sm"
               data-testid="schedules-new-btn"
-              icon={<Plus size={12} />}
+              icon={<Plus size={ICON_SIZE.xs} />}
               onClick={() => openScheduleEditor()}
             >
               New schedule
@@ -249,7 +250,7 @@ export function SchedulesSection({ showTitle = true, collapse }: SchedulesSectio
                 variant="secondary"
                 size="sm"
                 data-testid="schedules-empty-new-btn"
-                icon={<Plus size={12} />}
+                icon={<Plus size={ICON_SIZE.xs} />}
                 onClick={() => openScheduleEditor()}
               >
                 New schedule

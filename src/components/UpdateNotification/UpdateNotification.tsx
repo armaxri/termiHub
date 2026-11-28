@@ -15,6 +15,7 @@ import {
 } from "./developUpdate";
 import { AppUpdateInstallActions } from "./AppUpdateInstallActions";
 import { isInAppUpdate } from "./installRoute";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./UpdateNotification.css";
 
 /**
@@ -87,7 +88,7 @@ export function UpdateNotification() {
         <div className="update-notification__title-row">
           {isSecurity ? (
             <Shield
-              size={14}
+              size={ICON_SIZE.sm}
               className="update-notification__icon update-notification__icon--security"
             />
           ) : (
@@ -107,7 +108,7 @@ export function UpdateNotification() {
           aria-label="Dismiss update notification"
           data-testid="update-notification-close"
         >
-          <X size={14} />
+          <X size={ICON_SIZE.sm} />
         </button>
       </div>
 
@@ -138,7 +139,7 @@ export function UpdateNotification() {
           <Button
             variant="ghost"
             size="sm"
-            icon={<RefreshCw size={12} />}
+            icon={<RefreshCw size={ICON_SIZE.xs} />}
             onClick={() => setShowNotes((v) => !v)}
             data-testid="update-notification-whats-new"
           >

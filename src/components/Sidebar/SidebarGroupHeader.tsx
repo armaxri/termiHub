@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { ResponsiveToolbar } from "@/components/ui";
 import type { ToolbarAction } from "@/components/ui";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /**
  * Shared collapsible group header for the connection sidebar (UISF-019).
  *
@@ -60,13 +61,13 @@ export function SidebarGroupHeader({
   const Chevron = expanded ? ChevronDown : ChevronRight;
   const toggle = (
     <button
-      className="connection-list__group-toggle"
+      className="ui-section-label connection-list__group-toggle"
       onClick={onToggle}
       aria-expanded={expanded}
       data-testid={toggleTestId}
     >
       <Chevron
-        size={16}
+        size={ICON_SIZE.md}
         className="connection-tree__chevron"
         aria-hidden
         data-testid={toggleTestId ? `${toggleTestId}-chevron` : undefined}

@@ -7,6 +7,7 @@ import { AgentErrorMeta } from "@/types/terminal";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
 import { errorMessage } from "@/utils/errorMessage";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./AgentErrorTab.css";
 
 interface AgentErrorTabProps {
@@ -80,7 +81,7 @@ export function AgentErrorTab({ tabId: _tabId, meta, isVisible }: AgentErrorTabP
       data-testid="agent-error-tab"
     >
       <ContentOverlay
-        icon={<WifiOff size={32} className="agent-error-tab__icon" />}
+        icon={<WifiOff size={ICON_SIZE.hero} className="agent-error-tab__icon" />}
         heading="Agent connection unavailable"
         announce="assertive"
         announcement={announcement}
@@ -93,9 +94,9 @@ export function AgentErrorTab({ tabId: _tabId, meta, isVisible }: AgentErrorTabP
               size="sm"
               icon={
                 isReconnecting ? (
-                  <Spinner icon={RefreshCw} size={14} label={null} />
+                  <Spinner icon={RefreshCw} size={ICON_SIZE.sm} label={null} />
                 ) : (
-                  <RefreshCw size={14} />
+                  <RefreshCw size={ICON_SIZE.sm} />
                 )
               }
               onClick={() => void handleReconnect()}

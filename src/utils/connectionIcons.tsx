@@ -24,6 +24,7 @@ import { getBasename } from "@/utils/paths";
 import { useIconSurfaces } from "@/hooks/useIconSurfaces";
 import { isSingleEmoji, resolveIconColor } from "@/utils/connectionIconStyle";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Resolved icon: a lucide component or a raw icon node, plus a stable id. */
 export interface ConnectionIconInfo {
   component?: LucideIcon;
@@ -167,7 +168,12 @@ interface FolderIconProps {
  * folder glyph tinted with `iconColor`, resolved against the active theme's
  * surfaces exactly like {@link ConnectionIcon} (#5020).
  */
-export function FolderIcon({ iconColor, iconEmoji, size = 16, className }: FolderIconProps) {
+export function FolderIcon({
+  iconColor,
+  iconEmoji,
+  size = ICON_SIZE.md,
+  className,
+}: FolderIconProps) {
   const surfaces = useIconSurfaces();
   if (iconEmoji && isSingleEmoji(iconEmoji)) {
     return (
@@ -204,7 +210,7 @@ export function ConnectionIcon({
   customIcon,
   iconColor,
   iconEmoji,
-  size = 16,
+  size = ICON_SIZE.md,
   className,
   testId,
 }: ConnectionIconProps) {
@@ -268,7 +274,7 @@ function IconGlyph({
  */
 export function ConnectionTypeIcon({
   type,
-  size = 16,
+  size = ICON_SIZE.md,
   className,
   "aria-hidden": ariaHidden,
 }: {
@@ -290,7 +296,7 @@ export function ConnectionTypeIcon({
 /** Render an icon by its stored name string */
 export function IconByName({
   name,
-  size = 16,
+  size = ICON_SIZE.md,
   className,
 }: {
   name: string;

@@ -9,6 +9,7 @@ import { driveXServerEnsure } from "./xServerProvisioning";
 import { guideTerminalInstall } from "./guideTerminalInstall";
 import { errorMessage } from "@/utils/errorMessage";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface XServerSetupDialogProps {
   /** Whether the dialog is open (controlled). */
   open: boolean;
@@ -111,7 +112,7 @@ export function XServerSetupDialog({ open, onOpenChange, onProvisioned }: XServe
     return (
       <div className="x-server-setup__consent" data-testid="x-server-setup-consent">
         <p className="x-server-setup__lead">
-          <AppWindow className="x-server-setup__lead-icon" size={16} aria-hidden />
+          <AppWindow className="x-server-setup__lead-icon" size={ICON_SIZE.md} aria-hidden />
           Remote GUI apps forwarded over SSH (X11) need a local X server to open as native windows.
         </p>
         <p className="x-server-setup__body-text">

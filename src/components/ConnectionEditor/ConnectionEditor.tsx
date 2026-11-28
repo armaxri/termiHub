@@ -143,6 +143,7 @@ import "./ConnectionEditor.css";
 import { errorMessage } from "@/utils/errorMessage";
 import { requestRemoteAgentReveal } from "@/components/Sidebar/remoteAgentReveal";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 type EditorCategory = "connection" | "terminal" | "appearance" | "agent";
 
 /**
@@ -1942,7 +1943,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
                   <span className="connection-editor__type-option">
                     <ConnectionTypeIcon
                       type={opt.value}
-                      size={13}
+                      size={ICON_SIZE.xs}
                       className="connection-editor__type-icon"
                       aria-hidden
                     />
@@ -2097,7 +2098,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
                       size="xs"
                       className="connection-editor__label-action"
                       title="Copies host, user, port, key and jump hosts from one OpenSSH config entry. Review before saving."
-                      icon={<FileDown size={12} aria-hidden />}
+                      icon={<FileDown size={ICON_SIZE.xs} aria-hidden />}
                       onClick={(e) => {
                         e.preventDefault();
                         setImportOpen(true);
@@ -2172,7 +2173,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           <Button
             variant="secondary"
             size="sm"
-            icon={<TerminalSquare size={13} aria-hidden />}
+            icon={<TerminalSquare size={ICON_SIZE.xs} aria-hidden />}
             onClick={() => setGitBashSetupOpen(true)}
             data-testid="connection-editor-git-bash-setup"
           >
@@ -2233,7 +2234,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
             variant="secondary"
             size="sm"
             className="connection-editor__setup-agent"
-            icon={<KeyRound size={13} aria-hidden />}
+            icon={<KeyRound size={ICON_SIZE.xs} aria-hidden />}
             onClick={handleSetupSshAgent}
             data-testid="ssh-setup-agent"
           >

@@ -28,6 +28,7 @@ import { errorMessage } from "@/utils/errorMessage";
 import { subscribeGuarded } from "@/hooks/useTauriListener";
 import { redactLogText } from "@/utils/redactLogText";
 import { displayTimestamp, exportTimestamp, mergeChronological } from "./logTime";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./LogViewer.css";
 
 const MAX_ENTRIES = 2000;
@@ -261,7 +262,7 @@ export function LogViewer({ isVisible }: LogViewerProps) {
           size="sm"
           iconOnly
           className={autoScroll ? "log-viewer__toolbar-action--active" : undefined}
-          icon={autoScroll ? <Pause size={14} /> : <Play size={14} />}
+          icon={autoScroll ? <Pause size={ICON_SIZE.sm} /> : <Play size={ICON_SIZE.sm} />}
           onClick={() => setAutoScroll((v) => !v)}
           title={autoScroll ? "Pause auto-scroll" : "Resume auto-scroll"}
         />
@@ -269,7 +270,7 @@ export function LogViewer({ isVisible }: LogViewerProps) {
           variant="ghost"
           size="sm"
           iconOnly
-          icon={<Save size={14} />}
+          icon={<Save size={ICON_SIZE.sm} />}
           onClick={() => handleSave(filteredEntries)}
           title="Save logs to file"
         />
@@ -277,7 +278,7 @@ export function LogViewer({ isVisible }: LogViewerProps) {
           variant="ghost"
           size="sm"
           iconOnly
-          icon={<Trash2 size={14} />}
+          icon={<Trash2 size={ICON_SIZE.sm} />}
           onClick={handleClear}
           title="Clear logs"
         />
@@ -301,14 +302,14 @@ export function LogViewer({ isVisible }: LogViewerProps) {
               </ContextMenuTrigger>
               <ContextMenuContent>
                 <MenuItem onSelect={() => handleCopyEntry(entry)}>
-                  <ClipboardCopy size={14} /> Copy entry
+                  <ClipboardCopy size={ICON_SIZE.sm} /> Copy entry
                 </MenuItem>
                 <MenuItem onSelect={() => handleCopyAll(filteredEntries)}>
-                  <ClipboardCopy size={14} /> Copy all logs
+                  <ClipboardCopy size={ICON_SIZE.sm} /> Copy all logs
                 </MenuItem>
                 <MenuSeparator />
                 <MenuItem onSelect={() => handleSave(filteredEntries)}>
-                  <FileDown size={14} /> Save all logs
+                  <FileDown size={ICON_SIZE.sm} /> Save all logs
                 </MenuItem>
               </ContextMenuContent>
             </ContextMenuRoot>

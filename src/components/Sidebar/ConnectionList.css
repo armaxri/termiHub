@@ -97,12 +97,8 @@
   gap: var(--spacing-xs);
   background: none;
   border: none;
-  color: var(--text-secondary);
-  font-size: var(--font-size-xs);
-  /* Sentence case at a muted secondary weight (#5848, R-088): the copy style
-     has no all-caps labels, and the section titles must not compete with the
-     connection names below them. */
-  font-weight: var(--font-weight-medium);
+  /* The type comes from the shared .ui-section-label (#6156): sentence case
+     (#5848, R-088), xs, in secondary text below the connection names. */
   cursor: pointer;
   padding: 0;
   min-width: 0;
@@ -311,7 +307,7 @@
 .connection-tree__type {
   display: none;
   flex-shrink: 0;
-  font-size: var(--font-size-2xs);
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
   text-transform: uppercase;
 }
@@ -415,7 +411,7 @@
   /* The dot sits right after the name rather than at the row's far end. */
   flex: 0 1 auto;
   color: var(--text-accent);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 
 .connection-tree__active-marker {
@@ -430,7 +426,7 @@
    chevron leads. */
 .connection-tree__chevron-spacer {
   flex-shrink: 0;
-  width: 16px;
+  width: var(--icon-md);
 }
 
 .connection-tree__folder--drop-over {
@@ -640,7 +636,7 @@
   align-items: center;
   justify-content: center;
   font-size: var(--font-size-2xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   line-height: 1;
   border-radius: var(--radius-full);
   background-color: var(--accent-color);

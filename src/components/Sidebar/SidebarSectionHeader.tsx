@@ -1,6 +1,7 @@
 import React from "react";
 import { ChevronRight } from "lucide-react";
 import { TruncatedText } from "@/components/ui";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./SidebarSectionHeader.css";
 
 /** The disclosure state of a collapsible section. */
@@ -69,14 +70,14 @@ export const SidebarSectionHeader = React.forwardRef<HTMLElement, SidebarSection
         {collapse ? (
           <button
             type="button"
-            className="sidebar-section-header__title sidebar-section-header__toggle"
+            className="ui-section-label sidebar-section-header__title sidebar-section-header__toggle"
             aria-expanded={collapse.expanded}
             aria-controls={collapse.expanded ? collapse.controls : undefined}
             onClick={collapse.onToggle}
             data-testid={collapse.testId}
           >
             <ChevronRight
-              size={12}
+              size={ICON_SIZE.xs}
               aria-hidden="true"
               className={
                 collapse.expanded
@@ -87,7 +88,7 @@ export const SidebarSectionHeader = React.forwardRef<HTMLElement, SidebarSection
             {label}
           </button>
         ) : (
-          <span className="sidebar-section-header__title">{label}</span>
+          <span className="ui-section-label sidebar-section-header__title">{label}</span>
         )}
         {actions != null && <span className="sidebar-section-header__actions">{actions}</span>}
       </header>

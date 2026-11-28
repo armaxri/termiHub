@@ -34,6 +34,7 @@ import type { SavedConnection } from "@/types/connection";
 import "./CommandPalette.css";
 import { useComboboxListNav } from "@/hooks/useComboboxListNav";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /**
  * DOM id of the results listbox the combobox input controls. Option ids are
  * derived from it by {@link useComboboxListNav} (`command-palette-list-opt-<index>`),
@@ -520,7 +521,7 @@ export function CommandPalette(): React.ReactElement {
             title="Back to commands (Backspace)"
             data-testid="command-palette-picker"
           >
-            <ChevronLeft size={14} aria-hidden="true" />
+            <ChevronLeft size={ICON_SIZE.sm} aria-hidden="true" />
             Run automation on broadcast group
           </button>
         )}
@@ -580,18 +581,18 @@ export function CommandPalette(): React.ReactElement {
                     {entry.kind === "command" ? (
                       <CommandGlyph icon={entry.icon} />
                     ) : entry.kind === "broadcast" ? (
-                      <Radio size={16} />
+                      <Radio size={ICON_SIZE.md} />
                     ) : entry.kind === "automation" || entry.kind === "broadcast-pick" ? (
-                      <Zap size={16} />
+                      <Zap size={ICON_SIZE.md} />
                     ) : entry.kind === "workspace" ? (
-                      <LayoutGrid size={16} />
+                      <LayoutGrid size={ICON_SIZE.md} />
                     ) : (
                       <ConnectionIcon
                         config={entry.connection.config}
                         customIcon={entry.connection.icon}
                         iconColor={entry.connection.iconColor}
                         iconEmoji={entry.connection.iconEmoji}
-                        size={16}
+                        size={ICON_SIZE.md}
                       />
                     )}
                   </span>
@@ -638,7 +639,7 @@ export function CommandPalette(): React.ReactElement {
 
 /** A command row's glyph: its own, or the generic command glyph (#6158). */
 function CommandGlyph({ icon: Icon }: { icon?: LucideIcon }) {
-  return Icon ? <Icon size={16} /> : <TerminalSquare size={16} />;
+  return Icon ? <Icon size={ICON_SIZE.md} /> : <TerminalSquare size={ICON_SIZE.md} />;
 }
 
 /** Where the palette comes back from, named in its empty state (#6158). */

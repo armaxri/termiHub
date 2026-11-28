@@ -13,6 +13,7 @@ import "./PluginSettingsSection.css";
 import { withLoggedFallback } from "@/utils/loggedFallback";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Debounce before a plugin's edited settings are persisted. */
 const SAVE_DEBOUNCE_MS = 300;
 /** How long the inline per-plugin "Saved" acknowledgment stays visible. */
@@ -187,7 +188,7 @@ function PluginSettingsGroup({
       data-testid={`plugin-settings-${manifest.id}`}
     >
       <div className="plugin-settings__header">
-        <Icon size={16} className="plugin-settings__icon" aria-hidden="true" />
+        <Icon size={ICON_SIZE.md} className="plugin-settings__icon" aria-hidden="true" />
         <SettingsSectionHeading>{manifest.name}</SettingsSectionHeading>
         <span className="settings-panel__badge">plugin</span>
         <span
@@ -198,7 +199,7 @@ function PluginSettingsGroup({
         >
           {saved && (
             <>
-              <Check size={12} aria-hidden="true" />
+              <Check size={ICON_SIZE.xs} aria-hidden="true" />
               Saved
             </>
           )}

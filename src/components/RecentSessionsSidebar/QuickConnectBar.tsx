@@ -9,6 +9,7 @@ import { formatRelativeTime } from "@/utils/formatters";
 import { itemMatchesQuery } from "@/hooks/useListFilter";
 import { useComboboxListNav } from "@/hooks/useComboboxListNav";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Maximum autocomplete suggestions shown below the quick-connect input. */
 const MAX_SUGGESTIONS = 6;
 
@@ -105,7 +106,11 @@ export function QuickConnectBar({ history, defaultUser, onConnect }: QuickConnec
   return (
     <div className="recent-sessions__quick-connect">
       <div className="recent-sessions__quick-connect-row">
-        <Zap size={14} className="recent-sessions__quick-connect-icon" aria-hidden="true" />
+        <Zap
+          size={ICON_SIZE.sm}
+          className="recent-sessions__quick-connect-icon"
+          aria-hidden="true"
+        />
         <Input
           ref={inputRef}
           value={value}
@@ -132,7 +137,7 @@ export function QuickConnectBar({ history, defaultUser, onConnect }: QuickConnec
             variant="ghost"
             size="sm"
             iconOnly
-            icon={<CornerDownLeft size={14} />}
+            icon={<CornerDownLeft size={ICON_SIZE.sm} />}
             aria-label="Connect"
             data-testid="quick-connect-submit"
             onClick={submit}

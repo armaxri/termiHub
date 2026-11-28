@@ -2,6 +2,7 @@ import { Ban, KeyRound, ShieldCheck } from "lucide-react";
 import { Checkbox } from "@/components/ui";
 import type { MobaxtermHostKey } from "@/types/connection";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 interface MobaxtermHostKeyListProps {
   /** Every `[SSH_Hostkeys]` entry of the preview. */
   hostKeys: MobaxtermHostKey[];
@@ -70,7 +71,11 @@ export function MobaxtermHostKeyList({
                 className="mobaxterm-import__skipped-row"
                 data-testid={`mobaxterm-import-hostkey-${key.id}`}
               >
-                <KeyRound size={14} aria-hidden className="mobaxterm-import__skipped-icon" />
+                <KeyRound
+                  size={ICON_SIZE.sm}
+                  aria-hidden
+                  className="mobaxterm-import__skipped-icon"
+                />
                 <span className="ssh-config-import__row-text">
                   <span className="ssh-config-import__row-name">{hostLabel(key)}</span>
                   <span className="ssh-config-import__row-chain">{keyMeta(key)}</span>
@@ -89,9 +94,13 @@ export function MobaxtermHostKeyList({
               data-testid={`mobaxterm-import-hostkey-${key.id}`}
             >
               {key.status === "trusted" ? (
-                <ShieldCheck size={14} aria-hidden className="mobaxterm-import__skipped-icon" />
+                <ShieldCheck
+                  size={ICON_SIZE.sm}
+                  aria-hidden
+                  className="mobaxterm-import__skipped-icon"
+                />
               ) : (
-                <Ban size={14} aria-hidden className="mobaxterm-import__skipped-icon" />
+                <Ban size={ICON_SIZE.sm} aria-hidden className="mobaxterm-import__skipped-icon" />
               )}
               <span className="ssh-config-import__row-text">
                 <span className="ssh-config-import__row-name">{hostLabel(key)}</span>

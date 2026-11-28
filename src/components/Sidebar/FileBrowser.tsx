@@ -123,6 +123,7 @@ import { errorMessage } from "@/utils/errorMessage";
 import { parentDir } from "@/utils/paths";
 import { isContextMenuShortcut, openContextMenuFromKeyboard } from "@/utils/contextMenuKey";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /**
  * Fixed row height in px, matching `.file-browser__row` in FileBrowser.css. Rows
  * are a single line: the filename (ellipsized when it does not fit, full name in
@@ -226,7 +227,7 @@ export function FileMenuItems({
     <>
       {entry.isDirectory && (
         <MenuItem onSelect={() => onNavigate(entry)} data-testid={`${testIdPrefix}-open`}>
-          <FolderOpen size={14} /> Open
+          <FolderOpen size={ICON_SIZE.sm} /> Open
         </MenuItem>
       )}
       {entry.isDirectory && onShareVia && (
@@ -236,19 +237,19 @@ export function FileMenuItems({
             onSelect={() => onShareVia(entry.path, "http")}
             data-testid={`${testIdPrefix}-share-http`}
           >
-            <Globe size={14} /> Share this folder in a browser…
+            <Globe size={ICON_SIZE.sm} /> Share this folder in a browser…
           </MenuItem>
           <MenuItem
             onSelect={() => onShareVia(entry.path, "ftp")}
             data-testid={`${testIdPrefix}-share-ftp`}
           >
-            <Globe size={14} /> Share this folder by FTP…
+            <Globe size={ICON_SIZE.sm} /> Share this folder by FTP…
           </MenuItem>
           <MenuItem
             onSelect={() => onShareVia(entry.path, "tftp")}
             data-testid={`${testIdPrefix}-share-tftp`}
           >
-            <Globe size={14} /> Share this folder by TFTP…
+            <Globe size={ICON_SIZE.sm} /> Share this folder by TFTP…
           </MenuItem>
           <MenuSeparator />
         </>
@@ -259,14 +260,14 @@ export function FileMenuItems({
             onSelect={() => onContextAction(entry, "openInExplorer")}
             data-testid={`${testIdPrefix}-open-in-explorer`}
           >
-            <ExternalLink size={14} /> {fileManagerActionLabel()}
+            <ExternalLink size={ICON_SIZE.sm} /> {fileManagerActionLabel()}
           </MenuItem>
           {vscodeAvailable && (
             <MenuItem
               onSelect={() => onContextAction(entry, "openFolderVscode")}
               data-testid={`${testIdPrefix}-open-folder-vscode`}
             >
-              <CodeXml size={14} /> Open folder in VS Code
+              <CodeXml size={ICON_SIZE.sm} /> Open folder in VS Code
             </MenuItem>
           )}
           <MenuSeparator />
@@ -277,7 +278,7 @@ export function FileMenuItems({
           onSelect={() => onContextAction(entry, "download")}
           data-testid={`${testIdPrefix}-download`}
         >
-          <Download size={14} /> Download
+          <Download size={ICON_SIZE.sm} /> Download
         </MenuItem>
       )}
       {!entry.isDirectory && (
@@ -285,7 +286,7 @@ export function FileMenuItems({
           onSelect={() => onContextAction(entry, "edit")}
           data-testid={`${testIdPrefix}-edit`}
         >
-          <FileEdit size={14} /> Edit
+          <FileEdit size={ICON_SIZE.sm} /> Edit
         </MenuItem>
       )}
       {!entry.isDirectory && vscodeAvailable && (
@@ -293,7 +294,7 @@ export function FileMenuItems({
           onSelect={() => onContextAction(entry, "vscode")}
           data-testid={`${testIdPrefix}-vscode`}
         >
-          <CodeXml size={14} /> Open in VS Code
+          <CodeXml size={ICON_SIZE.sm} /> Open in VS Code
         </MenuItem>
       )}
       <MenuSeparator />
@@ -301,51 +302,51 @@ export function FileMenuItems({
         onSelect={() => onContextAction(entry, "copy")}
         data-testid={`${testIdPrefix}-copy`}
       >
-        <Copy size={14} /> Copy
+        <Copy size={ICON_SIZE.sm} /> Copy
       </MenuItem>
       <MenuItem onSelect={() => onContextAction(entry, "cut")} data-testid={`${testIdPrefix}-cut`}>
-        <Scissors size={14} /> Cut
+        <Scissors size={ICON_SIZE.sm} /> Cut
       </MenuItem>
       <MenuItem disabled={!hasClipboard} onSelect={onPaste} data-testid={`${testIdPrefix}-paste`}>
-        <ClipboardPaste size={14} /> Paste
+        <ClipboardPaste size={ICON_SIZE.sm} /> Paste
       </MenuItem>
       <MenuItem
         onSelect={() => onContextAction(entry, "moveTo")}
         data-testid={`${testIdPrefix}-move-to`}
       >
-        <FolderInput size={14} /> Move to…
+        <FolderInput size={ICON_SIZE.sm} /> Move to…
       </MenuItem>
       <MenuItem
         onSelect={() => onContextAction(entry, "copyTo")}
         data-testid={`${testIdPrefix}-copy-to`}
       >
-        <CopyPlus size={14} /> Copy to…
+        <CopyPlus size={ICON_SIZE.sm} /> Copy to…
       </MenuItem>
       <MenuItem
         onSelect={() => onContextAction(entry, "copyName")}
         data-testid={`${testIdPrefix}-copy-name`}
       >
-        <Copy size={14} /> Copy name
+        <Copy size={ICON_SIZE.sm} /> Copy name
       </MenuItem>
       <MenuItem
         onSelect={() => onContextAction(entry, "copyPath")}
         data-testid={`${testIdPrefix}-copy-path`}
       >
-        <Copy size={14} /> Copy path
+        <Copy size={ICON_SIZE.sm} /> Copy path
       </MenuItem>
       <MenuSeparator />
       <MenuItem
         onSelect={() => onContextAction(entry, "rename")}
         data-testid={`${testIdPrefix}-rename`}
       >
-        <Pencil size={14} /> Rename
+        <Pencil size={ICON_SIZE.sm} /> Rename
       </MenuItem>
       {canChangePermissions && (
         <MenuItem
           onSelect={() => onContextAction(entry, "permissions")}
           data-testid={`${testIdPrefix}-permissions`}
         >
-          <KeyRound size={14} /> Change permissions
+          <KeyRound size={ICON_SIZE.sm} /> Change permissions
         </MenuItem>
       )}
       {canChangeOwner && (
@@ -353,7 +354,7 @@ export function FileMenuItems({
           onSelect={() => onContextAction(entry, "owner")}
           data-testid={`${testIdPrefix}-owner`}
         >
-          <UserCog size={14} /> Change owner
+          <UserCog size={ICON_SIZE.sm} /> Change owner
         </MenuItem>
       )}
       {canCreateSymlink && (
@@ -361,7 +362,7 @@ export function FileMenuItems({
           onSelect={() => onContextAction(entry, "symlink")}
           data-testid={`${testIdPrefix}-symlink`}
         >
-          <Link2 size={14} /> Create symlink…
+          <Link2 size={ICON_SIZE.sm} /> Create symlink…
         </MenuItem>
       )}
       <MenuItem
@@ -369,7 +370,7 @@ export function FileMenuItems({
         onSelect={() => onContextAction(entry, "delete")}
         data-testid={`${testIdPrefix}-delete`}
       >
-        <Trash2 size={14} /> Delete
+        <Trash2 size={ICON_SIZE.sm} /> Delete
       </MenuItem>
     </>
   );
@@ -392,27 +393,27 @@ export function MultiSelectMenuItems({
   return (
     <>
       <MenuItem onSelect={() => onAction("copy")} data-testid="multi-select-copy">
-        <Copy size={14} /> Copy ({count} items)
+        <Copy size={ICON_SIZE.sm} /> Copy ({count} items)
       </MenuItem>
       <MenuItem onSelect={() => onAction("cut")} data-testid="multi-select-cut">
-        <Scissors size={14} /> Cut ({count} items)
+        <Scissors size={ICON_SIZE.sm} /> Cut ({count} items)
       </MenuItem>
       <MenuItem disabled={!hasClipboard} onSelect={onPaste} data-testid="multi-select-paste">
-        <ClipboardPaste size={14} /> Paste
+        <ClipboardPaste size={ICON_SIZE.sm} /> Paste
       </MenuItem>
       <MenuItem onSelect={() => onAction("moveTo")} data-testid="multi-select-move-to">
-        <FolderInput size={14} /> Move to… ({count} items)
+        <FolderInput size={ICON_SIZE.sm} /> Move to… ({count} items)
       </MenuItem>
       <MenuItem onSelect={() => onAction("copyTo")} data-testid="multi-select-copy-to">
-        <CopyPlus size={14} /> Copy to… ({count} items)
+        <CopyPlus size={ICON_SIZE.sm} /> Copy to… ({count} items)
       </MenuItem>
       <MenuSeparator />
       <MenuItem onSelect={() => onAction("download")} data-testid="multi-select-download">
-        <Download size={14} /> Download ({count} items)
+        <Download size={ICON_SIZE.sm} /> Download ({count} items)
       </MenuItem>
       <MenuSeparator />
       <MenuItem danger onSelect={() => onAction("delete")} data-testid="multi-select-delete">
-        <Trash2 size={14} /> Delete ({count} items)
+        <Trash2 size={ICON_SIZE.sm} /> Delete ({count} items)
       </MenuItem>
     </>
   );
@@ -444,7 +445,7 @@ function SortHeader({
   return (
     <button
       type="button"
-      className={`file-browser__col file-browser__col--${col}${
+      className={`ui-section-label file-browser__col file-browser__col--${col}${
         active ? " file-browser__col--active" : ""
       }`}
       onClick={() => onToggle(col)}
@@ -455,9 +456,9 @@ function SortHeader({
       {children}
       {active &&
         (direction === "asc" ? (
-          <ChevronUp size={10} className="file-browser__col-caret" />
+          <ChevronUp size={ICON_SIZE.xs} className="file-browser__col-caret" />
         ) : (
-          <ChevronDown size={10} className="file-browser__col-caret" />
+          <ChevronDown size={ICON_SIZE.xs} className="file-browser__col-caret" />
         ))}
     </button>
   );
@@ -488,9 +489,13 @@ function SortedByHint({
     >
       · sorted by {sortKey}
       {direction === "asc" ? (
-        <ChevronUp size={10} className="file-browser__col-caret" aria-label="ascending" />
+        <ChevronUp size={ICON_SIZE.xs} className="file-browser__col-caret" aria-label="ascending" />
       ) : (
-        <ChevronDown size={10} className="file-browser__col-caret" aria-label="descending" />
+        <ChevronDown
+          size={ICON_SIZE.xs}
+          className="file-browser__col-caret"
+          aria-label="descending"
+        />
       )}
     </span>
   );
@@ -517,17 +522,17 @@ function FileEntryIcon({ entry }: { entry: FileEntry }) {
   if (entry.isSymlink) {
     return entry.isDirectory ? (
       <FolderSymlink
-        size={16}
+        size={ICON_SIZE.md}
         className="file-browser__icon file-browser__icon--folder file-browser__icon--symlink"
       />
     ) : (
-      <FileSymlink size={16} className="file-browser__icon file-browser__icon--symlink" />
+      <FileSymlink size={ICON_SIZE.md} className="file-browser__icon file-browser__icon--symlink" />
     );
   }
   return entry.isDirectory ? (
-    <Folder size={16} className="file-browser__icon file-browser__icon--folder" />
+    <Folder size={ICON_SIZE.md} className="file-browser__icon file-browser__icon--folder" />
   ) : (
-    <File size={16} className="file-browser__icon" />
+    <File size={ICON_SIZE.md} className="file-browser__icon" />
   );
 }
 
@@ -741,7 +746,7 @@ function FileRow({
                     variant="ghost"
                     size="sm"
                     className="file-browser__menu-reveal"
-                    icon={<MoreHorizontal size={14} />}
+                    icon={<MoreHorizontal size={ICON_SIZE.sm} />}
                     aria-label="File actions"
                     // Mouse-only affordance (#4559): the keyboard path to a row's
                     // actions is Shift+F10 / the ContextMenu key on the row itself.
@@ -1123,7 +1128,7 @@ function FileBrowserErrorActions({
       <Button
         variant="secondary"
         size="sm"
-        icon={<RefreshCw size={14} />}
+        icon={<RefreshCw size={ICON_SIZE.sm} />}
         onClick={onRetry}
         data-testid={`${testIdPrefix}-retry`}
       >
@@ -1132,7 +1137,7 @@ function FileBrowserErrorActions({
       <Button
         variant="ghost"
         size="sm"
-        icon={<X size={14} />}
+        icon={<X size={ICON_SIZE.sm} />}
         onClick={onDismiss}
         data-testid={`${testIdPrefix}-dismiss`}
       >
@@ -1946,15 +1951,14 @@ export function FileBrowser() {
     return (
       <div className="file-browser">
         <EmptyState
-          variant="card"
-          icon={<MonitorOff size={28} strokeWidth={1.5} aria-hidden />}
+          icon={<MonitorOff size={ICON_SIZE.md} aria-hidden />}
           title={fileBrowserPlaceholderTitle(placeholder)}
           action={
             placeholder.kind === "no-tab" ? (
               <Button
                 variant="primary"
                 size="sm"
-                icon={<Plus size={14} />}
+                icon={<Plus size={ICON_SIZE.sm} />}
                 onClick={() => {
                   addLocalShellTab();
                 }}
@@ -1976,15 +1980,13 @@ export function FileBrowser() {
       <div className="file-browser">
         {isLoading ? (
           <EmptyState
-            variant="panel"
             loading
             title="Loading files…"
             data-testid="file-browser-session-connecting"
           />
         ) : error ? (
           <EmptyState
-            variant="panel"
-            icon={<AlertCircle size={20} aria-hidden />}
+            icon={<AlertCircle size={ICON_SIZE.md} aria-hidden />}
             title={error}
             role="alert"
             action={
@@ -1997,11 +1999,7 @@ export function FileBrowser() {
             data-testid="file-browser-session-connecting"
           />
         ) : (
-          <EmptyState
-            variant="panel"
-            title="Waiting for session…"
-            data-testid="file-browser-session-connecting"
-          />
+          <EmptyState title="Waiting for session…" data-testid="file-browser-session-connecting" />
         )}
       </div>
     );
@@ -2016,7 +2014,7 @@ export function FileBrowser() {
       <FileBrowserDndProvider onDrop={requestTransfer} onDragOut={handleDragOut}>
         {isDragOver && (
           <div className="file-browser__drag-overlay" data-testid="file-browser-drag-overlay">
-            <Upload size={24} />
+            <Upload size={ICON_SIZE.xl} />
             <span>{mode === "local" ? "Drop to copy here" : "Drop to upload"}</span>
           </div>
         )}
@@ -2085,7 +2083,7 @@ export function FileBrowser() {
         {error && (
           <div className="file-browser__error">
             <div className="file-browser__error-message">
-              <AlertCircle size={14} />
+              <AlertCircle size={ICON_SIZE.sm} />
               <span>{error}</span>
             </div>
             <FileBrowserErrorActions
@@ -2115,7 +2113,7 @@ export function FileBrowser() {
               <Button
                 variant="ghost"
                 size="sm"
-                icon={<FilePlus size={14} />}
+                icon={<FilePlus size={ICON_SIZE.sm} />}
                 onClick={handleCreateFile}
                 aria-label="Create file"
                 data-testid="file-browser-new-file-confirm"
@@ -2143,7 +2141,7 @@ export function FileBrowser() {
               <Button
                 variant="ghost"
                 size="sm"
-                icon={<FolderPlus size={14} />}
+                icon={<FolderPlus size={ICON_SIZE.sm} />}
                 onClick={handleCreateDir}
                 aria-label="Create folder"
                 data-testid="file-browser-new-folder-confirm"
@@ -2250,14 +2248,14 @@ export function FileBrowser() {
               onSelect={handlePaste}
               data-testid="context-bg-paste"
             >
-              <ClipboardPaste size={14} /> Paste
+              <ClipboardPaste size={ICON_SIZE.sm} /> Paste
             </MenuItem>
             <MenuSeparator />
             <MenuItem onSelect={() => setNewFileName("")} data-testid="context-bg-new-file">
-              <FilePlus size={14} /> New file
+              <FilePlus size={ICON_SIZE.sm} /> New file
             </MenuItem>
             <MenuItem onSelect={() => setNewDirName("")} data-testid="context-bg-new-folder">
-              <FolderPlus size={14} /> New folder
+              <FolderPlus size={ICON_SIZE.sm} /> New folder
             </MenuItem>
           </ContextMenuContent>
         </ContextMenuRoot>

@@ -43,6 +43,7 @@ import type {
 } from "@/utils/serviceModel";
 import { MiddleEllipsis } from "./MiddleEllipsis";
 import { serviceRowTestIds, type ServiceActionTestIds } from "./serviceRowTestIds";
+import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./ServiceListItem.css";
 
 /** What the owner of the service does; the row copies and opens by itself. */
@@ -177,7 +178,7 @@ export function ServiceListItem({
           iconOnly={!gives}
           aria-label={action.label}
           {...ids.actionTestIds[action.id]}
-          icon={gives ? undefined : <ActionIcon id={action.id} size={12} />}
+          icon={gives ? undefined : <ActionIcon id={action.id} size={ICON_SIZE.xs} />}
           // Whoever acts shows its own failure.
           errorToast={false}
           // Only Copy changes nothing else on screen.
@@ -246,7 +247,7 @@ export function ServiceListItem({
             onSelect={() => performFromMenu(action.id)}
             {...testIds[action.id]}
           >
-            <ActionIcon id={action.id} size={14} /> {action.label}
+            <ActionIcon id={action.id} size={ICON_SIZE.sm} /> {action.label}
           </MenuItem>
         </MenuEntry>
       );
@@ -262,7 +263,7 @@ export function ServiceListItem({
             iconOnly
             aria-label={t("service.more")}
             data-testid={ids.moreTestId}
-            icon={<Ellipsis size={12} />}
+            icon={<Ellipsis size={ICON_SIZE.xs} />}
             onClick={(e) => e.stopPropagation()}
           />
         </DropdownMenuTrigger>
@@ -282,7 +283,11 @@ export function ServiceListItem({
       {model.machine !== undefined && (
         <Tooltip content={model.where.label} side="right">
           <span className="service-row__machine" data-testid={ids.machineTestId}>
-            <HardDrive size={11} className="service-row__machine-icon" aria-hidden="true" />
+            <HardDrive
+              size={ICON_SIZE.xs}
+              className="service-row__machine-icon"
+              aria-hidden="true"
+            />
             <MiddleEllipsis text={model.machine} />
           </span>
         </Tooltip>
@@ -323,7 +328,7 @@ export function ServiceListItem({
       )}
       {model.risk && (
         <span className="service-row__risk" data-testid={ids.riskTestId}>
-          <AlertTriangle size={11} aria-hidden="true" />
+          <AlertTriangle size={ICON_SIZE.xs} aria-hidden="true" />
           <span>{model.risk}</span>
         </span>
       )}

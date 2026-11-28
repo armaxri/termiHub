@@ -15,6 +15,7 @@ import {
 } from "@/components/ui";
 import type { FileBrowserAction } from "./FileBrowserActions";
 
+import { ICON_SIZE } from "@/components/ui/iconSize";
 /** Whether the entry just chosen opens a field that must keep the focus. */
 let fieldOpening = false;
 
@@ -46,7 +47,7 @@ export function MenuTick(): React.ReactElement {
   return (
     <span className="file-browser__menu-tick">
       <MenuItemIndicator>
-        <Check size={14} />
+        <Check size={ICON_SIZE.sm} />
       </MenuItemIndicator>
     </span>
   );
@@ -117,7 +118,11 @@ export function InlineMenuButton({ action }: { action: FileBrowserAction }): Rea
             data-testid={action.testId}
             data-icon={action.iconName}
           >
-            <ChevronDown size={10} aria-hidden="true" className="file-browser__actions-caret" />
+            <ChevronDown
+              size={ICON_SIZE.xs}
+              aria-hidden="true"
+              className="file-browser__actions-caret"
+            />
           </Button>
         </DropdownMenuTrigger>
       </Tooltip>

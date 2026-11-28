@@ -11,7 +11,7 @@ import "./ui.css";
 export interface ContentOverlayProps {
   /**
    * The status icon element — a lucide icon, or for a `busy` screen the shared
-   * {@link Spinner} (`<Spinner size={32} label={null} className="…__icon" />`;
+   * {@link Spinner} (`<Spinner size={ICON_SIZE.hero} label={null} className="…__icon" />`;
    * never a hand-rolled `Loader2` + spin class). Already sized and coloured by
    * the caller (its `className` carries the per-state colour, so each surface
    * keeps its own icon semantics). Rendered as the first child.
