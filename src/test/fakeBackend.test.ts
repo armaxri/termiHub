@@ -46,6 +46,15 @@ describe("fakeBackend", () => {
     expect(await localReadFile("/a")).toBe("two");
   });
 
+  it("forgets the calls so far on clearCalls, keeping the handlers", async () => {
+    const backend = fakeBackend({ local_read_file: () => "one" });
+    await localReadFile("/a");
+    backend.clearCalls();
+    expect(backend.calls).toEqual([]);
+    expect(await localReadFile("/b")).toBe("one");
+    expect(backend.callsTo("local_read_file")).toEqual([{ path: "/b" }]);
+  });
+
   it("passes a handler's rejection through", async () => {
     fakeBackend({
       local_read_file: () => {
