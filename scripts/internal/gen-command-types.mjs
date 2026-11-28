@@ -72,6 +72,28 @@ function invokeNames(sf) {
   return names;
 }
 
+/** `p` with forward slashes, as the TypeScript program names files on Windows. */
+function posix(p) {
+  return p.replace(/\\/g, "/");
+}
+
+/**
+ * The `@/…` specifier of `file` when it lies under `srcDir`, else `null`.
+ * Either may use either separator: on Windows the TypeScript program names
+ * files with `/` while `path.join` gives `\\` (develop red at 60e556957).
+ */
+export function moduleSpecifierFor(file, srcDir) {
+  const dir = posix(srcDir).replace(/\/+$/, "") + "/";
+  const name = posix(file);
+  if (!name.startsWith(dir)) return null;
+  return "@/" + name.slice(dir.length).replace(/\.tsx?$/, "");
+}
+
+/** Whether the checked-in `current` text differs from `generated`, line endings aside. */
+export function isStale(current, generated) {
+  return current.replace(/\r\n/g, "\n") !== generated.replace(/\r\n/g, "\n");
+}
+
 /** Prints checker types as source text, collecting the imports they need. */
 class TypePrinter {
   constructor(checker, root) {
@@ -91,9 +113,8 @@ class TypePrinter {
     const file = sf.fileName;
     // A global type from TypeScript's own lib files (Date, Uint8Array, Record).
     if (sf.isDeclarationFile && /[\\/]typescript[\\/]lib[\\/]/.test(file)) return symbol.name;
-    if (!file.startsWith(this.srcDir + path.sep) && !file.startsWith(this.srcDir + "/")) {
-      return null;
-    }
+    const specifier = moduleSpecifierFor(file, this.srcDir);
+    if (!specifier) return null;
     const moduleSymbol = this.checker.getSymbolAtLocation(sf);
     if (!moduleSymbol) return null;
     const exported = this.checker.getExportsOfModule(moduleSymbol).find((e) => {
@@ -101,8 +122,6 @@ class TypePrinter {
       return target === symbol;
     });
     if (!exported) return null;
-    const rel = path.relative(this.srcDir, file).split(path.sep).join("/");
-    const specifier = "@/" + rel.replace(/\.tsx?$/, "");
     const names = this.imports.get(specifier) ?? new Map();
     this.imports.set(specifier, names);
     if (names.has(exported.name)) return names.get(exported.name);
@@ -310,7 +329,7 @@ export async function generate(root = ROOT) {
   const prettier = await import("prettier");
   const target = path.join(root, OUTPUT);
   const options = (await prettier.resolveConfig(target)) ?? {};
-  return prettier.format(render(root), { ...options, filepath: target });
+  return prettier.format(render(root), { ...options, filepath: target, endOfLine: "lf" });
 }
 
 async function main() {
@@ -319,7 +338,7 @@ async function main() {
   const text = await generate(ROOT);
   if (check) {
     const current = existsSync(target) ? readFileSync(target, "utf8") : "";
-    if (current !== text) {
+    if (isStale(current, text)) {
       console.error(`${OUTPUT} is stale. Run: node scripts/internal/gen-command-types.mjs`);
       process.exit(1);
     }
