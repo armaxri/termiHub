@@ -118,8 +118,9 @@ export const solarizedLightTheme: ThemeDefinition = {
     broadcastAccent: "#a8400e",
     macroAccent: "#5f63b8",
 
-    scrollbarThumb: "rgba(147, 161, 161, 0.55)",
-    scrollbarThumbHover: "rgba(147, 161, 161, 0.75)",
+    // 3:1 against every surface it sits on (#6167; graded in tokenContrast.test.ts).
+    scrollbarThumb: "rgba(7, 54, 66, 0.65)",
+    scrollbarThumbHover: "rgba(7, 54, 66, 0.85)",
   },
 
   // #5562: an 18% accent tint over base3 painted off-palette greys (#d6e0dc

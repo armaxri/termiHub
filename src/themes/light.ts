@@ -103,7 +103,8 @@ export const lightTheme: ThemeDefinition = {
     broadcastAccent: "#b23c0b",
     macroAccent: "#7c3aed",
 
-    scrollbarThumb: "rgba(100, 100, 100, 0.45)",
-    scrollbarThumbHover: "rgba(100, 100, 100, 0.65)",
+    // 3:1 against every surface it sits on (#6167; graded in tokenContrast.test.ts).
+    scrollbarThumb: "rgba(80, 80, 80, 0.65)",
+    scrollbarThumbHover: "rgba(60, 60, 60, 0.8)",
   },
 };

@@ -107,8 +107,9 @@ export const solarizedDarkTheme: ThemeDefinition = {
     broadcastAccent: "#e87d0d",
     macroAccent: "#b48cf2",
 
-    scrollbarThumb: "rgba(88, 110, 117, 0.5)",
-    scrollbarThumbHover: "rgba(88, 110, 117, 0.7)",
+    // 3:1 against every surface it sits on (#6167; graded in tokenContrast.test.ts).
+    scrollbarThumb: "rgba(147, 161, 161, 0.75)",
+    scrollbarThumbHover: "rgba(147, 161, 161, 0.95)",
   },
 
   // #5582: an 18% accent tint over the base02 sidebar painted an off-palette
