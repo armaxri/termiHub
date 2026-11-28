@@ -666,6 +666,8 @@ const en = {
   "automation.importedInPart":
     "Imported in part: left out {parts}, which this version does not know.",
   "automation.importedCheck": "Check it",
+  "automation.missingCallee": "Step {step} runs an automation that is not in your library.",
+  "automation.missingCalleeChoose": "Choose one",
   "automation.importedNote":
     "Imported in part, without {parts}, which this version does not know. Check what it does, then save it.",
   "automation.blockedShort.unknown": "needs a newer termiHub",

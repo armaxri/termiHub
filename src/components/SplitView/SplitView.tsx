@@ -77,7 +77,6 @@ import { InitialCommandHeldNotice } from "@/components/Terminal/InitialCommandHe
 import { ImportedConnectionPrompt } from "@/components/Terminal/ImportedConnectionPrompt";
 import {
   Spinner,
-  EmptyState,
   MenuCheckboxItem,
   MenuItem,
   MenuItemIndicator,
@@ -836,12 +835,10 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
           </div>
         )}
         {panel.tabs.length === 0 && (
-          <EmptyState
-            variant="card"
-            title="No terminals open."
-            description="Use the toolbar or double-click a connection."
-            data-testid="split-view-empty"
-          />
+          // The same next steps as an empty window, compact, for this panel (#6162).
+          <div className="split-view__empty-panel" data-testid="split-view-empty">
+            <EmptyWindowState panelId={panel.id} />
+          </div>
         )}
         {panel.tabs.map((tab) =>
           tab.contentType === "settings" ? (

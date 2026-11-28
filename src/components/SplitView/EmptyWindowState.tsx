@@ -11,6 +11,15 @@ import { pickRecentConnections } from "@/utils/recentConnections";
 import { ICON_SIZE } from "@/components/ui/iconSize";
 import "./EmptyWindowState.css";
 
+/** How many connections the compact state of an empty panel lists. */
+const COMPACT_RECENT = 3;
+
+/** Props of {@link EmptyWindowState}. */
+export interface EmptyWindowStateProps {
+  /** The empty panel of a split it stands in (#6162); none for an empty window. */
+  panelId?: string;
+}
+
 /**
  * First-class empty-window call-to-action (#1902, epic #1899; onboarding UX-003).
  *
@@ -38,9 +47,15 @@ import "./EmptyWindowState.css";
  * window holds no tabs; every action runs against *this* window's store, so a
  * launched session (or a tab moved in via "Move to window") replaces the CTA
  * with the normal tab UI.
+ *
+ * With `panelId` it is the compact state of one empty panel in a split (#6162):
+ * the same next steps, a new terminal or a recent connection, opened in that
+ * panel; the window-level hints (restore, new connection, move a tab in) stay
+ * with the empty window.
  */
-export function EmptyWindowState() {
+export function EmptyWindowState({ panelId }: EmptyWindowStateProps = {}) {
   const addLocalShellTab = useAppStore((s) => s.addLocalShellTab);
+  const setActivePanel = useAppStore((s) => s.setActivePanel);
   const openConnectionEditorTab = useAppStore((s) => s.openConnectionEditorTab);
   const sessionHistory = useAppStore((s) => s.sessionHistory);
   const { connections } = useProjectedConnections();
@@ -48,22 +63,35 @@ export function EmptyWindowState() {
   const [restoreOpen, setRestoreOpen] = useState(false);
   const recentLabelId = useId();
 
+  const compact = panelId !== undefined;
   const hasConnections = connections.length > 0;
-  const multiWindow = windowCount > 1;
+  const multiWindow = !compact && windowCount > 1;
   const recent = pickRecentConnections(connections, sessionHistory);
+  const shown = compact ? recent.connections.slice(0, COMPACT_RECENT) : recent.connections;
+  // Whatever starts here opens in this panel.
+  const here = () => {
+    if (panelId !== undefined) setActivePanel(panelId);
+  };
 
   return (
-    <div className="empty-window" data-testid="empty-window-state">
+    <div
+      className={compact ? "empty-window empty-window--compact" : "empty-window"}
+      data-testid={compact ? "empty-panel-state" : "empty-window-state"}
+    >
       <EmptyState
         variant="card"
         role={undefined}
-        icon={<AppWindow size={ICON_SIZE.xl} strokeWidth={1.5} />}
-        title="This window is empty"
+        icon={compact ? undefined : <AppWindow size={ICON_SIZE.xl} strokeWidth={1.5} />}
+        title={compact ? "This panel is empty" : "This window is empty"}
         description={
           <>
-            {hasConnections
-              ? "Start a local terminal, or open one of your connections."
-              : "Start a local terminal, create a connection, or restore your data from a backup."}
+            {compact
+              ? hasConnections
+                ? "Start a local terminal here, or open one of your connections."
+                : "Start a local terminal here."
+              : hasConnections
+                ? "Start a local terminal, or open one of your connections."
+                : "Start a local terminal, create a connection, or restore your data from a backup."}
             {multiWindow && (
               <>
                 {" "}
@@ -81,13 +109,14 @@ export function EmptyWindowState() {
                 size="sm"
                 icon={<Plus size={ICON_SIZE.sm} />}
                 onClick={() => {
-                  addLocalShellTab();
+                  if (panelId !== undefined) addLocalShellTab({ panelId });
+                  else addLocalShellTab();
                 }}
                 data-testid="empty-window-new-terminal"
               >
                 New terminal
               </Button>
-              {!hasConnections && (
+              {!hasConnections && !compact && (
                 <>
                   <Button
                     variant="secondary"
@@ -120,7 +149,7 @@ export function EmptyWindowState() {
                 <p id={recentLabelId} className="empty-window__recent-label">
                   {recent.fromHistory ? "Recent connections" : "Your connections"}
                 </p>
-                {recent.connections.map((connection) => (
+                {shown.map((connection) => (
                   <Button
                     key={connection.id}
                     variant="ghost"
@@ -136,7 +165,10 @@ export function EmptyWindowState() {
                         size={ICON_SIZE.sm}
                       />
                     }
-                    onClick={() => void connectSavedConnection(connection)}
+                    onClick={() => {
+                      here();
+                      void connectSavedConnection(connection);
+                    }}
                     data-testid={`empty-window-recent-${connection.id}`}
                   >
                     {connection.name}
@@ -147,7 +179,9 @@ export function EmptyWindowState() {
           </div>
         }
       />
-      {!hasConnections && <BackupRestoreDialog open={restoreOpen} onOpenChange={setRestoreOpen} />}
+      {!hasConnections && !compact && (
+        <BackupRestoreDialog open={restoreOpen} onOpenChange={setRestoreOpen} />
+      )}
     </div>
   );
 }

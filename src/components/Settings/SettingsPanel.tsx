@@ -10,6 +10,7 @@ import {
   type ReactNode,
   type SyntheticEvent,
 } from "react";
+import { isCompactSettingsWidth } from "./settingsCompact";
 import { frontendLog } from "@/utils/frontendLog";
 import {
   Settings2,
@@ -277,7 +278,7 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
 
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        setIsCompact(entry.contentRect.width < 480);
+        setIsCompact(isCompactSettingsWidth(entry.contentRect.width));
       }
     });
     observer.observe(el);

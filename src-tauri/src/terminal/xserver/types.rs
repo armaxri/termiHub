@@ -347,8 +347,8 @@ impl XServerError {
             dependency: "XWayland".to_string(),
             install_mode: InstallMode::Backend,
             install_hint: Some(
-                "Install your distribution's XWayland package (e.g. `xwayland`, `xorg-xwayland`, \
-                or `xwayland` via your package manager), then reconnect."
+                "Install your distribution's XWayland package (xwayland, xorg-xwayland or \
+                xorg-x11-server-Xwayland, depending on the distribution), then reconnect."
                     .to_string(),
             ),
             install_command: None,
@@ -361,8 +361,8 @@ impl XServerError {
     pub fn linux_sandbox_socket_hidden() -> Self {
         XServerError::ServerUnreachable {
             message: "termiHub is running in a Flatpak/Snap sandbox that is not exposing the host \
-                X socket. Grant X access to the sandbox (e.g. `--socket=x11`, or \
-                `--socket=fallback-x11` on Wayland) and reconnect."
+                X socket. Grant the sandbox X access (the permission --socket=x11, or \
+                --socket=fallback-x11 on Wayland) and reconnect."
                 .to_string(),
         }
     }
@@ -437,6 +437,36 @@ pub const X_SERVER_CONNECT_FAILED_EVENT: &str = "x-server-connect-failed";
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The user reads `message` and `installHint` as plain text, so markdown
+    /// backticks would show literally (#6166). `installCommand` is a command.
+    #[test]
+    fn guidance_text_has_no_markdown_backticks() {
+        let errors = [
+            XServerError::vcxsrv_missing(),
+            XServerError::winget_required(),
+            XServerError::windows_server_unreachable(),
+            XServerError::windows_no_local_server(),
+            XServerError::xquartz_missing(),
+            XServerError::homebrew_required(),
+            XServerError::macos_server_unreachable(),
+            XServerError::linux_x_missing(),
+            XServerError::linux_server_unreachable(),
+            XServerError::linux_xwayland_missing(),
+            XServerError::linux_sandbox_socket_hidden(),
+            XServerError::linux_headless(),
+            XServerError::linux_install_unsupported(),
+        ];
+        for error in errors {
+            let json = serde_json::to_value(&error).expect("serializes");
+            for field in ["message", "installHint"] {
+                let text = json.pointer(&format!("/{field}")).and_then(|v| v.as_str());
+                if let Some(text) = text {
+                    assert!(!text.contains('`'), "{field} shows a backtick: {text}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn platform_current_is_one_of_the_variants() {

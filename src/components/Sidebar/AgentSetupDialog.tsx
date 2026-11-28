@@ -252,8 +252,9 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
           useAgentSetupStatus.getState().applyProgress(agentId, step, message, sessionId);
 
           if (step === "sent") {
-            // Windows: the commands run in the setup tab, and the app-wide
-            // listener reports the checked outcome (#5992). Nothing is deployed yet.
+            // The commands run in the setup tab, and the app-wide listener
+            // reports the outcome: a checked Windows setup's (#5992), a POSIX
+            // setup's once its shell ended (#5518). Nothing is deployed yet.
             toast.dismiss(progressToastIdRef.current ?? undefined);
             stopProgressListener();
             onOpenChange(false);

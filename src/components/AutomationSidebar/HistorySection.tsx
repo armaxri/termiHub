@@ -202,11 +202,13 @@ export function HistorySection({ automationId, onFilterChange, collapse }: Histo
             ? `This removes the recorded runs of “${filterName}”. It cannot be undone.`
             : "This removes the recorded runs of every automation. It cannot be undone."
         }
-        confirmLabel="Clear history"
+        confirmLabel={automationId ? "Clear this history" : "Clear history"}
         confirmVariant="danger"
+        // Both clear for good, so both look so, and each names its scope (live
+        // review history-1): the wider one must not look like the safe choice.
         alternateAction={
           automationId && total > entries.length
-            ? { label: "Clear all history", variant: "secondary", onClick: handleClearAll }
+            ? { label: "Clear all history", variant: "danger", onClick: handleClearAll }
             : undefined
         }
         testIdBase="automation-history-clear-confirm"

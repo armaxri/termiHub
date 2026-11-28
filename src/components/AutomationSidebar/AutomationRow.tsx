@@ -1,4 +1,5 @@
 import { AlertTriangle, Ban, Hand, MoreHorizontal, Pencil, Play, Square } from "lucide-react";
+import { missingCalleeStep } from "@/utils/runBlocked";
 import {
   Button,
   ContextMenuContent,
@@ -285,6 +286,7 @@ export function AutomationRow({
       targets={targets}
       blocked={running ? null : blocked}
       importedInPart={automation.importedInPart ?? []}
+      missingCalleeStep={missingCalleeStep(automation, resolve)}
       onEdit={() => actions.onEdit(id)}
       triggers={triggers}
       nextRun={nextRun}

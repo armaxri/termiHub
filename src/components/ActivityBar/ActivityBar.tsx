@@ -1,24 +1,16 @@
 import { useServicesView } from "@/components/ServicesSidebar/servicesView";
 import {
-  Network,
-  FolderOpen,
-  LayoutGrid,
-  History,
-  Server,
   Settings,
   FileText,
-  Zap,
   LayoutDashboard,
-  Stethoscope,
   Activity,
   RefreshCw,
   FileArchive,
   Info,
   Keyboard,
-  Puzzle,
 } from "lucide-react";
 import { openDiagnosticsExport } from "@/components/Diagnostics/diagnosticsDialogStore";
-import { useAppStore, SidebarView } from "@/store/appStore";
+import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { OpenConnectionsModal } from "@/components/OpenConnections/OpenConnectionsModal";
 import {
@@ -37,32 +29,8 @@ import {
 import { getActionAccelerator } from "@/services/keybindings";
 import { ActivityBarItem } from "./ActivityBarItem";
 import { ICON_SIZE } from "@/components/ui/iconSize";
+import { OPTIONAL_ITEMS, REQUIRED_ITEMS, isViewOffBySetting } from "./activityBarItems";
 import "./ActivityBar.css";
-
-interface ActivityBarItemDef {
-  view: SidebarView;
-  icon: typeof Network;
-  /** The glyph's lucide name, exposed as `data-icon` for the product-run grade (#5848). */
-  iconName: string;
-  label: string;
-}
-
-const REQUIRED_ITEMS: ActivityBarItemDef[] = [
-  { view: "connections", icon: Network, iconName: "network", label: "Connections" },
-];
-
-const OPTIONAL_ITEMS: ActivityBarItemDef[] = [
-  { view: "files", icon: FolderOpen, iconName: "folder-open", label: "File browser" },
-  { view: "recent-sessions", icon: History, iconName: "history", label: "Recent sessions" },
-  { view: "workspaces", icon: LayoutGrid, iconName: "layout-grid", label: "Workspaces" },
-  // One entry for what were Macros and Workflows (#5818). A lightning bolt reads
-  // as "quick action"; the clapperboard read as video (#5848).
-  { view: "automations", icon: Zap, iconName: "zap", label: "Automations" },
-  // SSH tunnels and file servers (#6028).
-  { view: "services", icon: Server, iconName: "server", label: "Services" },
-  { view: "network-tools", icon: Stethoscope, iconName: "stethoscope", label: "Network tools" },
-  { view: "plugins", icon: Puzzle, iconName: "puzzle", label: "Plugins" },
-];
 
 const EMPTY_HIDDEN_VIEWS: string[] = [];
 
@@ -89,12 +57,9 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
   const toggleActivityBarView = useAppStore((s) => s.toggleActivityBarView);
   const showRecentSessions = useProjectedSettings().showRecentSessions;
 
-  const availableOptionalItems = OPTIONAL_ITEMS.filter((item) => !isViewHiddenBySetting(item.view));
-
-  function isViewHiddenBySetting(view: SidebarView): boolean {
-    // The Recent Sessions panel is opt-out via the session-history settings.
-    return view === "recent-sessions" && showRecentSessions === false;
-  }
+  const availableOptionalItems = OPTIONAL_ITEMS.filter(
+    (item) => !isViewOffBySetting(item.view, { showRecentSessions })
+  );
   const visibleItems = [...REQUIRED_ITEMS, ...availableOptionalItems].filter(
     (item) => !hiddenActivityBarViews.includes(item.view)
   );

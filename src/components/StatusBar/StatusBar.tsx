@@ -969,7 +969,7 @@ function MonitoringStatus() {
         or an agent that stopped sending data — Retry stays one click away.
       */}
       {isOffline && isMonitorUnsupported(monitoringStatus, monitoringStatusReason) && (
-        <MonitoringUnsupported />
+        <MonitoringUnsupported onRetry={handleRetry} />
       )}
       {isOffline && !isMonitorUnsupported(monitoringStatus, monitoringStatusReason) && (
         <Tooltip content="Retry monitoring connection" side="top">
@@ -986,8 +986,10 @@ function MonitoringStatus() {
         </Tooltip>
       )}
       {statslessChip === "waiting" && <MonitoringWaiting />}
-      {statslessChip === "unavailable" && <MonitoringUnavailable reason={monitoringStatusReason} />}
-      {statslessChip === "unsupported" && <MonitoringUnsupported />}
+      {statslessChip === "unavailable" && (
+        <MonitoringUnavailable reason={monitoringStatusReason} onRetry={handleRetry} />
+      )}
+      {statslessChip === "unsupported" && <MonitoringUnsupported onRetry={handleRetry} />}
       {monitoringStats && (
         <>
           {/*
