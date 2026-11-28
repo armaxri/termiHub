@@ -90,7 +90,7 @@ describe("triggers", () => {
         on: true,
         effective: true,
         text:
-          "Triggers on: hotkey Ctrl+Alt+D, matching output in prod, connecting to db, " +
+          "Triggers on · Hotkey Ctrl+Alt+D, matching output in prod, connecting to db, " +
           "disconnecting from prod, db +1",
       });
     });
@@ -99,9 +99,10 @@ describe("triggers", () => {
       const off = triggerState({ ...a, triggersEnabled: false }, context)!;
       expect(off.on).toBe(false);
       expect(off.text).toMatch(
-        /^Triggers off: hotkey Ctrl\+Alt\+D, matching output in prod, .+ and disconnecting/
+        /^Triggers off · Hotkey Ctrl\+Alt\+D, matching output in prod, .+ and disconnecting/
       );
-      expect(off.text).toMatch(/ do not start it\. You can still run it\.$/);
+      // One short line (#6183, files-3): "You can still run it" is the switch's tooltip.
+      expect(off.text).not.toMatch(/still run it/);
     });
 
     describe("what can never start it is not among them (C-001)", () => {
@@ -116,7 +117,7 @@ describe("triggers", () => {
         expect(triggerState(some, context)).toEqual({
           on: true,
           effective: true,
-          text: "Triggers on: hotkey F9. On output match will not start it: step 1 waits for you.",
+          text: "Triggers on · Hotkey F9. On output match will not start it: step 1 waits for you.",
         });
       });
 

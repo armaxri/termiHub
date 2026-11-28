@@ -164,11 +164,12 @@ export function triggerState(
       : joinWords([...new Set(broken.values())]);
     return { on, effective: false, text: tf("automation.triggers.none", { reason }) };
   }
+  // One short line, the trigger named as the import dialog names it ("Hotkey
+  // F9"); that it still runs by hand is the switch's tooltip (#6183, files-3).
+  const named = (list: string) => list.charAt(0).toUpperCase() + list.slice(1);
   const text = on
-    ? tf("automation.triggers.on", { triggers: working.join(", ") })
-    : tf(working.length > 1 ? "automation.triggers.offMany" : "automation.triggers.off", {
-        triggers: joinWords(working),
-      });
+    ? tf("automation.triggers.on", { triggers: named(working.join(", ")) })
+    : tf("automation.triggers.off", { triggers: named(joinWords(working)) });
   if (!on || broken.size === 0) return { on, effective: on, text };
   const notes = [...broken].map(([trigger, reason]) =>
     tf("automation.startBlocked.row", { trigger: triggerKindLabel(trigger.kind), reason })

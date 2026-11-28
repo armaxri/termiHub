@@ -653,8 +653,10 @@ const en = {
   "automation.stop.allLabel": "Stop {name} on every terminal",
   "automation.stop.all": "Stop all {count}",
   "automation.stop.target": "Stop on {target}",
-  "automation.triggers.on": "Triggers on: {triggers}",
-  "automation.triggers.off": "Triggers off: {triggers} does not start it. You can still run it.",
+  "automation.triggers.on": "Triggers on · {triggers}",
+  "automation.triggers.off": "Triggers off · {triggers}",
+  "automation.triggers.switchHint":
+    "Switches its triggers on or off. You can still run it yourself.",
   "automation.triggers.onState": "Triggers on",
   "automation.triggers.offState": "Triggers off",
   "automation.triggers.editorOn":
@@ -681,7 +683,6 @@ const en = {
   "automation.triggerHint.onDisconnect": "When a connection closes",
   "automation.triggerHint.onOutputMatch": "When a terminal shows a text",
   "automation.triggerHint.schedule": "At a time, again and again",
-  "automation.triggers.offMany": "Triggers off: {triggers} do not start it. You can still run it.",
   "automation.deletedConnection": "a deleted connection",
   "automation.program.refused": "You did not allow “{program}”. Nothing of it was started.",
   "automation.program.stops": "Don't allow: the step fails and the run stops.",

@@ -253,9 +253,9 @@ whole reason. Those lines wrap and are never cut. Its switch shows on and off; a
 always means an outcome. A schedule is **On**, **Off** or **Paused**, never "enabled" or "armed".
 
 **An automation's row is the other exception** (#6026): one decides there whether something may
-type by itself. Under its name it says, in sentences, which hotkeys and triggers start it
-("Triggers on: hotkey F8, connecting to prod"), or what does not while they are off and that it
-can still be run, with their switch; when a schedule runs it next; in which terminal it runs and
+type by itself. Under its name it says, in one line, which hotkeys and triggers start it
+("Triggers on · Hotkey F8, connecting to prod") or which do not while they are off ("Triggers off ·
+Hotkey F8"), with their switch, whose tooltip says it can still be run (#6183); when a schedule runs it next; in which terminal it runs and
 at which step; and why it cannot run. An automation is never "off" or "armed": its **triggers** are
 **on** or **off**. Progress is the step it is at ("step 2 of 3", "2/3" on a tab) or the share of the keys
 ("50 % typed"), never the steps that are done. The verbs are **Run**, **Record** and **Stop** (a stopped run is "Stopped", not

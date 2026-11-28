@@ -244,7 +244,7 @@ describe("one list", () => {
     expect(query("automation-item-macro-1")!.textContent).toBe("Sudo loginType the login");
     expect(query("automation-item-workflow-1")!.textContent).toBe("Deploy prep");
     expect(query("automation-item-workflow-2")!.textContent).toBe(
-      "Answer on matchTriggers on: matching output in prod"
+      "Answer on matchTriggers on · Matching output in prod"
     );
     expect(query("automation-item-workflow-2")!.getAttribute("aria-description")).toContain(
       "On output match · prod"
@@ -506,7 +506,7 @@ describe("markers", () => {
   it("switches triggers without running or opening anything (R-077)", async () => {
     await render();
     const line = query("automation-armed-workflow-2")!;
-    expect(line.textContent).toBe("Triggers on: matching output in prod");
+    expect(line.textContent).toBe("Triggers on · Matching output in prod");
     const toggle = query("automation-arm-toggle-workflow-2")!;
     expect(toggle.getAttribute("aria-checked")).toBe("true");
     click("automation-arm-toggle-workflow-2");
@@ -519,11 +519,18 @@ describe("markers", () => {
   it("says what no longer happens while they are off, and still offers Run (A-013)", async () => {
     await render([{ ...triggered, triggersEnabled: false }]);
     expect(query("automation-armed-workflow-2")!.textContent).toBe(
-      "Triggers off: matching output in prod does not start it. You can still run it."
+      "Triggers off · Matching output in prod"
     );
     expect(query("automation-start-workflow-2")).not.toBeNull();
     click("automation-arm-toggle-workflow-2");
     expect(storeFns.setWorkflowTriggersEnabled).toHaveBeenCalledWith("workflow-2", true);
+  });
+
+  it("says on the switch that it can still be run with its triggers off (#6183, files-3)", async () => {
+    await render([{ ...triggered, triggersEnabled: false }]);
+    act(() => query("automation-arm-toggle-workflow-2")!.focus());
+    await flushAsync();
+    expect(document.body.textContent).toContain("You can still run it yourself.");
   });
 
   it("keeps the switch of an automation with only a hotkey, on and off (A-014)", async () => {
@@ -534,13 +541,13 @@ describe("markers", () => {
     };
     await render([hotkey]);
     const toggle = query("automation-arm-toggle-workflow-2")!;
-    expect(query("automation-armed-workflow-2")!.textContent).toContain("hotkey Ctrl+Alt+D");
+    expect(query("automation-armed-workflow-2")!.textContent).toContain("Hotkey Ctrl+Alt+D");
     act(() => toggle.focus());
     click("automation-arm-toggle-workflow-2");
     expect(storeFns.setWorkflowTriggersEnabled).toHaveBeenCalledWith("workflow-2", true);
     act(() => setLibrary([{ ...hotkey, triggersEnabled: undefined }]));
     expect(query("automation-armed-workflow-2")!.textContent).toBe(
-      "Triggers on: hotkey Ctrl+Alt+D"
+      "Triggers on · Hotkey Ctrl+Alt+D"
     );
     expect(document.activeElement).toBe(query("automation-arm-toggle-workflow-2"));
   });

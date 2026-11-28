@@ -1,6 +1,6 @@
 import { Ban, CalendarClock, Hand, Square, TriangleAlert, Zap, ZapOff } from "lucide-react";
 import type React from "react";
-import { Button, Toggle } from "@/components/ui";
+import { Button, Toggle, Tooltip } from "@/components/ui";
 import { t, tf } from "@/i18n/catalog";
 import { describeLeftOut } from "@/services/automationFileIo";
 import type { AutomationRunTarget } from "./AutomationRow";
@@ -163,15 +163,17 @@ export function RowLines({
             {triggers.text}
           </span>
           <span className="automation-item__arm-toggle" {...keepOffRow}>
-            <Toggle
-              checked={triggers.on}
-              onCheckedChange={onSetTriggers}
-              aria-label={tf(
-                triggers.on ? "automation.triggers.toggleOff" : "automation.triggers.toggleOn",
-                { name }
-              )}
-              data-testid={`automation-arm-toggle-${id}`}
-            />
+            <Tooltip content={t("automation.triggers.switchHint")} side="top">
+              <Toggle
+                checked={triggers.on}
+                onCheckedChange={onSetTriggers}
+                aria-label={tf(
+                  triggers.on ? "automation.triggers.toggleOff" : "automation.triggers.toggleOn",
+                  { name }
+                )}
+                data-testid={`automation-arm-toggle-${id}`}
+              />
+            </Tooltip>
           </span>
         </div>
       )}
