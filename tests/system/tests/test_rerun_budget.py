@@ -124,15 +124,16 @@ def test_the_committed_budgets_name_only_workflow_lanes_and_cover_the_rerun_lane
         "bulk-linux-arm64",
         "bulk-macos",
         "bulk-windows",
-        "os-input-macos",
-        "os-input-windows",
     }
     assert rerun_lanes <= workflow
     assert budget.lanes == rerun_lanes
     for lane in rerun_lanes:
         assert budget.for_lane(lane) > 0
-    # The --reruns 0 lanes never retry, so they carry no budget.
+    # The --reruns 0 lanes never retry, so they carry no budget — the OS-input
+    # lanes included since #6148.
     assert budget.for_lane("display-linux") == 0
+    assert budget.for_lane("os-input-macos") == 0
+    assert budget.for_lane("os-input-windows") == 0
 
 
 def test_each_seed_fragment_is_named_after_the_one_lane_it_budgets():

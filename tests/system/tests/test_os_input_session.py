@@ -180,6 +180,16 @@ def test_other_outcomes_leave_the_session_running(exc):
     assert item.session.shouldstop is False
 
 
+def test_a_bulk_lane_never_stops_on_an_os_input_refusal():
+    # Linux runs the OS-input files inside its bulk session: one refusal there
+    # must not end every other suite of that lane.
+    item = _item()
+    assert not stop_on_environment_refusal(
+        item, _call(HostUnavailable("xdotool missing")), lane="bulk-linux"
+    )
+    assert item.session.shouldstop is False
+
+
 def test_an_earlier_stop_reason_is_kept():
     item = _item()
     item.session.shouldstop = "stopping after 1 failures"
@@ -240,10 +250,8 @@ def test_the_os_input_step_runs_without_reruns():
 
 
 @pytest.mark.parametrize("lane", ["os-input-macos", "os-input-windows"])
-def test_the_os_input_rerun_budget_is_zero(lane):
-    import json
+def test_the_os_input_lanes_carry_no_rerun_budget(lane):
+    # A --reruns 0 lane never retries, so it has no budget fragment (#5167).
+    from termihub_harness import rerun_budget
 
-    budget = json.loads(
-        (REPO / f"tests/system/rerun-budget.d/{lane}.json").read_text(encoding="utf-8")
-    )
-    assert budget["max_reruns"] == {lane: 0}
+    assert rerun_budget.load_budget().for_lane(lane) == 0
