@@ -1,5 +1,5 @@
 import { useRef } from "react";
-import { ChevronRight } from "lucide-react";
+import { CalendarClock, ChevronRight, CornerDownRight, Zap } from "lucide-react";
 import { StatusDot, TruncatedText } from "@/components/ui";
 import type { RunSchedule } from "./historyEntries";
 import type { AutomationRun } from "@/types/generated/AutomationRun";
@@ -25,12 +25,40 @@ export interface HistoryRunRowProps {
   onToggle: (runId: string) => void;
   /** Open another run of the list, by id (the one that started this run). */
   onShowRun?: (runId: string) => void;
+  /**
+   * The list shows one automation's runs: its name is in the filter, so the
+   * row is titled by its terminal instead (#6183, automations-3).
+   */
+  oneAutomation?: boolean;
+}
+
+/** The mark of who started a run, beside its dot; `null` for you (#6183, macro-3). */
+function originMark(origin: AutomationRun["origin"]): {
+  kind: "schedule" | "trigger" | "automation";
+  label: string;
+  Icon: typeof Zap;
+} | null {
+  switch (origin) {
+    case "scheduled":
+      return { kind: "schedule", label: "Started by a schedule", Icon: CalendarClock };
+    case "on-connect":
+    case "on-disconnect":
+    case "on-output-match":
+      return { kind: "trigger", label: "Started by a trigger", Icon: Zap };
+    case "run-by-automation":
+      return { kind: "automation", label: "Started by another automation", Icon: CornerDownRight };
+    default:
+      return null;
+  }
 }
 
 /**
- * One row of the Automation history (#5818, slice 9): the automation's name, and
- * under it in words how the run ended, when and where (#6026), so two runs of one
- * automation can be told apart. Activating the row discloses the rest.
+ * One row of the Automation history (#5818, slice 9), on one line (#6183): its
+ * outcome dot, who started it, the automation's name, its terminal and when it
+ * ended, so two runs of one automation can be told apart and more of them fit.
+ * A run that did not complete says so in words beside its dot (A-038); a
+ * completed one says it only to assistive tech. Activating the row discloses
+ * the rest.
  */
 export function HistoryRunRow({
   run,
@@ -38,11 +66,18 @@ export function HistoryRunRow({
   expanded,
   onToggle,
   onShowRun,
+  oneAutomation = false,
 }: HistoryRunRowProps) {
   const detailsId = `automation-run-details-${run.id}`;
   const targets = automationRunTargets(run);
   const row = useRef<HTMLDivElement>(null);
   useRevealWhenOpened(row, expanded);
+  const where = targets.length > 1 ? `${targets.length} terminals` : (targets[0] ?? null);
+  const title = oneAutomation && where !== null ? where : run.automationName;
+  const mark = originMark(run.origin);
+  const outcome = `${automationRunStatusLabel(run.status)}${
+    run.continuedFailures ? ` · ${toleratedText(run.continuedFailures)}` : ""
+  }`;
 
   return (
     <div
@@ -70,37 +105,48 @@ export function HistoryRunRow({
               : "automation-history__chevron"
           }
         />
+        <StatusDot tone={automationRunTone(run.status)} size="sm" ariaHidden />
+        {mark ? (
+          <mark.Icon
+            size={12}
+            className="automation-history__origin"
+            role="img"
+            aria-label={mark.label}
+            data-kind={mark.kind}
+            data-testid={`automation-run-origin-icon-${run.id}`}
+          />
+        ) : null}
         <span className="automation-history__main">
           <TruncatedText
             className="automation-history__name"
             data-testid={`automation-run-name-${run.id}`}
           >
-            {run.automationName}
+            {title}
           </TruncatedText>
-          {/* In words: a dot's colour alone says nothing to many (A-038). */}
-          <span className="automation-history__line">
-            <StatusDot tone={automationRunTone(run.status)} size="sm" ariaHidden />
+          {/* In words when it did not complete: a dot's colour alone says nothing
+              to many (A-038). A completed run says it to assistive tech only. */}
+          {run.status === "completed" && !run.continuedFailures ? (
+            <span className="ui-visually-hidden">, {outcome}</span>
+          ) : (
             <span
               className="automation-history__outcome"
               data-testid={`automation-run-outcome-${run.id}`}
             >
-              {automationRunStatusLabel(run.status)}
-              {run.continuedFailures ? ` · ${toleratedText(run.continuedFailures)}` : ""}
+              {outcome}
             </span>
-            <time
-              dateTime={run.endedAt}
-              title={formatAbsoluteTime(run.endedAt)}
-              data-testid={`automation-run-time-${run.id}`}
-            >
-              {formatDayTime(run.endedAt)}
-            </time>
-            {targets.length > 0 ? (
-              <TruncatedText className="automation-history__target">
-                {targets.length === 1 ? targets[0] : `${targets.length} terminals`}
-              </TruncatedText>
-            ) : null}
-          </span>
+          )}
+          {!oneAutomation && where !== null ? (
+            <TruncatedText className="automation-history__target">{where}</TruncatedText>
+          ) : null}
         </span>
+        <time
+          className="automation-history__time"
+          dateTime={run.endedAt}
+          title={formatAbsoluteTime(run.endedAt)}
+          data-testid={`automation-run-time-${run.id}`}
+        >
+          {formatDayTime(run.endedAt)}
+        </time>
       </button>
       {expanded ? (
         <HistoryRunDetails run={run} schedule={schedule} id={detailsId} onShowRun={onShowRun} />

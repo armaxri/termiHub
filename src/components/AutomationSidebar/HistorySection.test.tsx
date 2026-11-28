@@ -134,6 +134,55 @@ describe("HistorySection (#5818, slice 9)", () => {
     expect(row.getAttribute("aria-expanded")).toBe("false");
   });
 
+  describe("one line per run (#6183, macro-2, macro-3, automations-3)", () => {
+    it("puts dot, name, terminal and time on one line; says trouble in words", () => {
+      render(RUNS);
+      const ok = query("automation-run-toggle-run-1")!;
+      // No second line: name, terminal and time share the row.
+      expect(ok.querySelector(".automation-history__line")).toBeNull();
+      expect(ok.querySelector(".automation-history__name")!.textContent).toBe("Deploy");
+      expect(ok.querySelector(".automation-history__target")!.textContent).toBe("prod-1");
+      expect(query("automation-run-time-run-1")).not.toBeNull();
+      // A completed run needs no word next to its dot; trouble is said (A-038)…
+      expect(query("automation-run-outcome-run-1")).toBeNull();
+      expect(query("automation-run-outcome-run-2")!.textContent).toBe("Failed");
+      // …and the row's name for assistive tech still says how it ended.
+      expect(ok.textContent).toContain("Completed");
+    });
+
+    it("marks a run a schedule, a trigger or another automation started", () => {
+      render([
+        run({ id: "r-you", origin: "manual" }),
+        run({ id: "r-sched", origin: "scheduled" }),
+        run({ id: "r-trig", origin: "on-output-match" }),
+        run({ id: "r-caller", origin: "run-by-automation" }),
+      ]);
+      expect(query("automation-run-origin-icon-r-you")).toBeNull();
+      expect(query("automation-run-origin-icon-r-sched")!.getAttribute("data-kind")).toBe(
+        "schedule"
+      );
+      expect(query("automation-run-origin-icon-r-trig")!.getAttribute("data-kind")).toBe("trigger");
+      expect(query("automation-run-origin-icon-r-caller")!.getAttribute("data-kind")).toBe(
+        "automation"
+      );
+      // Named for assistive tech, not just drawn.
+      expect(query("automation-run-origin-icon-r-sched")!.getAttribute("aria-label")).toBe(
+        "Started by a schedule"
+      );
+    });
+
+    it("titles a row by its terminal when the list shows one automation", () => {
+      render(
+        [run({ id: "r1", targetLabel: "pr-auto-ssh-1" }), run({ id: "r2", targetLabel: "db-1" })],
+        "a1"
+      );
+      const row = query("automation-run-toggle-r1")!;
+      expect(row.querySelector(".automation-history__name")!.textContent).toBe("pr-auto-ssh-1");
+      // The filter names the automation already; the row does not repeat it.
+      expect(row.textContent).not.toContain("Deploy");
+    });
+  });
+
   it("names the automation that started a nested run and links to its run (#6183, history-2)", () => {
     const caller = run({ id: "run-caller", automationName: "History caller", origin: "manual" });
     const nested = run({

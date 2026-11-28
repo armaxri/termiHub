@@ -252,6 +252,7 @@ export function HistorySection({ automationId, onFilterChange, collapse }: Histo
                 schedule={entry.schedule}
                 expanded={expanded.has(entry.run.id)}
                 onToggle={handleToggle}
+                oneAutomation={automationId !== null}
                 onShowRun={
                   entry.run.startedByRunId && shownRunIds.has(entry.run.startedByRunId)
                     ? handleShowRun
