@@ -5,7 +5,15 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs"
 import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
-import { OUTPUT, collectCommands, generate, invokeFiles, render } from "./gen-command-types.mjs";
+import {
+  OUTPUT,
+  collectCommands,
+  generate,
+  invokeFiles,
+  isStale,
+  moduleSpecifierFor,
+  render,
+} from "./gen-command-types.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -108,8 +116,29 @@ describe("gen-command-types (#6151)", () => {
     expect([...collectCommands(root).commands.keys()]).toEqual(["real_cmd"]);
   });
 
+  // Windows (develop red at 60e556957): the TypeScript program names files with
+  // forward slashes while `path.join` gives back-slashes, so no type was ever
+  // named in src/ and every one became `unknown`.
+  it("names a module under src/ whatever separator either path uses", () => {
+    const win = "C:\\repo\\src";
+    expect(moduleSpecifierFor("C:/repo/src/types/file.ts", win)).toBe("@/types/file");
+    expect(moduleSpecifierFor("C:\\repo\\src\\types\\file.ts", win)).toBe("@/types/file");
+    expect(moduleSpecifierFor("C:/repo/src/a/b.tsx", "C:/repo/src")).toBe("@/a/b");
+    expect(moduleSpecifierFor("/repo/src/types/file.ts", "/repo/src")).toBe("@/types/file");
+    expect(moduleSpecifierFor("C:/repo/node_modules/x/index.d.ts", win)).toBeNull();
+    expect(moduleSpecifierFor("C:/repo/srcx/types/file.ts", win)).toBeNull();
+  });
+
+  it("compares the checked-in file without regard to line endings", () => {
+    const text = "// a\nexport type A = 1;\n";
+    expect(isStale(text.replace(/\n/g, "\r\n"), text)).toBe(false);
+    expect(isStale(text, text)).toBe(false);
+    expect(isStale("// b\n", text)).toBe(true);
+    expect(isStale("", text)).toBe(true);
+  });
+
   it("the checked-in file is up to date", async () => {
-    const current = readFileSync(path.join(REPO_ROOT, OUTPUT), "utf8");
+    const current = readFileSync(path.join(REPO_ROOT, OUTPUT), "utf8").replace(/\r\n/g, "\n");
     expect(current, `run: node scripts/internal/gen-command-types.mjs`).toBe(
       await generate(REPO_ROOT)
     );
