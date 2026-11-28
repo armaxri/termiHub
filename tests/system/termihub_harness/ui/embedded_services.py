@@ -84,6 +84,9 @@ class EmbeddedServicesUi(HarnessMixin):
     def choose_new_service(self, entry: str) -> None:
         """Pick ``entry`` ("tunnel-local", "server-ftp", …) in the New service menu."""
         item = f"service-new-{entry}"
+        # The New service button lives in the Services sidebar only: a caller
+        # that was just in Connections would otherwise click nothing.
+        self.open_services_sidebar()
         self.driver.click(self.NEW_BTN)
         self.wait(lambda: self.driver.exists(item), what=f"the {entry} entry of New service")
         self.driver.click(item)
