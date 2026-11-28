@@ -1134,6 +1134,10 @@ fn git_bash_from_path() -> Option<PathBuf> {
 }
 
 #[cfg(test)]
+#[path = "shell_windows_posix_tests.rs"]
+mod windows_posix_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

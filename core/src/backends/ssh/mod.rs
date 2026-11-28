@@ -3133,13 +3133,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn posix_shell_on_windows_gets_the_posix_setup() {
-        // #5015: a Git Bash / MSYS2 / Cygwin `DefaultShell` is typed the same
-        // POSIX hook as a Linux host (only its echo is never filtered).
+    async fn posix_shell_on_windows_gets_the_windows_posix_setup() {
+        // #5015: a Git Bash / MSYS2 / Cygwin `DefaultShell` is typed a POSIX
+        // hook (its echo is never filtered); since #6170 the one that reports
+        // the Windows path of its directory.
         let (writes, detected) = writes_for_shell(remote_shell::RemoteShell::WindowsPosix).await;
-        let (posix, _) = writes_for_shell(remote_shell::RemoteShell::Posix).await;
         assert_eq!(detected, Some(true));
-        assert_eq!(writes, posix);
+        let expected = format!("{}\n", crate::session::shell::windows_posix_osc7_command());
+        assert_eq!(writes, vec![expected.into_bytes()]);
     }
 
     #[tokio::test]

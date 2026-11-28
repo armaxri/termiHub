@@ -1818,6 +1818,22 @@ mod tests {
     }
 
     #[test]
+    fn a_posix_shell_on_windows_gets_the_hook_that_reports_the_windows_path() {
+        // #6170: Git Bash's `$PWD` names mounts such as /tmp that no rule maps
+        // to a Windows folder; its hook asks `pwd -W` instead.
+        let line = integration_setup_line(RemoteShell::WindowsPosix).expect("setup");
+        assert_eq!(
+            line,
+            format!("{}\n", crate::session::shell::windows_posix_osc7_command())
+        );
+        assert_ne!(
+            Some(line),
+            integration_setup_line(RemoteShell::Posix),
+            "a Linux host keeps its hook"
+        );
+    }
+
+    #[test]
     fn posix_setup_is_the_bash_hook_ended_with_lf() {
         let line = integration_setup_line(RemoteShell::Posix).expect("posix setup");
         assert_eq!(line, format!("{}\n", osc7_setup_command("bash").unwrap()));
