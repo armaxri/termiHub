@@ -201,6 +201,15 @@ describe("StatusBar — monitoring states and host menu (#5840)", () => {
     expect(chip.getAttribute("title")).toContain("remote output unreadable");
     expect(chip.className).not.toContain("monitoring-status__error");
     expect(q("monitoring-waiting")).toBeNull();
+    // The reason shows without hovering, and Retry is one click away (states-1).
+    expect(chip.textContent).toContain("remote output unreadable");
+    const clearMonitoringError = vi.fn();
+    useAppStore.setState({ clearMonitoringError });
+    const retry = q("monitoring-unavailable-retry")!;
+    expect(retry.tagName).toBe("BUTTON");
+    expect(retry.textContent).toContain("Retry");
+    act(() => retry.click());
+    expect(clearMonitoringError).toHaveBeenCalledWith(KEY);
   });
 
   it("shows unsupported as soon as the host reports no stats source", async () => {
@@ -214,6 +223,9 @@ describe("StatusBar — monitoring states and host menu (#5840)", () => {
     await renderStatusBar();
     expect(q("monitoring-unsupported")).not.toBeNull();
     expect(q("monitoring-unavailable")).toBeNull();
+    // Why, in a few words, and a way to try again (states-1).
+    expect(q("monitoring-unsupported")!.textContent).toContain("no shell for stats on this host");
+    expect(q("monitoring-unsupported-retry")?.tagName).toBe("BUTTON");
   });
 
   it("adds no state chip once stats arrive", async () => {
