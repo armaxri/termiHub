@@ -8,7 +8,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { flushAsync } from "@/test/flushAsync";
 import { createRoot, Root } from "react-dom/client";
-import { invoke } from "@tauri-apps/api/core";
+import { fakeBackend, type FakeBackend } from "@/test/fakeBackend";
+import { FILE_BROWSER_MOUNT } from "@/test/fileBrowserBackend";
 import { useAppStore } from "@/store/appStore";
 import { seedFileBrowsers, setupFileBrowsersRegion } from "@/test/fileBrowsersRegionTestHarness";
 import { setupVirtualListSizing } from "@/test/virtualListSize";
@@ -40,7 +41,7 @@ vi.mock("@/services/events", () => ({
   onLocalDirChanged: vi.fn(() => Promise.resolve(vi.fn())),
 }));
 
-const mockedInvoke = vi.mocked(invoke);
+let backend: FakeBackend;
 
 const remote: FileEntry[] = [
   {
@@ -98,10 +99,7 @@ async function renderSession() {
 }
 
 const byTestId = (id: string) => document.querySelector(`[data-testid="${id}"]`) as HTMLElement;
-const uploads = () =>
-  mockedInvoke.mock.calls
-    .filter(([cmd]) => cmd === "session_upload_local_file")
-    .map(([, args]) => args as { localPath: string; remotePath: string });
+const uploads = () => backend.callsTo("session_upload_local_file");
 
 async function click(el: HTMLElement) {
   await act(async () => {
@@ -119,10 +117,13 @@ describe("FileBrowser — Upload several files at once (#6165)", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "session_list_files") return Promise.resolve(remote);
-      if (cmd === "local_stat") return Promise.reject(new Error("not found"));
-      return Promise.resolve(null);
+    backend = fakeBackend({
+      ...FILE_BROWSER_MOUNT,
+      session_list_files: () => remote,
+      local_stat: () => {
+        throw new Error("not found");
+      },
+      session_upload_local_file: () => undefined,
     });
   });
 
