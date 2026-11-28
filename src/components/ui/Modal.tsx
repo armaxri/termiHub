@@ -478,8 +478,10 @@ export function UnsavedChangesDialog({
       data-testid="unsaved-changes-dialog"
       footer={
         <>
+          {/* Named by outcome: right over an editor's own Cancel, a "Cancel"
+              here read as "close" while it keeps the editor open (#6183). */}
           <Button variant="secondary" onClick={onCancel} data-testid="unsaved-changes-cancel">
-            Cancel
+            Keep editing
           </Button>
           <Button variant="danger" onClick={onJustClose} data-testid="unsaved-changes-just-close">
             Discard changes
