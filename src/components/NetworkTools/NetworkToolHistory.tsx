@@ -78,7 +78,7 @@ export function NetworkToolHistory({ tool, onRerun, rerunDisabled }: NetworkTool
       <div className="network-history__header">
         <button
           type="button"
-          className="network-history__toggle"
+          className="ui-section-label network-history__toggle"
           aria-expanded={expanded}
           onClick={() => setExpanded((v) => !v)}
           data-testid="network-history-toggle"

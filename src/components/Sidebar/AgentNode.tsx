@@ -1807,7 +1807,7 @@ export function AgentNode({
               className={`connection-list__group-row${agent.description ? " connection-list__group-row--described" : ""}`}
             >
               <button
-                className={AGENT_TOGGLE_CLASS}
+                className={`ui-section-label ${AGENT_TOGGLE_CLASS}`}
                 onClick={() => toggleRemoteAgent(agent.id)}
                 aria-keyshortcuts={treeRowKeyShortcuts({ rename: true, delete: true })}
               >

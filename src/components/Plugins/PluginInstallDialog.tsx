@@ -234,7 +234,7 @@ export function PluginInstallDialog({
 
       {unavailable && platforms && (
         <>
-          <div className="plugin-install__perm-title">Supported platforms</div>
+          <div className="ui-section-label plugin-install__perm-title">Supported platforms</div>
           <PluginPlatformList support={platforms} testIdBase="plugin-install" />
         </>
       )}
@@ -325,12 +325,12 @@ export function PluginInstallDialog({
 
           {platforms && (
             <>
-              <div className="plugin-install__perm-title">Supported platforms</div>
+              <div className="ui-section-label plugin-install__perm-title">Supported platforms</div>
               <PluginPlatformList support={platforms} testIdBase="plugin-install" />
             </>
           )}
 
-          <div className="plugin-install__perm-title">Requested permissions</div>
+          <div className="ui-section-label plugin-install__perm-title">Requested permissions</div>
           {manifest.permissions.length === 0 ? (
             <div className="plugin-install__perm-empty" data-testid="plugin-install-no-perms">
               This plugin requests no special permissions.

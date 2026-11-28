@@ -444,7 +444,7 @@ function SortHeader({
   return (
     <button
       type="button"
-      className={`file-browser__col file-browser__col--${col}${
+      className={`ui-section-label file-browser__col file-browser__col--${col}${
         active ? " file-browser__col--active" : ""
       }`}
       onClick={() => onToggle(col)}
@@ -1946,8 +1946,7 @@ export function FileBrowser() {
     return (
       <div className="file-browser">
         <EmptyState
-          variant="card"
-          icon={<MonitorOff size={28} strokeWidth={1.5} aria-hidden />}
+          icon={<MonitorOff size={16} aria-hidden />}
           title={fileBrowserPlaceholderTitle(placeholder)}
           action={
             placeholder.kind === "no-tab" ? (
@@ -1976,15 +1975,13 @@ export function FileBrowser() {
       <div className="file-browser">
         {isLoading ? (
           <EmptyState
-            variant="panel"
             loading
             title="Loading files…"
             data-testid="file-browser-session-connecting"
           />
         ) : error ? (
           <EmptyState
-            variant="panel"
-            icon={<AlertCircle size={20} aria-hidden />}
+            icon={<AlertCircle size={16} aria-hidden />}
             title={error}
             role="alert"
             action={
@@ -1997,11 +1994,7 @@ export function FileBrowser() {
             data-testid="file-browser-session-connecting"
           />
         ) : (
-          <EmptyState
-            variant="panel"
-            title="Waiting for session…"
-            data-testid="file-browser-session-connecting"
-          />
+          <EmptyState title="Waiting for session…" data-testid="file-browser-session-connecting" />
         )}
       </div>
     );

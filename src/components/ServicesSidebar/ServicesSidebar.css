@@ -60,7 +60,7 @@
   width: var(--spacing-xs);
   height: var(--spacing-xs);
   margin-right: var(--spacing-xs);
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   background: currentcolor;
   vertical-align: middle;
 }

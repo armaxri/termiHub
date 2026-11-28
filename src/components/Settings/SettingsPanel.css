@@ -197,14 +197,12 @@
 
 .settings-panel__badge {
   flex-shrink: 0;
-  font-size: var(--font-size-2xs);
+  font-size: var(--font-size-xs);
   padding: 1px var(--spacing-xs);
   border-radius: var(--radius-sm);
   background-color: var(--color-warning);
   color: var(--bg-primary);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
+  font-weight: var(--font-weight-semibold);
 }
 
 .settings-panel__file-error {
@@ -335,7 +333,7 @@
 
 .settings-panel__inline-dialog-title {
   font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
   margin: 0;
 }

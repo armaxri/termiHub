@@ -222,7 +222,7 @@
 .terminal-container .xterm-decoration.terminal-command-mark {
   left: calc((var(--terminal-command-mark-width) + var(--terminal-command-mark-gutter)) * -1);
   width: var(--terminal-command-mark-width) !important;
-  border-radius: 1px;
+  border-radius: var(--radius-xs);
   cursor: default;
 }
 

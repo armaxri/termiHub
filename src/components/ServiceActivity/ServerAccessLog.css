@@ -27,10 +27,6 @@
 }
 
 .server-activity__stat dt {
-  font-size: var(--font-size-2xs);
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: var(--letter-spacing-label);
 }
 
 .server-activity__stat dd {
@@ -40,10 +36,6 @@
 }
 
 .server-activity__heading {
-  font-size: var(--font-size-2xs);
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: var(--letter-spacing-label);
 }
 
 .server-activity__top ul {

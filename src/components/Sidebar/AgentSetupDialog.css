@@ -24,7 +24,7 @@
 .agent-setup-dialog__label {
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 .agent-setup-dialog__file-row {
@@ -85,7 +85,7 @@
 
 .agent-setup-dialog__running-step {
   font-size: var(--font-size-sm);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   color: var(--text-primary);
   text-transform: capitalize;
 }

@@ -69,7 +69,7 @@ export const SidebarSectionHeader = React.forwardRef<HTMLElement, SidebarSection
         {collapse ? (
           <button
             type="button"
-            className="sidebar-section-header__title sidebar-section-header__toggle"
+            className="ui-section-label sidebar-section-header__title sidebar-section-header__toggle"
             aria-expanded={collapse.expanded}
             aria-controls={collapse.expanded ? collapse.controls : undefined}
             onClick={collapse.onToggle}
@@ -87,7 +87,7 @@ export const SidebarSectionHeader = React.forwardRef<HTMLElement, SidebarSection
             {label}
           </button>
         ) : (
-          <span className="sidebar-section-header__title">{label}</span>
+          <span className="ui-section-label sidebar-section-header__title">{label}</span>
         )}
         {actions != null && <span className="sidebar-section-header__actions">{actions}</span>}
       </header>

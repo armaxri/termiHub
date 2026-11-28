@@ -140,7 +140,7 @@ export function PluginAccessDiffSection({
       )}
       {removes && (
         <div className="plugin-access-diff__removed">
-          <div className="plugin-install__perm-title">
+          <div className="ui-section-label plugin-install__perm-title">
             No longer requested (installed {installedVersion})
           </div>
           <DiffList side="removed" delta={diff.removed} policy={policyRemoved} />

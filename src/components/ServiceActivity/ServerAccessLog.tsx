@@ -111,7 +111,7 @@ function StatsGrid({ stats, dropped }: { stats: DetailedServerStats; dropped: nu
     <dl className="server-activity__stats">
       {items.map(([label, value]) => (
         <div key={label} className="server-activity__stat">
-          <dt>{label}</dt>
+          <dt className="ui-section-label">{label}</dt>
           <dd data-testid={`server-activity-stat-${label.toLowerCase()}`}>{value}</dd>
         </div>
       ))}
@@ -123,7 +123,7 @@ function TopList({ title, items }: { title: string; items: TopEntry[] }) {
   if (items.length === 0) return null;
   return (
     <div className="server-activity__top">
-      <span className="server-activity__heading">{title}</span>
+      <span className="ui-section-label server-activity__heading">{title}</span>
       <ul>
         {items.map((item) => (
           <li key={item.key}>
@@ -229,7 +229,9 @@ export function ServerAccessLog({ serverId, live, hostAgent }: Props) {
     <>
       {stats && stats.currentTransfers.length > 0 && (
         <div className="server-activity__top" data-testid={`server-activity-transfers-${serverId}`}>
-          <span className="server-activity__heading">{t("server.activity.now")}</span>
+          <span className="ui-section-label server-activity__heading">
+            {t("server.activity.now")}
+          </span>
           <ul>
             {stats.currentTransfers.map((transfer) => (
               <li key={transfer.id} className="server-activity__transfer">

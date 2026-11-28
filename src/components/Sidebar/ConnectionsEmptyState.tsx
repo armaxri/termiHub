@@ -49,9 +49,8 @@ export function ConnectionsEmptyState({
 
   return (
     <EmptyState
-      variant="card"
       role={null}
-      icon={<Network size={28} strokeWidth={1.5} />}
+      icon={<Network size={16} aria-hidden />}
       title="No connections yet"
       description="Create your first connection to get started."
       data-testid="connections-empty-state"

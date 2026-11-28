@@ -33,11 +33,6 @@
   align-items: center;
   gap: var(--spacing-sm);
   padding: var(--spacing-sm) var(--spacing-md) var(--spacing-xs);
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-secondary);
 }
 
 .plugin-manager__sep::after {
@@ -198,7 +193,7 @@
 
 .plugin-detail__name {
   font-size: var(--font-size-xl);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
@@ -223,11 +218,6 @@
 }
 
 .plugin-detail__section-title {
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-secondary);
   margin: 0 0 var(--spacing-sm);
 }
 
@@ -271,7 +261,7 @@
 }
 
 .plugin-detail__item-name {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 
 .plugin-detail__item-desc {
@@ -283,7 +273,7 @@
   align-items: center;
   gap: var(--spacing-xs-sm);
   font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   padding: var(--spacing-xxs) var(--spacing-sm);
   border-radius: var(--radius-full);
 }
@@ -371,7 +361,7 @@
 }
 
 .plugin-install__banner-title {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--banner-tone);
 }
 
@@ -390,7 +380,7 @@
 }
 
 .plugin-install__trust-check-name {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 
 /* Native-code warning — shown when the package ships a native
@@ -419,7 +409,7 @@
 }
 
 .plugin-install__native-title {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   /* #5740: status text misses AA on its own tint (Light, Solarized); the tint and border keeps
      the status cue, the label uses --text-primary. */
   color: var(--text-primary);
@@ -469,11 +459,6 @@
 }
 
 .plugin-install__perm-title {
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-secondary);
   margin: 0 0 var(--spacing-sm);
 }
 
@@ -499,7 +484,7 @@
 }
 
 .plugin-install__perm-name {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 
 .plugin-install__perm-desc {
@@ -539,7 +524,7 @@
 }
 
 .plugin-access-diff__name {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
 }
 
@@ -560,7 +545,7 @@
 }
 
 .plugin-access-diff__removed .plugin-access-diff__name {
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   color: var(--text-secondary);
 }
 
@@ -601,7 +586,7 @@
 }
 
 .plugin-signer-change__version-title {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   /* #5740: status text misses AA on its own tint (Light, Solarized); the tint and border keeps
      the status cue, the label uses --text-primary. */
   color: var(--text-primary);
@@ -693,7 +678,7 @@
 }
 
 .plugin-platforms__label {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 
 .plugin-platforms__triple {
@@ -705,7 +690,7 @@
 .plugin-platforms__current {
   margin-left: auto;
   font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--color-success);
 }
 

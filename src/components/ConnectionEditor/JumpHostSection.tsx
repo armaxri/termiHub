@@ -169,7 +169,7 @@ export function JumpHostSection({
             return (
               <div className="jump-host__card" key={i} data-testid={`jump-host-card-${i}`}>
                 <div className="jump-host__card-head">
-                  <span className="jump-host__card-title">
+                  <span className="ui-section-label jump-host__card-title">
                     Hop {i + 1} ({positionLabel(i, hops.length)})
                   </span>
                   <button

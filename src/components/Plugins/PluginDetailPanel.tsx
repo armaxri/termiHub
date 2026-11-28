@@ -160,7 +160,7 @@ export function PluginDetailPanel({ meta, isVisible }: PluginDetailPanelProps) {
 
       {!isInvalidManifest && (
         <div className="plugin-detail__block" data-testid="plugin-detail-extension-points">
-          <div className="plugin-detail__section-title">Extension points</div>
+          <div className="ui-section-label plugin-detail__section-title">Extension points</div>
           <div className="plugin-detail__list">
             {points.map((point) => {
               const Icon = point.icon;
@@ -185,14 +185,14 @@ export function PluginDetailPanel({ meta, isVisible }: PluginDetailPanelProps) {
 
       {platforms && (
         <div className="plugin-detail__block">
-          <div className="plugin-detail__section-title">Supported platforms</div>
+          <div className="ui-section-label plugin-detail__section-title">Supported platforms</div>
           <PluginPlatformList support={platforms} testIdBase="plugin-detail" />
         </div>
       )}
 
       {manifest.permissions.length > 0 && (
         <div className="plugin-detail__block">
-          <div className="plugin-detail__section-title">Permissions</div>
+          <div className="ui-section-label plugin-detail__section-title">Permissions</div>
           <div className="plugin-detail__list">
             {manifest.permissions.map((perm) => (
               <div className="plugin-detail__item" key={perm}>

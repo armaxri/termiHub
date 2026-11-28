@@ -32,10 +32,8 @@
 }
 
 .update-settings__security-badge {
-  font-size: var(--font-size-2xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
   padding: 1px var(--spacing-xs);
   border-radius: var(--radius-sm);
   background: var(--color-error);

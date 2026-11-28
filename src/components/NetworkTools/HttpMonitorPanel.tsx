@@ -638,7 +638,7 @@ export function HttpMonitorPanel() {
       {/* All monitors (running, paused, and stopped-but-listed) */}
       {monitors.length > 0 && (
         <>
-          <div className="network-panel__section-title">Monitors</div>
+          <div className="ui-section-label network-panel__section-title">Monitors</div>
           {monitors.map((m) => {
             // Where it runs is stored with it (#6039).
             const location = hostChoice(m.config.host);

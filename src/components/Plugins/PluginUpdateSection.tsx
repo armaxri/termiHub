@@ -93,7 +93,7 @@ export function PluginUpdateSection({ plugin }: PluginUpdateSectionProps) {
 
   return (
     <div className="plugin-detail__block" data-testid="plugin-update">
-      <div className="plugin-detail__section-title">Updates</div>
+      <div className="ui-section-label plugin-detail__section-title">Updates</div>
 
       {checking && (
         <p className="plugin-update__line" data-testid="plugin-update-checking">

@@ -468,7 +468,7 @@ export function NetworkToolsSidebar() {
     <div className="network-sidebar" data-testid="network-tools-sidebar">
       {/* Quick Actions */}
       <div className="network-sidebar__section">
-        <div className="network-sidebar__section-title">Quick actions</div>
+        <div className="ui-section-label network-sidebar__section-title">Quick actions</div>
         <QuickAction label="Ping host…" tool="ping" />
         <QuickAction label="Ping sweep…" tool="ping-sweep" />
         <QuickAction label="Scan ports…" tool="port-scanner" />
@@ -478,7 +478,7 @@ export function NetworkToolsSidebar() {
 
       {/* HTTP Monitors */}
       <div className="network-sidebar__section" data-testid="network-monitors-section">
-        <div className="network-sidebar__section-title">
+        <div className="ui-section-label network-sidebar__section-title">
           Monitors
           <Tooltip content="Refresh monitors" side="bottom">
             <Button
@@ -523,7 +523,7 @@ export function NetworkToolsSidebar() {
 
       {/* Local Utilities */}
       <div className="network-sidebar__section">
-        <div className="network-sidebar__section-title">Local</div>
+        <div className="ui-section-label network-sidebar__section-title">Local</div>
         <QuickAction label="View open ports" tool="open-ports" />
         <QuickAction label="Traceroute…" tool="traceroute" />
       </div>

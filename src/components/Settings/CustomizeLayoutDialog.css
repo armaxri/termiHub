@@ -39,7 +39,7 @@
 .customize-layout-dialog__preset-label {
   font-size: var(--font-size-sm);
   color: var(--text-primary);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 /* Mini schematic inside preset cards */
@@ -101,7 +101,7 @@
 
 .customize-layout-dialog__section-title {
   font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-secondary);
 }
 

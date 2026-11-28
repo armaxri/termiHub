@@ -130,6 +130,8 @@ describe("Sidebar container (#2953)", () => {
       // The header shows the view's human title.
       const titleEl = container.querySelector(".sidebar__title");
       expect(titleEl?.textContent).toBe(title);
+      // One section-label look (#6156).
+      expect(titleEl?.classList.contains("ui-section-label")).toBe(true);
     });
   }
 

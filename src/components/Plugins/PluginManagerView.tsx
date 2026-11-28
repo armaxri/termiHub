@@ -125,7 +125,7 @@ export function PluginManagerView() {
       </div>
 
       <div className="plugin-manager__list" data-testid="plugin-list">
-        <div className="plugin-manager__sep">Installed ({plugins.length})</div>
+        <div className="ui-section-label plugin-manager__sep">Installed ({plugins.length})</div>
         {filtered.length === 0 ? (
           <EmptyState
             title={plugins.length === 0 ? "No plugins installed" : "No plugins match your search"}

@@ -1593,7 +1593,7 @@ function Section({
   return (
     <div data-testid={testId}>
       <div className="oc-section__header">
-        <span className="oc-section__title">{title}</span>
+        <span className="ui-section-label oc-section__title">{title}</span>
         {count > 0 && <span className="oc-section__count">{count}</span>}
         {onKillAll && (
           <ConfirmButton
