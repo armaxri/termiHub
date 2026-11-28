@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -40,7 +41,7 @@ from termihub_harness.product_run.automation_local_program import (
     question_problems,
     trust_problems,
 )
-from termihub_harness.product_run.automation_steps import AutomationPhaseUi
+from termihub_harness.product_run.automation_steps import RUN_TARGETS, AutomationPhaseUi
 from termihub_harness.product_run.ssh_steps import SshPhaseUi
 
 DIALOG = "local-process-auth-dialog"
@@ -135,8 +136,15 @@ class TestProductRunAutomationLocalProgram(
         return Path(self.config_dir) / f"pr-local {self.tag} {name}"
 
     def _run(self) -> None:
+        # Run on the terminal the phase opened: after the import the active tab is
+        # Settings, and a Run without a terminal opens the run picker instead of
+        # asking about the program.
+        self.switch_to_tab(self.ids["tab"])
         self.show_automations()
         self.driver.click(f"automation-start-{self.ids['automation']}")
+        time.sleep(0.5)  # the picker, if any, mounts on the click's next render
+        if self.driver.exists(RUN_TARGETS):
+            self.run_picker_on([self.ids["tab"]])
 
     def _grade_question(self, marker: Path, label: str) -> list[str]:
         self.wait(lambda: self.driver.exists(DIALOG), what="the question")
@@ -175,7 +183,8 @@ class TestProductRunAutomationLocalProgram(
             name = f"pr-program-{t}"
             self.switch_to_connections_sidebar()
             self.create_local_connection(name, connect=True)
-            self.wait_connected(self.tab_id_of(name))
+            self.ids["tab"] = self.tab_id_of(name)
+            self.wait_connected(self.ids["tab"])
             path = Path(self.config_dir) / f"pr-program-{t}.json"
             entry = {
                 "id": "x",

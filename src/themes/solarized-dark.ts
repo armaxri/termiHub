@@ -9,7 +9,7 @@ export const solarizedDarkTheme: ThemeDefinition = {
     // Backgrounds — derived from the Solarized base0x monotone ramp
     bgPrimary: "#002b36", // base03
     bgSecondary: "#073642", // base02
-    bgTertiary: "#0d3f4d",
+    bgTertiary: "#093945", // #6154: base1 text at 4.5:1 on raised surfaces
     bgHover: "#0d3f4d",
     bgActive: "#174858",
     bgInput: "#073642",
@@ -53,6 +53,7 @@ export const solarizedDarkTheme: ThemeDefinition = {
     // Borders
     borderPrimary: "#586e75", // base01
     borderSecondary: "#073642",
+    borderInput: "#6e8890", // #6154: 3:1 on the input and around it
 
     // Accent / focus
     // #5164: blue darkened (same hue) so white button text reaches AA
@@ -101,6 +102,11 @@ export const solarizedDarkTheme: ThemeDefinition = {
     ansiBrightWhite: "#fdf6e3", // base3
 
     // Scrollbar
+    // Indicators (#6154): text on the status bar at 4.5:1, marks at 3:1.
+    colorNotice: "#f59e0b",
+    broadcastAccent: "#e87d0d",
+    macroAccent: "#b48cf2",
+
     scrollbarThumb: "rgba(88, 110, 117, 0.5)",
     scrollbarThumbHover: "rgba(88, 110, 117, 0.7)",
   },

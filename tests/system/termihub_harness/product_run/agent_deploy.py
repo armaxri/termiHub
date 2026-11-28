@@ -117,6 +117,15 @@ class AgentDeployUi:
         if self.driver.exists("agent-setup-error"):
             raise AssertionError(f"setup error: {self.driver.get_text('agent-setup-error')}")
         self.wait(lambda: target.is_file(), timeout=30.0, what=f"{target} on the host")
+        # The app stores the chosen path as the agent's path only once the setup's
+        # shell has ended (#5999), after the file is in place: connecting before
+        # that tries the default path and reads "not installed".
+        self.wait(
+            lambda: ((self.find_agent(name) or {}).get("config") or {}).get("agentPath")
+            == str(target),
+            timeout=60.0,
+            what="the app to store the agent's install path",
+        )
 
         self.dismiss_connection_error_if_present()
         self.connect_agent(name)

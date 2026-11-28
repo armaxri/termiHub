@@ -92,7 +92,7 @@ const CSS_VAR_TO_KEY = Object.fromEntries(
   Object.entries(COLOR_TO_CSS_VAR).map(([key, cssVar]) => [cssVar, key as keyof ThemeColors])
 ) as Record<string, keyof ThemeColors>;
 
-/** `--color-notice` is a single `:root` value in variables.css, not a theme token. */
+/** A `:root` value in variables.css that is not a theme token. */
 const VARIABLES_CSS = readFileSync(join(SRC_DIR, "styles/variables.css"), "utf8");
 function staticVar(name: string): string {
   const m = new RegExp(`${name}:\\s*(#[0-9a-fA-F]{6})`).exec(VARIABLES_CSS);
@@ -351,7 +351,8 @@ describe("status tints keep their labels at AA in every built-in theme (#5740)",
     };
     expect(on18(lightTheme, "--color-success")).toBeLessThan(AA_NORMAL_TEXT);
     expect(on18(solarizedDarkTheme, "--color-info")).toBeLessThan(AA_NORMAL_TEXT);
-    expect(on18(lightTheme, "--color-notice")).toBeLessThan(UI_COMPONENT_MIN);
+    // Fixed by #6154: notice is a theme token with a light-surface value now.
+    expect(on18(lightTheme, "--color-notice")).toBeGreaterThanOrEqual(UI_COMPONENT_MIN);
   });
 
   it("documents the #5744 regression: secondary text and links miss AA on a warning tint", () => {
