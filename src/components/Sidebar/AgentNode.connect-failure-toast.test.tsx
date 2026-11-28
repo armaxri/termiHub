@@ -153,7 +153,7 @@ describe("AgentNode — a failed connect shows the row and a toast, no dialog (#
 
   it("raises an error toast that names the agent and the reason, with Details", async () => {
     renderAgent(makeAgent());
-    await failConnect("[thub-code:auth_failure] permission denied");
+    await failConnect("[thub-code:auth_failed] permission denied");
     const error = await toastError();
     expect(error).toHaveBeenCalledOnce();
     const [title, options] = error.mock.calls[0];
