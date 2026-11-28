@@ -150,17 +150,13 @@
 }
 
 /*
- * The row just saved from an editor (#5687): an accent tint and leading bar so
- * the user sees which automation changed. It holds, then fades out over
- * AUTOMATION_JUST_SAVED_MS (3 s); under reduced motion it stays static until
- * the sidebar unmarks the row at the same time.
+ * The row just saved from an editor (#5687): a leading accent bar so the user
+ * sees which automation changed. No fill: with the selection's tint it read as
+ * a second selected row (live review history-3, store-2). It holds, then fades
+ * out over AUTOMATION_JUST_SAVED_MS (3 s); under reduced motion it stays static
+ * until the sidebar unmarks the row at the same time.
  */
 .sidebar-list-item.automation-item--just-saved {
-  /* #5398: secondary/muted text here sits on the accent-tinted --bg-selected. */
-  --text-secondary: var(--text-secondary-on-selection);
-  --text-muted: var(--text-muted-on-selection);
-  --sidebar-list-item-surface: color-mix(in srgb, var(--accent-color) 18%, var(--sidebar-bg));
-  background: var(--bg-selected);
   box-shadow: inset 2px 0 0 var(--accent-color);
 }
 
@@ -171,10 +167,9 @@
   }
 }
 
-/* Fades from the row's own tint and bar (above) back to the resting row. */
+/* Fades the bar (above) out. */
 @keyframes automation-item-just-saved {
   to {
-    background-color: transparent;
     box-shadow: inset 2px 0 0 transparent;
   }
 }

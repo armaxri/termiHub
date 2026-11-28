@@ -545,6 +545,16 @@ describe("markers", () => {
     expect(document.activeElement).toBe(query("automation-arm-toggle-workflow-2"));
   });
 
+  it("keeps a mark on a row whose step runs an automation that is not there (files-2)", async () => {
+    await render([{ ...steps, steps: [{ kind: "run-automation", automationId: "gone" }] }]);
+    const line = query("automation-missing-callee-workflow-1")!;
+    expect(line.textContent).toContain("Step 1 runs an automation that is not in your library");
+    // It can still run (the step may be skipped); the mark leads to the step.
+    expect(query("automation-start-workflow-1")).not.toBeNull();
+    click("automation-missing-callee-edit-workflow-1");
+    expect(useAutomationEditor.getState().editing).not.toBeNull();
+  });
+
   it("says which step cannot run instead of offering Run (A-016)", async () => {
     await render([
       {

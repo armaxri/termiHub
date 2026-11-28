@@ -424,6 +424,8 @@ describe("an import is never trusted", () => {
       ["n2", "Deploy (imported 2)"],
       ["n3", "X"],
     ]);
+    // The summary says which ones are copies, and of what (files-1).
+    expect(result.entries.map((e) => e.renamedFrom)).toEqual(["Deploy", "Deploy", undefined]);
   });
 
   it("cannot reach an object's prototype", () => {

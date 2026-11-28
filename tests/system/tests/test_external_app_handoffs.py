@@ -351,7 +351,9 @@ class TestLocalHandoffs(TerminalUi, TabsUi, SidebarUi, FilesUi, ConnectionsUi, S
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
-@pytest.mark.native_sshd(platforms=("darwin",))
+# Windows too (#5449): Git Bash's `~` and the SFTP browser's `~` are the same
+# profile folder there, and the `code` shim is a `.cmd` the app runs.
+@pytest.mark.native_sshd
 class TestSftpVscodeHandoff(
     TerminalUi, TabsUi, SidebarUi, ConnectionsUi, PasswordPromptUi, SshUi, SftpUi, FilesUi,
     SystemTest,

@@ -704,3 +704,38 @@ describe("CommandPalette", () => {
     });
   });
 });
+
+describe("CommandPalette — icons, a counted result and the shortcut (#6158)", () => {
+  const row = (key: string) =>
+    document.querySelector<HTMLElement>(`[data-testid="command-palette-item-command:${key}"]`);
+
+  it("shows each command with its own icon", () => {
+    typeInto("show automations");
+    const automations = row("show-view-automations")?.querySelector(".command-palette__icon svg");
+    typeInto("new terminal");
+    const terminal = row("new-terminal")?.querySelector(".command-palette__icon svg");
+    expect(automations?.getAttribute("class")).toContain("lucide-zap");
+    expect(terminal?.getAttribute("class")).not.toBe(automations?.getAttribute("class"));
+  });
+
+  it("finds New connection… and the gear menu's items", () => {
+    typeInto("new connection");
+    expect(activeLabel()).toBe("New connection…");
+    typeInto("export diagnostics");
+    expect(activeLabel()).toBe("Export diagnostics…");
+  });
+
+  it("says how many results there are, politely", () => {
+    typeInto("show automations");
+    const status = document.querySelector('[data-testid="command-palette-count"]');
+    expect(status?.getAttribute("aria-live")).toBe("polite");
+    expect(status?.textContent).toMatch(/^\d+ results?$/);
+  });
+
+  it("names the palette's shortcut when nothing matches", () => {
+    typeInto("zzzz-nothing-matches-this");
+    expect(document.querySelector('[data-testid="command-palette-empty"]')?.textContent).toContain(
+      getActionAccelerator("command-palette") ?? "the palette shortcut"
+    );
+  });
+});

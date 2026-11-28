@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAppStore } from "@/store/appStore";
 import { useAutomationEditor } from "@/components/AutomationEditor/automationEditorStore";
 import { useAutomationSections } from "@/components/AutomationSidebar/automationSections";
@@ -10,6 +10,11 @@ import { errorMessage } from "@/utils/errorMessage";
 import { ScheduleEditorDialog } from "./ScheduleEditorDialog";
 import { ScheduleSwitchOn } from "./ScheduleSwitchOn";
 import { useScheduleLabels } from "./useScheduleLabels";
+
+/** The "saved, switched off" message of one schedule: one at a time, and taken back by id. */
+function savedOffToastId(scheduleId: string): string {
+  return `schedule-saved-off-${scheduleId}`;
+}
 
 /**
  * App-level host of the schedule editor (PROD-043), so it can be opened from
@@ -25,6 +30,18 @@ export function ScheduleEditorHost() {
   const [switchOnId, setSwitchOnId] = useState<string | null>(null);
   const closeScheduleEditor = useAppStore((s) => s.closeScheduleEditor);
   const { automations, connections, groups } = useScheduleLabels();
+  // Schedules whose "saved, switched off" message still shows (live review
+  // automations-1): it goes as soon as the schedule is on, however it was
+  // switched on, so the screen never says both.
+  const offMessages = useRef(new Set<string>());
+  useEffect(() => {
+    for (const id of offMessages.current) {
+      const schedule = schedules.find((s) => s.id === id);
+      if (schedule && !schedule.enabled) continue;
+      toast.dismiss(savedOffToastId(id));
+      offMessages.current.delete(id);
+    }
+  }, [schedules]);
 
   const existing = editor?.scheduleId
     ? (schedules.find((s) => s.id === editor.scheduleId) ?? null)
@@ -73,8 +90,10 @@ export function ScheduleEditorHost() {
           // After the editor closed: its own status line would take the message
           // with it.
           window.setTimeout(() => {
+            offMessages.current.add(saved.id);
             // toast-policy: explains-outcome — the schedule was saved but will not run yet
             toast.info(tf("schedule.saved.off", { name: saved.name }), {
+              id: savedOffToastId(saved.id),
               description: t("schedule.saved.offHint"),
               action: {
                 label: t("schedule.switchOn"),
