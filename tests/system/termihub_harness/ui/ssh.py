@@ -10,7 +10,7 @@ those in alongside :class:`~termihub_harness.SystemTest`.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from ..fixtures import SSH_HOST, SSH_PASSWORD_PORT, SSH_USERNAME
 from .base import HarnessMixin
@@ -22,13 +22,20 @@ class SshUi(HarnessMixin):
     if TYPE_CHECKING:  # borrowed from the mixins suites combine this with
         def create_ssh_connection(self, name: str, *, host: str, port: int, username: str,
                                   auth_method: str = ..., key_path=...,
-                                  auto_reconnect: bool = ..., connect: bool = ...) -> None: ...
+                                  auto_reconnect: bool = ..., connect: bool = ...,
+                                  before_save=...) -> None: ...
+        def set_command_marks(self, on: bool) -> None: ...
         def handle_password_prompt(self, password: str = ...) -> None: ...
         def accept_host_key_prompt(self, *, remember: bool = ..., timeout: float = ...) -> bool: ...
         def has_terminal(self) -> bool: ...
 
     def connect_ssh_password(
-        self, name: str, *, port: int = SSH_PASSWORD_PORT, username: str = SSH_USERNAME
+        self,
+        name: str,
+        *,
+        port: int = SSH_PASSWORD_PORT,
+        username: str = SSH_USERNAME,
+        command_marks: Optional[bool] = None,
     ) -> None:
         """Create + Save and connect a password SSH connection, answer the prompt,
         and wait for its terminal — the sequence nearly every SSH suite repeats.
@@ -36,9 +43,18 @@ class SshUi(HarnessMixin):
         Accepts the host-key trust prompt (#1959) that the first connect to a
         fresh app instance's untrusted host raises mid-handshake: without it the
         connection hangs and no session is ever established (#2398 / #2447).
+        ``command_marks`` sets the "Command Marks (Shell Hook)" toggle; ``None``
+        keeps the editor's default.
         """
+        marks = command_marks
+        before_save = None if marks is None else (lambda: self.set_command_marks(marks))
         self.create_ssh_connection(
-            name, host=SSH_HOST, port=port, username=username, connect=True
+            name,
+            host=SSH_HOST,
+            port=port,
+            username=username,
+            connect=True,
+            before_save=before_save,
         )
         self.handle_password_prompt()
         self.accept_host_key_prompt()

@@ -62,6 +62,7 @@ export const darkTheme: ThemeDefinition = {
     // Borders
     borderPrimary: "#2a2f40",
     borderSecondary: "#1a1e2a",
+    borderInput: "#666f86", // #6154: 3:1 on the input and around it
 
     // Accent / focus
     // #5164: darkened (same hue) so white text on buttons reaches WCAG AA:
@@ -112,6 +113,11 @@ export const darkTheme: ThemeDefinition = {
     ansiBrightWhite: "#e5e5e5",
 
     // Scrollbar
+    // Indicators (#6154): text on the status bar at 4.5:1, marks at 3:1.
+    colorNotice: "#f59e0b",
+    broadcastAccent: "#e87d0d",
+    macroAccent: "#a66cf0",
+
     scrollbarThumb: "rgba(121, 121, 121, 0.5)",
     scrollbarThumbHover: "rgba(100, 100, 100, 0.7)",
   },

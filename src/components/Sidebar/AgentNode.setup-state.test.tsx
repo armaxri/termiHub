@@ -192,6 +192,21 @@ describe("AgentNode — row state during and after an agent setup (#5906)", () =
     expectInstalling();
   });
 
+  it("offers no Connect in the menu while the setup runs (live product run, #5518)", async () => {
+    renderAgent(makeAgent({ lastError: NOT_INSTALLED }));
+    setPhase("installing");
+    await act(async () => {
+      byTestId(`agent-header-${AGENT_ID}`)!.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true })
+      );
+    });
+    await settle();
+    // The menu is portalled out of the row's container.
+    const item = document.querySelector('[data-testid="context-agent-connect"]');
+    expect(item).not.toBeNull();
+    expect(item!.hasAttribute("data-disabled")).toBe(true);
+  });
+
   it("never shows the failure state while the setup runs, whatever the stored error", () => {
     renderAgent(makeAgent({ lastError: "boom" }));
     setPhase("installing");

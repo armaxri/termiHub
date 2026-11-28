@@ -22,6 +22,8 @@ const ALLOWED: Record<string, string> = {
   "components/AutomationEditor/AutomationEditorDialog.tsx": "Save and run says it cannot run",
   "components/AutomationEditor/StepRow.tsx": "says a Run local process step will not run",
   "components/AutomationSidebar/AutomationSidebar.tsx": "says a row cannot run",
+  "components/Automations/AutomationImportDialog.tsx":
+    "says which switch an imported local program still waits for",
   "components/Automations/RunTargetsDialog.tsx": "says that it cannot run",
   "components/CommandPalette/CommandPalette.tsx": "says an entry cannot run",
   "components/Schedules/ScheduleEditorDialog.tsx": "offers no automation that reaches the step",

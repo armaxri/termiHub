@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { matchSorter } from "match-sorter";
-import { TerminalSquare, LayoutGrid, Radio, ChevronLeft, Zap } from "lucide-react";
+import {
+  TerminalSquare,
+  LayoutGrid,
+  Radio,
+  ChevronLeft,
+  Server,
+  Zap,
+  type LucideIcon,
+} from "lucide-react";
+import { getActionAccelerator } from "@/services/keybindings";
 import { collectLiveTabs, getActiveTab, useAppStore } from "@/store/appStore";
 import { useActivePanelId, useLayoutRenderTree } from "@/store/layoutSelectors";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
@@ -52,6 +61,8 @@ type PaletteEntry =
       available: boolean;
       /** What else finds it; never shown. */
       aliases: string[];
+      /** Its glyph; the generic command glyph when it has none (#6158). */
+      icon?: LucideIcon;
       /** Activate the entry. */
       run: () => void;
     }
@@ -285,6 +296,7 @@ export function CommandPalette(): React.ReactElement {
       accelerator: cmd.accelerator,
       available: cmd.available,
       aliases: [...(COMMAND_ALIASES[cmd.id] ?? []), cmd.label],
+      icon: cmd.icon,
       run: cmd.run,
     }));
     const serviceEntries: PaletteEntry[] = [
@@ -298,6 +310,7 @@ export function CommandPalette(): React.ReactElement {
           accelerator: null,
           available: true,
           aliases: [label, model.technical, model.what],
+          icon: Server,
           run,
         });
         const open = model.counters?.active ?? 0;
@@ -525,6 +538,15 @@ export function CommandPalette(): React.ReactElement {
           aria-expanded={results.length > 0}
           data-testid="command-palette-input"
         />
+        {/* The count, for a screen reader (#6158). */}
+        <span
+          className="sr-only"
+          role="status"
+          aria-live="polite"
+          data-testid="command-palette-count"
+        >
+          {results.length === 1 ? "1 result" : `${results.length} results`}
+        </span>
         {results.length === 0 ? (
           <EmptyState
             title={
@@ -532,6 +554,7 @@ export function CommandPalette(): React.ReactElement {
                 ? "No matching automations."
                 : "No matching commands or connections."
             }
+            description={mode === "broadcast" ? undefined : paletteShortcutHint()}
             data-testid="command-palette-empty"
           />
         ) : (
@@ -555,7 +578,7 @@ export function CommandPalette(): React.ReactElement {
                 >
                   <span className="command-palette__icon" aria-hidden="true">
                     {entry.kind === "command" ? (
-                      <TerminalSquare size={16} />
+                      <CommandGlyph icon={entry.icon} />
                     ) : entry.kind === "broadcast" ? (
                       <Radio size={16} />
                     ) : entry.kind === "automation" || entry.kind === "broadcast-pick" ? (
@@ -611,4 +634,17 @@ export function CommandPalette(): React.ReactElement {
       </div>
     </Modal>
   );
+}
+
+/** A command row's glyph: its own, or the generic command glyph (#6158). */
+function CommandGlyph({ icon: Icon }: { icon?: LucideIcon }) {
+  return Icon ? <Icon size={16} /> : <TerminalSquare size={16} />;
+}
+
+/** Where the palette comes back from, named in its empty state (#6158). */
+function paletteShortcutHint(): string {
+  const accelerator = getActionAccelerator("command-palette");
+  return accelerator
+    ? `Open this list any time with ${accelerator}.`
+    : "Open this list any time with the palette shortcut.";
 }

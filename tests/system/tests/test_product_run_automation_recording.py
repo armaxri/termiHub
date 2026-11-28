@@ -169,6 +169,10 @@ class TestProductRunAutomationRecording(
             self.driver.terminal_key("Enter" if char == "\r" else char, tab or self.ids["tab"])
 
     def _start(self) -> None:
+        # A recording an earlier step left kept would come back instead of a new
+        # one starting (its dialog, not the chip): one failed step must not fail
+        # every step after it.
+        self._discard()
         self.switch_to_tab(self.ids["tab"])
         self.invoke_terminal_toolbar_action(RECORD)
         self.wait(lambda: self.driver.exists(CHIP), what="the Recording chip")
@@ -265,6 +269,11 @@ class TestProductRunAutomationRecording(
             self._record("pwd\r")
             summary = self.driver.get_text("recording-save-summary")
             self.driver.press_key("Escape", "recording-save-name")
+            deadline = time.monotonic() + 5.0
+            while self.driver.exists(SAVE_DIALOG) and time.monotonic() < deadline:
+                time.sleep(0.25)
+            # Which half failed, if the bar does not come: the close or the bar.
+            self.evidence(f"save dialog open after Escape: {self.driver.exists(SAVE_DIALOG)}")
             self.wait(lambda: self.driver.exists(KEPT_BAR), what="the bar of the kept recording")
             self.shot(label="kept")
             problems = []
@@ -489,6 +498,7 @@ class TestProductRunAutomationRecording(
         ):
             self.require("automation-recording.toolbar")
             tab = self.ids["tab"]
+            self._discard()  # a kept recording would hold the Record button
             self.edit_automation(self.ids["recorded"])
             count = self.step_count()
             self.driver.type("automation-editor-name", f"Draft {t}")

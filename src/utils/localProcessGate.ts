@@ -8,6 +8,9 @@ import { reachesLocalProcess } from "@/services/automationRunner";
 import type { Automation } from "@/types/generated/Automation";
 import { EXPERIMENTAL_SETTING_PATH } from "@/utils/experimentalSetting";
 
+/** The Settings ▸ Security switch that lets automations run local programs. */
+export const LOCAL_PROGRAMS_SETTING_LABEL = "Allow automations to run local programs";
+
 /** Why such a run does not start. */
 export const LOCAL_PROCESS_REASON =
   `Will not run: it runs a local process, which is experimental. ` +

@@ -33,9 +33,10 @@ describe("custom file-type mapping language contrast (WCAG 2.2 AA)", () => {
     }
   }
 
-  it("documents why: plain textSecondary misses AA on the raised row in Solarized Dark", () => {
+  it("plain textSecondary reaches AA on the raised row in Solarized Dark too, since #6154", () => {
+    // It missed (4.28:1) on the old bgTertiary; the redirect above stays as the safe pair.
     const { textSecondary, bgTertiary } = solarizedDarkTheme.colors;
-    expect(contrastRatio(textSecondary, bgTertiary)).toBeLessThan(AA_NORMAL_TEXT);
+    expect(contrastRatio(textSecondary, bgTertiary)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
   });
 });
 

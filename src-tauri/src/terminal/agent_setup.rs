@@ -543,23 +543,48 @@ fn run_setup_background(
     let watch = SessionEndWatch::start(app_handle, session_id);
     inject_commands(session_manager, session_id, &exec_command, rt_handle);
 
+    // Started, not installed: the row keeps "Installing…" until the end below.
     emit_progress(
         app_handle,
         agent_id,
-        "done",
+        POSIX_SETUP_STARTED_STEP,
         "Setup script started in terminal",
     );
     info!("Agent setup: script started for agent {}", agent_id);
 
-    // The next connect must run the binary this setup installs: store the
-    // chosen path as the agent path (#5532). Not after a failure: the stored
-    // path names the agent that was working (#5999).
     let end = watch.wait(SHELL_END_CEILING, || {
         session_is_open(session_manager, session_id, rt_handle)
     });
+    let (step, message) = finish_posix_setup(app_handle, agent_id, remote_path, end);
+    info!("Agent setup: POSIX shell end {end:?}: {step}");
+    emit_progress(app_handle, agent_id, step, &message);
+}
+
+/// The step a POSIX setup reports once its script was started in the tab: not
+/// an install yet, so the agent row keeps "Installing…" and offers no Connect.
+const POSIX_SETUP_STARTED_STEP: &str = "sent";
+
+/// End a POSIX setup whose shell ended as `end`: the step to report, and its
+/// message. The next connect must run the binary this setup installs, so the
+/// chosen path is stored as the agent path first (#5532) and only then is the
+/// setup "done", which offers Connect (live product run, #5518). Not after a
+/// failure: the stored path names the agent that was working (#5999), and the
+/// setup "ended", which drops the row's "Installing…".
+fn finish_posix_setup<R: Runtime>(
+    app_handle: &AppHandle<R>,
+    agent_id: &str,
+    remote_path: &str,
+    end: ShellEnd,
+) -> (&'static str, String) {
     if installs_agent(end) {
         crate::commands::connection::record_setup_agent_path(app_handle, agent_id, remote_path);
+        return ("done", "Agent installed".to_string());
     }
+    let message = match end {
+        ShellEnd::Exited(code) => format!("The setup script exited with code {code}."),
+        _ => "The setup ended before the script finished.".to_string(),
+    };
+    ("ended", message)
 }
 
 /// Whether the setup's terminal session still exists.
