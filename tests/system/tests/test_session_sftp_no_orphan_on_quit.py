@@ -32,6 +32,11 @@ probe needs no ``ps`` / ``pgrep`` / ``ss`` in the minimal Ubuntu image and does 
 care whether sshd uses an external ``sftp-server`` or the built-in ``internal-sftp``.
 This is the same probe the retired test used (see its git history).
 
+On the native sshd fixture (macOS, and Windows with Win32-OpenSSH, #5449) the server
+runs on this computer, so its end of each connection is a local socket. ``netstat -an``
+lists those, and the app's own client ports (psutil) pick out its connections, so the
+other worker's sessions on the same sshd never count (:mod:`termihub_harness.server_sockets`).
+
 This is a dedicated single-method suite because it quits the suite's app mid-test.
 """
 
@@ -42,6 +47,7 @@ import subprocess
 import pytest
 
 from termihub_harness import (
+    NATIVE_SSH_TARGET,
     ConnectionsUi,
     PasswordPromptUi,
     SSH_PASSWORD_SERVICE,
@@ -54,6 +60,8 @@ from termihub_harness import (
     dev_local,
     unique_name,
 )
+from termihub_harness import server_sockets
+from termihub_harness.egress import app_pid
 
 pytestmark = pytest.mark.integration
 
@@ -92,6 +100,7 @@ def _count_established_ssh(service: str = SSH_PASSWORD_SERVICE) -> int:
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
+@pytest.mark.native_sshd
 class TestSessionSftpNoOrphanOnQuit(
     TerminalUi,
     SidebarUi,
@@ -104,6 +113,9 @@ class TestSessionSftpNoOrphanOnQuit(
     """App-quit closes every live session-path SFTP connection — no server-side orphan."""
 
     def test_app_quit_leaves_no_orphaned_session_sftp_connection(self):
+        if NATIVE_SSH_TARGET is not None:
+            self._quit_leaves_no_orphan_on_the_native_sshd(NATIVE_SSH_TARGET.port)
+            return
         # Baseline: ESTABLISHED SSH connections on the container before we connect.
         baseline = _count_established_ssh()
 
@@ -141,4 +153,40 @@ class TestSessionSftpNoOrphanOnQuit(
             timeout=45.0,
             what="every SSH connection to be gone after app-quit "
             f"(baseline={baseline})",
+        )
+
+
+    def _quit_leaves_no_orphan_on_the_native_sshd(self, port: int) -> None:
+        """The same invariant against the loopback sshd: the server keeps none of the
+        app's connections once the app has quit."""
+        pid = app_pid(self.app)
+        assert pid is not None, "the app's pid is needed to tell its connections apart"
+
+        def ports() -> set[int]:
+            return server_sockets.client_ports(pid, port)
+
+        # A live SSH terminal: one connection of the app to the sshd.
+        self.connect_ssh_password(unique_name("session-sftp-quit"))
+        terminal = self.wait(ports, what="the terminal's connection to the sshd")
+
+        # The session-path SFTP browser opens a dedicated connection of its own.
+        self.connect_sftp_browser()
+        seen = self.wait(
+            lambda: ports() if len(ports() - terminal) >= 1 else None,
+            what="the session SFTP browser's own connection to the sshd",
+        )
+        held = server_sockets.server_held(server_sockets.netstat(), port, seen)
+        assert held >= 2, (
+            f"the sshd should hold the terminal's and the browser's connections "
+            f"(app ports {sorted(seen)}, held {held})"
+        )
+
+        self.app.stop()
+
+        # No connection of the app may survive on the server: not up, and not
+        # left half-closed by an sshd that never noticed the client go.
+        self.wait(
+            lambda: server_sockets.server_held(server_sockets.netstat(), port, seen) == 0,
+            timeout=45.0,
+            what=f"the sshd to let go of every connection of the quit app (ports {sorted(seen)})",
         )
