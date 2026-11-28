@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { Automation } from "@/types/generated/Automation";
 import type { AutomationStep } from "@/types/generated/AutomationStep";
-import { LOCAL_PROCESS_REASON, localProcessBlockedReason } from "./localProcessGate";
+import {
+  LOCAL_PROCESS_REASON,
+  LOCAL_PROGRAMS_OFF_REASON,
+  localProcessBlockedReason,
+} from "./localProcessGate";
 
 const lp: AutomationStep = { kind: "run-local-process", program: "make", args: [] };
 const call = (automationId: string): AutomationStep => ({ kind: "run-automation", automationId });
@@ -34,5 +38,22 @@ describe("localProcessBlockedReason", () => {
       reason([automation("a", [call("gone"), call("b")]), automation("b", [lp])])
     ).not.toBeNull();
     expect(reason([automation("a", [call("gone")])])).toBeNull();
+  });
+});
+
+describe("the Security switch for local programs (#6178)", () => {
+  const blocked = (gate: { experimental: boolean; localPrograms: boolean }) =>
+    localProcessBlockedReason(automation("a", [lp]), () => undefined, gate);
+
+  it("blocks it while the Security switch is off, and names that switch", () => {
+    expect(blocked({ experimental: true, localPrograms: false })).toBe(LOCAL_PROGRAMS_OFF_REASON);
+    expect(LOCAL_PROGRAMS_OFF_REASON).toContain(
+      "Settings ▸ Security ▸ Allow automations to run local programs"
+    );
+  });
+
+  it("names the experimental switch first, and lets it run with both on", () => {
+    expect(blocked({ experimental: false, localPrograms: false })).toBe(LOCAL_PROCESS_REASON);
+    expect(blocked({ experimental: true, localPrograms: true })).toBeNull();
   });
 });

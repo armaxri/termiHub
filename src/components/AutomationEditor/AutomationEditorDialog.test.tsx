@@ -348,13 +348,22 @@ describe("validation timing (#5917)", () => {
     name: "",
   });
 
-  it("opens a new automation clean, says what is missing, and Save looks usable (A-023)", async () => {
+  it("opens a new automation clean, says what is missing, and Save looks unavailable (editor-3)", async () => {
     await open(blankKeys, true);
     expect(nameError()).toBeNull();
     expect(document.querySelector('[aria-invalid="true"]')).toBeNull();
     expect(missing()).toBe("To save: give it a name and complete the steps.");
+    // The footer note and the buttons agree: both say it cannot be saved yet. Still
+    // reachable, so a press shows what is missing (A-023).
     expect(saveButton().disabled).toBe(false);
+    expect(saveButton().getAttribute("aria-disabled")).toBe("true");
+    expect(query("automation-editor-save-run")?.getAttribute("aria-disabled")).toBe("true");
+  });
+
+  it("makes Save available once nothing is missing (editor-3)", async () => {
+    await open(automationWith([{ kind: "send-command", command: "ls" }], { name: "List" }));
     expect(saveButton().getAttribute("aria-disabled")).not.toBe("true");
+    expect(query("automation-editor-save-run")?.getAttribute("aria-disabled")).not.toBe("true");
   });
 
   it("flags an empty command together with the name (A-022)", async () => {

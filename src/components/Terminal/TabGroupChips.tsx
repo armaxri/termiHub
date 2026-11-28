@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { ArrowLeft, ArrowRight, Layers, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Layers, Palette, X } from "lucide-react";
 import { DndContext, DragEndEvent, useSensor, useSensors } from "@dnd-kit/core";
 import { ReleaseScopedPointerSensor } from "@/utils/releaseScopedPointerSensor";
 import { SortableContext, horizontalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
@@ -9,6 +9,7 @@ import { useActiveTabGroupId, useLayoutTabGroups } from "@/store/layoutSelectors
 import { TabGroup } from "@/types/terminal";
 import { closeTabGroupGuarded } from "@/utils/tabGroupCloseGuard";
 import { RenameDialog } from "./RenameDialog";
+import { ColorPickerDialog } from "./ColorPickerDialog";
 import {
   Tooltip,
   ContextMenuContent,
@@ -37,10 +38,12 @@ export function TabGroupChips() {
   const setActiveTabGroup = useAppStore((s) => s.setActiveTabGroup);
   const addTabGroup = useAppStore((s) => s.addTabGroup);
   const renameTabGroup = useAppStore((s) => s.renameTabGroup);
+  const setTabGroupColor = useAppStore((s) => s.setTabGroupColor);
   const reorderTabGroups = useAppStore((s) => s.reorderTabGroups);
   const draggingTabId = useAppStore((s) => s.draggingTabId);
 
   const [renameGroupId, setRenameGroupId] = useState<string | null>(null);
+  const [colorGroupId, setColorGroupId] = useState<string | null>(null);
   const newTabGroupText = "New tab group";
   const newTabGroupLabel = withActionAccelerator(newTabGroupText, "new-tab-group");
   const showChips = tabGroups.length > 1;
@@ -89,6 +92,7 @@ export function TabGroupChips() {
                 onClick={() => setActiveTabGroup(group.id)}
                 onClose={(e) => handleClose(group.id, e)}
                 onRename={() => setRenameGroupId(group.id)}
+                onSetColor={() => setColorGroupId(group.id)}
                 onMoveLeft={index > 0 ? () => reorderTabGroups(index, index - 1) : undefined}
                 onMoveRight={
                   index < tabGroups.length - 1
@@ -113,6 +117,17 @@ export function TabGroupChips() {
           {!showChips && <span className="tab-group-chips__add-text">{newTabGroupText}</span>}
         </button>
       </Tooltip>
+      {/* The group's accent dot, as the tab-groups concept's chip menu offers (#6164). */}
+      <ColorPickerDialog
+        open={colorGroupId !== null}
+        onOpenChange={(open) => {
+          if (!open) setColorGroupId(null);
+        }}
+        currentColor={tabGroups.find((g) => g.id === colorGroupId)?.color}
+        onColorChange={(color) => {
+          if (colorGroupId) setTabGroupColor(colorGroupId, color);
+        }}
+      />
       <RenameDialog
         open={renameGroupId !== null}
         onOpenChange={(open) => {
@@ -136,6 +151,8 @@ interface TabGroupChipProps {
   onClick: () => void;
   onClose: (e: React.SyntheticEvent) => void;
   onRename: () => void;
+  /** Open the colour picker for the group's accent dot. */
+  onSetColor: () => void;
   /**
    * Move the group one place left — the keyboard/menu alternative to dragging
    * its chip (#4329). Omitted on the first group, which disables the item.
@@ -153,6 +170,7 @@ function TabGroupChip({
   onClick,
   onClose,
   onRename,
+  onSetColor,
   onMoveLeft,
   onMoveRight,
 }: TabGroupChipProps) {
@@ -223,6 +241,9 @@ function TabGroupChip({
       <ContextMenuContent>
         <MenuItem onSelect={onRename} data-testid="tab-group-ctx-rename">
           Rename
+        </MenuItem>
+        <MenuItem onSelect={onSetColor} data-testid="tab-group-ctx-color">
+          <Palette size={14} /> Set color…
         </MenuItem>
         <MenuSeparator />
         <MenuItem

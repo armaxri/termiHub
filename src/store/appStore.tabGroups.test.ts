@@ -239,6 +239,55 @@ describe("appStore — tab groups", () => {
     });
   });
 
+  describe("moveTabToGroupPanel (#6201)", () => {
+    function twoGroups() {
+      useAppStore.getState().addTab("bash", "local");
+      const group1Id = layoutState().tabGroups[0].id;
+      const leaf1 = getAllLeaves(layoutState().rootPanel)[0];
+      const tabId = leaf1.tabs[0].id;
+      // A second group, now active: as after a dwell on its chip.
+      const group2Id = layoutState().addTabGroup("Group 2");
+      useAppStore.getState().addTab("zsh", "local");
+      const leaf2 = getAllLeaves(layoutState().rootPanel)[0];
+      return { group1Id, group2Id, leaf1, leaf2, tabId };
+    }
+
+    it("moves the tab from the hidden source group into a panel of the visible one", () => {
+      const { group1Id, group2Id, leaf1, leaf2, tabId } = twoGroups();
+      useAppStore
+        .getState()
+        .moveTabToGroupPanel(tabId, group1Id, leaf1.id, group2Id, leaf2.id, "center");
+
+      const visible = getAllLeaves(layoutState().rootPanel).flatMap((l) => l.tabs.map((t) => t.id));
+      expect(visible).toContain(tabId);
+      const source = layoutState().tabGroups.find((g) => g.id === group1Id)!;
+      expect(getAllLeaves(source.rootPanel).flatMap((l) => l.tabs)).toHaveLength(0);
+      expect(layoutState().activeTabGroupId).toBe(group2Id);
+    });
+
+    it("splits the target panel on an edge drop", () => {
+      const { group1Id, group2Id, leaf1, leaf2, tabId } = twoGroups();
+      useAppStore
+        .getState()
+        .moveTabToGroupPanel(tabId, group1Id, leaf1.id, group2Id, leaf2.id, "bottom");
+
+      const leaves = getAllLeaves(layoutState().rootPanel);
+      expect(leaves).toHaveLength(2);
+      expect(leaves[1].tabs.map((t) => t.id)).toEqual([tabId]);
+      expect(layoutState().activePanelId).toBe(leaves[1].id);
+    });
+
+    it("is a no-op when the source is the visible group", () => {
+      const { group2Id, leaf2 } = twoGroups();
+      const before = layoutState().rootPanel;
+      const tabId = leaf2.tabs[0].id;
+      useAppStore
+        .getState()
+        .moveTabToGroupPanel(tabId, group2Id, leaf2.id, group2Id, leaf2.id, "center");
+      expect(layoutState().rootPanel).toBe(before);
+    });
+  });
+
   describe("moveTabToGroup", () => {
     it("moves a tab from the active group to a target group", () => {
       // Set up: add a tab to the initial group

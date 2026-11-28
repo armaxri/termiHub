@@ -136,7 +136,10 @@ for (const viewport of [
       await page.locator(DIALOG).waitFor();
       await check(page, "new-keys");
       await expect(page.locator(id("automation-editor-footer-note"))).toContainText("To save:");
-      await page.locator(id("automation-editor-save-run")).click();
+      // Save is aria-disabled while the editor is incomplete, yet a click still
+      // runs and lists every reason. Playwright reads aria-disabled as "not
+      // enabled", so the click skips that actionability wait.
+      await page.locator(id("automation-editor-save-run")).click({ force: true });
       await expect(page.locator(id("automation-editor-keys-error-0-0"))).toBeVisible();
       await expect(page.locator(id("automation-editor-name"))).toBeFocused();
       await check(page, "new-keys-errors");

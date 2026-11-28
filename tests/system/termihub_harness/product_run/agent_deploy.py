@@ -58,9 +58,10 @@ class AgentDeployUi:
         if self.driver.exists(self.HOSTKEY_PROMPT):
             self.driver.click(self.HOSTKEY_ACCEPT_REMEMBER)
             return None
-        if self.driver.exists(self.ERROR_TITLE):
-            return "error"
         agent = self.find_agent(name)
+        # A failed connect shows its reason row, no dialog (#6184).
+        if agent and self.driver.exists(self.reason_testid(agent["id"])):
+            return "error"
         return agent if agent and agent.get("connectionState") == "connected" else None
 
     def deploy_and_connect_agent(self, name: str, *, install_dir: str) -> dict[str, Any]:
@@ -99,10 +100,7 @@ class AgentDeployUi:
             if hasattr(self, "evidence"):
                 self.evidence(f"agent {name!r} connected to an agent already on the host")
             return outcome
-        self.wait(
-            lambda: self.driver.exists(self.ERROR_SETUP_AGENT), what="'Set up agent' in the error"
-        )
-        self.driver.click(self.ERROR_SETUP_AGENT)
+        self.click_failure_step(name, "setup")
         self.wait_setup_ready()
         target = native.session_home / install_dir / "termihub-agent"
         self.driver.type(self.SETUP_REMOTE_PATH, str(target))
@@ -127,6 +125,5 @@ class AgentDeployUi:
             what="the app to store the agent's install path",
         )
 
-        self.dismiss_connection_error_if_present()
         self.connect_agent(name)
         return self.wait_agent_connected(name, timeout=90.0)

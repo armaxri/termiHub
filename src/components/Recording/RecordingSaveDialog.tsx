@@ -125,6 +125,8 @@ export function RecordingSaveDialog({
             variant="secondary"
             className="recording-save__keep"
             onClick={onKeep}
+            // Where it goes (live review 2026-11-28).
+            title="It waits in a bar above the terminal until you save or discard it"
             data-testid="recording-save-keep"
           >
             Keep for later
@@ -210,21 +212,30 @@ export function RecordingSaveDialog({
             Nothing else was typed, so there is nothing to save.
           </p>
         )}
-        {automations.length > 0 && (
-          <RadioGroup
-            value={to}
-            onValueChange={(value) => setTo(value as SaveTakeRequest["to"])}
-            aria-label="Save as"
-            options={[
-              { value: "new", label: "New automation", "data-testid": "recording-save-to-new" },
-              {
-                value: "existing",
-                label: "Add to an automation",
-                "data-testid": "recording-save-to-existing",
-              },
-            ]}
-          />
-        )}
+        {/* Both ways always show; adding is off, with why, while there is no
+            automation to add to (live review 2026-11-28). */}
+        <RadioGroup
+          value={to}
+          onValueChange={(value) => setTo(value as SaveTakeRequest["to"])}
+          aria-label="Save as"
+          options={[
+            { value: "new", label: "New automation", "data-testid": "recording-save-to-new" },
+            {
+              value: "existing",
+              label:
+                automations.length === 0 ? (
+                  <>
+                    Add to an automation{" "}
+                    <span className="recording-save__option-note">· No automations yet</span>
+                  </>
+                ) : (
+                  "Add to an automation"
+                ),
+              disabled: automations.length === 0,
+              "data-testid": "recording-save-to-existing",
+            },
+          ]}
+        />
         {to === "new" ? (
           <>
             <Field

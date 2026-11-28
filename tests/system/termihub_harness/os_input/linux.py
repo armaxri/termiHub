@@ -20,7 +20,14 @@ import subprocess
 import time
 from typing import Callable, Optional, Sequence
 
-from .base import GlobalInjectionRefused, OsInput, OsInputUnavailable, OsWindow, global_injection_allowed
+from .base import (
+    HostUnavailable,
+    InjectionNotAllowed,
+    OsInput,
+    OsInputUnavailable,
+    OsWindow,
+    global_injection_allowed,
+)
 
 #: Portable key name → X keysym.
 KEYSYMS = {
@@ -93,7 +100,8 @@ def _default_runner(argv: Sequence[str]) -> str:
     try:
         result = subprocess.run(list(argv), capture_output=True, text=True, timeout=15)
     except (OSError, subprocess.SubprocessError) as exc:
-        raise OsInputUnavailable(f"{argv[0]} failed to run: {exc}") from exc
+        # Not installed or not runnable: the host cannot inject (#6148).
+        raise HostUnavailable(f"{argv[0]} failed to run: {exc}") from exc
     if result.returncode != 0:
         raise OsInputUnavailable(
             f"{' '.join(argv)} exited {result.returncode}: {result.stderr.strip()}"
@@ -218,7 +226,7 @@ class LinuxOsInput(OsInput):
         Display-wide, so it is held to the same rule as global input.
         """
         if not global_injection_allowed(self._env):
-            raise GlobalInjectionRefused("changing the X keyboard map is refused outside CI")
+            raise InjectionNotAllowed("changing the X keyboard map is refused outside CI")
         argv = ["setxkbmap", "-layout", layout]
         if variant:
             argv += ["-variant", variant]
@@ -261,9 +269,9 @@ class XWindowManager:
 
     def start(self, timeout: float = 15.0) -> "XWindowManager":
         if not global_injection_allowed():
-            raise GlobalInjectionRefused("starting a window manager is refused outside CI")
+            raise InjectionNotAllowed("starting a window manager is refused outside CI")
         if shutil.which("xprop") is None or shutil.which("openbox") is None:
-            raise OsInputUnavailable("openbox/xprop are not installed (apt install openbox x11-utils)")
+            raise HostUnavailable("openbox/xprop are not installed (apt install openbox x11-utils)")
         if self.running():
             return self
         self._proc = subprocess.Popen(

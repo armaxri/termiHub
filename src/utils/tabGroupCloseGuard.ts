@@ -24,7 +24,7 @@ import type { TerminalTab } from "@/types/terminal";
  * close started by `trigger` (#5844); unsaved editors always prompt, matching
  * the single-tab dirty guard, which has no opt-out.
  */
-function assessBulkClose(
+export function assessBulkClose(
   tabs: TerminalTab[],
   trigger: TabCloseTrigger
 ): {

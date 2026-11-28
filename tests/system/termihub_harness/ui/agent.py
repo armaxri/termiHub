@@ -2,8 +2,9 @@
 
 ``AgentUi`` drives the **Remote Agents** subsystem: creating a remote-agent
 definition via the experimental Remote Agents sidebar group, the agent
-context-menu (connect / setup), the connection-error feedback dialog a failed
-connect raises, and the agent-setup wizard.
+context-menu (connect / setup), the reason row a failed connect shows under the
+agent's header (#6160, #6184: no dialog opens by itself; the row's Details opens
+the connection-error dialog), and the agent-setup wizard.
 
 Remote agents are a distinct entity from regular connections — they live in the
 ``remoteAgents`` store (not ``connections``), are created through the dedicated
@@ -107,6 +108,12 @@ class AgentUi(HarnessMixin):
     # Per-definition persistent-session action buttons (id suffix is the def id).
     CTX_DEF_START_PERSISTENT = "context-agent-def-start-persistent"
 
+    # A failed connect's reason row under the agent header (#6160) and its
+    # next steps: setup, update, edit, force-reconnect, details (#6184).
+    REASON = "agent-reason-{agent_id}"
+    REASON_STEP = "agent-reason-step-{step}-{agent_id}"
+
+    # The connection-error dialog the row's Details opens.
     ERROR_TITLE = "connection-error-title"
     ERROR_MESSAGE = "connection-error-message"
     ERROR_SETUP_AGENT = "connection-error-setup-agent"
@@ -557,38 +564,72 @@ class AgentUi(HarnessMixin):
         classes = self.driver.get_attribute(f"persistent-state-dot-{def_id}", "class") or ""
         return "status-dot--connected" in classes.split()
 
-    # ── connection-error dialog ─────────────────────────────────────────────────
-    def connection_error_present(self) -> bool:
-        return self.driver.exists(self.ERROR_TITLE)
+    # ── a failed connect: the reason row (#6160, #6184) ────────────────────────
+    def reason_testid(self, agent_id: str) -> str:
+        """The reason row a failed connect shows under the agent's header."""
+        return self.REASON.format(agent_id=agent_id)
 
-    def wait_connection_error_title(self, *, accept_host_keys: bool = True) -> str:
-        """Wait for a failed agent connect's error dialog and return its title.
+    def reason_step_testid(self, agent_id: str, step: str) -> str:
+        """A next step on the reason row: ``setup``, ``update``, ``edit``,
+        ``force-reconnect`` or ``details``."""
+        return self.REASON_STEP.format(step=step, agent_id=agent_id)
 
-        A connect that reaches the SSH handshake raises the host-key trust prompt
-        (#1959) the first time this app meets the host — *after* the password
-        prompt. Unanswered, the handshake stalls until the prompt times out and
-        the connect fails with "Unknown server key" instead of the error the test
-        set out to provoke (wrong password, missing agent binary). That stalled
-        prompt outlived each 20 s wait, so its late dialogs stacked up and leaked
+    def wait_connect_failure(self, name: str, *, accept_host_keys: bool = True) -> str:
+        """Wait for agent ``name``'s failed connect and return its reason row text.
+
+        A failed connect opens no dialog (#6184): the row under the header says
+        why, with its next steps. A connect that reaches the SSH handshake raises
+        the host-key trust prompt (#1959) the first time this app meets the host,
+        after the password prompt. Unanswered, the handshake stalls until the
+        prompt times out and the connect fails with "Unknown server key" instead
+        of the error the test set out to provoke, and its late failures leak
         into the next test (the 2026-10-08 nightly, #4017). With
         ``accept_host_keys`` (the default) any such prompt seen while waiting is
         accepted with "Accept for host", like :meth:`wait_agent_connected`.
         """
+        agent_id = self.require_agent(name)["id"]
+        row = self.reason_testid(agent_id)
 
-        def title() -> Optional[str]:
+        def reason() -> Optional[str]:
             if accept_host_keys and self.driver.exists(self.HOSTKEY_PROMPT):
                 self.driver.click(self.HOSTKEY_ACCEPT_REMEMBER)
                 return None
-            return self.driver.get_text(self.ERROR_TITLE)
+            if not self.driver.exists(row):
+                return None
+            return self.driver.get_text(row) or None
 
-        return self.wait(title, what="the connection-error title")
+        return self.wait(reason, what=f"the reason row of {name!r}")
+
+    def has_failure_step(self, name: str, step: str) -> bool:
+        """Whether agent ``name``'s reason row offers ``step``."""
+        agent = self.find_agent(name)
+        return bool(agent) and self.driver.exists(self.reason_step_testid(agent["id"], step))
+
+    def click_failure_step(self, name: str, step: str) -> None:
+        """Wait for ``step`` on agent ``name``'s reason row and click it."""
+        testid = self.reason_step_testid(self.require_agent(name)["id"], step)
+        self.wait(lambda: self.driver.exists(testid), what=f"{step!r} on the reason row of {name!r}")
+        self.driver.click(testid)
+
+    def open_connect_failure_details(self, name: str) -> str:
+        """Open the full error from the reason row's Details; return the dialog title."""
+        self.click_failure_step(name, "details")
+        return self.wait(
+            lambda: self.driver.get_text(self.ERROR_TITLE) if self.connection_error_present()
+            else None,
+            what="the connection-error title",
+        )
+
+    # ── the connection-error dialog (opened from Details) ─────────────────────
+    def connection_error_present(self) -> bool:
+        return self.driver.exists(self.ERROR_TITLE)
 
     def connection_error_message(self) -> str:
         """The user-facing message line of the open connection-error dialog."""
         return self.driver.get_text(self.ERROR_MESSAGE)
 
     def dismiss_connection_error(self) -> None:
-        """Wait for the connection-error dialog, click Close, and wait for it to go."""
+        """Wait for the Details dialog, click Close, and wait for it to go."""
         self.wait(self.connection_error_present, what="the connection-error dialog")
         self.driver.click(self.ERROR_CLOSE)
         self.wait(

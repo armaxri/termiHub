@@ -347,8 +347,9 @@ for (const win of WINDOWS) {
         ".settings-panel:not(.settings-panel--hidden)"
       );
       await page.locator("[data-testid=imported-confirmations-revoke-all]").click();
-      await page.getByRole("dialog").waitFor();
-      await report.check("dialog/revoke-imported-confirmations", "[role=dialog]");
+      // A danger confirm is an alert dialog (#6155).
+      await page.getByRole("alertdialog").waitFor();
+      await report.check("dialog/revoke-imported-confirmations", "[role=alertdialog]");
       await report.finish();
     });
 

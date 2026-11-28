@@ -57,7 +57,8 @@ describe("the keys", () => {
     await open();
     expect(valueOf(text(0))).toBe("sudo -v⏎");
     expect(valueOf(text(1))).toBe("⎋[A");
-    expect(valueOf(text(2))).toBe("\\x03");
+    // Ctrl+C as the collapsed step shows it, not as \x03 (live review editor-1).
+    expect(valueOf(text(2))).toBe("⌃C");
     expect(query("automation-editor-keys-hint-0")?.textContent).toContain("⏎");
   });
 
@@ -110,6 +111,23 @@ describe("the keys", () => {
     await open();
     click("automation-editor-keys-enter-0-1");
     expect(valueOf(text(1))).toBe("⎋[A⏎");
+  });
+
+  it("says Enter one way: the button adds the ⏎ the row shows (editor-2)", async () => {
+    await open();
+    const button = query("automation-editor-keys-enter-0-1")!;
+    expect(button.textContent?.trim()).toBe("Add ⏎");
+  });
+
+  it("writes keys typed as escapes as the row shows them, once the row is left (editor-2)", async () => {
+    await open({ kind: "type-keys", chunks: [{ data: "abc", delayMs: 0 }], timing: "recorded" });
+    typeText(text(0), "ls\\r\\x03");
+    leaveField(query(text(0)));
+    expect(valueOf(text(0))).toBe("ls⏎⌃C");
+    // A row that does not parse is left as typed, with its error.
+    typeText(text(0), "ls\\q");
+    leaveField(query(text(0)));
+    expect(valueOf(text(0))).toBe("ls\\q");
   });
 
   it("adds a row that follows with a short delay, focused", async () => {

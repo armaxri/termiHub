@@ -2153,7 +2153,8 @@ sequenceDiagram
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> at promotion to <code>implemented/</code> ·
+          <strong>Last synced:</strong> 2026-11-28 at commit <code>695e6bb04</code> (#6164;
+          earlier at promotion to <code>implemented/</code>) ·
           <strong>Status:</strong> implemented (epic #1899 closed; children #1900–#1905, #1910,
           #1925, #1926, #1939 merged)
         </p>
@@ -2225,6 +2226,21 @@ sequenceDiagram
                 </td>
                 <td>Resolved (#1951)</td>
                 <td>Source releases the moved sessions so broadcast events don't re-adopt them</td>
+              </tr>
+              <tr>
+                <td>7</td>
+                <td>
+                  Closing a window that would lose sessions: Move is the safe, primary action
+                </td>
+                <td>
+                  Move was the primary button, but the dialog started on the first control of its
+                  body (the Modal's rule since #5550), so Enter did not keep the sessions
+                </td>
+                <td>Code divergence</td>
+                <td>
+                  Code fixed (#6164): the dialog starts on Move when Move is offered and possible,
+                  else on the first control of the body or Cancel, never on the destructive button
+                </td>
               </tr>
             </tbody>
           </table>

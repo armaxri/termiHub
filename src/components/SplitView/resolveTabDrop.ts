@@ -26,6 +26,10 @@ export interface PointerHit {
   tabGroupId: string | null;
   /** Whether the element belongs to the "new tab group" button. */
   newGroupButton: boolean;
+  /** The panel of the drop zone the element belongs to, if any (#6201). */
+  dropPanelId?: string;
+  /** That zone's edge (`center` for the middle). */
+  dropEdge?: DropEdge;
 }
 
 /** Everything the drop routing needs, already read out of the dnd-kit event. */
@@ -49,6 +53,14 @@ export interface TabDropInput {
   dropPoint: Point | null;
   /** The window's viewport size, to tell an in-window drop from a tear-off. */
   viewport: Size;
+  /**
+   * The group the drag started in, and the group shown now (#6201). They differ
+   * once a dwell on a chip switched the view: the tab is still in the hidden
+   * source group, whose droppables are stale, so the drop reads the visible
+   * group's zones under the pointer instead.
+   */
+  dragGroupId?: string;
+  activeGroupId?: string;
 }
 
 /** A point in viewport (client) coordinates. */
@@ -71,7 +83,14 @@ export type TabDropAction =
   | { kind: "split"; targetPanelId: string; edge: DropEdge }
   | { kind: "move"; toPanelId: string; index: number }
   | { kind: "reorder"; panelId: string; oldIndex: number; newIndex: number }
-  | { kind: "tearOff" };
+  | { kind: "tearOff" }
+  | {
+      kind: "moveToGroupPanel";
+      fromGroupId: string;
+      toGroupId: string;
+      toPanelId: string | null;
+      edge: DropEdge;
+    };
 
 /**
  * Whether `point` lies outside a `viewport` of the given size. A zero-size
@@ -84,10 +103,55 @@ export function isOutsideViewport(point: Point, viewport: Size): boolean {
 
 /** Describe the elements under a drop point (from `document.elementsFromPoint`). */
 export function describePointerHits(elements: Element[]): PointerHit[] {
-  return elements.map((el) => ({
-    tabGroupId: el.closest("[data-tab-group-id]")?.getAttribute("data-tab-group-id") ?? null,
-    newGroupButton: el.closest("[data-new-group-btn]") !== null,
-  }));
+  return elements.map((el) => {
+    const zone = el.closest("[data-drop-panel]");
+    return {
+      tabGroupId: el.closest("[data-tab-group-id]")?.getAttribute("data-tab-group-id") ?? null,
+      newGroupButton: el.closest("[data-new-group-btn]") !== null,
+      ...(zone
+        ? {
+            dropPanelId: zone.getAttribute("data-drop-panel") ?? "",
+            dropEdge: (zone.getAttribute("data-drop-edge") ?? "center") as DropEdge,
+          }
+        : {}),
+    };
+  });
+}
+
+/**
+ * Where a drop goes after a dwell switched the view (#6201): into the visible
+ * group's panel zone under the pointer, or into the first panel of the group
+ * whose chip is under it. The source group's droppables are hidden and stale,
+ * so `overId` is not read. A drop on nothing, the source group's chip or the
+ * new-group button changes nothing.
+ */
+function resolveSwitchedDrop(
+  pointerHits: PointerHit[],
+  fromGroupId: string,
+  activeGroupId: string
+): TabDropAction {
+  const chip = pointerHits.find((hit) => hit.tabGroupId !== null);
+  if (chip?.tabGroupId) {
+    if (chip.tabGroupId === fromGroupId) return { kind: "none" };
+    return {
+      kind: "moveToGroupPanel",
+      fromGroupId,
+      toGroupId: chip.tabGroupId,
+      toPanelId: null,
+      edge: "center",
+    };
+  }
+  const zone = pointerHits.find((hit) => hit.dropPanelId);
+  if (zone?.dropPanelId) {
+    return {
+      kind: "moveToGroupPanel",
+      fromGroupId,
+      toGroupId: activeGroupId,
+      toPanelId: zone.dropPanelId,
+      edge: zone.dropEdge ?? "center",
+    };
+  }
+  return { kind: "none" };
 }
 
 /** Decide what a tab drop does. */
@@ -101,6 +165,11 @@ export function resolveTabDrop(input: TabDropInput): TabDropAction {
   // droppable near the window edge (dnd-kit's rect-intersection collision),
   // which would otherwise turn a tear-off into an edge split.
   if (dropPoint && isOutsideViewport(dropPoint, viewport)) return { kind: "tearOff" };
+
+  const { dragGroupId, activeGroupId } = input;
+  if (dragGroupId && activeGroupId && dragGroupId !== activeGroupId) {
+    return resolveSwitchedDrop(pointerHits, dragGroupId, activeGroupId);
+  }
 
   // Not over any registered droppable: look for the targets outside the
   // DndContext (group chips, the new-group button). A chip wins over the
@@ -161,6 +230,14 @@ export interface TabDropOps {
   moveTab: (tabId: string, fromPanelId: string, toPanelId: string, index: number) => void;
   reorderTabs: (panelId: string, oldIndex: number, newIndex: number) => void;
   moveTabToWindow: (tabId: string, fromPanelId: string, target: MoveWindowTarget) => Promise<void>;
+  moveTabToGroupPanel: (
+    tabId: string,
+    fromGroupId: string,
+    fromPanelId: string,
+    toGroupId: string,
+    toPanelId: string | null,
+    edge: DropEdge
+  ) => void;
 }
 
 /** Apply a resolved tab drop to the store. */
@@ -190,6 +267,16 @@ export function dispatchTabDrop(
       // The same hand-off as the tab context menu's "Move to new window": the
       // live session is marked moving and adopted by the new window.
       void ops.moveTabToWindow(tabId, fromPanelId, { kind: "new" });
+      break;
+    case "moveToGroupPanel":
+      ops.moveTabToGroupPanel(
+        tabId,
+        action.fromGroupId,
+        fromPanelId,
+        action.toGroupId,
+        action.toPanelId,
+        action.edge
+      );
       break;
     case "none":
       break;

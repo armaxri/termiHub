@@ -117,7 +117,7 @@ for (const viewport of [
       await expect(dialog).toContainText("Imported 5 of 6 automations");
       await expect(page.locator(id("automation-import-refused-Odd one"))).toContainText("teleport");
       for (const [name, says] of [
-        ["Partly known", "Left out, because this version does not know it: a setting (“later”)"],
+        ["Partly known", "Left out 1 setting from a newer termiHub (“later”)"],
         ["Notify", "Runs a program on this computer"],
         ["Deploy", "/home/ops/deploy/scripts/release.sh"],
         ["Deploy", "Runs an automation that is not in the file"],

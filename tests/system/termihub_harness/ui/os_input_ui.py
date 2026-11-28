@@ -24,7 +24,8 @@ import pytest
 
 from .. import os_input
 from ..bridge import Driver
-from ..os_input import OsInput, ScreenMapper
+from ..os_input import HostUnavailable, OsInput, ScreenMapper
+from ..os_input.session import close_leftover_dialogs
 from .base import HarnessMixin
 
 
@@ -35,15 +36,20 @@ class OsInputUi(HarnessMixin):
     _osi: Optional[OsInput] = None
 
     def os_input(self) -> OsInput:
-        """The backend aimed at the current test-instance PID (skips/fails if unusable)."""
+        """The backend aimed at the current test-instance PID (skips/fails if unusable).
+
+        On CI an unusable host, and anywhere a shared session, raises
+        :class:`HostUnavailable`: an environment refusal that ends the OS-input
+        session once instead of failing every test the same way (#6148).
+        """
         reason = os_input.unavailable_reason()
         if reason is not None:
             if os.environ.get("GITHUB_ACTIONS") == "true":
-                pytest.fail(f"OS input unavailable on the CI runner: {reason}")
+                raise HostUnavailable(f"OS input unavailable on the CI runner: {reason}")
             pytest.skip(reason)
         shared = os_input.shared_session_reason()
         if shared is not None:
-            pytest.fail(shared)
+            raise HostUnavailable(shared)
         pid = self.app.pid
         if pid is None:
             raise AssertionError("the test instance is not running")
@@ -52,6 +58,31 @@ class OsInputUi(HarnessMixin):
         elif self._osi.pid != pid:
             self._osi.retarget(pid)
         return self._osi  # type: ignore[return-value]
+
+    @pytest.fixture(autouse=True)
+    def _os_input_leftover_dialogs(self) -> Iterator[None]:
+        """Close a native dialog this test left open before the next test (#6148).
+
+        A failed grade can leave the app's Save dialog (``#32770``, an
+        ``NSSavePanel`` sheet, a GTK chooser) over its window; the next test's
+        calibration and keys then hit the dialog. The windows of the test
+        instance at the start are the baseline; whatever is new at the end is
+        closed with Escape. A host that cannot inject is left alone.
+        """
+        baseline: Optional[set[int]] = None
+        osi: Optional[OsInput] = None
+        if os_input.unavailable_reason() is None and os_input.shared_session_reason() is None:
+            pid = getattr(getattr(self, "app", None), "pid", None)
+            if pid is not None:
+                with contextlib.suppress(Exception):
+                    osi = self.os_input()
+                    baseline = {w.handle for w in osi.windows()}
+        yield
+        if osi is None or baseline is None:
+            return
+        closed = close_leftover_dialogs(osi, baseline)
+        if closed:
+            print(f"[os-input] closed a native dialog left open: {', '.join(closed)}")
 
     def _reacquire_driver(self) -> None:
         """After a relaunch, also re-aim a backend a test already holds.

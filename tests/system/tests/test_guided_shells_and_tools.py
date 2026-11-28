@@ -85,6 +85,7 @@ class TestGuidedShellsAndTools(
         self.driver.select("field-authMethod", "password")
         # X11 forwarding is opt-in (#5555); one click turns it on.
         self.wait(lambda: self.driver.exists("field-enableX11Forwarding"), what="the X11 toggle")
+        self.expand_form_group("advanced")  # X11 lives in the collapsed Advanced group
         self.driver.click("field-enableX11Forwarding")
         self.driver.click(self.EDITOR_SAVE)
         self.connect_connection(name)
