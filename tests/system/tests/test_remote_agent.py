@@ -22,11 +22,12 @@ Divergences from the original, by design:
   asserted: the category the password container (no agent binary) lands in is
   not pinned here (the categorization itself is covered by the
   ``classifyAgentError`` / ``ConnectionErrorDialog`` unit tests). This port
-  asserts the real outcome — an error dialog that is not a host-key failure
-  appears and dismisses.
+  asserts the real outcome: a failed connect shows its reason row (no dialog
+  opens by itself, #6184), the row's Details opens the error, which is not a
+  host-key failure, and it dismisses.
 * **The SSH host-key prompt** (#1959) raised by the handshake on the first
-  connect to the container is accepted while waiting for the error dialog
-  (:meth:`AgentUi.wait_connection_error_title`). Left unanswered it failed every
+  connect to the container is accepted while waiting for the reason row
+  (:meth:`AgentUi.wait_connect_failure`). Left unanswered it failed every
   handshake connect with "Unknown server key" and passed these tests vacuously
   until the stalled dialogs stacked into the next test (#4017).
 * **MT-AGENT-03/05/06/08** in the old suite only asserted that a selector string
@@ -111,7 +112,7 @@ class TestRemoteAgent(
             what="the agent sidebar node",
         )
 
-    # ── connection-error feedback dialog ────────────────────────────────────────
+    # ── a failed connect: the reason row, Details opens the error (#6184) ──────
     @pytest.mark.native_sshd(platforms=("darwin",))
     def test_unreachable_host_shows_error_dialog(self):
         name = unique_name("agent-unreachable")
@@ -120,10 +121,11 @@ class TestRemoteAgent(
         )
         self.connect_agent(name)
         # Password is requested before the connect attempt; answer it, then the
-        # refused connection raises the error dialog.
+        # refused connection shows the reason row with no dialog.
         self.handle_password_prompt()
-        title = self.wait_connection_error_title()
-        assert title.strip()
+        assert self.wait_connect_failure(name).strip()
+        assert not self.connection_error_present(), "a dialog opened by itself (#6184)"
+        assert self.open_connect_failure_details(name).strip()
         self.dismiss_connection_error()
 
     @pytest.mark.native_sshd(platforms=("darwin",))
@@ -136,7 +138,9 @@ class TestRemoteAgent(
         self.handle_password_prompt("definitely-the-wrong-password")
         # The handshake raises the host-key prompt first; the helper accepts it so
         # the connect reaches auth and fails on the password, not the host key.
-        title = self.wait_connection_error_title()
+        reason = self.wait_connect_failure(name)
+        assert "refused the sign-in" in reason, reason
+        title = self.open_connect_failure_details(name)
         assert title.strip() == "Authentication failed", self.connection_error_message()
         self.dismiss_connection_error()
 
@@ -145,8 +149,8 @@ class TestRemoteAgent(
     # binary" does not hold.
     def test_missing_agent_errors_and_close_keeps_agent(self):
         # The password container accepts SSH but has no agent binary, so the
-        # connect fails after auth; the dialog appears, Close dismisses it, and the
-        # agent stays in the list (disconnected).
+        # connect fails after auth; the reason row appears, its Details opens the
+        # error, Close dismisses it, and the agent stays in the list (disconnected).
         name = unique_name("agent-missing")
         self.create_remote_agent(
             name, host=SSH_HOST, port=SSH_PASSWORD_PORT, username=SSH_USERNAME
@@ -154,7 +158,8 @@ class TestRemoteAgent(
         self.connect_agent(name)
         self.handle_password_prompt(SSH_PASSWORD)
 
-        title = self.wait_connection_error_title()
+        self.wait_connect_failure(name)
+        title = self.open_connect_failure_details(name)
         assert title.strip()
         # It failed past the handshake (no agent binary), not on an unanswered
         # host-key prompt — which used to make this pass vacuously (#4017).

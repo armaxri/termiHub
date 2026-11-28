@@ -118,6 +118,10 @@ interface TabProps {
   isDirty?: boolean;
   tabColor?: string;
   onRename?: () => void;
+  /** Close the panel's other tabs (#6161); absent when there are none. */
+  onCloseOthers?: () => void;
+  /** Close the panel's tabs right of this one (#6161); absent when there are none. */
+  onCloseToRight?: () => void;
   onSetColor?: () => void;
   /**
    * Disconnect the tab's live backend session while keeping the tab open in a
@@ -231,6 +235,8 @@ export function Tab({
   isDirty,
   tabColor,
   onRename,
+  onCloseOthers,
+  onCloseToRight,
   onSetColor,
   onDisconnect,
   status,
@@ -363,6 +369,8 @@ export function Tab({
           onClose();
         }
       }}
+      // Double-click renames, as in the menu (#6161).
+      onDoubleClick={onRename ? () => onRename() : undefined}
       title={tabTooltip}
       data-testid={`tab-${tab.id}`}
       {...attributes}
@@ -638,6 +646,16 @@ export function Tab({
         <MenuItem onSelect={() => onClose()} data-testid="tab-context-close">
           <X size={14} /> Close tab
         </MenuItem>
+        {onCloseOthers && (
+          <MenuItem onSelect={() => onCloseOthers()} data-testid="tab-context-close-others">
+            <X size={14} /> Close others
+          </MenuItem>
+        )}
+        {onCloseToRight && (
+          <MenuItem onSelect={() => onCloseToRight()} data-testid="tab-context-close-right">
+            <X size={14} /> Close tabs to the right
+          </MenuItem>
+        )}
       </ContextMenuContent>
     </ContextMenuRoot>
   );

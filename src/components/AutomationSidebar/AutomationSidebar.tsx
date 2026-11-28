@@ -12,7 +12,7 @@ import { useScheduleLabels } from "@/components/Schedules/useScheduleLabels";
 import { SchedulesSection } from "@/components/Schedules";
 import { WorkflowRunOutput } from "@/components/WorkflowSidebar/WorkflowRunOutput";
 import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
-import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
+import { useLocalProcessSwitches } from "@/hooks/useExperimentalFeatures";
 import { useElementWidth } from "@/hooks/useElementWidth";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
 import { nameDescriptionTagsFields, useListFilter } from "@/hooks/useListFilter";
@@ -81,7 +81,7 @@ export function AutomationSidebar() {
   const schedules = useAppStore((s) => s.schedules);
   const { blockedShort } = useScheduleLabels();
   const schedulesPaused = useAppStore((s) => s.schedulesPaused);
-  const experimental = useExperimentalFeatures();
+  const localSwitches = useLocalProcessSwitches();
   const resolve = useCallback((id: string) => automations.find((a) => a.id === id), [automations]);
 
   const historyAutomationId = useAutomationSections((s) => s.historyAutomationId);
@@ -251,7 +251,7 @@ export function AutomationSidebar() {
       e.preventDefault();
       const automation = filtered[nav.activeIndex];
       if (!automation || e.repeat || running.has(automation.id)) return;
-      if (runBlockedReason(automation, resolve, experimental) === null) handleRun(automation.id);
+      if (runBlockedReason(automation, resolve, localSwitches) === null) handleRun(automation.id);
       return;
     }
     nav.onKeyDown(e);
@@ -410,7 +410,7 @@ export function AutomationSidebar() {
               compact={compact}
               connectionName={connectionName}
               resolve={resolve}
-              blocked={runBlockedReason(automation, resolve, experimental)}
+              blocked={runBlockedReason(automation, resolve, localSwitches)}
               nextRun={nextScheduledRun(
                 automation.id,
                 schedules,

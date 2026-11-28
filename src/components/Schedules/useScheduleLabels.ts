@@ -1,13 +1,13 @@
 import { useCallback, useMemo } from "react";
 
-import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
+import { useLocalProcessSwitches } from "@/hooks/useExperimentalFeatures";
 import { useAppStore } from "@/store/appStore";
 import { useBroadcastGroups } from "@/store/broadcastGroups";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import type { ScheduleAction, ScheduleTargets } from "@/types/schedule";
 
 import { t, tf } from "@/i18n/catalog";
-import { localProcessBlockedReason } from "@/utils/localProcessGate";
+import { localProcessBlockedReason, localProcessSwitchOff } from "@/utils/localProcessGate";
 import { unattendedBlockedReason, waitingStep } from "@/utils/unattended";
 
 import { describeTargetNames } from "./scheduleForm";
@@ -28,7 +28,7 @@ export function useScheduleLabels() {
     [automations]
   );
 
-  const experimental = useExperimentalFeatures();
+  const localSwitches = useLocalProcessSwitches();
 
   const targets = useCallback(
     (target: ScheduleTargets) => describeTargetNames(target, (id) => names.get(id), groups),
@@ -42,13 +42,13 @@ export function useScheduleLabels() {
       const automation = find(s.action.automationId);
       if (!automation) return tf("schedule.blocked", { reason: t("schedule.gone.automation") });
       const blocked =
-        localProcessBlockedReason(automation, find, experimental) ??
+        localProcessBlockedReason(automation, find, localSwitches) ??
         unattendedBlockedReason(automation, find);
       if (blocked) return blocked;
       const { gone } = targets(s.targets);
       return gone ? tf("schedule.blocked", { reason: gone }) : null;
     },
-    [automations, experimental, targets]
+    [automations, localSwitches, targets]
   );
 
   /** The same in a few words, for a line about something else (B-016). */
@@ -57,8 +57,13 @@ export function useScheduleLabels() {
       const find = (id: string) => automations.find((x) => x.id === id);
       const automation = find(s.action.automationId);
       if (!automation) return t("schedule.gone.automation");
-      if (localProcessBlockedReason(automation, find, experimental)) {
-        return t("schedule.short.localProcess");
+      if (localProcessBlockedReason(automation, find, localSwitches)) {
+        // Name the switch that is off (#6178): experimental features, then Security.
+        return t(
+          localProcessSwitchOff(localSwitches) === "experimental"
+            ? "schedule.short.localProcess"
+            : "schedule.short.localPrograms"
+        );
       }
       if (unattendedBlockedReason(automation, find)) {
         return t(
@@ -67,7 +72,7 @@ export function useScheduleLabels() {
       }
       return targets(s.targets).gone;
     },
-    [automations, experimental, targets]
+    [automations, localSwitches, targets]
   );
 
   return { automations, connections, groups, actionLabel, blockedReason, blockedShort, targets };

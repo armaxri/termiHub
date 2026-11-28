@@ -51,7 +51,7 @@ import {
 } from "./scheduleForm";
 import { useConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
 import { t } from "@/i18n/catalog";
-import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
+import { useLocalProcessSwitches } from "@/hooks/useExperimentalFeatures";
 import { localProcessBlockedReason } from "@/utils/localProcessGate";
 import { remapConnectionIdList } from "@/utils/connectionIdChanges";
 import "./Schedules.css";
@@ -187,11 +187,11 @@ export function ScheduleEditorDialog({
   // With experimental features off, an automation that can run a local process
   // cannot be scheduled (#5818). A schedule that already runs one keeps it, and
   // the picker says why it will not run; picking another one is not possible.
-  const experimental = useExperimentalFeatures();
+  const localSwitches = useLocalProcessSwitches();
   const blockedReason = (id: string): string | null => {
     const find = (x: string) => automations.find((a) => a.id === x);
     const automation = find(id);
-    return automation ? localProcessBlockedReason(automation, find, experimental) : null;
+    return automation ? localProcessBlockedReason(automation, find, localSwitches) : null;
   };
   const blockedPick = blockedReason(watched.automationId);
   const storedPick = watched.automationId === schedule?.action.automationId;

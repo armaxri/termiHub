@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { describeLeftOut } from "@/services/automationFileIo";
 import { flushSync } from "react-dom";
 import { Button, Field, Input, LiveRegion, Modal, ModalClose } from "@/components/ui";
 import { useEditorKeyboard } from "@/hooks/useEditorKeyboard";
 import { useConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
 import { useRevealOnSave } from "@/hooks/useRevealedErrors";
-import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
+import { useLocalProcessSwitches } from "@/hooks/useExperimentalFeatures";
 import { getActiveTab, useAppStore } from "@/store/appStore";
 import type { RecordedTake } from "@/store/slices/recordingSlice";
 import { showTerminal } from "@/utils/showTerminal";
@@ -39,7 +40,6 @@ import { StepList } from "./StepList";
 import { hotkeyConflict } from "./HotkeyField";
 import { tf } from "@/i18n/catalog";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
-import { joinWords } from "@/utils/joinWords";
 import { triggerKindLabel } from "./stepMeta";
 import type { AutomationTrigger } from "@/types/generated/AutomationTrigger";
 import { triggerBlocked, unattendedStartBlocked } from "@/utils/triggerBlocked";
@@ -131,8 +131,6 @@ export function AutomationEditorDialog({
   const schedules = useAppStore((s) => s.schedules);
   const linked = schedules.filter((x) => x.action.automationId === automation.id);
   const { connections } = useProjectedConnections();
-  // What starts it comes first when something does (A-024); the heading says what.
-  const [whenFirst] = useState(initial.triggers.length > 0 || (!isNew && linked.length > 0));
   const [whenOpen, setWhenOpen] = useState(false);
   const [valuesOpen, setValuesOpen] = useState(false);
   const [tagsOpen, setTagsOpen] = useState(false);
@@ -151,7 +149,7 @@ export function AutomationEditorDialog({
     const tab = getActiveTab(s);
     return tab?.contentType === "terminal" ? tab.title || "Terminal" : null;
   });
-  const experimental = useExperimentalFeatures();
+  const localSwitches = useLocalProcessSwitches();
   const aside = useAutomationEditor((s) => s.aside);
   const setAside = useAutomationEditor((s) => s.setAside);
   const takeForEditor = useAppStore((s) => s.takeForEditor);
@@ -197,9 +195,9 @@ export function AutomationEditorDialog({
       setExpanded: (uid, open) => setExpandedSet((prev) => toggled(prev, uid, open)),
       failureOpen,
       showFailure: (uid) => setFailureOpen((prev) => toggled(prev, uid, true)),
-      openSettings: () => {
+      openSettings: (category = "general") => {
         setAside(true);
-        openSettingsTab({ category: "general" });
+        openSettingsTab({ category });
       },
       announce: setAnnouncement,
       renderStepList: (props) => <StepList {...props} />,
@@ -263,8 +261,8 @@ export function AutomationEditorDialog({
 
   // Why running it would be refused, in a few words; it can be saved (A-032).
   const blockedBy = useMemo(
-    () => blockedSummary(draft.steps, (id) => automations.find((a) => a.id === id), experimental),
-    [draft.steps, automations, experimental]
+    () => blockedSummary(draft.steps, (id) => automations.find((a) => a.id === id), localSwitches),
+    [draft.steps, automations, localSwitches]
   );
   const missing = missingSummary(allErrors);
   // A hotkey somebody else answers to is stored and never works (B-022).
@@ -383,13 +381,14 @@ export function AutomationEditorDialog({
               Cancel
             </Button>
           </ModalClose>
-          {/* Save is the primary, on the right, in New and Edit (A-021). Both stay
-              enabled while something is missing: a click then shows it (A-023). */}
+          {/* Save is the primary, on the right, in New and Edit (A-021). While
+              something is missing both look unavailable, as the note says (live
+              review editor-3), and stay reachable: a click shows it (A-023). */}
           <Button
             variant="secondary"
             className="automation-editor__save-run"
             onClick={() => handleSave(true)}
-            aria-disabled={blockedBy !== null}
+            aria-disabled={!canSave || blockedBy !== null}
             errorToast={false}
             data-testid="automation-editor-save-run"
           >
@@ -402,6 +401,7 @@ export function AutomationEditorDialog({
             variant="primary"
             onClick={() => handleSave(false)}
             data-invalid={!canSave || undefined}
+            aria-disabled={!canSave || undefined}
             errorToast={false}
             data-testid="automation-editor-save"
           >
@@ -422,7 +422,7 @@ export function AutomationEditorDialog({
             className="automation-step__note automation-step__note--warning"
             data-testid="automation-editor-imported-part"
           >
-            {tf("automation.importedNote", { parts: joinWords(base.importedInPart) })}
+            {tf("automation.importedNote", { parts: describeLeftOut(base.importedInPart) })}
           </p>
         ) : null}
         <div className="automation-editor__head">
@@ -447,8 +447,6 @@ export function AutomationEditorDialog({
             />
           </Field>
         </div>
-
-        {whenFirst && whenSection}
 
         <section
           className="automation-editor__section"
@@ -512,7 +510,9 @@ export function AutomationEditorDialog({
           </StepEditorProvider>
         </section>
 
-        {!whenFirst && whenSection}
+        {/* One order for every automation (live review editor-6): the steps come
+            first; the heading of When it runs names its triggers (A-024). */}
+        {whenSection}
 
         {showValues && (
           <div data-enter-exempt>

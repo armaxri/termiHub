@@ -18,7 +18,7 @@ from ctypes import wintypes
 from typing import Any, Optional, Sequence
 
 from .base import (
-    GlobalInjectionRefused,
+    InjectionNotAllowed,
     OsInput,
     OsInputUnavailable,
     OsWindow,
@@ -325,7 +325,7 @@ class WindowsOsInput(OsInput):
         belong to the test instance (checked like any global input).
         """
         if not global_injection_allowed(self._env):
-            raise GlobalInjectionRefused("changing the keyboard layout is refused outside CI")
+            raise InjectionNotAllowed("changing the keyboard layout is refused outside CI")
         self._require_global(self.pid)
         user32 = self._user32
         user32.LoadKeyboardLayoutW.restype = ctypes.c_void_p

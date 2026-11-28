@@ -21,7 +21,7 @@ import { toast } from "@/components/ui";
 import { tf } from "@/i18n/catalog";
 import { errorMessage } from "@/utils/errorMessage";
 import { buildCommands } from "@/services/commands";
-import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
+import { useExperimentalFeatures, useLocalProcessSwitches } from "@/hooks/useExperimentalFeatures";
 import { isMacroShaped } from "@/store/slices/automationViews";
 import { runBlockedReason, runBlockedShort } from "@/utils/runBlocked";
 import { openRunPicker } from "@/services/contextCommands";
@@ -244,6 +244,7 @@ export function CommandPalette(): React.ReactElement {
   const automations = useAppStore((s) => s.automations);
   const runAutomation = useAppStore((s) => s.runAutomation);
   const experimental = useExperimentalFeatures();
+  const localSwitches = useLocalProcessSwitches();
   // Where an automation would type (R-083): the active terminal tab's title.
   // "asks where" needs something to choose from (C-024).
   const anyTerminal = useAppStore((s) =>
@@ -364,8 +365,8 @@ export function CommandPalette(): React.ReactElement {
       automationId: a.id,
       automation: a,
       triggersOff: a.triggers.length > 0 && a.triggersEnabled === false,
-      blocked: runBlockedReason(a, (id) => automations.find((x) => x.id === id), experimental),
-      blockedShort: runBlockedShort(a, (id) => automations.find((x) => x.id === id), experimental),
+      blocked: runBlockedReason(a, (id) => automations.find((x) => x.id === id), localSwitches),
+      blockedShort: runBlockedShort(a, (id) => automations.find((x) => x.id === id), localSwitches),
     }));
     // Only offered while broadcasting (#3430); disabled when the group has no
     // connected terminal or there is no automation to pick.

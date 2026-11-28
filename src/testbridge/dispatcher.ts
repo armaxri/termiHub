@@ -55,6 +55,12 @@ export interface BridgeDeps {
   /** Root node that `data-testid` selectors are resolved against. */
   root: ParentNode;
   /**
+   * How long `click` / `doubleClick` wait for their target to mount and become
+   * clickable before they fail with the reason (#6149). Defaults to
+   * {@link ACTION_TIMEOUT_MS}; unit tests shorten it.
+   */
+  actionTimeoutMs?: number;
+  /**
    * Read a terminal's reconstructed logical-line text, or `undefined` when no
    * terminal is registered for `tabId`.
    */
@@ -221,6 +227,92 @@ function findByTestId(root: ParentNode, testId: string): Element | null {
       ? CSS.escape(testId)
       : testId.replace(/["\\]/g, "\\$&");
   return root.querySelector(`[data-testid="${escaped}"]`);
+}
+
+/** How long a click waits for its target to mount and become clickable (#6149). */
+export const ACTION_TIMEOUT_MS = 2000;
+/** The interval of that wait. */
+const ACTION_POLL_MS = 25;
+
+/** A short description of an element for an error: its testid, or tag and class. */
+function describeElement(el: Element): string {
+  const testId = el.getAttribute("data-testid");
+  if (testId) return `data-testid="${testId}"`;
+  const cls =
+    typeof el.className === "string" && el.className.trim()
+      ? `.${el.className.trim().split(/\s+/).join(".")}`
+      : "";
+  return `<${el.tagName.toLowerCase()}${cls}>`;
+}
+
+/**
+ * Why a user could not click `el` now, or `null` when they could (#6149).
+ *
+ * Disabled (natively or by a disabled fieldset), `aria-disabled="true"` and
+ * `inert` are always checked. Size and cover need a layout, so they are
+ * checked only where the document can hit-test (`elementFromPoint`; jsdom
+ * cannot): a target with no size is hidden, and the element at its centre must
+ * be the target, inside it, or the label that activates it.
+ */
+function clickBlocker(el: Element): string | null {
+  if (el.matches(":disabled")) return "it is disabled";
+  if (el.getAttribute("aria-disabled") === "true") return "it is aria-disabled";
+  if (el.closest("[inert]")) return "it is inside an inert region";
+  const doc = el.ownerDocument;
+  if (typeof doc?.elementFromPoint !== "function") return null;
+  if (!hasLayout(el)) return "it has no size (hidden)";
+  let { x, y } = centerOf(el);
+  const view = doc.defaultView;
+  if (view && (x < 0 || y < 0 || x > view.innerWidth || y > view.innerHeight)) {
+    (el as HTMLElement).scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    ({ x, y } = centerOf(el));
+  }
+  const hit = doc.elementFromPoint(x, y);
+  // Outside the viewport even after scrolling: nothing to hit-test against.
+  if (!hit) return null;
+  if (hit === el || el.contains(hit)) return null;
+  const labels = (el as HTMLInputElement).labels;
+  if (
+    hit instanceof HTMLLabelElement &&
+    (hit.contains(el) || (labels && [...labels].includes(hit)))
+  ) {
+    return null;
+  }
+  return `it is covered at its centre by ${describeElement(hit)}`;
+}
+
+/**
+ * Resolve the click target, waiting up to `timeoutMs` for it to mount and
+ * become clickable (#6149). `force` takes the element as it is. Fails with the
+ * last reason when the wait runs out.
+ */
+async function actionableTarget(
+  deps: BridgeDeps,
+  testId: string,
+  force: boolean | undefined
+): Promise<{ el: Element } | { error: string }> {
+  const deadline = Date.now() + (deps.actionTimeoutMs ?? ACTION_TIMEOUT_MS);
+  for (;;) {
+    const el = findByTestId(deps.root, testId);
+    const reason = el ? (force ? null : clickBlocker(el)) : null;
+    if (el && reason === null) return { el };
+    if (Date.now() >= deadline) {
+      return {
+        error: el
+          ? `element data-testid="${testId}" cannot be clicked: ${reason} ` +
+            `(pass force to click it anyway)`
+          : `no element with data-testid="${testId}"`,
+      };
+    }
+    await new Promise((resolve) => setTimeout(resolve, ACTION_POLL_MS));
+  }
+}
+
+/** Whether `el` is a contenteditable element (jsdom has no `isContentEditable`). */
+function isContentEditable(el: Element): boolean {
+  const host = el.closest("[contenteditable]");
+  const value = host?.getAttribute("contenteditable");
+  return host !== null && value !== "false";
 }
 
 /** The owning document of a bridge root (which may itself be a `Document`). */
@@ -908,16 +1000,18 @@ export async function dispatchCommand(
     }
 
     case "click": {
-      const el = findByTestId(deps.root, command.testId);
-      if (!el) return fail("click", `no element with data-testid="${command.testId}"`);
+      const target = await actionableTarget(deps, command.testId, command.force);
+      if ("error" in target) return fail("click", target.error);
+      const { el } = target;
       const { x, y } = centerOf(el);
       clickSequence(el, x, y);
       return ok("click");
     }
 
     case "doubleClick": {
-      const el = findByTestId(deps.root, command.testId);
-      if (!el) return fail("doubleClick", `no element with data-testid="${command.testId}"`);
+      const target = await actionableTarget(deps, command.testId, command.force);
+      if ("error" in target) return fail("doubleClick", target.error);
+      const { el } = target;
       const { x, y } = centerOf(el);
       // A real double-click fires two full click rounds, then a `dblclick` — the
       // event React's `onDoubleClick` listens for (e.g. sidebar connect, which is
@@ -1116,8 +1210,27 @@ export async function dispatchCommand(
     case "type": {
       const el = findByTestId(deps.root, command.testId);
       if (!el) return fail("type", `no element with data-testid="${command.testId}"`);
-      if (!(el instanceof HTMLInputElement) && !(el instanceof HTMLTextAreaElement)) {
-        return fail("type", `element data-testid="${command.testId}" is not an input or textarea`);
+      const field = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement;
+      if (!field && !isContentEditable(el)) {
+        return fail(
+          "type",
+          `element data-testid="${command.testId}" is not editable ` +
+            `(not an input, textarea or contenteditable)`
+        );
+      }
+      // A user types into a field that holds the focus (#6149): refuse one that
+      // cannot take it, and give it the focus first, as a click into it would.
+      const refuse = (why: string) =>
+        fail("type", `element data-testid="${command.testId}" cannot be typed into: ${why}`);
+      if (el.matches(":disabled")) return refuse("it is disabled");
+      if (field && el.readOnly) return refuse("it is read-only");
+      if (el.closest("[inert]")) return refuse("it is inside an inert region");
+      (el as HTMLElement).focus();
+      if (el.ownerDocument.activeElement !== el) return refuse("it does not take the focus");
+      if (!field) {
+        el.textContent = command.text;
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        return ok("type");
       }
       // Drive React's controlled inputs via the native value setter, then fire an
       // input event — the same approach the E2E helpers use to remain robust
