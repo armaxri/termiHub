@@ -138,7 +138,8 @@ class TestProductRunAgent(
         with self.step(
             "agent.connect.not-installed",
             "Connecting before a deploy explains that no agent is installed and offers setup",
-            expect="the connection-error dialog for the agent with a 'Set up agent' button",
+            expect="the agent row saying no agent is installed, with 'Set up agent' on its reason "
+            "row and no dialog opened by itself (#6184)",
         ):
             self.require("agent.create")
             binary = agent_binary()
@@ -146,9 +147,10 @@ class TestProductRunAgent(
                 pytest.skip("no built agent (cargo build -p termihub-agent)")
             self.state["binary"] = binary
             self.connect_agent(self.name)
-            title = self.wait_connection_error_title()
-            self.evidence(f"error: {title!r} / {self.connection_error_message()[:200]!r}")
-            assert self.driver.exists(self.ERROR_SETUP_AGENT), "no 'Set up agent' in the error"
+            reason = self.wait_connect_failure(self.name)
+            self.evidence(f"reason row: {reason[:200]!r}")
+            assert not self.connection_error_present(), "a dialog opened by itself (#6184)"
+            assert self.has_failure_step(self.name, "setup"), "no 'Set up agent' on the row"
         with self.step(
             "agent.deploy",
             "Set up agent: the wizard detects the host and installs the local dev agent over SSH",
@@ -156,7 +158,7 @@ class TestProductRunAgent(
         ):
             self.require("agent.connect.not-installed")
             binary = self.state["binary"]
-            self.driver.click(self.ERROR_SETUP_AGENT)
+            self.click_failure_step(self.name, "setup")
             self.wait_setup_ready()
             arch = self.driver.get_text(self.SETUP_ARCH)
             self.evidence(f"detected target: {arch.strip()!r}")
