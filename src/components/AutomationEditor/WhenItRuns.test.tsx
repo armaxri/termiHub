@@ -219,8 +219,9 @@ describe("triggers", () => {
 
   it("shows the limits that apply as placeholders (A-026)", async () => {
     await open([{ kind: "on-output-match", connectionIds: ["conn-1"], pattern: "x" }]);
-    expect(query("automation-trigger-cooldown-0")).toHaveProperty("placeholder", "10");
-    expect(query("automation-trigger-max-fires-0")).toHaveProperty("placeholder", "5");
+    // A dimmed number alone read as a set value (#6183, editor-8): say it is the default.
+    expect(query("automation-trigger-cooldown-0")).toHaveProperty("placeholder", "10 (default)");
+    expect(query("automation-trigger-max-fires-0")).toHaveProperty("placeholder", "5 (default)");
     const text = () => query("automation-editor-trigger-0")!.textContent;
     expect(text()).toContain("At most 5 times until the terminal disconnects.");
     typeText("automation-trigger-max-fires-0", "7");
