@@ -149,3 +149,39 @@ describe("plugin themes without the new tokens (#6154)", () => {
     expect(older("dark").colors.borderInput).toBe(darkTheme.colors.borderInput);
   });
 });
+
+/**
+ * The scrollbar thumb against what it sits on (#6167, audit UI-016 b). The
+ * track is transparent, so the thumb is composited over the scroller's surface;
+ * the result must reach 3:1 against that surface (SC 1.4.11), or a persistent
+ * thumb (#3144) reads as no scrollbar at all.
+ */
+function rgbaOver(color: string, surface: string): string {
+  const m = /^rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\s*\)$/.exec(color.trim());
+  if (!m) return color;
+  const alpha = Number(m[4]);
+  const bg = /^#([0-9a-f]{6})$/i.exec(surface.trim());
+  if (!bg) throw new Error(`surface ${surface} is not #rrggbb`);
+  const back = [0, 2, 4].map((i) => parseInt(bg[1].slice(i, i + 2), 16));
+  const mixed = [1, 2, 3].map((i, k) => Math.round(Number(m[i]) * alpha + back[k] * (1 - alpha)));
+  return `#${mixed.map((v) => v.toString(16).padStart(2, "0")).join("")}`;
+}
+
+describe("scrollbar thumb on its surfaces (#6167)", () => {
+  const surfaces = ["bgPrimary", "bgSecondary", "bgTertiary", "sidebarBg", "terminalBg"] as const;
+  for (const theme of THEMES) {
+    for (const token of ["scrollbarThumb", "scrollbarThumbHover"] as const) {
+      for (const surface of surfaces) {
+        const [thumb, bg] = [theme.colors[token], theme.colors[surface]];
+        it(`${theme.id} ${token} (${thumb}) reaches 3:1 on ${surface} (${bg})`, () => {
+          expect(contrastRatio(rgbaOver(thumb, bg), bg)).toBeGreaterThanOrEqual(NON_TEXT);
+        });
+      }
+    }
+  }
+
+  it("composites a translucent colour over its surface (helper self-check)", () => {
+    expect(rgbaOver("rgba(255, 255, 255, 0.5)", "#000000")).toBe("#808080");
+    expect(rgbaOver("#123456", "#000000")).toBe("#123456");
+  });
+});
