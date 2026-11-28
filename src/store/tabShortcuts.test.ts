@@ -44,6 +44,12 @@ function open(title: string, opts: { sessionId?: string; initialCommand?: string
   );
 }
 const command = (id: string) => CONTEXT_COMMANDS[id];
+/** Tabs whose shell failed to start: closing them ends no live session. */
+function ended(...tabIds: string[]) {
+  const errors = { ...useAppStore.getState().terminalSpawnErrors };
+  for (const id of tabIds) errors[id] = "failed to start";
+  useAppStore.setState({ terminalSpawnErrors: errors });
+}
 
 describe("tab shortcuts (#6161)", () => {
   beforeEach(() => {
@@ -116,13 +122,15 @@ describe("tab shortcuts (#6161)", () => {
 
     it("closes at once when no session would end, and keeps them for Reopen", () => {
       const ids = ["a", "b", "c"].map((t) => open(t));
+      ended(ids[1], ids[2]);
       closeTabsGuarded(leaf().id, tabsToClose(leaf(), ids[0], "right"));
       expect(titles()).toEqual(["a"]);
       expect(hasClosedTab()).toBe(true);
     });
 
-    it("asks first when a live session would end, and closes on confirm", () => {
+    it("asks first when a live session would end", () => {
       const ids = [open("a"), open("b", { sessionId: "s-b" }), open("c")];
+      ended(ids[2]); // c's shell failed to start: only b's session would end
       closeTabsGuarded(leaf().id, tabsToClose(leaf(), ids[0], "others"));
       expect(titles()).toEqual(["a", "b", "c"]);
       const request = useAppStore.getState().pendingSessionCloseConfirm;

@@ -29,10 +29,10 @@ describe("tab shortcuts (#6161)", () => {
     expect(binding("switch-to-tab-9")!.label).toBe("Switch to the last tab");
   });
 
-  it("reopens a closed tab with Cmd+Alt+T on macOS and Alt+Shift+T elsewhere", () => {
+  it("reopens a closed tab with Ctrl+Cmd+T on macOS and Alt+Shift+T elsewhere", () => {
     const b = binding("reopen-closed-tab");
     expect(b?.label).toBe("Reopen closed tab");
-    expect(single(b!.macDefault)).toEqual({ key: "t", meta: true, alt: true });
+    expect(single(b!.macDefault)).toEqual({ key: "t", meta: true, ctrl: true });
     expect(single(b!.winLinuxDefault)).toEqual({ key: "T", alt: true, shift: true });
   });
 
