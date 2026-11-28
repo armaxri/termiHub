@@ -75,6 +75,14 @@ describe("import", () => {
     expect(query("automation-import-dialog")).toBeNull();
   });
 
+  it("says that a copy was made, under which name, when the name is taken (files-1)", async () => {
+    act(() => useAppStore.setState(automationLibraryState([automation({ id: "old" })])));
+    await importJson({ version: 1, automations: [automation({})] });
+    expect(entry("Deploy (imported)")?.textContent).toBe(
+      "Deploy (imported): imported as a copy, because “Deploy” is already in your library"
+    );
+  });
+
   it("says per automation what is off, runs programs, was removed and is missing (A-049)", async () => {
     await importJson({
       version: 1,
