@@ -1389,3 +1389,76 @@ describe("one sidebar empty state (#6156)", () => {
     expect(offenders, "Sidebars use the inline EmptyState:\n" + offenders.join("\n")).toEqual([]);
   });
 });
+
+/**
+ * Icon size scale (#6157, audit UI-028).
+ *
+ * Lucide icons came in 16 sizes, several off-grid (11, 13, 15). The scale is
+ * `ICON_SIZE` in src/components/ui/iconSize.ts (xs 12 · sm 14 · md 16 · lg 20 ·
+ * xl 24 · hero 32), mirrored as `--icon-*` in variables.css for CSS-sized
+ * glyphs. A JSX `size={…}` never carries a number: it names a tier.
+ */
+const ICON_SCALE = { xs: 12, sm: 14, md: 16, lg: 20, xl: 24, hero: 32 };
+
+/** Each `size={…}` expression in `tsx` that contains a numeric literal. */
+function literalIconSizes(tsx: string): string[] {
+  const out: string[] = [];
+  for (const m of tsx.matchAll(/\bsize=\{/g)) {
+    let depth = 1;
+    let i = m.index! + m[0].length;
+    const start = i;
+    for (; i < tsx.length && depth > 0; i++) {
+      if (tsx[i] === "{") depth++;
+      else if (tsx[i] === "}") depth--;
+    }
+    const expr = tsx.slice(start, i - 1);
+    // A number on its own, not part of a name (ICON_SIZE.xs) or a string.
+    if (/(^|[^\w."'`])\d+(\.\d+)?(?![\w"'`])/.test(expr)) out.push(`size={${expr.trim()}}`);
+  }
+  return out;
+}
+
+describe("icon size scale (#6157)", () => {
+  it("defines the scale in TS and CSS with the same values", () => {
+    // Read as text: the guard must still load (and say why) when the module is missing.
+    const iconFile = join(UI_DIR, "iconSize.ts");
+    const ts = statSync(iconFile, { throwIfNoEntry: false }) ? readFileSync(iconFile, "utf8") : "";
+    const body = ts.match(/export const ICON_SIZE = \{([^}]*)\}/)?.[1] ?? "";
+    const scale = Object.fromEntries(
+      [...body.matchAll(/(\w+):\s*(\d+)/g)].map((m) => [m[1], Number(m[2])])
+    );
+    expect(scale, "src/components/ui/iconSize.ts must export ICON_SIZE").toEqual(ICON_SCALE);
+    const css = stripCssComments(readFileSync(join(STYLES_DIR, "variables.css"), "utf8"));
+    for (const [tier, px] of Object.entries(ICON_SCALE)) {
+      expect(css, `variables.css must define --icon-${tier}: ${px}px`).toMatch(
+        new RegExp(`--icon-${tier}:\\s*${px}px;`)
+      );
+    }
+  });
+
+  it("flags a numeric icon size and accepts a tier (guard self-check)", () => {
+    expect(literalIconSizes("<Plus size={14} />")).toHaveLength(1);
+    expect(literalIconSizes("<Plus size={big ? 16 : 14} />")).toHaveLength(1);
+    expect(literalIconSizes("<Plus size={ICON_SIZE.sm} />")).toEqual([]);
+    expect(literalIconSizes("<Plus size={props.size ?? ICON_SIZE.md} />")).toEqual([]);
+    expect(literalIconSizes('<Spinner size="sm" />')).toEqual([]);
+    expect(literalIconSizes("<Box size={{ w: ICON_SIZE.xs }} />")).toEqual([]);
+  });
+
+  it("names a tier for every JSX size in the app (no numeric literals)", () => {
+    const files = collectFiles(
+      SRC_DIR,
+      (name) => name.endsWith(".tsx") && !name.includes(".test.")
+    ).filter((f) => !toPosix(f).includes("/src/test/"));
+    const offenders = files.flatMap((file) =>
+      literalIconSizes(readFileSync(file, "utf8")).map(
+        (hit) => `${toPosix(file).split("/src/")[1]} ${hit}`
+      )
+    );
+    expect(
+      offenders,
+      `Use ICON_SIZE.{xs,sm,md,lg,xl,hero} from @/components/ui/iconSize (${offenders.length}):\n` +
+        offenders.slice(0, 40).join("\n")
+    ).toEqual([]);
+  });
+});
