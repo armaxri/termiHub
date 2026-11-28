@@ -15,6 +15,7 @@ import { setupVirtualListSizing } from "@/test/virtualListSize";
 import { FileBrowser } from "./FileBrowser";
 import { TooltipProvider } from "@/components/ui";
 import type { TerminalTab, LeafPanel } from "@/types/terminal";
+import type { FileEntry } from "@/types/connection";
 import { seedLayoutState } from "@/test/layoutState";
 import { findFileBrowserAction } from "@/test/fileBrowserMenu";
 
@@ -41,8 +42,16 @@ vi.mock("@/services/events", () => ({
 
 const mockedInvoke = vi.mocked(invoke);
 
-const remote = [
-  { name: "notes.txt", path: "/srv/notes.txt", isDirectory: false, size: 4, modified: "" },
+const remote: FileEntry[] = [
+  {
+    name: "notes.txt",
+    path: "/srv/notes.txt",
+    isDirectory: false,
+    size: 4,
+    modified: "",
+    permissions: null,
+    writable: null,
+  },
 ];
 
 let container: HTMLDivElement;
