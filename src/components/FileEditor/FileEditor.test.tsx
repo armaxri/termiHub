@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import React from "react";
 import { createRoot, Root } from "react-dom/client";
-import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useAppStore, deriveEditorHostLabel, getComposedLayout } from "@/store/appStore";
 import { FileEditor } from "./FileEditor";
@@ -43,8 +42,6 @@ globalThis.ResizeObserver = class {
   unobserve() {}
   disconnect() {}
 } as unknown as typeof ResizeObserver;
-
-const mockedInvoke = vi.mocked(invoke);
 
 /** A small file: under the large-file guard's threshold. */
 function smallFile(path: string): FileEntry {
@@ -736,9 +733,6 @@ describe("FileEditor — sudo host label from the session (#2424 / #2426)", () =
         credentialCalls.push({ cmd: "resolve_credential", args: { ...args } });
         return resolvePw;
       },
-      remove_credential: (args) => {
-        credentialCalls.push({ cmd: "remove_credential", args: { ...args } });
-      },
     });
     return { backend, elevatedCalls, credentialCalls };
   }
@@ -854,13 +848,17 @@ describe("FileEditor — sudo host label from the session (#2424 / #2426)", () =
     const persisted: Array<{ cmd: string; args: unknown }> = [];
     backend.handle({
       restore_resolve_mode: () => "always",
+      report_window_layout: () => undefined,
+      get_workspaces: () => [],
+      set_active_workspace: () => undefined,
+      get_active_workspace: () => null,
+      collect_window_layouts: () => [],
       save_last_session: (args) => {
         persisted.push({ cmd: "save_last_session", args });
       },
       save_workspace: (args) => {
         persisted.push({ cmd: "save_workspace", args });
       },
-      list_workspaces: () => [],
     });
 
     // Every frontend log line (the LogViewer and the durable log's source).
@@ -957,7 +955,7 @@ describe("FileEditor — sudo host label from the session (#2424 / #2426)", () =
   });
 
   it("keeps a rejected saved sudo password and prompts instead (#5156)", async () => {
-    const { elevatedCalls, credentialCalls } = mockBackend({
+    const { backend, elevatedCalls } = mockBackend({
       resolvePw: "stored-pw",
       elevatedResults: [{ kind: "incorrectPassword" }],
     });
@@ -978,7 +976,7 @@ describe("FileEditor — sudo host label from the session (#2424 / #2426)", () =
     // saved password is never deleted.
     expect(elevatedCalls).toHaveLength(1);
     expect(docQuery("sudo-prompt-dialog")).not.toBeNull();
-    expect(credentialCalls.some((c) => c.cmd === "remove_credential")).toBe(false);
+    expect(backend.calls.map((c) => c.command)).not.toContain("remove_credential");
   });
 });
 
@@ -1320,17 +1318,13 @@ describe("FileEditor — session-layer backed tabs (#1557)", () => {
     // a non-SFTP browser. That reject is the capability signal (#2420): the tab
     // stays on the plain read/write path with none of the advanced affordances,
     // and even a read-only verdict would never be probed for.
-    const calls: string[] = [];
-    mockedInvoke.mockImplementation((cmd) => {
-      calls.push(String(cmd));
-      if (cmd === "session_read_file") return Promise.resolve(toB64("body\n"));
-      if (cmd === "session_has_exec_capability")
-        return Promise.reject(
-          new Error("Session file browser does not support SFTP advanced operations")
-        );
+    const backend = installBackend({
+      session_read_file: () => toB64("body\n"),
+      session_has_exec_capability: () => {
+        throw new Error("Session file browser does not support SFTP advanced operations");
+      },
       // Were these ever reached, they would light up the sudo / fallback UI.
-      if (cmd === "session_check_writable") return Promise.resolve("readOnly");
-      return Promise.resolve(undefined);
+      session_check_writable: () => "readOnly",
     });
 
     render(SESSION_META);
@@ -1346,6 +1340,7 @@ describe("FileEditor — session-layer backed tabs (#1557)", () => {
     expect(query("file-editor-download")).toBeNull();
     // The advanced ops are gated off the failed probe: no writability / realpath
     // round-trip is made once the backend reports it is not SFTP-backed.
+    const calls = backend.calls.map((c) => c.command);
     expect(calls).not.toContain("session_check_writable");
     expect(calls).not.toContain("session_realpath");
     // The SFTP-family commands are never used on the session path either.
@@ -1415,56 +1410,53 @@ describe("FileEditor — SFTP-backed session tab reaches SFTP parity (#2420)", (
     execCapable?: boolean;
     writable?: "writable" | "readOnly" | "unknown";
     home?: string;
-    elevatedResults?: unknown[];
+    elevatedResults?: ElevatedWriteResult[];
   }): {
-    calls: string[];
-    elevatedCalls: Array<Record<string, unknown>>;
-    writeCalls: Array<Record<string, unknown>>;
-    downloadCalls: Array<Record<string, unknown>>;
+    commands: () => string[];
+    elevatedCalls: Array<Commands["session_write_file_elevated"]["args"]>;
+    writeCalls: Array<Commands["session_write_file"]["args"]>;
+    downloadCalls: Array<Commands["session_download"]["args"]>;
   } {
     const { execCapable = true, writable = "readOnly", home, elevatedResults = [] } = opts;
-    const calls: string[] = [];
-    const elevatedCalls: Array<Record<string, unknown>> = [];
-    const writeCalls: Array<Record<string, unknown>> = [];
-    const downloadCalls: Array<Record<string, unknown>> = [];
+    const elevatedCalls: Array<Commands["session_write_file_elevated"]["args"]> = [];
+    const writeCalls: Array<Commands["session_write_file"]["args"]> = [];
+    const downloadCalls: Array<Commands["session_download"]["args"]> = [];
     const queue = [...elevatedResults];
-    mockedInvoke.mockImplementation((cmd, args) => {
-      calls.push(String(cmd));
-      if (cmd === "session_read_file") return Promise.resolve(toB64("127.0.0.1 localhost\n"));
+    const backend = installBackend({
+      session_read_file: () => toB64("127.0.0.1 localhost\n"),
       // The probe resolves (does not reject) → the session is SFTP-backed.
-      if (cmd === "session_has_exec_capability") return Promise.resolve(execCapable);
-      if (cmd === "session_check_writable") return Promise.resolve(writable);
-      if (cmd === "session_realpath") {
-        return home !== undefined
-          ? Promise.resolve(home)
-          : Promise.reject(new Error("no realpath"));
-      }
-      if (cmd === "session_write_file_elevated") {
-        elevatedCalls.push((args ?? {}) as Record<string, unknown>);
-        return Promise.resolve(queue.shift() ?? { kind: "success" });
-      }
-      if (cmd === "session_write_file") {
-        writeCalls.push((args ?? {}) as Record<string, unknown>);
-        return Promise.resolve(undefined);
-      }
-      if (cmd === "session_download") {
-        downloadCalls.push((args ?? {}) as Record<string, unknown>);
-        return Promise.resolve("transfer-1");
-      }
-      return Promise.resolve(undefined);
+      session_has_exec_capability: () => execCapable,
+      session_check_writable: () => writable,
+      session_realpath: () => {
+        if (home === undefined) throw new Error("no realpath");
+        return home;
+      },
+      session_write_file_elevated: (args) => {
+        elevatedCalls.push(args);
+        return queue.shift() ?? { kind: "success" };
+      },
+      session_write_file: (args) => {
+        writeCalls.push(args);
+      },
+      session_download: (args) => {
+        downloadCalls.push(args);
+        return "transfer-1";
+      },
     });
-    return { calls, elevatedCalls, writeCalls, downloadCalls };
+    /** The command names called so far. */
+    const commands = () => backend.calls.map((c) => c.command);
+    return { commands, elevatedCalls, writeCalls, downloadCalls };
   }
 
   it("probes writability over the session path and shows the read-only badge", async () => {
-    const { calls } = mockSessionSftp({ execCapable: false, writable: "readOnly" });
+    const { commands } = mockSessionSftp({ execCapable: false, writable: "readOnly" });
     render(SESSION_SSH_META);
     await flush();
     await flush();
 
     // Writability was probed via the session twin, never the SftpManager path.
-    expect(calls).toContain("session_check_writable");
-    expect(calls.filter((c) => c.startsWith("sftp_"))).toEqual([]);
+    expect(commands()).toContain("session_check_writable");
+    expect(commands().filter((c) => c.startsWith("sftp_"))).toEqual([]);
     const badge = query("file-editor-readonly-badge");
     expect(badge).not.toBeNull();
     expect(badge?.getAttribute("title") ?? "").toContain("rw-r--r--");
@@ -1609,13 +1601,14 @@ describe("FileEditor — FTP writability hint + editing limits (PROD-015)", () =
 
   /** Mock a byte-based (non-SFTP) FTP session whose stat reports `writable`. */
   function mockFtpSession(writable: boolean | null | "reject") {
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "session_read_file") return Promise.resolve(toB64("hello\n"));
-      if (cmd === "session_has_exec_capability")
-        return Promise.reject(new Error("session is not SFTP-backed"));
-      if (cmd === "session_stat") {
-        if (writable === "reject") return Promise.reject(new Error("stat failed"));
-        return Promise.resolve({
+    installBackend({
+      session_read_file: () => toB64("hello\n"),
+      session_has_exec_capability: () => {
+        throw new Error("session is not SFTP-backed");
+      },
+      session_stat: () => {
+        if (writable === "reject") throw new Error("stat failed");
+        return {
           name: "readme.txt",
           path: "/pub/readme.txt",
           isDirectory: false,
@@ -1623,9 +1616,8 @@ describe("FileEditor — FTP writability hint + editing limits (PROD-015)", () =
           modified: "",
           permissions: null,
           writable,
-        });
-      }
-      return Promise.resolve(undefined);
+        };
+      },
     });
   }
 
