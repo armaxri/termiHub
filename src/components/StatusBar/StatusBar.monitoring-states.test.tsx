@@ -205,7 +205,7 @@ describe("StatusBar — monitoring states and host menu (#5840)", () => {
     expect(chip.textContent).toContain("remote output unreadable");
     const clearMonitoringError = vi.fn();
     useAppStore.setState({ clearMonitoringError });
-    const retry = q("monitoring-unavailable-retry")!;
+    const retry = q("monitoring-unavailable-retry") as HTMLButtonElement;
     expect(retry.tagName).toBe("BUTTON");
     expect(retry.textContent).toContain("Retry");
     act(() => retry.click());
