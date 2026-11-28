@@ -1109,7 +1109,7 @@ fn check_failure_reason(e: &reqwest::Error, config: &HttpMonitorConfig) -> Strin
 
 /// A timeout as a reader says it: whole seconds in seconds, else milliseconds.
 fn human_timeout(ms: u64) -> String {
-    if ms >= 1000 && ms % 1000 == 0 {
+    if ms >= 1000 && ms.is_multiple_of(1000) {
         format!("{} s", ms / 1000)
     } else {
         format!("{ms} ms")
