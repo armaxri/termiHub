@@ -825,7 +825,9 @@ def test_the_suite_fails_rather_than_skips_in_a_shared_session(monkeypatch):
     class Suite(OsInputUi):
         app = type("App", (), {"pid": 100})()
 
-    with pytest.raises(pytest.fail.Exception, match="xdist workers"):
+    # Still a failure, never a skip — now an environment refusal, which ends the
+    # OS-input session once instead of failing every grade (#6148).
+    with pytest.raises(os_input.HostUnavailable, match="xdist workers"):
         Suite().os_input()
 
 

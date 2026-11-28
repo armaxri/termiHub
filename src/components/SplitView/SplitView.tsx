@@ -1,9 +1,11 @@
 import { useState, useCallback, useEffect, useRef, useMemo, lazy, Suspense } from "react";
 import { connectOverlayIdentity } from "@/utils/connectStages";
 import { Group, Panel, Separator } from "react-resizable-panels";
+import { createPortal } from "react-dom";
 import {
   DndContext,
   DragEndEvent,
+  DragMoveEvent,
   DragStartEvent,
   DragOverlay,
   useSensor,
@@ -95,6 +97,7 @@ import {
   type Point,
   type PointerHit,
 } from "./resolveTabDrop";
+import { createDwellTimer, GROUP_DWELL_MS } from "./dwellTimer";
 import "./SplitView.css";
 
 /**
@@ -247,6 +250,8 @@ export function SplitView() {
   const moveTab = useAppStore((s) => s.moveTab);
   const splitPanelWithTab = useAppStore((s) => s.splitPanelWithTab);
   const moveTabToGroup = useAppStore((s) => s.moveTabToGroup);
+  const moveTabToGroupPanel = useAppStore((s) => s.moveTabToGroupPanel);
+  const setActiveTabGroup = useAppStore((s) => s.setActiveTabGroup);
   const moveTabToWindow = useAppStore((s) => s.moveTabToWindow);
   const setDraggingTabId = useAppStore((s) => s.setDraggingTabId);
   const zoomedTabId = useAppStore((s) => s.zoomedTabId);
@@ -299,6 +304,18 @@ export function SplitView() {
   const dismissZoom = useCallback(() => setZoomedTabId(null), [setZoomedTabId]);
 
   const [activeDragTab, setActiveDragTab] = useState<TerminalTab | null>(null);
+  // The group a drag started in (#6201). A dwell on another group's chip shows
+  // that group mid-drag, but the drag stays with its own DndContext: that
+  // context keeps its handlers and its overlay until the drop.
+  const [dragGroupId, setDragGroupId] = useState<string | null>(null);
+  // Holding a dragged tab over another group's chip for 500 ms shows that group
+  // (tab-groups concept). The timer lives as long as the view.
+  const switchGroupRef = useRef(setActiveTabGroup);
+  switchGroupRef.current = setActiveTabGroup;
+  const [dwell] = useState(() =>
+    createDwellTimer(GROUP_DWELL_MS, (groupId) => switchGroupRef.current(groupId))
+  );
+  useEffect(() => () => dwell.cancel(), [dwell]);
 
   const sensors = useSensors(
     useSensor(ReleaseScopedPointerSensor, { activationConstraint: { distance: 5 } })
@@ -313,24 +330,50 @@ export function SplitView() {
       if (tab) {
         setActiveDragTab(tab);
         setDraggingTabId(tabId);
+        setDragGroupId(activeTabGroupId);
       }
     },
-    [rootPanel, setDraggingTabId]
+    [rootPanel, setDraggingTabId, activeTabGroupId]
+  );
+
+  // Track the chip under the pointer for the dwell switch (#6201). The chips
+  // live outside every DndContext, so they are found by hit-testing the
+  // pointer, as a drop on them is.
+  const handleDragMove = useCallback(
+    (event: DragMoveEvent) => {
+      const ae = asPointerEvent(event.activatorEvent);
+      if (!ae || typeof document.elementsFromPoint !== "function") return;
+      const x = ae.clientX + event.delta.x;
+      const y = ae.clientY + event.delta.y;
+      const chip = describePointerHits(document.elementsFromPoint(x, y)).find(
+        (hit) => hit.tabGroupId !== null
+      );
+      const target = chip?.tabGroupId ?? null;
+      dwell.hover(target !== null && target !== activeTabGroupId ? target : null);
+    },
+    [dwell, activeTabGroupId]
   );
 
   // A drag can end without a drop: Escape, a window resize, or the window being
   // hidden all make dnd-kit cancel instead of calling onDragEnd. Clear the drag
   // state either way so no ghost overlay or "dragging" flag survives (MT-NIN-07).
   const handleDragCancel = useCallback(() => {
+    dwell.cancel();
     setActiveDragTab(null);
     setDraggingTabId(null);
-  }, [setDraggingTabId]);
+    setDragGroupId(null);
+  }, [setDraggingTabId, dwell]);
 
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
+      dwell.cancel();
       setActiveDragTab(null);
       setDraggingTabId(null);
+      setDragGroupId(null);
       const { active, over } = event;
+      // A dwell switched the view mid-drag (#6201): the source group's
+      // droppables are hidden, so the drop reads what is under the pointer.
+      const switched = dragGroupId !== null && dragGroupId !== activeTabGroupId;
 
       const tabId = dndId(active.id);
       const fromPanelId = readDndPanelId(active.data.current);
@@ -348,7 +391,7 @@ export function SplitView() {
       // elementsFromPoint (plural) to look through the DragOverlay, which may sit
       // at the same coordinates and would block elementFromPoint.
       let pointerHits: PointerHit[] = [];
-      if (!over && dropPoint && !isOutsideViewport(dropPoint, viewport)) {
+      if ((!over || switched) && dropPoint && !isOutsideViewport(dropPoint, viewport)) {
         pointerHits = describePointerHits(document.elementsFromPoint(dropPoint.x, dropPoint.y));
       }
 
@@ -361,6 +404,8 @@ export function SplitView() {
         pointerHits,
         dropPoint,
         viewport,
+        dragGroupId: dragGroupId ?? undefined,
+        activeGroupId: activeTabGroupId,
       });
       if (!fromPanelId) return;
       dispatchTabDrop(action, tabId, fromPanelId, {
@@ -370,9 +415,14 @@ export function SplitView() {
         moveTab,
         reorderTabs,
         moveTabToWindow,
+        moveTabToGroupPanel,
       });
     },
     [
+      dwell,
+      dragGroupId,
+      activeTabGroupId,
+      moveTabToGroupPanel,
       rootPanel,
       addTabGroupWithTab,
       reorderTabs,
@@ -396,6 +446,8 @@ export function SplitView() {
     <div className="split-view-groups">
       {tabGroups.map((group) => {
         const isActive = group.id === activeTabGroupId;
+        // The group that owns the drag in flight, else the visible one (#6201).
+        const ownsDrag = group.id === (dragGroupId ?? activeTabGroupId);
         // Active group: use live rootPanel state (always up-to-date).
         // Inactive groups: use saved rootPanel from tabGroups (preserved on switch).
         const panelTree = groupRenderTree(group, rootPanel, activeTabGroupId);
@@ -411,19 +463,24 @@ export function SplitView() {
             <DndContext
               sensors={sensors}
               onDragStart={isActive ? handleDragStart : undefined}
-              onDragEnd={isActive ? handleDragEnd : undefined}
-              onDragCancel={isActive ? handleDragCancel : undefined}
+              onDragMove={ownsDrag ? handleDragMove : undefined}
+              onDragEnd={ownsDrag ? handleDragEnd : undefined}
+              onDragCancel={ownsDrag ? handleDragCancel : undefined}
             >
               <PanelNodeRenderer
                 node={panelTree}
                 setActivePanel={isActive ? setActivePanel : () => {}}
                 activeDragTab={isActive ? activeDragTab : null}
               />
-              {isActive && (
-                <DragOverlay dropAnimation={null}>
-                  {activeDragTab && <TabDragOverlay tab={activeDragTab} />}
-                </DragOverlay>
-              )}
+              {/* In the body, not the group: the source group hides when a dwell
+                  shows another one, and the dragged tab must stay visible (#6201). */}
+              {ownsDrag &&
+                createPortal(
+                  <DragOverlay dropAnimation={null}>
+                    {activeDragTab && <TabDragOverlay tab={activeDragTab} />}
+                  </DragOverlay>,
+                  document.body
+                )}
             </DndContext>
           </div>
         );

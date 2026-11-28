@@ -63,7 +63,7 @@ describe("an automation that was imported in part (B-041)", () => {
 
   it("says so on its row, also one without triggers, with the way to check it", () => {
     expect(query("automation-imported-part-a")?.textContent).toContain(
-      "Imported in part: left out a setting of step 1 (“later”), which this version does not know."
+      "Imported in part: left out 1 setting from a newer termiHub (“later”) in step 1."
     );
     click("automation-imported-check-a");
     expect(query("automation-editor-imported-part")?.textContent).toContain("Check what it does");

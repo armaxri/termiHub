@@ -187,7 +187,8 @@ class TestProductRunFormValidationTiming(ProductRunUi, SidebarUi, ConnectionsUi,
             self.shot(label="pristine")
             problems = pristine_problems(pristine)
 
-            self.driver.click("connection-editor-save")
+            # Save is aria-disabled but clickable on purpose (#5917): force the click.
+            self.driver.click("connection-editor-save", force=True)
             self.wait(lambda: self.driver.exists(NAME_ERROR), what="the Name error after Save")
             attempted = self._shown_errors()
             self.evidence(f"errors after Save {attempted}")
@@ -229,7 +230,8 @@ class TestProductRunDialogValidationTiming(ProductRunUi, AutomationPhaseUi, Side
             problems = pristine_problems(pristine)
             problems += named_save_problems(disabled, note)
 
-            self.driver.click(MACRO_SAVE)
+            # Save is aria-disabled but clickable on purpose (#5917): force the click.
+            self.driver.click(MACRO_SAVE, force=True)
             self.wait(
                 lambda: self.driver.exists(MACRO_STEP_ERROR), what="the keys error after Save"
             )

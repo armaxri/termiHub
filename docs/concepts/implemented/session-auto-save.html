@@ -382,8 +382,10 @@ port        = &lt;1-65535&gt;
           connections are flagged
         </li>
         <li>
-          <strong>Timing</strong>: the last-session snapshot is saved on graceful shutdown (window
-          close) and overwritten each time
+          <strong>Timing</strong>: the last-session snapshot is saved on every layout change,
+          debounced (500 ms), and overwritten each time; closing a window flushes a save still
+          waiting (#6094). A crash therefore loses at most the last half second of layout, where
+          a save on shutdown alone would lose the whole session
         </li>
       </ul>
       <h3 id="privacy-security">Privacy &amp; Security</h3>
@@ -546,7 +548,7 @@ stateDiagram-v2
 </pre
         >
       </div>
-      <h3 id="app-shutdown-snapshot-capture">App Shutdown — Snapshot Capture</h3>
+      <h3 id="app-shutdown-snapshot-capture">Snapshot Capture (on change, flushed on close)</h3>
       <div class="diagram">
         <pre class="mermaid">
 sequenceDiagram
@@ -554,11 +556,12 @@ sequenceDiagram
     participant Store as App Store
     participant Snapshot as Snapshot Storage
 
+    Store-&gt;&gt;Store: Layout changes (tab opened, moved, split…)
+    Store-&gt;&gt;Store: Debounce 500 ms
+    Store-&gt;&gt;Snapshot: Write the last session (open tabs + panel tree)
     App-&gt;&gt;Store: Window close event
-    Store-&gt;&gt;Store: Serialize open tabs + panel tree
-    Store-&gt;&gt;Snapshot: Write last-session.json
-    Snapshot--&gt;&gt;Store: Saved
-    Store-&gt;&gt;App: Proceed with shutdown
+    Store-&gt;&gt;Snapshot: Flush a save still waiting (#6094)
+    Store-&gt;&gt;App: Proceed with the close
 </pre
         >
       </div>
@@ -990,8 +993,9 @@ graph TD
         </p>
       </blockquote>
       <p>
-        <strong>Last synced:</strong> 2026-07-25 (promotion to implemented) ·
-        <strong>Status:</strong> in sync (implemented). Session restore (#586), session history
+        <strong>Last synced:</strong> 2026-11-28 at commit <code>695e6bb04</code> (#6164) ·
+        <strong>Status:</strong> diverged — one product question (row 8). Earlier: synced
+        2026-07-25 at promotion to implemented. Session restore (#586), session history
         (#1883) and the ask/never/always restore dialog (#1884) shipped first; the three remaining
         mockup refinements (#1931/#1932/#1933) have now all merged, so the concept is fully
         implemented.
@@ -1099,6 +1103,29 @@ graph TD
               <td>
                 Landed via <a href="https://github.com/armaxri/termiHub/issues/1933">#1933</a> —
                 merged
+              </td>
+            </tr>
+            <tr>
+              <td>7</td>
+              <td>The snapshot is saved on graceful shutdown (body text and diagram)</td>
+              <td>
+                Saved on every layout change, debounced 500 ms, and flushed on window close
+                (<code>layoutPersistenceSlice.ts</code>, <code>App.tsx</code>, #6094)
+              </td>
+              <td>Design reality</td>
+              <td>Concept edited (2026-11-28, #6164): row 1 had recorded this, the body still said shutdown</td>
+            </tr>
+            <tr>
+              <td>8</td>
+              <td>Recent Sessions: a single click opens a tab and connects</td>
+              <td>
+                A double-click connects (since #1883), like a saved connection; so do Enter on the
+                focused row, its Connect button and its menu. A single click only focuses the row
+              </td>
+              <td>Open — product call</td>
+              <td>
+                Question in #6164's PR. Recommendation: keep the double-click (one gesture for
+                saved and recent connections, no accidental connect) and edit the concept
               </td>
             </tr>
           </tbody>

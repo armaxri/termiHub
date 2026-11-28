@@ -1147,10 +1147,11 @@ for (const viewport of WINDOWS) {
       async function bootSchedules(
         page: Page,
         schedules: unknown,
-        { automations = LIBRARY, runs = RUNS } = {}
+        { automations = LIBRARY, runs = RUNS, localProgramsOn = false } = {}
       ): Promise<void> {
         await boot(page, theme, {
           automationData: { automations, runs, schedules: schedules as typeof SCHEDULES },
+          localProgramsOn,
         });
         await page.locator(id("schedules-section-toggle")).click();
         await page.locator(id("schedule-enable-s1")).waitFor();
@@ -1295,7 +1296,9 @@ for (const viewport of WINDOWS) {
             ARCHIVE,
           ],
         };
-        await bootSchedules(page, blockedSecond);
+        // Local programs on (#6178), so the row's only trouble is the schedule
+        // this test is about, not the Security switch as well.
+        await bootSchedules(page, blockedSecond, { localProgramsOn: true });
         await page.locator(id("schedule-blocked-s1")).waitFor();
         const warning = page.locator(id("automation-next-run-full"));
         await expect(warning).toContainText("will not run");

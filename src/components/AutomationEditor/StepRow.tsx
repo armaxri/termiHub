@@ -4,13 +4,15 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { ChevronRight, GripVertical, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui";
-import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
+import { useLocalProcessSwitches } from "@/hooks/useExperimentalFeatures";
+import { localProcessSwitchOff } from "@/utils/localProcessGate";
 import { fromStepDraft, type StepDraft } from "./automationDraft";
 import { FailureOptions } from "./FailureOptions";
 import { useStepEditor } from "./stepEditorContext";
 import { StepFields } from "./StepFields";
 import {
   LOCAL_PROCESS_STEP_REASON,
+  LOCAL_PROGRAMS_STEP_REASON,
   UNKNOWN_STEP_REASON,
   isKnownStepKind,
   stepKindIcon,
@@ -59,7 +61,7 @@ export function StepRow({
 }: StepRowProps) {
   const { automations, expanded, setExpanded, failureOpen, showFailure, errors, openSettings } =
     useStepEditor();
-  const experimental = useExperimentalFeatures();
+  const localSwitchOff = localProcessSwitchOff(useLocalProcessSwitches());
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: draft.uid,
   });
@@ -75,8 +77,10 @@ export function StepRow({
   const notes = stepNotes(step);
   const blocked = !isKnownStepKind(step.kind)
     ? UNKNOWN_STEP_REASON
-    : step.kind === "run-local-process" && !experimental
-      ? LOCAL_PROCESS_STEP_REASON
+    : step.kind === "run-local-process" && localSwitchOff !== null
+      ? localSwitchOff === "experimental"
+        ? LOCAL_PROCESS_STEP_REASON
+        : LOCAL_PROGRAMS_STEP_REASON
       : null;
   // A wait for the user never goes on by itself, so nothing of it can fail softly.
   const hasFailure = step.kind !== "wait-for-user";
@@ -198,11 +202,14 @@ export function StepRow({
               data-testid={`automation-editor-step-blocked-${path}`}
             >
               {blocked}{" "}
-              {blocked === LOCAL_PROCESS_STEP_REASON && (
+              {(blocked === LOCAL_PROCESS_STEP_REASON ||
+                blocked === LOCAL_PROGRAMS_STEP_REASON) && (
                 <Button
                   variant="secondary"
                   size="sm"
-                  onClick={openSettings}
+                  onClick={() =>
+                    openSettings(blocked === LOCAL_PROCESS_STEP_REASON ? "general" : "security")
+                  }
                   data-testid={`automation-editor-step-open-settings-${path}`}
                 >
                   Open settings

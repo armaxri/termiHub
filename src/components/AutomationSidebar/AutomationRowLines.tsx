@@ -2,7 +2,7 @@ import { Ban, CalendarClock, Hand, Square, TriangleAlert, Zap, ZapOff } from "lu
 import type React from "react";
 import { Button, Toggle } from "@/components/ui";
 import { t, tf } from "@/i18n/catalog";
-import { joinWords } from "@/utils/joinWords";
+import { describeLeftOut } from "@/services/automationFileIo";
 import type { AutomationRunTarget } from "./AutomationRow";
 import type { TriggerState } from "./automationRowInfo";
 
@@ -108,7 +108,7 @@ export function RowLines({
         >
           <TriangleAlert size={10} aria-hidden="true" />
           <span className="automation-item__line-text">
-            {tf("automation.importedInPart", { parts: joinWords(importedInPart) })}{" "}
+            {tf("automation.importedInPart", { parts: describeLeftOut(importedInPart) })}{" "}
             <button
               type="button"
               className="automation-item__link"

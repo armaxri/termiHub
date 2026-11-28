@@ -32,7 +32,7 @@ import sys
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
-from .base import OsInputUnavailable
+from .base import HostUnavailable
 from .xdnd import _Partner
 
 #: Seconds after which a partner window quits by itself (orphan guard).
@@ -488,7 +488,7 @@ class _NativePartner(_Partner):
     def command(self) -> list[str]:
         reason = unavailable_reason()
         if reason is not None:
-            raise OsInputUnavailable(reason)
+            raise HostUnavailable(reason)
         return partner_command(self.mode, self.geometry, self._args)
 
     def drag_ends(self) -> list[dict]:

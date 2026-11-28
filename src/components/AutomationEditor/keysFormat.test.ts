@@ -17,9 +17,10 @@ describe("formatMacroStepData", () => {
     expect(formatMacroStepData("\x1b")).toBe("⎋");
   });
 
-  it("uses caret notation for other control characters", () => {
-    // Ctrl-C is 0x03 → "^C".
-    expect(formatMacroStepData("\x03")).toBe("^C");
+  it("shows a Ctrl+letter key as the editor shows it, other controls in caret notation", () => {
+    // Ctrl-C is 0x03 → "⌃C", as in the open step (live review editor-1).
+    expect(formatMacroStepData("\x03")).toBe("⌃C");
+    expect(formatMacroStepData("\x1c")).toBe("^\\");
     // Backspace (0x7f) → "⌫" (a named control), not caret.
     expect(formatMacroStepData("\x7f")).toBe("⌫");
   });
@@ -55,7 +56,7 @@ describe("macroPreviewLines", () => {
   });
 
   it("keeps non-Enter control keys as readable tokens", () => {
-    expect(macroPreviewLines([{ data: "top\rq\x03", delayMs: 0 }])).toEqual(["top", "q^C"]);
+    expect(macroPreviewLines([{ data: "top\rq\x03", delayMs: 0 }])).toEqual(["top", "q⌃C"]);
   });
 
   it("returns no lines for no steps", () => {
@@ -76,8 +77,14 @@ describe("escapeMacroStepData", () => {
     expect(escapeMacroStepData("C:\\dir")).toBe("C:\\\\dir");
   });
 
+  it("writes a Ctrl+letter key as ⌃ and its letter, as the collapsed step does (editor-1)", () => {
+    expect(escapeMacroStepData("\x03")).toBe("⌃C");
+    expect(escapeMacroStepData("\x01\x1a")).toBe("⌃A⌃Z");
+    // The glyph typed as itself stays itself.
+    expect(escapeMacroStepData("⌃")).toBe("\\⌃");
+  });
+
   it("uses \\xHH for every other control character, so no raw control chars remain", () => {
-    expect(escapeMacroStepData("\x03")).toBe("\\x03");
     expect(escapeMacroStepData("\x7f")).toBe("\\x7f");
     expect(escapeMacroStepData("\x00")).toBe("\\x00");
     // eslint-disable-next-line no-control-regex
@@ -96,6 +103,8 @@ describe("parseMacroStepText", () => {
   it("reads a glyph as its key, and an escaped one as the character itself (A-030)", () => {
     expect(parseMacroStepText("ls⏎⇥⎋")).toEqual({ ok: true, data: "ls\r\t\x1b" });
     expect(parseMacroStepText("\\⏎\\⇥\\⎋")).toEqual({ ok: true, data: "⏎⇥⎋" });
+    expect(parseMacroStepText("⌃C⌃d")).toEqual({ ok: true, data: "\x03\x04" });
+    expect(parseMacroStepText("\\⌃C")).toEqual({ ok: true, data: "⌃C" });
     for (const data of ["⏎", "a⇥\t⎋\x1b\\⏎\r", "\\⏎"]) {
       expect(parseMacroStepText(escapeMacroStepData(data))).toEqual({ ok: true, data });
     }

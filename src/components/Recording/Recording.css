@@ -98,3 +98,8 @@
   flex-shrink: 0;
   color: var(--color-error);
 }
+
+/* Why a save choice is off (live review 2026-11-28). */
+.recording-save__option-note {
+  color: var(--text-secondary);
+}

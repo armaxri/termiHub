@@ -82,7 +82,8 @@ def test_target_reports_dropped_paths_from_its_drop_events(tmp_path):
 
 def test_partner_without_its_program_says_why(monkeypatch, tmp_path):
     monkeypatch.setattr(native_dnd.sys, "platform", "linux")
-    with pytest.raises(native_dnd.OsInputUnavailable, match="XDND"):
+    # A missing partner program is the host's, not the test's (#6148).
+    with pytest.raises(native_dnd.HostUnavailable, match="XDND"):
         NativeTarget(tmp_path, (0, 0, 10, 10)).command()
 
 

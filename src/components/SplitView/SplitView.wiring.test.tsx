@@ -25,9 +25,9 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
-import type { DragEndEvent, DragStartEvent } from "@dnd-kit/core";
+import type { DragEndEvent, DragMoveEvent, DragStartEvent } from "@dnd-kit/core";
 import { useAppStore } from "@/store/appStore";
-import { seedLayoutState } from "@/test/layoutState";
+import { layoutState, seedLayoutState } from "@/test/layoutState";
 import { withTooltip } from "@/test/tooltip";
 import type { LeafPanel, PanelNode, SplitContainer, TerminalTab } from "@/types/terminal";
 
@@ -35,6 +35,7 @@ import type { LeafPanel, PanelNode, SplitContainer, TerminalTab } from "@/types/
 
 interface DndHandlers {
   onDragStart?: (e: DragStartEvent) => void;
+  onDragMove?: (e: DragMoveEvent) => void;
   onDragEnd?: (e: DragEndEvent) => void;
   onDragCancel?: () => void;
 }
@@ -51,6 +52,7 @@ vi.mock("@dnd-kit/core", async (importOriginal) => {
       if (props.onDragEnd) {
         dnd = {
           onDragStart: props.onDragStart as DndHandlers["onDragStart"],
+          onDragMove: props.onDragMove as DndHandlers["onDragMove"],
           onDragEnd: props.onDragEnd as DndHandlers["onDragEnd"],
           onDragCancel: props.onDragCancel as DndHandlers["onDragCancel"],
         };
@@ -223,6 +225,7 @@ const ops = {
   moveTab: vi.fn(),
   reorderTabs: vi.fn(),
   moveTabToWindow: vi.fn(() => Promise.resolve()),
+  moveTabToGroupPanel: vi.fn(),
   setDraggingTabId: vi.fn(),
   setPanelSizes: vi.fn(),
   renameTab: vi.fn(),
@@ -802,5 +805,130 @@ describe("SplitView panel surfaces (#5171)", () => {
     await render();
     expect(document.querySelector(".split-view-groups")).not.toBeNull();
     expect(q("panel-content-left")).toBeNull();
+  });
+});
+
+describe("SplitView — hover a dragged tab over a group chip (#6201)", () => {
+  const GROUP_B_LEAF = leaf("bpanel", [tab("b1", "bpanel")]);
+
+  function seedTwoGroups(): void {
+    const groupA = twoPanelSplit();
+    seedLayoutState({
+      rootPanel: groupA,
+      activePanelId: "left",
+      tabGroups: [
+        { id: "ga", name: "A", rootPanel: groupA, activePanelId: "left" },
+        { id: "gb", name: "B", rootPanel: GROUP_B_LEAF, activePanelId: "bpanel" },
+      ] as never,
+      activeTabGroupId: "ga",
+    });
+  }
+
+  function chipOf(groupId: string): Element {
+    const chip = document.createElement("button");
+    chip.setAttribute("data-tab-group-id", groupId);
+    document.body.appendChild(chip);
+    return chip;
+  }
+
+  function moveTo(x: number, y: number): DragMoveEvent {
+    return {
+      active: { id: "t1", data: { current: { panelId: "left" } } },
+      activatorEvent: pointerAt(100, 100),
+      delta: { x: x - 100, y: y - 100 },
+      over: null,
+      collisions: null,
+    } as unknown as DragMoveEvent;
+  }
+
+  function startDrag(): void {
+    act(() =>
+      dnd.onDragStart!({
+        active: { id: "t1", data: { current: { panelId: "left" } } },
+      } as unknown as DragStartEvent)
+    );
+  }
+
+  const activeGroup = () => layoutState().activeTabGroupId;
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("switches to the hovered group after 500 ms; a drop then lands in its panel", async () => {
+    seedTwoGroups();
+    await render();
+    startDrag();
+    vi.useFakeTimers();
+
+    elementsFromPoint.mockReturnValue([chipOf("gb")]);
+    act(() => dnd.onDragMove!(moveTo(300, 20)));
+    act(() => vi.advanceTimersByTime(499));
+    expect(activeGroup()).toBe("ga");
+    act(() => vi.advanceTimersByTime(1));
+    expect(activeGroup()).toBe("gb");
+
+    // The drag stays owned by the group it started in: its handlers stay bound.
+    expect(dnd.onDragEnd).toBeDefined();
+    const zone = document.querySelector('[data-drop-panel="bpanel"][data-drop-edge="center"]');
+    expect(zone).not.toBeNull();
+    elementsFromPoint.mockReturnValue([zone!]);
+    // A stale droppable of the hidden source group must not win.
+    fireDragEnd(
+      dragEnd({
+        over: { id: "center-right", data: { panelId: "right" } },
+        delta: { x: 200, y: 200 },
+      })
+    );
+    expect(ops.moveTabToGroupPanel).toHaveBeenCalledWith(
+      "t1",
+      "ga",
+      "left",
+      "gb",
+      "bpanel",
+      "center"
+    );
+    expect(ops.splitPanelWithTab).not.toHaveBeenCalled();
+  });
+
+  it("switches nothing when the pointer leaves the chip before 500 ms", async () => {
+    seedTwoGroups();
+    await render();
+    startDrag();
+    vi.useFakeTimers();
+
+    elementsFromPoint.mockReturnValue([chipOf("gb")]);
+    act(() => dnd.onDragMove!(moveTo(300, 20)));
+    act(() => vi.advanceTimersByTime(300));
+    elementsFromPoint.mockReturnValue([]);
+    act(() => dnd.onDragMove!(moveTo(300, 300)));
+    act(() => vi.advanceTimersByTime(1000));
+    expect(activeGroup()).toBe("ga");
+  });
+
+  it("a drop before the dwell cancels the pending switch", async () => {
+    seedTwoGroups();
+    await render();
+    startDrag();
+    vi.useFakeTimers();
+
+    elementsFromPoint.mockReturnValue([chipOf("gb")]);
+    act(() => dnd.onDragMove!(moveTo(300, 20)));
+    fireDragEnd(dragEnd({ over: null }));
+    act(() => vi.advanceTimersByTime(1000));
+    expect(activeGroup()).toBe("ga");
+    expect(ops.moveTabToGroup).toHaveBeenCalledWith("t1", "left", "gb");
+  });
+
+  it("hovering the active group's own chip switches nothing", async () => {
+    seedTwoGroups();
+    await render();
+    startDrag();
+    vi.useFakeTimers();
+
+    elementsFromPoint.mockReturnValue([chipOf("ga")]);
+    act(() => dnd.onDragMove!(moveTo(300, 20)));
+    act(() => vi.advanceTimersByTime(1000));
+    expect(activeGroup()).toBe("ga");
   });
 });
