@@ -86,6 +86,9 @@ describe("CONTEXT_COMMANDS registry", () => {
         "copy-last-command-output",
         "show-services",
         "stop-all-services",
+        // #6161
+        "reopen-closed-tab",
+        ...Array.from({ length: 9 }, (_, i) => `switch-to-tab-${i + 1}`),
       ].sort()
     );
   });

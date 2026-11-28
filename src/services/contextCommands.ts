@@ -1,4 +1,6 @@
 import { showServicesView, stopAllServices } from "@/components/ServicesSidebar/servicesView";
+import { hasClosedTab } from "@/utils/closedTabStack";
+import { reopenLastClosedTab } from "@/utils/reopenTab";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import {
   getActivePanelId,
@@ -102,6 +104,32 @@ function cycleTab(delta: 1 | -1): void {
   const nextIdx = (currentIdx + delta + panel.tabs.length) % panel.tabs.length;
   useAppStore.getState().setActiveTab(panel.tabs[nextIdx].id, panel.id);
 }
+
+/**
+ * The active panel's tab that "Switch to tab `n`" selects (#6161): the `n`th,
+ * and for 9 the last, as in a browser.
+ */
+function nthTab(n: number): TerminalTab | null {
+  const panel = activeLeaf();
+  if (!panel || panel.tabs.length === 0) return null;
+  if (n === 9) return panel.tabs[panel.tabs.length - 1];
+  return panel.tabs[n - 1] ?? null;
+}
+
+/** Select the active panel's {@link nthTab}. */
+function switchToTab(n: number): void {
+  const panel = activeLeaf();
+  const tab = nthTab(n);
+  if (panel && tab) useAppStore.getState().setActiveTab(tab.id, panel.id);
+}
+
+/** "Switch to tab 1"…"9" (#6161). */
+const SWITCH_TO_TAB_COMMANDS: Record<string, ContextCommand> = Object.fromEntries(
+  Array.from({ length: 9 }, (_, i) => [
+    `switch-to-tab-${i + 1}`,
+    { isAvailable: () => nthTab(i + 1) !== null, run: () => switchToTab(i + 1) },
+  ])
+);
 
 /** Whether there is a panel adjacent to the active one in `dir`. */
 function canFocusPanel(dir: FocusDirection): boolean {
@@ -264,6 +292,9 @@ function cycleTabGroup(delta: 1 | -1): void {
 export const CONTEXT_COMMANDS: Record<string, ContextCommand> = {
   "close-tab": { isAvailable: () => !!activeLeaf()?.activeTabId, run: closeActiveTab },
   "next-tab": { isAvailable: hasMultipleTabs, run: () => cycleTab(1) },
+  ...SWITCH_TO_TAB_COMMANDS,
+  // Reopen the newest closed tab (#6161), without its startup command (#6065).
+  "reopen-closed-tab": { isAvailable: hasClosedTab, run: () => void reopenLastClosedTab() },
   "prev-tab": { isAvailable: hasMultipleTabs, run: () => cycleTab(-1) },
   "focus-up": { isAvailable: () => canFocusPanel("up"), run: () => focusPanel("up") },
   "focus-down": { isAvailable: () => canFocusPanel("down"), run: () => focusPanel("down") },
