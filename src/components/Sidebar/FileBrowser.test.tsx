@@ -6,6 +6,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
+import { fakeBackend, type CommandHandlers, type FakeBackend } from "@/test/fakeBackend";
+import { FILE_BROWSER_MOUNT } from "@/test/fileBrowserBackend";
 import { useAppStore } from "@/store/appStore";
 import { currentFileBrowsersView } from "@/store/fileBrowsersBridge";
 import { flushAsync } from "@/test/flushAsync";
@@ -42,7 +44,24 @@ vi.mock("@/services/api", async (importOriginal) => {
   };
 });
 
-const mockedInvoke = vi.mocked(invoke);
+let backend: FakeBackend;
+
+/** A FileEntry with nothing set, for fixtures that name only a few fields. */
+const BLANK_ENTRY: FileEntry = {
+  name: "",
+  path: "",
+  isDirectory: false,
+  size: 0,
+  modified: "",
+  permissions: null,
+  writable: null,
+};
+
+/** Install the typed fake backend (#6151) with the browser's mount calls under `handlers`. */
+function installBackend(handlers: CommandHandlers): FakeBackend {
+  backend = fakeBackend({ ...FILE_BROWSER_MOUNT, ...handlers });
+  return backend;
+}
 
 let container: HTMLDivElement;
 let root: Root;
@@ -90,10 +109,9 @@ describe("FileBrowser – useFileBrowserSync", () => {
     useAppStore.setState(useAppStore.getInitialState());
 
     // Mock file listing commands to return empty entries so navigation doesn't throw.
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "local_list_dir") return Promise.resolve([]);
-      if (cmd === "session_list_files") return Promise.resolve([]);
-      return Promise.resolve(undefined);
+    installBackend({
+      local_list_dir: () => [],
+      session_list_files: () => [],
     });
   });
 
@@ -287,10 +305,9 @@ describe("FileBrowser – useFileBrowserSync", () => {
     // Post-convergence, SSH browses through the shared session layer like FTP /
     // Docker — no `sftp_open` / SftpManager auto-connect. Its SFTP-backed session
     // still drives the dedicated transfer channel, resolved by session id.
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "session_has_exec_capability") return Promise.resolve(true);
-      if (cmd === "session_list_files") return Promise.resolve([]);
-      return Promise.resolve(undefined);
+    installBackend({
+      session_has_exec_capability: () => true,
+      session_list_files: () => [],
     });
 
     const sshTab = makeTab({
@@ -314,7 +331,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
     expect(currentFileBrowsersView().mode).toBe("session");
     expect(useAppStore.getState().sessionFileBrowserId).toBe("ssh-sess-1");
     // No legacy SftpManager connect was attempted.
-    expect(mockedInvoke).not.toHaveBeenCalledWith("sftp_open", expect.anything());
+    expect(invoke).not.toHaveBeenCalledWith("sftp_open", expect.anything());
   });
 
   it("sets fileBrowserMode to 'none' for an FTP tab that has no session yet", async () => {
@@ -756,13 +773,11 @@ describe("FileBrowser – Copy/Cut/Paste UI", () => {
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
 
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "local_list_dir")
-        return Promise.resolve([
-          { name: "test.txt", path: "/home/test.txt", isDirectory: false, size: 10 },
-          { name: "mydir", path: "/home/mydir", isDirectory: true, size: 0 },
-        ]);
-      return Promise.resolve(undefined);
+    installBackend({
+      local_list_dir: () => [
+        { ...BLANK_ENTRY, name: "test.txt", path: "/home/test.txt", size: 10 },
+        { ...BLANK_ENTRY, name: "mydir", path: "/home/mydir", isDirectory: true },
+      ],
     });
   });
 
@@ -1135,9 +1150,8 @@ describe("FileBrowser – Multi-file selection", () => {
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
 
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "local_list_dir") return Promise.resolve(entries);
-      return Promise.resolve(undefined);
+    installBackend({
+      local_list_dir: () => entries,
     });
   });
 
@@ -1400,9 +1414,8 @@ describe("FileBrowser – Windows navigate-up (#555)", () => {
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
 
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "local_list_dir") return Promise.resolve([]);
-      return Promise.resolve(undefined);
+    installBackend({
+      local_list_dir: () => [],
     });
   });
 
@@ -1515,9 +1528,8 @@ describe("FileBrowser – session mode initial path (#630)", () => {
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
 
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "session_list_files") return Promise.resolve([]);
-      return Promise.resolve(undefined);
+    installBackend({
+      session_list_files: () => [],
     });
   });
 
@@ -1545,10 +1557,9 @@ describe("FileBrowser – session mode initial path (#630)", () => {
     });
     await flushAsync();
 
-    const calls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === "session_list_files");
+    const calls = backend.callsTo("session_list_files");
     expect(calls.length).toBeGreaterThan(0);
-    const [, args] = calls[0] as [string, { sessionId: string; path: string }];
-    expect(args.path).toBe("~");
+    expect(calls[0].path).toBe("~");
   });
 
   it("re-navigates a session whose pane still shows another session's listing (#4017)", async () => {
@@ -1556,27 +1567,24 @@ describe("FileBrowser – session mode initial path (#630)", () => {
     // session that reports no cwd (an SFTP-only or FTP host), the previous
     // session's entries counted as "already loaded", so the browser stayed on
     // that session's directory — and an upload landed there (`/etc`).
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "session_list_files") {
-        return Promise.resolve([
-          {
-            name: "passwd",
-            path: "/etc/passwd",
-            isDirectory: false,
-            size: 1,
-            modified: "",
-            permissions: null,
-            writable: null,
-          },
-        ]);
-      }
-      return Promise.resolve(undefined);
+    installBackend({
+      session_list_files: () => [
+        {
+          name: "passwd",
+          path: "/etc/passwd",
+          isDirectory: false,
+          size: 1,
+          modified: "",
+          permissions: null,
+          writable: null,
+        },
+      ],
     });
     await act(async () => {
       await useAppStore.getState().navigateSession("sess-old", "/etc");
     });
     expect(currentFileBrowsersView().session.entries).toHaveLength(1);
-    mockedInvoke.mockClear();
+    backend.clearCalls();
 
     useAppStore.setState({ sessionFileBrowserId: "sess-new" });
     seedFileBrowsers({ mode: "session", session: currentFileBrowsersView().session });
@@ -1590,8 +1598,10 @@ describe("FileBrowser – session mode initial path (#630)", () => {
     });
     await flushAsync();
 
-    const calls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === "session_list_files");
-    expect(calls.map(([, a]) => a)).toContainEqual({ sessionId: "sess-new", path: "~" });
+    expect(backend.callsTo("session_list_files")).toContainEqual({
+      sessionId: "sess-new",
+      path: "~",
+    });
   });
 });
 
@@ -1602,9 +1612,8 @@ describe("FileBrowser – Go to Terminal CWD button", () => {
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
 
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "local_list_dir") return Promise.resolve([]);
-      return Promise.resolve(undefined);
+    installBackend({
+      local_list_dir: () => [],
     });
   });
 
@@ -1714,6 +1723,8 @@ describe("FileBrowser – navigation UX (#1361)", () => {
       isDirectory: true,
       size: 0,
       modified: "2026-01-05T00:00:00Z",
+      permissions: null,
+      writable: null,
     },
     {
       name: "bdir",
@@ -1721,6 +1732,8 @@ describe("FileBrowser – navigation UX (#1361)", () => {
       isDirectory: true,
       size: 0,
       modified: "2026-01-04T00:00:00Z",
+      permissions: null,
+      writable: null,
     },
     {
       name: "big.log",
@@ -1728,6 +1741,8 @@ describe("FileBrowser – navigation UX (#1361)", () => {
       isDirectory: false,
       size: 900,
       modified: "2026-01-01T00:00:00Z",
+      permissions: null,
+      writable: null,
     },
     {
       name: "small.txt",
@@ -1735,6 +1750,8 @@ describe("FileBrowser – navigation UX (#1361)", () => {
       isDirectory: false,
       size: 5,
       modified: "2026-01-02T00:00:00Z",
+      permissions: null,
+      writable: null,
     },
   ];
 
@@ -1743,9 +1760,8 @@ describe("FileBrowser – navigation UX (#1361)", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "local_list_dir") return Promise.resolve(navEntries);
-      return Promise.resolve(undefined);
+    installBackend({
+      local_list_dir: () => navEntries,
     });
   });
 
@@ -2012,9 +2028,8 @@ describe("FileBrowser – symlinks (#1513)", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "local_list_dir") return Promise.resolve(symlinkEntries);
-      return Promise.resolve(undefined);
+    installBackend({
+      local_list_dir: () => symlinkEntries,
     });
   });
 
@@ -2073,10 +2088,9 @@ describe("FileBrowser – session-layer editor tabs (#1557)", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "local_list_dir") return Promise.resolve([]);
-      if (cmd === "session_list_files") return Promise.resolve([]);
-      return Promise.resolve(undefined);
+    installBackend({
+      local_list_dir: () => [],
+      session_list_files: () => [],
     });
   });
 
@@ -2205,10 +2219,9 @@ describe("FileBrowser – failed-listing recovery controls (SM-008)", () => {
     useAppStore.setState(useAppStore.getInitialState());
     useAppStore.setState({ sidebarView: "files" });
 
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "session_has_exec_capability") return Promise.resolve(true);
-      if (cmd === "session_list_files") return Promise.resolve([]);
-      return Promise.resolve(undefined);
+    installBackend({
+      session_has_exec_capability: () => true,
+      session_list_files: () => [],
     });
   });
 
@@ -2287,7 +2300,7 @@ describe("FileBrowser – failed-listing recovery controls (SM-008)", () => {
 
   it("Retry re-invokes the directory listing", async () => {
     await renderFailedSessionBrowser();
-    mockedInvoke.mockClear();
+    backend.clearCalls();
 
     const retry = container.querySelector(
       '[data-testid="file-browser-error-retry"]'
@@ -2297,7 +2310,7 @@ describe("FileBrowser – failed-listing recovery controls (SM-008)", () => {
     });
     await flushAsync();
 
-    const relisted = mockedInvoke.mock.calls.filter(([cmd]) => cmd === "session_list_files");
+    const relisted = backend.callsTo("session_list_files");
     expect(relisted.length).toBeGreaterThan(0);
   });
 
