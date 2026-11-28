@@ -16,6 +16,9 @@ import { act } from "react";
 import { flushAsync } from "@/test/flushAsync";
 import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
+import { fakeBackend, type CommandHandlers, type FakeBackend } from "@/test/fakeBackend";
+import { FILE_BROWSER_MOUNT, LOCAL_FILE_ACTIONS_OK } from "@/test/fileBrowserBackend";
+import type { FileEntry } from "@/types/generated/FileEntry";
 import { useAppStore } from "@/store/appStore";
 import { setupFileBrowsersRegion } from "@/test/fileBrowsersRegionTestHarness";
 import { setupVirtualListSizing } from "@/test/virtualListSize";
@@ -81,14 +84,36 @@ vi.mock("@/services/api", async (importOriginal) => {
   };
 });
 
-const mockedInvoke = vi.mocked(invoke);
+let backend: FakeBackend;
+
+/** Install the typed fake backend (#6151) with the browser's mount calls under `handlers`. */
+function installBackend(handlers: CommandHandlers): FakeBackend {
+  backend = fakeBackend({ ...FILE_BROWSER_MOUNT, ...LOCAL_FILE_ACTIONS_OK, ...handlers });
+  return backend;
+}
 
 let container: HTMLDivElement;
 let root: Root;
 
-const entries = [
-  { name: "report.pdf", path: "/home/report.pdf", isDirectory: false, size: 10, modified: "" },
-  { name: "mydir", path: "/home/mydir", isDirectory: true, size: 0, modified: "" },
+const entries: FileEntry[] = [
+  {
+    name: "report.pdf",
+    path: "/home/report.pdf",
+    isDirectory: false,
+    size: 10,
+    modified: "",
+    permissions: null,
+    writable: null,
+  },
+  {
+    name: "mydir",
+    path: "/home/mydir",
+    isDirectory: true,
+    size: 0,
+    modified: "",
+    permissions: null,
+    writable: null,
+  },
 ];
 
 function makeTab(overrides: Partial<TerminalTab>): TerminalTab {
@@ -180,9 +205,8 @@ describe("FileBrowser — mutating/clipboard action feedback (#1399)", () => {
     writeClipboardMock.mockImplementation(() => Promise.resolve());
     saveMock.mockClear();
     saveMock.mockImplementation(() => Promise.resolve("/downloads/report.pdf"));
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "local_list_dir") return Promise.resolve(entries);
-      return Promise.resolve(undefined);
+    installBackend({
+      local_list_dir: () => entries,
     });
   });
 
@@ -199,7 +223,7 @@ describe("FileBrowser — mutating/clipboard action feedback (#1399)", () => {
     await startRenameOnReport();
     await commitRenameTo("renamed.pdf");
 
-    expect(mockedInvoke).toHaveBeenCalledWith("local_rename", {
+    expect(invoke).toHaveBeenCalledWith("local_rename", {
       oldPath: "/home/report.pdf",
       newPath: "/home/renamed.pdf",
       overwrite: false,
@@ -209,10 +233,11 @@ describe("FileBrowser — mutating/clipboard action feedback (#1399)", () => {
   });
 
   it("shows an error toast when a rename fails", async () => {
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "local_list_dir") return Promise.resolve(entries);
-      if (cmd === "local_rename") return Promise.reject(new Error("permission denied"));
-      return Promise.resolve(undefined);
+    installBackend({
+      local_list_dir: () => entries,
+      local_rename: () => {
+        throw new Error("permission denied");
+      },
     });
     await renderLocal();
     await startRenameOnReport();
@@ -242,16 +267,17 @@ describe("FileBrowser — mutating/clipboard action feedback (#1399)", () => {
     await renderLocal();
     await createFolderNamed("newdir");
 
-    expect(mockedInvoke).toHaveBeenCalledWith("local_mkdir", { path: "/home/newdir" });
+    expect(invoke).toHaveBeenCalledWith("local_mkdir", { path: "/home/newdir" });
     expect(toastSuccess).not.toHaveBeenCalled();
     expect(toastError).not.toHaveBeenCalled();
   });
 
   it("shows an error toast when new folder creation fails", async () => {
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "local_list_dir") return Promise.resolve(entries);
-      if (cmd === "local_mkdir") return Promise.reject(new Error("exists"));
-      return Promise.resolve(undefined);
+    installBackend({
+      local_list_dir: () => entries,
+      local_mkdir: () => {
+        throw new Error("exists");
+      },
     });
     await renderLocal();
     await createFolderNamed("newdir");
@@ -280,7 +306,7 @@ describe("FileBrowser — mutating/clipboard action feedback (#1399)", () => {
     await renderLocal();
     await createFileNamed("notes.txt");
 
-    expect(mockedInvoke).toHaveBeenCalledWith("local_write_file", {
+    expect(invoke).toHaveBeenCalledWith("local_write_file", {
       path: "/home/notes.txt",
       content: "",
       exclusive: true,
@@ -290,10 +316,11 @@ describe("FileBrowser — mutating/clipboard action feedback (#1399)", () => {
   });
 
   it("shows an error toast when new file creation fails", async () => {
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "local_list_dir") return Promise.resolve(entries);
-      if (cmd === "local_write_file") return Promise.reject(new Error("no space"));
-      return Promise.resolve(undefined);
+    installBackend({
+      local_list_dir: () => entries,
+      local_write_file: () => {
+        throw new Error("no space");
+      },
     });
     await renderLocal();
     await createFileNamed("notes.txt");
@@ -363,7 +390,7 @@ describe("FileBrowser — mutating/clipboard action feedback (#1399)", () => {
     await renderLocal();
     await invokeContextAction("report.pdf", "context-file-download");
 
-    expect(mockedInvoke).toHaveBeenCalledWith("local_copy_start", {
+    expect(invoke).toHaveBeenCalledWith("local_copy_start", {
       srcPath: "/home/report.pdf",
       destPath: "/downloads/report.pdf",
     });
@@ -373,10 +400,11 @@ describe("FileBrowser — mutating/clipboard action feedback (#1399)", () => {
   });
 
   it("shows an error toast when a local download (Save-as) fails", async () => {
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "local_list_dir") return Promise.resolve(entries);
-      if (cmd === "local_copy_start") return Promise.reject(new Error("permission denied"));
-      return Promise.resolve(undefined);
+    installBackend({
+      local_list_dir: () => entries,
+      local_copy_start: () => {
+        throw new Error("permission denied");
+      },
     });
     await renderLocal();
     await invokeContextAction("report.pdf", "context-file-download");
@@ -391,7 +419,7 @@ describe("FileBrowser — mutating/clipboard action feedback (#1399)", () => {
     await renderLocal();
     await invokeContextAction("report.pdf", "context-file-download");
 
-    expect(mockedInvoke).not.toHaveBeenCalledWith("local_copy_start", expect.anything());
+    expect(invoke).not.toHaveBeenCalledWith("local_copy_start", expect.anything());
     expect(toastSuccess).not.toHaveBeenCalled();
     expect(toastError).not.toHaveBeenCalled();
   });
