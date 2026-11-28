@@ -508,6 +508,12 @@ jobs:
       - name: Check IPC invoke argument contract
         run: node scripts/internal/check-invoke-contract.mjs
 
+      # The typed command map the tests' fake backend is keyed by (#6151): a
+      # renamed or retyped invoke() must regenerate it, which then breaks the
+      # tests' handlers at compile time.
+      - name: Check the typed IPC command map is up to date
+        run: node scripts/internal/gen-command-types.mjs --check
+
       - name: Check formatting with Prettier
         run: pnpm run format:check
 

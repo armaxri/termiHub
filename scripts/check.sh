@@ -101,6 +101,16 @@ else
 fi
 
 echo ""
+echo "=== Typed IPC command map ==="
+# src/types/commands.generated.ts follows every production invoke() call, so the
+# tests' typed fake backend breaks when a command is renamed or retyped (#6151).
+if node scripts/internal/gen-command-types.mjs --check; then
+    echo "PASS"
+else
+    FAILED=1
+fi
+
+echo ""
 echo "=== uv version pin consistency ==="
 # .github/uv-version is the only uv pin; no direct astral-sh/setup-uv (WA-CI-017).
 if node scripts/internal/check-uv-version.mjs; then
