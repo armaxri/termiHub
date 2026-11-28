@@ -61,6 +61,7 @@ export const solarizedLightTheme: ThemeDefinition = {
     // Borders
     borderPrimary: "#cac4b3",
     borderSecondary: "#eee8d5",
+    borderInput: "#8a8a80", // #6154: 3:1 on the input and around it
 
     // Accent / focus
     // #5164: blue darkened (same hue) so white button text reaches AA
@@ -112,6 +113,11 @@ export const solarizedLightTheme: ThemeDefinition = {
     ansiBrightWhite: "#fdf6e3", // base3
 
     // Scrollbar
+    // Indicators (#6154): text on the status bar at 4.5:1, marks at 3:1.
+    colorNotice: "#9c4a00",
+    broadcastAccent: "#a8400e",
+    macroAccent: "#5f63b8",
+
     scrollbarThumb: "rgba(147, 161, 161, 0.55)",
     scrollbarThumbHover: "rgba(147, 161, 161, 0.75)",
   },
