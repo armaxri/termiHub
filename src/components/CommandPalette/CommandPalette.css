@@ -89,8 +89,8 @@
 .command-palette__type {
   flex-shrink: 0;
   font-size: var(--font-size-2xs);
+  /* Sentence case, as the copy style asks (#5848, #6183). */
   color: var(--text-secondary);
-  text-transform: uppercase;
 }
 
 /* Sub-picker breadcrumb (#3430): shows which picker is open; click to go back. */

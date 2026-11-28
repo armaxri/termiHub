@@ -242,6 +242,7 @@ export function CommandPalette(): React.ReactElement {
   const setOpen = useAppStore((s) => s.setCommandPaletteOpen);
   const { connections } = useProjectedConnections();
   const automations = useAppStore((s) => s.automations);
+  const connectionTypes = useAppStore((s) => s.connectionTypes);
   const runAutomation = useAppStore((s) => s.runAutomation);
   const experimental = useExperimentalFeatures();
   const localSwitches = useLocalProcessSwitches();
@@ -617,14 +618,18 @@ export function CommandPalette(): React.ReactElement {
                             : automationDoes(entry.automation, runTarget)}
                         {entry.triggersOff ? " · triggers off" : ""}
                       </span>
-                      <span className="command-palette__type">automation</span>
+                      <span className="command-palette__type">Automation</span>
                     </>
                   ) : entry.kind === "broadcast" || entry.kind === "broadcast-pick" ? (
-                    <span className="command-palette__type">broadcast</span>
+                    <span className="command-palette__type">Broadcast</span>
                   ) : entry.kind === "workspace" ? (
-                    <span className="command-palette__type">workspace</span>
+                    <span className="command-palette__type">Workspace</span>
                   ) : (
-                    <span className="command-palette__type">{entry.connection.config.type}</span>
+                    <span className="command-palette__type">
+                      {/* The type's own name ("SSH"), sentence case like the rest (#6183). */}
+                      {connectionTypes.find((ct) => ct.typeId === entry.connection.config.type)
+                        ?.displayName ?? entry.connection.config.type}
+                    </span>
                   )}
                 </li>
               );
