@@ -386,6 +386,50 @@ describe("useSessionFileSystem — SFTP-backed transport (probe resolves)", () =
     expect(vi.mocked(sessionReadFile)).not.toHaveBeenCalled();
   });
 
+  it("uploads every picked file, one after another, through the given upload (#6165)", async () => {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    vi.mocked(open).mockResolvedValueOnce(["/local/a.txt", "/local/b.txt", "/local/c.txt"]);
+    const api = await mountHook();
+    const order: string[] = [];
+    let releaseFirst: () => void = () => {};
+    const upload = vi.fn(async (path: string) => {
+      order.push(`start ${path}`);
+      // The first one waits (a conflict question): the next must not start yet.
+      if (path === "/local/a.txt") await new Promise<void>((r) => (releaseFirst = r));
+      order.push(`end ${path}`);
+    });
+    let done: Promise<void> | undefined;
+    await act(async () => {
+      done = api.uploadFile(upload);
+      await Promise.resolve();
+    });
+    expect(vi.mocked(open)).toHaveBeenCalledWith(expect.objectContaining({ multiple: true }));
+    expect(order).toEqual(["start /local/a.txt"]);
+    await act(async () => {
+      releaseFirst();
+      await done;
+    });
+    expect(order).toEqual([
+      "start /local/a.txt",
+      "end /local/a.txt",
+      "start /local/b.txt",
+      "end /local/b.txt",
+      "start /local/c.txt",
+      "end /local/c.txt",
+    ]);
+  });
+
+  it("uploads nothing when the picker is cancelled (#6165)", async () => {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    vi.mocked(open).mockResolvedValueOnce(null);
+    const api = await mountHook();
+    const upload = vi.fn(async () => {});
+    await act(async () => {
+      await api.uploadFile(upload);
+    });
+    expect(upload).not.toHaveBeenCalled();
+  });
+
   it("routes uploadFileFromPath through the dedicated session_upload channel", async () => {
     const api = await mountHook();
     await act(async () => {
