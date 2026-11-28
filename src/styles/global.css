@@ -82,10 +82,10 @@ body::after {
 
 /* Focus styles */
 :focus-visible {
-  outline: none;
-  box-shadow:
-    0 0 0 2px var(--bg-primary),
-    0 0 0 4px var(--focus-border);
+  /* An outline off the element (#6154): it shows on whatever surface is around
+     it, where a ring padded with --bg-primary did not. */
+  outline: var(--focus-ring-width) solid var(--focus-border);
+  outline-offset: var(--focus-ring-offset);
 }
 
 /* Button reset */
@@ -104,7 +104,7 @@ textarea {
   font: inherit;
   color: var(--text-primary);
   background-color: var(--bg-input);
-  border: 1px solid var(--border-primary);
+  border: 1px solid var(--border-input);
   border-radius: var(--radius-md);
   padding: var(--spacing-xs) var(--spacing-sm);
   transition:
