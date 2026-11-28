@@ -360,6 +360,10 @@ struct OwedStop {
 pub struct HostedServices<K: HostedKind> {
     inner: Arc<Mutex<Inner<K::State>>>,
     file: Option<Arc<OwedFile>>,
+    /// Held while an owed stop is sent, so a Restart's send and the Stop's
+    /// background send never overlap: the second finds it confirmed and sends
+    /// nothing, so no late stop reaches the agent after the new start.
+    sending_stop: Arc<Mutex<()>>,
 }
 
 impl<K: HostedKind> Clone for HostedServices<K> {
@@ -367,6 +371,7 @@ impl<K: HostedKind> Clone for HostedServices<K> {
         Self {
             inner: Arc::clone(&self.inner),
             file: self.file.clone(),
+            sending_stop: Arc::clone(&self.sending_stop),
         }
     }
 }
@@ -383,6 +388,7 @@ impl<K: HostedKind> Default for HostedServices<K> {
                 expected: HashMap::new(),
             })),
             file: None,
+            sending_stop: Arc::new(Mutex::new(())),
         }
     }
 }
@@ -763,11 +769,18 @@ impl<K: HostedKind> HostedServices<K> {
         now: Instant,
     ) -> bool {
         let key = (agent_id.to_string(), id.to_string());
+        // One send at a time (a Restart sends while the Stop's background send
+        // may still be out). A poisoned lock still serializes.
+        let _sending = self
+            .sending_stop
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let Some(seq) = self.lock().owed.get(&key).map(|owed| owed.seq) else {
             return true;
         };
         let probe = ask::<K>(client, agent_id, id, &Ask::Stop).0;
-        self.settle(&key, seq, &probe, now)
+        // Settled meanwhile by the poller's stop: that confirmed it too.
+        self.settle(&key, seq, &probe, now) || !self.lock().owed.contains_key(&key)
     }
 
     fn settle(
