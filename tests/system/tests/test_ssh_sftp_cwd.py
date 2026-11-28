@@ -7,16 +7,25 @@ On macOS the suite runs against the native sshd fixture (#5421). There ``/tmp``
 and ``/var`` are symlinks into ``/private``, so the browser may show the path the
 shell was given or the one SFTP ``realpath`` resolves it to (``/private/tmp``).
 The checks are substring matches, which accept both.
+
+On Windows the suite runs against the native sshd with Git Bash as the login
+shell (#5449, #6147). Win32-OpenSSH is followed only through the shell hook, so
+the connection turns Command Marks on there. Git Bash reports its directory as an
+MSYS drive path (``/c/Users``), which the browser opens as the server's
+``/C:/Users``; MSYS mounts such as ``/tmp`` cannot be followed, so the suite
+changes into drive folders instead.
 """
 
 from __future__ import annotations
 
+import sys
 import time
 
 import pytest
 
 from termihub_harness import (
     ConnectionsUi,
+    FilesUi,
     PasswordPromptUi,
     SSH_USERNAME,
     SftpUi,
@@ -30,10 +39,34 @@ from termihub_harness import (
 
 pytestmark = pytest.mark.integration
 
+WINDOWS = sys.platform == "win32"
+
+#: Two folders to change into. Windows: Git Bash drive paths, which the browser
+#: opens as the server's ``/C:/…`` (its header may keep the path it was given).
+FIRST_DIR, SECOND_DIR = ("/c/Users", "/c/Windows") if WINDOWS else ("/tmp", "/var/log")
+
+#: An entry each Windows folder lists: the browser really opened it, rather than
+#: keeping the path it was given over a failed listing.
+LISTS = {"/c/Users": "Public", "/c/Windows": "System32"}
+
+
+def _shows(path: str, folder: str) -> bool:
+    """Whether the browser's ``path`` is at ``folder`` (or a resolved form of it).
+
+    A substring check: macOS may resolve ``/tmp`` to ``/private/tmp``, and on
+    Windows ``/c/Users`` and ``/C:/Users`` are the same folder.
+    """
+    if WINDOWS:
+        return folder.lower() in path.replace(":", "").lower()
+    return folder in path
+
 
 @pytest.mark.usefixtures("ssh_fixtures")
-@pytest.mark.native_sshd(platforms=("darwin",))
-class TestSshSftpCwd(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, PasswordPromptUi, SshUi, SftpUi, SystemTest):
+@pytest.mark.native_sshd
+class TestSshSftpCwd(
+    TerminalUi, TabsUi, SidebarUi, ConnectionsUi, PasswordPromptUi, SshUi, SftpUi, FilesUi,
+    SystemTest,
+):
     @pytest.fixture(autouse=True)
     def _close_tabs_between_tests(self):
         # The file browser tracks the *active* tab's CWD, so leftover SSH tabs
@@ -42,19 +75,24 @@ class TestSshSftpCwd(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, PasswordPromp
         self.close_all_tabs()
         self.switch_to_connections_sidebar()
 
+    def _connect(self, name: str) -> None:
+        # A Windows host is followed only through the shell hook (#5028).
+        self.connect_ssh_password(name, command_marks=True if WINDOWS else None)
+
     def test_follows_cd_to_tmp(self):
-        self.connect_ssh_password(unique_name("sftp-cwd-tmp"))
-        self.run_command("cd /tmp")
+        self._connect(unique_name("sftp-cwd-tmp"))
+        self.run_command(f"cd {FIRST_DIR}")
         self._cd_settles()
-        path = self.connect_sftp_browser()
+        self.connect_sftp_browser()
         # A substring: "/private/tmp" on macOS (see the module docstring).
         assert self.wait(
-            lambda: "/tmp" in self.file_browser_path(), what="the browser at /tmp"
+            lambda: _shows(self.file_browser_path(), FIRST_DIR), what=f"the browser at {FIRST_DIR}"
         )
+        self._lists(FIRST_DIR)
 
     def test_follows_cd_to_home(self):
-        self.connect_ssh_password(unique_name("sftp-cwd-home"))
-        self.run_command("cd /tmp")
+        self._connect(unique_name("sftp-cwd-home"))
+        self.run_command(f"cd {FIRST_DIR}")
         self._cd_settles()
         self.run_command("cd ~")
         self._cd_settles()
@@ -65,25 +103,26 @@ class TestSshSftpCwd(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, PasswordPromp
         )
 
     def test_follows_cd_to_var_log(self):
-        self.connect_ssh_password(unique_name("sftp-cwd-var"))
-        self.run_command("cd /var/log")
+        self._connect(unique_name("sftp-cwd-var"))
+        self.run_command(f"cd {SECOND_DIR}")
         self._cd_settles()
         self.connect_sftp_browser()
         assert self.wait(
-            lambda: "/var/log" in self.file_browser_path(),
-            what="the browser at /var/log",
+            lambda: _shows(self.file_browser_path(), SECOND_DIR),
+            what=f"the browser at {SECOND_DIR}",
         )
+        self._lists(SECOND_DIR)
 
     def test_updates_when_switching_ssh_tabs(self):
         name1 = unique_name("sftp-switch1")
         name2 = unique_name("sftp-switch2")
-        self.connect_ssh_password(name1)
-        self.run_command("cd /tmp")
+        self._connect(name1)
+        self.run_command(f"cd {FIRST_DIR}")
         self._cd_settles()
 
         self.switch_to_connections_sidebar()
-        self.connect_ssh_password(name2)
-        self.run_command("cd /var")
+        self._connect(name2)
+        self.run_command(f"cd {SECOND_DIR}")
         self._cd_settles()
 
         # Active (second) tab's CWD shows in the browser.
@@ -95,6 +134,10 @@ class TestSshSftpCwd(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, PasswordPromp
         assert tab1 is not None
         self.switch_to_tab(tab1["id"])
         assert self.wait(lambda: self.file_browser_path() != "", what="the updated path")
+
+    def _lists(self, folder: str) -> None:
+        if folder in LISTS:
+            self.wait_for_file_row(LISTS[folder])
 
     def _cd_settles(self) -> None:
         # Give the shell + CWD tracking a beat to report the new directory.

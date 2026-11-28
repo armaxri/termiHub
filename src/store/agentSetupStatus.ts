@@ -91,7 +91,10 @@ interface AgentSetupStatusState {
 export function setupPhaseAfterStep(step: string): AgentSetupPhase | null {
   if (step === "done" || step === "installed") return "installed";
   if (step === "unknown") return "unknown";
-  if (step === "error" || step === "failed" || step === "cancelled") return null;
+  // "ended": a POSIX setup that did not install; its tab says why (#5518).
+  if (step === "error" || step === "failed" || step === "cancelled" || step === "ended") {
+    return null;
+  }
   return "installing";
 }
 

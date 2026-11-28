@@ -195,6 +195,13 @@ describe("HistorySection (#5818, slice 9)", () => {
     );
     await openClearConfirm();
     expect(document.body.textContent).toContain("Clear the history of “Rotate logs”?");
+    // Both clear for good: both look dangerous, and each names its scope (history-1).
+    const confirm = query("automation-history-clear-confirm-confirm")!;
+    const all = query("automation-history-clear-confirm-alternate")!;
+    expect(confirm.textContent?.trim()).toBe("Clear this history");
+    expect(all.textContent?.trim()).toBe("Clear all history");
+    expect(confirm.className).toContain("ui-btn--danger");
+    expect(all.className).toContain("ui-btn--danger");
     await act(async () => {
       query("automation-history-clear-confirm-confirm")!.click();
     });

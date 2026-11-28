@@ -3,9 +3,13 @@ import { useAgentSetupStatus } from "@/store/agentSetupStatus";
 import { toast } from "@/components/ui";
 import { useTauriSubscription } from "./useTauriListener";
 
-/** The steps that report a checked Windows setup's outcome (#5992). */
+/**
+ * The steps that report a setup's outcome after its dialog closed: a checked
+ * Windows setup's (#5992), and a POSIX setup's `done` once its shell ended and
+ * its path is stored (#5518).
+ */
 function reportOutcome(step: string, message: string, agentName: string): void {
-  if (step === "installed") {
+  if (step === "installed" || step === "done") {
     // toast-policy: background — checked on the host after the setup dialog closed
     toast.success(`Agent installed on ${agentName}`);
   } else if (step === "failed") {
