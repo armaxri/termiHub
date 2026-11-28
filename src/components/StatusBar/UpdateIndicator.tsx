@@ -25,26 +25,19 @@ export function UpdateIndicator() {
   if (!hasUpdate && !isDevelop) return null;
 
   const handleClick = () => {
-    if (hasUpdate) {
-      // Toggle: un-dismiss so the popup reappears.
-      useAppStore.setState({ updateNotificationDismissed: false });
-    }
+    // Toggle: un-dismiss so the popup reappears.
+    useAppStore.setState({ updateNotificationDismissed: false });
   };
 
-  return (
-    <button
-      className={`status-bar__item${hasUpdate ? " status-bar__item--interactive" : ""}`}
-      onClick={hasUpdate ? handleClick : undefined}
-      title={
-        hasUpdate && updateInfo && isDevelopUpdate(updateInfo)
-          ? `${developUpdateSummary(updateInfo)} — click to view`
-          : hasUpdate
-            ? `termiHub v${updateInfo?.latestVersion} is available — click to view`
-            : `Develop branch build of termiHub v${appInfo?.version ?? ""}`
-      }
-      data-testid="update-indicator"
-      style={{ cursor: hasUpdate ? "pointer" : "default" }}
-    >
+  const title =
+    hasUpdate && updateInfo && isDevelopUpdate(updateInfo)
+      ? `${developUpdateSummary(updateInfo)} — click to view`
+      : hasUpdate
+        ? `termiHub v${updateInfo?.latestVersion} is available — click to view`
+        : `Develop branch build of termiHub v${appInfo?.version ?? ""}`;
+
+  const content = (
+    <>
       {hasUpdate &&
         (updateInfo && isDevelopUpdate(updateInfo)
           ? "Update"
@@ -67,6 +60,29 @@ export function UpdateIndicator() {
           label={isSecurity ? "Security update available" : "Update available"}
         />
       )}
+    </>
+  );
+
+  // With no update there is nothing to do: a plain label, not a focusable
+  // control that does nothing (#6155).
+  if (!hasUpdate) {
+    return (
+      <span className="status-bar__item" title={title} data-testid="update-indicator">
+        {content}
+      </span>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className="status-bar__item status-bar__item--interactive"
+      onClick={handleClick}
+      title={title}
+      data-testid="update-indicator"
+      style={{ cursor: "pointer" }}
+    >
+      {content}
     </button>
   );
 }

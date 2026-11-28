@@ -187,6 +187,16 @@ export interface ModalProps {
    * hosts a whole surface rather than one task.
    */
   inlineStatus?: boolean;
+  /**
+   * The dialog role. `alertdialog` is for a confirm that interrupts with a
+   * consequence (delete, reset), so assistive tech announces it urgently (#6155).
+   */
+  role?: "dialog" | "alertdialog";
+  /**
+   * The id of a visible body element that describes the dialog, used when there
+   * is no {@link ModalProps.description | description} (#6155).
+   */
+  describedById?: string;
   /** Test hook forwarded to the content node. */
   "data-testid"?: string;
 }
@@ -221,6 +231,8 @@ export function Modal({
   initialFocusRef,
   dismissTransientToasts = false,
   inlineStatus,
+  role = "dialog",
+  describedById,
   ...rest
 }: ModalProps): React.ReactElement {
   const statusLine = inlineStatus ?? size !== "full";
@@ -289,11 +301,12 @@ export function Modal({
           // Radix makes everything outside the content inert (aria-hidden) but
           // does not state it on the dialog itself; say so explicitly (#4329).
           aria-modal="true"
-          // With no `description`, opt out of `aria-describedby` explicitly
-          // (Radix's documented pattern) instead of pointing it at a
-          // Description element that is never rendered, which also makes
-          // Radix log a missing-Description warning on every open (#3356).
-          {...(description ? {} : { "aria-describedby": undefined })}
+          role={role}
+          // With no `description`, point `aria-describedby` at the caller's body
+          // element, or opt out explicitly (Radix's documented pattern) instead
+          // of pointing it at a Description element that is never rendered,
+          // which also makes Radix log a missing-Description warning (#3356).
+          {...(description ? {} : { "aria-describedby": describedById })}
           onCloseAutoFocus={(e) => {
             // Only rescue focus that was lost with the dialog: never pull it
             // back from something that claimed it on close (a new terminal tab,

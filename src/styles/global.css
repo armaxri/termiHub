@@ -88,6 +88,19 @@ body::after {
   outline-offset: var(--focus-ring-offset);
 }
 
+/* Forced colors (Windows High Contrast) drop box-shadow, so the shadow ring on
+   text fields and some primitives vanishes there (#6155). An outline in a system
+   colour survives; !important beats the component rules that set outline: none. */
+@media (forced-colors: active) {
+  :focus-visible,
+  input:focus,
+  select:focus,
+  textarea:focus {
+    outline: var(--focus-ring-width) solid Highlight !important;
+    outline-offset: var(--focus-ring-offset);
+  }
+}
+
 /* Button reset */
 button {
   background: none;

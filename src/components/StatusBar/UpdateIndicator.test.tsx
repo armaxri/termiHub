@@ -100,4 +100,21 @@ describe("UpdateIndicator — live state only (#5559)", () => {
     expect(container.querySelector("[data-testid='develop-branch-badge']")).not.toBeNull();
     expect(chip()?.textContent).toBe("develop");
   });
+
+  it("is not a focusable control when it has no update to show (#6155)", async () => {
+    useAppStore.setState({ updateCheckState: "up-to-date", updateInfo: null });
+    await render({ ...RELEASE, buildBranch: "develop" });
+    const el = chip()!;
+    expect(el.tagName).not.toBe("BUTTON");
+    expect(el.hasAttribute("tabindex")).toBe(false);
+    // Not inert: the develop badge is real content a screen reader still reads.
+    expect(el.hasAttribute("inert")).toBe(false);
+    expect(el.textContent).toBe("develop");
+  });
+
+  it("is a button while an update is available (#6155)", async () => {
+    useAppStore.setState({ updateCheckState: "available", updateInfo: UPDATE });
+    await render(RELEASE);
+    expect(chip()?.tagName).toBe("BUTTON");
+  });
 });
