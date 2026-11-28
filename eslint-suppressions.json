@@ -1,0 +1,217 @@
+{
+  "src/components/AutomationEditor/AutomationEditorDialog.tsx": {
+    "jsx-a11y/no-static-element-interactions": {
+      "count": 1
+    }
+  },
+  "src/components/AutomationSidebar/AutomationSidebar.tsx": {
+    "jsx-a11y/interactive-supports-focus": {
+      "count": 1
+    }
+  },
+  "src/components/CommandPalette/CommandPalette.tsx": {
+    "jsx-a11y/role-supports-aria-props": {
+      "count": 1
+    }
+  },
+  "src/components/ConnectionEditor/ConnectionEditor.tsx": {
+    "jsx-a11y/no-static-element-interactions": {
+      "count": 1
+    }
+  },
+  "src/components/Plugins/PluginManagerView.tsx": {
+    "jsx-a11y/role-supports-aria-props": {
+      "count": 1
+    }
+  },
+  "src/components/RecentSessionsSidebar/QuickConnectBar.tsx": {
+    "jsx-a11y/no-noninteractive-element-interactions": {
+      "count": 1
+    }
+  },
+  "src/components/RecentSessionsSidebar/RecentSessionsSidebar.tsx": {
+    "jsx-a11y/interactive-supports-focus": {
+      "count": 1
+    }
+  },
+  "src/components/Recording/TabRecordingBadge.tsx": {
+    "jsx-a11y/click-events-have-key-events": {
+      "count": 1
+    },
+    "jsx-a11y/no-noninteractive-element-interactions": {
+      "count": 1
+    }
+  },
+  "src/components/RemoteDesktop/RemoteDesktopCanvas.tsx": {
+    "jsx-a11y/no-interactive-element-to-noninteractive-role": {
+      "count": 1
+    }
+  },
+  "src/components/RemoteDesktop/RemoteDesktopFiles.tsx": {
+    "jsx-a11y/no-noninteractive-element-interactions": {
+      "count": 1
+    }
+  },
+  "src/components/Schedules/ScheduleConnectionPicker.tsx": {
+    "jsx-a11y/role-supports-aria-props": {
+      "count": 1
+    }
+  },
+  "src/components/ServiceActivity/ServerAccessLog.tsx": {
+    "jsx-a11y/click-events-have-key-events": {
+      "count": 1
+    },
+    "jsx-a11y/no-static-element-interactions": {
+      "count": 1
+    }
+  },
+  "src/components/ServiceEditor/ServiceEditorShell.tsx": {
+    "jsx-a11y/interactive-supports-focus": {
+      "count": 1
+    },
+    "jsx-a11y/no-static-element-interactions": {
+      "count": 1
+    }
+  },
+  "src/components/ServicesSidebar/ServicesSidebar.tsx": {
+    "jsx-a11y/interactive-supports-focus": {
+      "count": 1
+    },
+    "jsx-a11y/no-static-element-interactions": {
+      "count": 1
+    }
+  },
+  "src/components/Settings/FileTypeLanguagePicker.tsx": {
+    "jsx-a11y/role-supports-aria-props": {
+      "count": 1
+    }
+  },
+  "src/components/Settings/KeyPathInput.tsx": {
+    "jsx-a11y/no-noninteractive-element-interactions": {
+      "count": 1
+    }
+  },
+  "src/components/Settings/LanguagePackagesSettings.tsx": {
+    "jsx-a11y/no-noninteractive-tabindex": {
+      "count": 1
+    }
+  },
+  "src/components/Settings/NativePluginRow.tsx": {
+    "jsx-a11y/role-supports-aria-props": {
+      "count": 1
+    }
+  },
+  "src/components/Settings/SettingsNav.tsx": {
+    "jsx-a11y/no-noninteractive-element-interactions": {
+      "count": 1
+    },
+    "jsx-a11y/no-noninteractive-element-to-interactive-role": {
+      "count": 1
+    }
+  },
+  "src/components/Sidebar/AgentNode.tsx": {
+    "jsx-a11y/interactive-supports-focus": {
+      "count": 1
+    },
+    "jsx-a11y/no-static-element-interactions": {
+      "count": 1
+    }
+  },
+  "src/components/Sidebar/ConnectionList.tsx": {
+    "jsx-a11y/click-events-have-key-events": {
+      "count": 1
+    },
+    "jsx-a11y/interactive-supports-focus": {
+      "count": 1
+    }
+  },
+  "src/components/Sidebar/FileBrowser.tsx": {
+    "jsx-a11y/no-static-element-interactions": {
+      "count": 2
+    }
+  },
+  "src/components/Sidebar/FileBrowserBreadcrumbs.tsx": {
+    "jsx-a11y/role-supports-aria-props": {
+      "count": 1
+    }
+  },
+  "src/components/Sidebar/TreeRow.tsx": {
+    "jsx-a11y/role-has-required-aria-props": {
+      "count": 1
+    }
+  },
+  "src/components/SplitView/SplitView.tsx": {
+    "jsx-a11y/click-events-have-key-events": {
+      "count": 1
+    },
+    "jsx-a11y/no-static-element-interactions": {
+      "count": 1
+    }
+  },
+  "src/components/Terminal/Tab.tsx": {
+    "jsx-a11y/click-events-have-key-events": {
+      "count": 1
+    },
+    "jsx-a11y/no-noninteractive-element-interactions": {
+      "count": 1
+    }
+  },
+  "src/components/Terminal/TabAutomationBadge.tsx": {
+    "jsx-a11y/click-events-have-key-events": {
+      "count": 1
+    },
+    "jsx-a11y/no-noninteractive-element-interactions": {
+      "count": 1
+    }
+  },
+  "src/components/Terminal/TabBar.tsx": {
+    "jsx-a11y/interactive-supports-focus": {
+      "count": 1
+    }
+  },
+  "src/components/Terminal/TerminalSearchBar.tsx": {
+    "jsx-a11y/no-static-element-interactions": {
+      "count": 1
+    }
+  },
+  "src/components/TransferView/TransferPane.tsx": {
+    "jsx-a11y/click-events-have-key-events": {
+      "count": 1
+    },
+    "jsx-a11y/interactive-supports-focus": {
+      "count": 1
+    },
+    "jsx-a11y/no-noninteractive-element-interactions": {
+      "count": 1
+    }
+  },
+  "src/components/WorkspaceEditor/LayoutDesigner.tsx": {
+    "jsx-a11y/click-events-have-key-events": {
+      "count": 1
+    },
+    "jsx-a11y/no-static-element-interactions": {
+      "count": 1
+    }
+  },
+  "src/components/WorkspaceEditor/WorkspaceEditor.tsx": {
+    "jsx-a11y/click-events-have-key-events": {
+      "count": 1
+    },
+    "jsx-a11y/interactive-supports-focus": {
+      "count": 1
+    },
+    "jsx-a11y/no-static-element-interactions": {
+      "count": 1
+    }
+  },
+  "src/components/WorkspaceSidebar/WorkspaceSidebar.tsx": {
+    "jsx-a11y/interactive-supports-focus": {
+      "count": 1
+    }
+  },
+  "src/components/ui/Chip.tsx": {
+    "jsx-a11y/no-noninteractive-tabindex": {
+      "count": 1
+    }
+  }
+}

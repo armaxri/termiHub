@@ -289,8 +289,8 @@ export default tseslint.config(
   },
   {
     // Accessibility (#6155): jsx-a11y's recommended rules on the app's components.
-    // Findings that predate it are recorded in eslint-suppressions.json and burned
-    // down in #FOLLOWUP; anything new fails.
+    // Findings that predate it are recorded in eslint-suppressions.json (ESLint bulk
+    // suppressions) and burned down in #6190; anything new fails.
     files: ["src/**/*.tsx"],
     ignores: ["src/**/*.test.tsx", "src/test/**"],
     ...jsxA11y.flatConfigs.recommended,
