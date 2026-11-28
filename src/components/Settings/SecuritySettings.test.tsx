@@ -3,6 +3,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
+import { fakeBackend, type FakeBackend } from "@/test/fakeBackend";
+import type { SwitchCredentialStoreResult } from "@/types/credential";
+import { OS_AUTH_UNAVAILABLE } from "@/test/osAuthFixtures";
 import { useAppStore } from "@/store/appStore";
 import { currentSettingsView } from "@/store/settingsBridge";
 import { SecuritySettings } from "./SecuritySettings";
@@ -25,11 +28,11 @@ vi.mock("@/components/ui", async () => {
 
 import { toast } from "@/components/ui";
 
-const mockedInvoke = vi.mocked(invoke);
+let backend: FakeBackend;
 const mockedToast = vi.mocked(toast);
 
 /** A clean switch result that moved and removed nothing. */
-const SWITCH_OK = {
+const SWITCH_OK: SwitchCredentialStoreResult = {
   status: "success",
   migratedCount: 0,
   failedCount: 0,
@@ -41,12 +44,12 @@ const SWITCH_OK = {
 
 /** Answers the switch with {@link SWITCH_OK} and the count with `count`. */
 function mockSwitchBackend(count: number | Error = 0) {
-  mockedInvoke.mockImplementation((cmd) => {
-    if (cmd === "switch_credential_store") return Promise.resolve(SWITCH_OK);
-    if (cmd === "count_saved_credentials") {
-      return count instanceof Error ? Promise.reject(count) : Promise.resolve(count);
-    }
-    return Promise.resolve(undefined);
+  backend.handle({
+    switch_credential_store: () => SWITCH_OK,
+    count_saved_credentials: () => {
+      if (count instanceof Error) throw count;
+      return count;
+    },
   });
 }
 
@@ -82,7 +85,20 @@ describe("SecuritySettings", () => {
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
 
-    mockedInvoke.mockImplementation(() => Promise.resolve(undefined));
+    // What the view reads and writes on mount, unless a test says otherwise.
+    backend = fakeBackend({
+      get_os_auth_info: () => OS_AUTH_UNAVAILABLE,
+      get_credential_store_status: () =>
+        useAppStore.getState().credentialStoreStatus ?? { mode: "none", status: "unlocked" },
+      // Unknown unless a test counts: the confirm then names no number.
+      count_saved_credentials: () => {
+        throw new Error("not counted in this test");
+      },
+      list_named_credentials: () => [],
+      list_confirmed_local_commands: () => [],
+      interpreters_among: () => [],
+      save_settings: () => undefined,
+    });
   });
 
   afterEach(() => {
@@ -110,19 +126,16 @@ describe("SecuritySettings", () => {
       credentialStoreStatus: { mode: "none", status: "unlocked" },
     });
 
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "switch_credential_store") {
-        return Promise.resolve({
-          status: "success",
-          migratedCount: 0,
-          failedCount: 0,
-          warnings: [],
-          removedCount: 0,
-          remaining: [],
-          rolledBack: false,
-        });
-      }
-      return Promise.resolve(undefined);
+    backend.handle({
+      switch_credential_store: () => ({
+        status: "success",
+        migratedCount: 0,
+        failedCount: 0,
+        warnings: [],
+        removedCount: 0,
+        remaining: [],
+        rolledBack: false,
+      }),
     });
 
     await render();
@@ -137,10 +150,10 @@ describe("SecuritySettings", () => {
     expect(query("master-password-setup")).toBeNull();
     expect(query("confirm-switch-dialog")).toBeNull();
 
-    const switchCalls = mockedInvoke.mock.calls.filter((c) => c[0] === "switch_credential_store");
+    const switchCalls = backend.callsTo("switch_credential_store");
     expect(switchCalls.length).toBeGreaterThan(0);
     // The new mode is passed and no password is sent.
-    const [, args] = switchCalls[0];
+    const args = switchCalls[0];
     expect(args).toMatchObject({ newMode: "os_keychain", masterPassword: null });
   });
 
@@ -224,19 +237,16 @@ describe("SecuritySettings", () => {
       credentialStoreStatus: { mode: "none", status: "unlocked" },
     });
 
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "switch_credential_store") {
-        return Promise.resolve({
-          status: "success",
-          migratedCount: 0,
-          failedCount: 0,
-          warnings: [],
-          removedCount: 0,
-          remaining: [],
-          rolledBack: false,
-        });
-      }
-      return Promise.resolve(undefined);
+    backend.handle({
+      switch_credential_store: () => ({
+        status: "success",
+        migratedCount: 0,
+        failedCount: 0,
+        warnings: [],
+        removedCount: 0,
+        remaining: [],
+        rolledBack: false,
+      }),
     });
 
     await render();
@@ -271,11 +281,10 @@ describe("SecuritySettings", () => {
     });
 
     // setup_master_password must NOT have been called
-    const setupCalls = mockedInvoke.mock.calls.filter((c) => c[0] === "setup_master_password");
-    expect(setupCalls).toHaveLength(0);
+    expect(backend.calls.map((c) => c.command)).not.toContain("setup_master_password");
 
     // switch_credential_store must have been called with the password
-    const switchCalls = mockedInvoke.mock.calls.filter((c) => c[0] === "switch_credential_store");
+    const switchCalls = backend.callsTo("switch_credential_store");
     expect(switchCalls.length).toBeGreaterThan(0);
   });
 
@@ -284,19 +293,16 @@ describe("SecuritySettings", () => {
       credentialStoreStatus: { mode: "master_password", status: "unlocked" },
     });
 
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "switch_credential_store") {
-        return Promise.resolve({
-          status: "success",
-          migratedCount: 2,
-          failedCount: 0,
-          warnings: [],
-          removedCount: 0,
-          remaining: [],
-          rolledBack: false,
-        });
-      }
-      return Promise.resolve(undefined);
+    backend.handle({
+      switch_credential_store: () => ({
+        status: "success",
+        migratedCount: 2,
+        failedCount: 0,
+        warnings: [],
+        removedCount: 0,
+        remaining: [],
+        rolledBack: false,
+      }),
     });
 
     await render();
@@ -322,11 +328,10 @@ describe("SecuritySettings", () => {
       credentialStoreStatus: { mode: "master_password", status: "unlocked" },
     });
 
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "switch_credential_store") {
-        return Promise.reject(new Error("switch boom"));
-      }
-      return Promise.resolve(undefined);
+    backend.handle({
+      switch_credential_store: () => {
+        throw new Error("switch boom");
+      },
     });
 
     await render();
@@ -353,11 +358,8 @@ describe("SecuritySettings", () => {
       credentialStoreStatus: { mode: "master_password", status: "unlocked" },
     });
 
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "change_master_password") {
-        return Promise.resolve(undefined);
-      }
-      return Promise.resolve(undefined);
+    backend.handle({
+      change_master_password: () => undefined,
     });
 
     await render();
@@ -545,11 +547,10 @@ describe("SecuritySettings", () => {
       credentialStoreStatus: { mode: "master_password", status: "unlocked" },
     });
 
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "change_master_password") {
-        return Promise.reject(new Error("Current password is incorrect"));
-      }
-      return Promise.resolve(undefined);
+    backend.handle({
+      change_master_password: () => {
+        throw new Error("Current password is incorrect");
+      },
     });
 
     await render();
@@ -652,7 +653,7 @@ describe("SecuritySettings", () => {
       mockSwitchBackend();
       await openSwitch("none", "storage-mode-os-keychain");
       expect(query("confirm-switch-dialog")).toBeNull();
-      expect(mockedInvoke).toHaveBeenCalledWith(
+      expect(invoke).toHaveBeenCalledWith(
         "switch_credential_store",
         expect.objectContaining({ newMode: "os_keychain" })
       );
@@ -689,13 +690,12 @@ describe("SecuritySettings", () => {
   // #2839: the switch flow must distinguish a clean migration from a partial or
   // failed one using the backend's structured `status`, never the warnings.
   describe("migration status", () => {
-    async function switchFromMasterPasswordToKeychain(result: unknown) {
+    async function switchFromMasterPasswordToKeychain(result: SwitchCredentialStoreResult) {
       useAppStore.setState({
         credentialStoreStatus: { mode: "master_password", status: "unlocked" },
       });
-      mockedInvoke.mockImplementation((cmd) => {
-        if (cmd === "switch_credential_store") return Promise.resolve(result);
-        return Promise.resolve(undefined);
+      backend.handle({
+        switch_credential_store: () => result,
       });
       await render();
       await act(async () => {
@@ -771,13 +771,12 @@ describe("SecuritySettings", () => {
       expect(mockedToast.success).not.toHaveBeenCalled();
     });
 
-    async function switchFromMasterPasswordToNone(result: unknown) {
+    async function switchFromMasterPasswordToNone(result: SwitchCredentialStoreResult) {
       useAppStore.setState({
         credentialStoreStatus: { mode: "master_password", status: "unlocked" },
       });
-      mockedInvoke.mockImplementation((cmd) => {
-        if (cmd === "switch_credential_store") return Promise.resolve(result);
-        return Promise.resolve(undefined);
+      backend.handle({
+        switch_credential_store: () => result,
       });
       await render();
       await act(async () => {
@@ -919,7 +918,7 @@ describe("SecuritySettings", () => {
       await pressRadioArrow(masterPassword, "ArrowUp");
       expect(document.activeElement).toBe(query("storage-mode-os-keychain"));
       // Nothing is saved without storage, so the switch starts at once (#5837).
-      expect(mockedInvoke).toHaveBeenCalledWith(
+      expect(invoke).toHaveBeenCalledWith(
         "switch_credential_store",
         expect.objectContaining({ newMode: "os_keychain" })
       );

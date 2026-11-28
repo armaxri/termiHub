@@ -2,11 +2,13 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import React from "react";
 import { createRoot, Root } from "react-dom/client";
-import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "@/store/appStore";
 import { FileEditor } from "./FileEditor";
 import type { EditorTabMeta } from "@/types/terminal";
+import type { ElevatedWriteResult } from "@/types/generated/ElevatedWriteResult";
+import type { FileEntry } from "@/types/generated/FileEntry";
+import { fakeBackend, type CommandHandlers } from "@/test/fakeBackend";
 
 // Render Monaco as a plain textarea so the editor mounts in jsdom and we can
 // drive content changes through its onChange (mirrors FileEditor.test.tsx).
@@ -37,7 +39,28 @@ globalThis.ResizeObserver = class {
   disconnect() {}
 } as unknown as typeof ResizeObserver;
 
-const mockedInvoke = vi.mocked(invoke);
+/** A small file: under the large-file guard's threshold. */
+function smallFile(path: string): FileEntry {
+  return {
+    name: path.split("/").pop() ?? path,
+    path,
+    isDirectory: false,
+    size: 16,
+    modified: "",
+    permissions: null,
+    writable: null,
+  };
+}
+
+/** What every editor tab asks on mount: its file watch and the session's exec capability. */
+const MOUNT: CommandHandlers = {
+  local_stat: ({ path }) => smallFile(path),
+  session_stat: ({ path }) => smallFile(path),
+  session_realpath: ({ path }) => path,
+  watch_local_file: () => undefined,
+  unwatch_local_file: () => undefined,
+  session_has_exec_capability: () => false,
+};
 
 /** Base64 of a string's UTF-8 bytes — the shape `session_read_file` returns. */
 function toB64(text: string): string {
@@ -146,11 +169,12 @@ describe("FileEditor — Save and close gates on a real save (FEC-010)", () => {
   });
 
   it("keeps the tab open (and shows the error) when the save fails", async () => {
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "local_read_file") return Promise.resolve("body\n");
-      if (cmd === "local_write_file")
-        return Promise.reject(new Error("write note.txt: permission denied"));
-      return Promise.resolve(undefined);
+    fakeBackend({
+      ...MOUNT,
+      local_read_file: () => "body\n",
+      local_write_file: () => {
+        throw new Error("write note.txt: permission denied");
+      },
     });
 
     render(LOCAL_META);
@@ -178,7 +202,7 @@ describe("FileEditor — Save and close gates on a real save (FEC-010)", () => {
   it("keeps a scratch tab open when Save-As is cancelled", async () => {
     // The user dismisses the native Save-As dialog: nothing is written.
     vi.mocked(save).mockResolvedValueOnce(null);
-    mockedInvoke.mockImplementation(() => Promise.resolve(undefined));
+    const backend = fakeBackend({ ...MOUNT });
 
     render(SCRATCH_META);
     await flush();
@@ -195,15 +219,14 @@ describe("FileEditor — Save and close gates on a real save (FEC-010)", () => {
     // tab must stay open rather than discard the captured buffer.
     expect(closeTabSpy).not.toHaveBeenCalled();
     // No write ever reached the backend.
-    const wrote = mockedInvoke.mock.calls.some(([cmd]) => cmd === "local_write_file");
-    expect(wrote).toBe(false);
+    expect(backend.callsTo("local_write_file")).toEqual([]);
   });
 
   it("closes the tab after a successful save", async () => {
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "local_read_file") return Promise.resolve("body\n");
-      if (cmd === "local_write_file") return Promise.resolve(undefined);
-      return Promise.resolve(undefined);
+    fakeBackend({
+      ...MOUNT,
+      local_read_file: () => "body\n",
+      local_write_file: () => undefined,
     });
 
     render(LOCAL_META);
@@ -226,21 +249,19 @@ describe("FileEditor — Save and close gates on a real save (FEC-010)", () => {
 
   describe("sudo path defers the close until the elevated write resolves", () => {
     /** Mock a read-only, exec-capable remote file so Save routes through sudo. */
-    function mockSudoBackend(elevatedResults: unknown[] = []): {
-      elevatedCalls: Array<Record<string, unknown>>;
-    } {
-      const elevatedCalls: Array<Record<string, unknown>> = [];
+    function mockSudoBackend(elevatedResults: ElevatedWriteResult[] = []) {
       const queue = [...elevatedResults];
-      mockedInvoke.mockImplementation((cmd, args) => {
-        if (cmd === "session_read_file") return Promise.resolve(toB64("127.0.0.1 localhost\n"));
-        if (cmd === "session_has_exec_capability") return Promise.resolve(true);
-        if (cmd === "session_check_writable") return Promise.resolve("readOnly");
-        if (cmd === "session_write_file_elevated") {
-          elevatedCalls.push((args ?? {}) as Record<string, unknown>);
-          return Promise.resolve(queue.shift() ?? { kind: "success" });
-        }
-        if (cmd === "resolve_credential") return Promise.resolve(null);
-        return Promise.resolve(undefined);
+      const elevatedCalls: Array<{ sudoPassword: string }> = [];
+      fakeBackend({
+        ...MOUNT,
+        session_read_file: () => toB64("127.0.0.1 localhost\n"),
+        session_has_exec_capability: () => true,
+        session_check_writable: () => "readOnly",
+        session_write_file_elevated: (args) => {
+          elevatedCalls.push(args);
+          return queue.shift() ?? { kind: "success" };
+        },
+        resolve_credential: () => null,
       });
       return { elevatedCalls };
     }

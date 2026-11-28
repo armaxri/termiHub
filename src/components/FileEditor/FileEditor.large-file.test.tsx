@@ -2,10 +2,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import React from "react";
 import { createRoot, Root } from "react-dom/client";
-import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
 import { FileEditor, LARGE_FILE_THRESHOLD_BYTES } from "./FileEditor";
 import type { EditorTabMeta } from "@/types/terminal";
+import { fakeBackend, type CommandHandlers } from "@/test/fakeBackend";
 
 // The large-file guard (#PROD-014 / #PERF-002) stats a file before reading it
 // and refuses to load blindly above LARGE_FILE_THRESHOLD_BYTES. These tests
@@ -45,8 +45,6 @@ globalThis.ResizeObserver = class {
   disconnect() {}
 } as unknown as typeof ResizeObserver;
 
-const mockedInvoke = vi.mocked(invoke);
-
 const OVER = LARGE_FILE_THRESHOLD_BYTES + 1;
 const UNDER = 1024;
 
@@ -69,6 +67,13 @@ function entry(size: number) {
     writable: null,
   };
 }
+
+/** What every editor tab asks on mount: its file watch and the session's exec capability. */
+const MOUNT: CommandHandlers = {
+  watch_local_file: () => undefined,
+  unwatch_local_file: () => undefined,
+  session_has_exec_capability: () => false,
+};
 
 let container: HTMLDivElement;
 let root: Root;
@@ -106,15 +111,12 @@ describe("FileEditor — large-file guard (#PROD-014 / #PERF-002)", () => {
   });
 
   it("shows the guard and does NOT read an over-threshold local file", async () => {
-    let readCalled = false;
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "local_stat") return Promise.resolve(entry(OVER));
-      if (cmd === "local_read_file") {
-        readCalled = true;
-        return Promise.resolve("contents");
-      }
-      return Promise.resolve(undefined);
+    const backend = fakeBackend({
+      ...MOUNT,
+      local_stat: () => entry(OVER),
+      local_read_file: () => "contents",
     });
+    const readCalled = () => backend.callsTo("local_read_file").length > 0;
 
     render(LOCAL_META);
     await flush();
@@ -122,19 +124,16 @@ describe("FileEditor — large-file guard (#PROD-014 / #PERF-002)", () => {
     expect(query("file-editor-large-file-guard")).not.toBeNull();
     // Nothing was loaded into the editor and the whole-file read never ran.
     expect(query("mock-monaco")).toBeNull();
-    expect(readCalled).toBe(false);
+    expect(readCalled()).toBe(false);
   });
 
   it("loads the file after the user chooses 'Open anyway'", async () => {
-    let readCalled = false;
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "local_stat") return Promise.resolve(entry(OVER));
-      if (cmd === "local_read_file") {
-        readCalled = true;
-        return Promise.resolve("contents");
-      }
-      return Promise.resolve(undefined);
+    const backend = fakeBackend({
+      ...MOUNT,
+      local_stat: () => entry(OVER),
+      local_read_file: () => "contents",
     });
+    const readCalled = () => backend.callsTo("local_read_file").length > 0;
 
     render(LOCAL_META);
     await flush();
@@ -146,57 +145,52 @@ describe("FileEditor — large-file guard (#PROD-014 / #PERF-002)", () => {
 
     expect(query("file-editor-large-file-guard")).toBeNull();
     expect(query("mock-monaco")).not.toBeNull();
-    expect(readCalled).toBe(true);
+    expect(readCalled()).toBe(true);
   });
 
   it("opens an under-threshold local file normally, without a guard", async () => {
-    let readCalled = false;
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "local_stat") return Promise.resolve(entry(UNDER));
-      if (cmd === "local_read_file") {
-        readCalled = true;
-        return Promise.resolve("small file");
-      }
-      return Promise.resolve(undefined);
+    const backend = fakeBackend({
+      ...MOUNT,
+      local_stat: () => entry(UNDER),
+      local_read_file: () => "small file",
     });
+    const readCalled = () => backend.callsTo("local_read_file").length > 0;
 
     render(LOCAL_META);
     await flush();
 
     expect(query("file-editor-large-file-guard")).toBeNull();
     expect(query("mock-monaco")).not.toBeNull();
-    expect(readCalled).toBe(true);
+    expect(readCalled()).toBe(true);
   });
 
   it("guards an over-threshold remote file without reading it over IPC", async () => {
-    let readCalled = false;
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "session_stat") return Promise.resolve(entry(OVER));
-      if (cmd === "session_read_file") {
-        readCalled = true;
-        return Promise.resolve([]);
-      }
-      return Promise.resolve(undefined);
+    const backend = fakeBackend({
+      ...MOUNT,
+      session_stat: () => entry(OVER),
+      session_realpath: ({ path }) => path,
+      session_check_writable: () => "writable",
+      session_read_file: () => "",
     });
+    const readCalled = () => backend.callsTo("session_read_file").length > 0;
 
     render(REMOTE_META);
     await flush();
 
     expect(query("file-editor-large-file-guard")).not.toBeNull();
     expect(query("mock-monaco")).toBeNull();
-    expect(readCalled).toBe(false);
+    expect(readCalled()).toBe(false);
   });
 
   it("falls through to a normal load when the size probe fails", async () => {
-    let readCalled = false;
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "local_stat") return Promise.reject(new Error("stat failed"));
-      if (cmd === "local_read_file") {
-        readCalled = true;
-        return Promise.resolve("contents");
-      }
-      return Promise.resolve(undefined);
+    const backend = fakeBackend({
+      ...MOUNT,
+      local_stat: () => {
+        throw new Error("stat failed");
+      },
+      local_read_file: () => "contents",
     });
+    const readCalled = () => backend.callsTo("local_read_file").length > 0;
 
     render(LOCAL_META);
     await flush();
@@ -204,6 +198,6 @@ describe("FileEditor — large-file guard (#PROD-014 / #PERF-002)", () => {
     // A failed probe must never block opening an ordinary file.
     expect(query("file-editor-large-file-guard")).toBeNull();
     expect(query("mock-monaco")).not.toBeNull();
-    expect(readCalled).toBe(true);
+    expect(readCalled()).toBe(true);
   });
 });

@@ -2,10 +2,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import React from "react";
 import { createRoot, Root } from "react-dom/client";
-import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
 import { FileEditor, REMOTE_POLL_INTERVAL_MS } from "./FileEditor";
 import type { EditorTabMeta } from "@/types/terminal";
+import type { FileEntry } from "@/types/generated/FileEntry";
+import { fakeBackend, type FakeBackend } from "@/test/fakeBackend";
+import type { CommandName } from "@/types/commands.generated";
 
 // Remote tabs don't OS-watch, but FileEditor still imports onLocalFileChanged;
 // stub it so the module resolves (it is never invoked for remote tabs). Keep the
@@ -101,8 +103,6 @@ globalThis.ResizeObserver = class {
   disconnect() {}
 } as unknown as typeof ResizeObserver;
 
-const mockedInvoke = vi.mocked(invoke);
-
 const TAB_ID = "tab-fe-remote-1";
 // An SFTP-backed session tab (SSH). Since the convergence (#2422) SSH file
 // editing is backed by the session layer like every other remote transport, so
@@ -125,27 +125,27 @@ const INITIAL = "key = 1\n";
 let diskContent = INITIAL;
 let statValue: { modified: string; size: number } = { modified: "t0", size: INITIAL.length };
 
-function statEntry() {
-  return { name: "app.conf", path: SFTP_META.filePath, isDirectory: false, ...statValue };
+function statEntry(): FileEntry {
+  return {
+    name: "app.conf",
+    path: SFTP_META.filePath,
+    isDirectory: false,
+    permissions: null,
+    writable: null,
+    ...statValue,
+  };
 }
 
+let backend: FakeBackend;
+
 function installInvoke() {
-  mockedInvoke.mockImplementation((cmd) => {
-    switch (cmd) {
-      case "session_read_file":
-        // File bytes cross IPC as base64, not a JSON number-array (PERF-002).
-        return Promise.resolve(btoa(String.fromCharCode(...new TextEncoder().encode(diskContent))));
-      case "session_stat":
-        return Promise.resolve(statEntry());
-      case "session_check_writable":
-        return Promise.resolve("unknown");
-      case "session_has_exec_capability":
-        return Promise.resolve(false);
-      case "session_realpath":
-        return Promise.resolve("/home/user");
-      default:
-        return Promise.resolve(undefined);
-    }
+  backend = fakeBackend({
+    // File bytes cross IPC as base64, not a JSON number-array (PERF-002).
+    session_read_file: () => btoa(String.fromCharCode(...new TextEncoder().encode(diskContent))),
+    session_stat: () => statEntry(),
+    session_check_writable: () => "unknown",
+    session_has_exec_capability: () => false,
+    session_realpath: () => "/home/user",
   });
 }
 
@@ -196,8 +196,8 @@ function setRemoteFile(content: string, modified = "t1"): void {
   statValue = { modified, size: content.length };
 }
 
-function countInvokes(cmd: string): number {
-  return mockedInvoke.mock.calls.filter((c) => c[0] === cmd).length;
+function countInvokes(cmd: CommandName): number {
+  return backend.callsTo(cmd).length;
 }
 
 describe("FileEditor — remote external-change poll (#1627)", () => {

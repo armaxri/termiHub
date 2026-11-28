@@ -2596,6 +2596,33 @@ vi.mock("@tauri-apps/api/fs", () => ({
 }));
 ```
 
+#### A typed fake backend instead of string-matched `invoke` mocks (#6151)
+
+Do not mock `invoke` with `if (cmd === "local_stat")` branches: a renamed or
+retyped command keeps such a test green. Use `fakeBackend()` from
+`src/test/fakeBackend.ts`. Its handlers are keyed by the generated `Commands`
+map (`src/types/commands.generated.ts`): each one receives the arguments the
+frontend sends and must return the result type it reads.
+
+```typescript
+const backend = fakeBackend({
+  local_stat: ({ path }) => fileEntry(path),
+  local_read_file: () => "contents",
+});
+// …
+expect(backend.callsTo("local_read_file")).toEqual([{ path: "/a.txt" }]);
+```
+
+A command without a handler rejects and fails the test when it finishes, so a
+test lists every command its code reaches; put what a component asks on mount in
+one shared object and spread it. `backend.handle({ … })` adds or replaces handlers
+mid-test.
+
+The map is generated from every production `invoke` call by
+`node scripts/internal/gen-command-types.mjs`. Run it after adding, renaming or
+retyping an `invoke`; `scripts/check.sh`, the Code Quality job and
+`gen-command-types.test.mjs` fail while it is stale.
+
 #### IPC wire-contract fixtures (MOCK-005)
 
 A hand-typed `invoke` response only proves the frontend handles what the test
