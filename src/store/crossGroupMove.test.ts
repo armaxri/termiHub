@@ -135,6 +135,7 @@ describe("moveTabAcrossGroups", () => {
       moveTabAcrossGroups(layout(), {
         tabId: "a",
         fromGroupId: "g1",
+        toGroupId: "g2",
         fromPanelId: "p1",
         toPanelId: "p2",
         edge: "center",
