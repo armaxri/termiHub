@@ -213,4 +213,42 @@ describe("EmptyWindowState (#1902, UX-003)", () => {
 
     expect(container.textContent).toContain("Move to window");
   });
+
+  describe("compact, in an empty panel of a split (#6162)", () => {
+    const render = () => act(() => root.render(<EmptyWindowState panelId="right" />));
+
+    it("says the panel is empty, without the window's restore, editor or move hints", () => {
+      mockWindowCount = 2;
+      render();
+      expect(q("empty-panel-state")).not.toBeNull();
+      expect(q("empty-window-state")).toBeNull();
+      expect(container.textContent).toContain("This panel is empty");
+      expect(container.textContent).not.toContain("Move to window");
+      expect(q("empty-window-restore")).toBeNull();
+      expect(q("empty-window-new-connection")).toBeNull();
+    });
+
+    it("opens a new terminal in this panel", () => {
+      const addLocalShellTab = vi.fn();
+      useAppStore.setState({ addLocalShellTab });
+      render();
+      clickTestId(container, "empty-window-new-terminal");
+      expect(addLocalShellTab).toHaveBeenCalledWith({ panelId: "right" });
+    });
+
+    it("opens a recent connection in this panel, and lists at most three", () => {
+      const setActivePanel = vi.fn();
+      useAppStore.setState({ setActivePanel });
+      mockConnections = ["a", "b", "c", "d", "e"].map((id) => fakeConnection(id));
+      render();
+      const recent = container.querySelectorAll("[data-testid^='empty-window-recent-']");
+      expect(recent).toHaveLength(3);
+      clickTestId(container, "empty-window-recent-a");
+      expect(setActivePanel).toHaveBeenCalledWith("right");
+      expect(connectSpy).toHaveBeenCalledTimes(1);
+      expect(setActivePanel.mock.invocationCallOrder[0]).toBeLessThan(
+        connectSpy.mock.invocationCallOrder[0]
+      );
+    });
+  });
 });
