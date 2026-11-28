@@ -121,6 +121,27 @@ export async function pickPathOrReport(
 }
 
 /**
+ * Like {@link pickPathOrReport}, for a picker that allows several paths
+ * (#6165): every picked path, in the picker's order; none when it was
+ * cancelled or failed (the failure is reported).
+ */
+export async function pickPathsOrReport(
+  label: string,
+  pick: () => Promise<string | string[] | null>
+): Promise<string[]> {
+  try {
+    const picked = await pick();
+    if (picked === null) return [];
+    return Array.isArray(picked) ? picked : [picked];
+  } catch (error) {
+    const message = transferErrorMessage(error);
+    frontendLog("file_transfer", `${label}: file picker failed: ${message}`);
+    toast.error(`${label} failed: ${message}`);
+    return [];
+  }
+}
+
+/**
  * Run a **blocking** transfer that produces NO `transfer-progress` events — a
  * local Save-as copy or a byte-based (Docker / FTP / remote-agent)
  * download/upload round-trip — with self-contained feedback (audit UX-017:

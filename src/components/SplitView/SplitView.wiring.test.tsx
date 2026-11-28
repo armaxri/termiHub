@@ -788,6 +788,13 @@ describe("SplitView panel surfaces (#5171)", () => {
     });
     await render();
     expect(q("split-view-empty")).not.toBeNull();
+    // The compact empty-window state, for this panel (#6162).
+    expect(
+      q("split-view-empty")?.querySelector("[data-testid='empty-panel-state']")
+    ).not.toBeNull();
+    expect(
+      q("split-view-empty")?.querySelector("[data-testid='empty-window-new-terminal']")
+    ).not.toBeNull();
   });
 
   it("an empty window renders the empty-window state", async () => {

@@ -172,6 +172,8 @@ export function AutomationImportDialog({ result, onClose, onShow }: AutomationIm
                   <p>
                     <strong>{entry.automation.name}</strong>:{" "}
                     {partly ? "imported in part" : "imported"}
+                    {entry.renamedFrom !== undefined &&
+                      ` as a copy, because “${entry.renamedFrom}” is already in your library`}
                   </p>
                   {notes.length > 0 && (
                     <ul className="automation-import__notes">

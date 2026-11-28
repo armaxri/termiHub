@@ -31,7 +31,7 @@ const XWAYLAND_MISSING = {
   dependency: "XWayland",
   installMode: "backend",
   installHint:
-    "Install your distribution's XWayland package (e.g. `xwayland`, `xorg-xwayland`, or `xwayland` via your package manager), then reconnect.",
+    "Install your distribution's XWayland package (xwayland, xorg-xwayland or xorg-x11-server-Xwayland, depending on the distribution), then reconnect.",
 };
 
 test.use({ viewport: { width: 1100, height: 720 } });

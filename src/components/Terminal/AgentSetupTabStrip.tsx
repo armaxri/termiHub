@@ -200,9 +200,8 @@ export function AgentSetupTabStrip({
   const agentId = tab?.agentId;
   const agentName = tab?.agentName ?? "";
 
-  // A script that failed after it started leaves the agent row's "installed"
-  // phase behind (the backend's "done" only means the script started): drop
-  // it, so the row no longer reads as freshly installed.
+  // A script that failed must not leave the agent row reading as freshly
+  // installed: drop its phase (the backend's "ended" does too, #5518).
   useEffect(() => {
     if (notice.kind === "failed" && agentId) clearAgentPhase(agentId);
   }, [notice.kind, agentId, clearAgentPhase]);

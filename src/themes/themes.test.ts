@@ -7,6 +7,10 @@ import { ThemeColors } from "./types";
 
 /** All keys that a complete ThemeColors object must have. */
 const REQUIRED_KEYS: (keyof ThemeColors)[] = [
+  "borderInput",
+  "colorNotice",
+  "broadcastAccent",
+  "macroAccent",
   "bgPrimary",
   "bgSecondary",
   "bgTertiary",
