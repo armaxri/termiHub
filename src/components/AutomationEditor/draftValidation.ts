@@ -22,6 +22,7 @@ import {
   type TriggerDraft,
 } from "./automationDraft";
 import { parseMacroStepText } from "./keysFormat";
+import { stepKindLabel } from "./stepText";
 import { stepPolicyErrors } from "./stepPolicySchema";
 
 /** Error path of the step list itself. */
@@ -157,8 +158,61 @@ export function stepsWithErrors(draft: AutomationDraft, errors: ZodFieldErrors):
   return out;
 }
 
-/** What is missing, in a few words for the footer (A-023); `null` when nothing is. */
-export function missingSummary(errors: ZodFieldErrors): string | null {
+/** The first step that keeps the draft from being saved (#6183, editor-4). */
+export interface StepProblem {
+  /** The step's uid, to open and focus it. */
+  uid: string;
+  /** Its number as the list shows it: "2", or "1.1" inside step 1. */
+  number: string;
+  /** Its kind, as the add-step menu names it. */
+  kind: string;
+  /** What is wrong, in a few words: the first clause of its first error, lower case. */
+  message: string;
+}
+
+/** The phrase of the save hint that names a step, also the text of its link. */
+export function stepFixPhrase(problem: StepProblem): string {
+  return `fix step ${problem.number} (${problem.kind})`;
+}
+
+/** The first step, in list order, with an error; `null` when no step has one. */
+export function firstStepProblem(
+  draft: AutomationDraft,
+  errors: ZodFieldErrors
+): StepProblem | null {
+  const paths = Object.keys(errors);
+  const walk = (steps: readonly StepDraft[], prefix: string): StepProblem | null => {
+    for (const [index, step] of steps.entries()) {
+      const number = `${prefix}${index + 1}`;
+      const path = paths.find((p) => p.startsWith(`steps.${step.uid}.`));
+      if (path) {
+        const first = errors[path].split(" — ")[0].replace(/\.$/, "");
+        return {
+          uid: step.uid,
+          number,
+          kind: stepKindLabel(step.step.kind),
+          message: first.charAt(0).toLowerCase() + first.slice(1),
+        };
+      }
+      for (const list of Object.values(step.lists ?? {})) {
+        const inner = walk(list, `${number}.`);
+        if (inner) return inner;
+      }
+    }
+    return null;
+  };
+  return walk(draft.steps, "");
+}
+
+/**
+ * What is missing, in a few words for the footer (A-023); `null` when nothing
+ * is. With `problem` it names the step to fix and what is wrong with it,
+ * instead of "complete the steps" (#6183, editor-4).
+ */
+export function missingSummary(
+  errors: ZodFieldErrors,
+  problem: StepProblem | null = null
+): string | null {
   const paths = Object.keys(errors);
   if (paths.length === 0) return null;
   const parts: string[] = [];
@@ -166,9 +220,17 @@ export function missingSummary(errors: ZodFieldErrors): string | null {
   if (errors[STEP_LIST_ERROR]) parts.push("add at least one step");
   const steps = paths.some((path) => path.startsWith("steps."));
   const triggers = paths.some((path) => path.startsWith("triggers."));
-  if (steps || triggers) {
+  if (steps && problem) {
+    parts.push(`${stepFixPhrase(problem)}: ${problem.message}`);
+    if (triggers) parts.push("complete the triggers");
+  } else if (steps || triggers) {
     const where = [...(steps ? ["steps"] : []), ...(triggers ? ["triggers"] : [])];
     parts.push(`complete the ${where.join(" and the ")}`);
   }
-  return `To save: ${parts.join(", ").replace(/, ([^,]*)$/, " and $1")}.`;
+  // Joined by hand: a step's message may hold a comma of its own.
+  const list =
+    parts.length === 1
+      ? parts[0]
+      : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+  return `To save: ${list}.`;
 }

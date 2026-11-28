@@ -70,12 +70,17 @@ def save_attempt_problems(shown: list[str], expected: Iterable[str]) -> list[str
     return [f"{test_id} is missing after Save" for test_id in expected if test_id not in shown]
 
 
+#: The footer of a new keystroke automation before anything is filled in.
+NEW_KEYS_NOTE = "To save: give it a name and fix step 1 (Type keys): enter the keys to type."
+
+
 def named_save_problems(disabled: str | None, note: str) -> list[str]:
     """Save of the automation editor works while something is missing, and the footer names it."""
     problems = []
     if disabled is not None:
         problems.append("Save is disabled, so it cannot say what is missing")
-    if note != "To save: give it a name and complete the steps.":
+    # The hint names the step to fix (#6183, editor-4).
+    if note != NEW_KEYS_NOTE:
         problems.append(f"the footer says {note!r}")
     return problems
 
@@ -136,8 +141,7 @@ def test_grade_reads_indexed_row_errors():
 
 
 def test_grade_named_save():
-    note = "To save: give it a name and complete the steps."
-    assert named_save_problems(None, note) == []
+    assert named_save_problems(None, NEW_KEYS_NOTE) == []
     assert len(named_save_problems("", "")) == 2
 
 

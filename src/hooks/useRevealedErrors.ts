@@ -171,7 +171,11 @@ export interface RevealOnSave {
    * Returns the focused element, or `null` when no field is marked invalid
    * (the caller may then focus something else that explains the block).
    */
-  revealAndFocus: () => HTMLElement | null;
+  /**
+   * Show every error and focus the first invalid field, or the first one inside
+   * the element `within` selects (a step the save hint links to, #6183).
+   */
+  revealAndFocus: (within?: string) => HTMLElement | null;
   /** See {@link RevealedErrors.rebaseline}. */
   rebaseline: (baseline?: unknown) => void;
 }
@@ -185,16 +189,22 @@ export function useRevealOnSave(errors: ZodFieldErrors, values: unknown): Reveal
   const { shown, revealProps, revealAll, rebaseline } = useRevealedErrors(errors, values);
   const rootRef = useRef<HTMLDivElement>(null);
 
-  const revealAndFocus = useCallback((): HTMLElement | null => {
-    // Render every error first: the focus target is the first `aria-invalid`.
-    flushSync(revealAll);
-    const target = rootRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]') ?? null;
-    if (target) {
-      target.scrollIntoView?.({ block: "center" });
-      target.focus();
-    }
-    return target;
-  }, [revealAll]);
+  const revealAndFocus = useCallback(
+    (within?: string): HTMLElement | null => {
+      // Render every error first: the focus target is the first `aria-invalid`.
+      flushSync(revealAll);
+      const invalid = '[aria-invalid="true"]';
+      const target =
+        rootRef.current?.querySelector<HTMLElement>(within ? `${within} ${invalid}` : invalid) ??
+        null;
+      if (target) {
+        target.scrollIntoView?.({ block: "center" });
+        target.focus();
+      }
+      return target;
+    },
+    [revealAll]
+  );
 
   const rootProps = useMemo(
     () => ({ ref: rootRef, onBlurCapture: revealProps.onBlurCapture }),

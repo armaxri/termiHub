@@ -27,7 +27,9 @@ import { blockedSummary } from "./blockedSteps";
 import {
   draftErrors,
   draftValues,
+  firstStepProblem,
   missingSummary,
+  stepFixPhrase,
   stepsWithErrors,
   STEP_LIST_ERROR,
 } from "./draftValidation";
@@ -228,6 +230,18 @@ export function AutomationEditorDialog({
       ?.focus();
   };
 
+  /** Open the step the save hint names (and the steps around it), focus its field. */
+  const revealStep = (uid: string) => {
+    flushSync(() => {
+      const open = new Set<string>([uid]);
+      visitStepDrafts(draft.steps, (step, ancestors) => {
+        if (step.uid === uid) for (const a of ancestors) open.add(a.uid);
+      });
+      setExpandedSet((prev) => new Set([...prev, ...open]));
+    });
+    revealAndFocus(`[data-step-uid="${uid}"]`);
+  };
+
   // Save stays reachable while invalid (aria-disabled, not disabled): using it
   // then points at the problem instead of saving (#5917).
   const handleSave = (run: boolean) => {
@@ -264,7 +278,9 @@ export function AutomationEditorDialog({
     () => blockedSummary(draft.steps, (id) => automations.find((a) => a.id === id), localSwitches),
     [draft.steps, automations, localSwitches]
   );
-  const missing = missingSummary(allErrors);
+  // The first step to fix is named in the hint, and linked (#6183, editor-4).
+  const stepProblem = firstStepProblem(draft, allErrors);
+  const missing = missingSummary(allErrors, stepProblem);
   // A hotkey somebody else answers to is stored and never works (B-022).
   const deadHotkey = draft.triggers
     .flatMap(({ trigger }) =>
@@ -372,7 +388,26 @@ export function AutomationEditorDialog({
               className="automation-editor__footer-note"
               data-testid="automation-editor-footer-note"
             >
-              {footerNote}
+              {stepProblem && footerNote === missing
+                ? (() => {
+                    const phrase = stepFixPhrase(stepProblem);
+                    const [before, after] = footerNote.split(phrase);
+                    return (
+                      <>
+                        {before}
+                        <button
+                          type="button"
+                          className="automation-editor__footer-fix"
+                          onClick={() => revealStep(stepProblem.uid)}
+                          data-testid="automation-editor-footer-fix"
+                        >
+                          {phrase}
+                        </button>
+                        {after}
+                      </>
+                    );
+                  })()
+                : footerNote}
             </span>
           )}
           {/* Routed through the Modal so a dirty form asks first (UX2-004). */}
