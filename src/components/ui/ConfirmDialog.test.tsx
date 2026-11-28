@@ -422,4 +422,76 @@ describe("ConfirmDialog", () => {
     });
     expect(onConfirm).not.toHaveBeenCalled();
   });
+
+  describe("danger confirms are alert dialogs (#6155)", () => {
+    function dialog(): HTMLElement {
+      return document.querySelector('[data-testid="confirm-dialog"]') as HTMLElement;
+    }
+
+    it("uses role=alertdialog with the message as the description for variant=danger", () => {
+      render(
+        <ConfirmDialog
+          open
+          variant="danger"
+          title="Delete"
+          message="This deletes 3 files."
+          confirmVariant="primary"
+          onConfirm={vi.fn()}
+          onCancel={vi.fn()}
+          data-testid="confirm-dialog"
+        />
+      );
+      expect(dialog().getAttribute("role")).toBe("alertdialog");
+      const id = dialog().getAttribute("aria-describedby");
+      expect(id).toBeTruthy();
+      expect(document.getElementById(id!)?.textContent).toBe("This deletes 3 files.");
+    });
+
+    it("treats a danger confirm button as a danger confirm", () => {
+      render(
+        <ConfirmDialog
+          open
+          title="Reset"
+          message="Reset all settings?"
+          confirmVariant="danger"
+          onConfirm={vi.fn()}
+          onCancel={vi.fn()}
+          data-testid="confirm-dialog"
+        />
+      );
+      expect(dialog().getAttribute("role")).toBe("alertdialog");
+    });
+
+    it("keeps role=dialog for a non-destructive confirm", () => {
+      render(
+        <ConfirmDialog
+          open
+          title="Save"
+          message="Save now?"
+          confirmVariant="primary"
+          onConfirm={vi.fn()}
+          onCancel={vi.fn()}
+          data-testid="confirm-dialog"
+        />
+      );
+      expect(dialog().getAttribute("role")).toBe("dialog");
+    });
+
+    it("keeps an explicit description over the message", () => {
+      render(
+        <ConfirmDialog
+          open
+          variant="danger"
+          title="Delete"
+          description="Spoken summary"
+          message="Visible body"
+          onConfirm={vi.fn()}
+          onCancel={vi.fn()}
+          data-testid="confirm-dialog"
+        />
+      );
+      const id = dialog().getAttribute("aria-describedby");
+      expect(document.getElementById(id!)?.textContent).toBe("Spoken summary");
+    });
+  });
 });
