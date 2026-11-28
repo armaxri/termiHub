@@ -50,6 +50,9 @@ export function isMonitorUnsupported(
   return status === "offline" && reason === "unsupported";
 }
 
+/** Why monitoring is unavailable on a host, in a few words for the status bar (states-1). */
+export const MONITOR_UNSUPPORTED_SHORT = "no shell for stats on this host";
+
 /** Tooltip explaining why monitoring is unavailable on a host (#5628). */
 export function monitorUnsupportedTooltip(): string {
   return (

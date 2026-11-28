@@ -16,6 +16,8 @@ export interface RowLinesProps {
   blocked: string | null;
   /** What an import left out of it, until it was saved once. */
   importedInPart: string[];
+  /** The step that runs an automation that is not there (files-2), or `null`. */
+  missingCalleeStep?: number | null;
   onEdit: () => void;
   /** What starts it, or does not while its triggers are off. */
   triggers: TriggerState | null;
@@ -40,6 +42,7 @@ export function RowLines({
   targets,
   blocked,
   importedInPart,
+  missingCalleeStep = null,
   onEdit,
   triggers,
   nextRun,
@@ -113,6 +116,26 @@ export function RowLines({
               data-testid={`automation-imported-check-${id}`}
             >
               {t("automation.importedCheck")}
+            </button>
+          </span>
+        </div>
+      )}
+      {missingCalleeStep !== null && (
+        <div
+          className="automation-item__line automation-item__line--warning"
+          data-testid={`automation-missing-callee-${id}`}
+          {...keepOffRow}
+        >
+          <TriangleAlert size={10} aria-hidden="true" />
+          <span className="automation-item__line-text">
+            {tf("automation.missingCallee", { step: String(missingCalleeStep) })}{" "}
+            <button
+              type="button"
+              className="automation-item__link"
+              onClick={onEdit}
+              data-testid={`automation-missing-callee-edit-${id}`}
+            >
+              {t("automation.missingCalleeChoose")}
             </button>
           </span>
         </div>

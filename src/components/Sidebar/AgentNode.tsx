@@ -80,6 +80,8 @@ import {
 } from "@/services/api";
 import type { RemoteAgentConfig } from "@/types/terminal";
 import { classifyAgentError, ClassifiedAgentError } from "@/utils/classifyAgentError";
+import { agentFailureReason, type AgentFailureStepId } from "./agentFailureReason";
+import "@/components/ServiceListItem/ServiceListItem.css";
 import { connectionStateLabel } from "@/utils/statusLabel";
 import { resolveAgentUpdateState } from "@/utils/agentVersion";
 import { useDesktopVersion } from "@/hooks/useDesktopVersion";
@@ -1341,7 +1343,8 @@ export function AgentNode({
   });
 
   const handleConnect = useCallback(async () => {
-    if (connecting) return;
+    // Nor while a setup installs it (a double-click): the row says "Installing…" (#5518).
+    if (connecting || setupPhase === "installing") return;
     connectCanceledRef.current = false;
 
     try {
@@ -1368,7 +1371,7 @@ export function AgentNode({
     } finally {
       setConnecting(false);
     }
-  }, [agent, connectRemoteAgent, requestPassword, connecting]);
+  }, [agent, connectRemoteAgent, requestPassword, connecting, setupPhase]);
 
   const handleSetupFromError = useCallback(() => {
     setErrorDialogOpen(false);
@@ -1389,6 +1392,38 @@ export function AgentNode({
     }
     void handleConnect();
   }, [agent.id, disconnectRemoteAgent, handleConnect, markUserEnded]);
+
+  // Why the last connect failed, in its row with the next step (#6160): the
+  // latest attempt's error, or the stored one. Only while the row reads as a
+  // failure or as "not installed" — never while it connects, installs or runs.
+  const failedError = useMemo(
+    () => connectionError ?? (agent.lastError ? classifyAgentError(agent.lastError) : null),
+    [connectionError, agent.lastError]
+  );
+  const failureReason =
+    failedError && (rowPresentation.action === "reconnect" || rowPresentation.action === "setup")
+      ? agentFailureReason(failedError, agent.config.host)
+      : null;
+  const handleFailureStep = useCallback(
+    (step: AgentFailureStepId) => {
+      switch (step) {
+        case "edit":
+          openConnectionEditorTab(agent.id);
+          return;
+        case "setup":
+        case "update":
+          setSetupDialogOpen(true);
+          return;
+        case "force-reconnect":
+          void handleForceReconnect();
+          return;
+        case "details":
+          setConnectionError(failedError);
+          setErrorDialogOpen(true);
+      }
+    },
+    [agent.id, openConnectionEditorTab, handleForceReconnect, failedError]
+  );
 
   // Disconnect (detach) — drop the transport but leave persistent daemon-backed
   // remote sessions running so they re-list on the next connect (G9, #1237).
@@ -1982,7 +2017,12 @@ export function AgentNode({
             </MenuItem>
           ) : !isConnected && !isReconnecting ? (
             <>
-              <MenuItem onSelect={handleConnect} data-testid="context-agent-connect">
+              <MenuItem
+                onSelect={handleConnect}
+                // A setup still installs it: its path is stored when it is done (#5518).
+                disabled={setupPhase === "installing"}
+                data-testid="context-agent-connect"
+              >
                 <Play size={14} />
                 Connect
               </MenuItem>
@@ -2094,6 +2134,30 @@ export function AgentNode({
           </MenuItem>
         </ContextMenuContent>
       </ContextMenuRoot>
+
+      {failureReason && (
+        // Why the last connect failed, readable without hovering (#6160).
+        <p
+          className="agent-node__hint agent-node__reason service-row__reason"
+          data-state="error"
+          data-testid={`agent-reason-${agent.id}`}
+        >
+          {failureReason.text}
+          {failureReason.steps.map((step) => (
+            <span key={step.id}>
+              {" "}
+              <button
+                type="button"
+                className="service-row__next"
+                onClick={() => handleFailureStep(step.id)}
+                data-testid={`agent-reason-step-${step.id}-${agent.id}`}
+              >
+                {step.label}
+              </button>
+            </span>
+          ))}
+        </p>
+      )}
 
       {/* Deferred-update strip: only for a connected agent with a staged update
           (it self-gates on the store's staged/dismissed state, #1352). Full width

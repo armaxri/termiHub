@@ -20,11 +20,15 @@
   flex-direction: column;
 }
 
+/*
+ * The panes are faint through their background colour, never element opacity,
+ * which would fade the label inside them too (#6166).
+ */
+
 /* Activity Bar */
 .layout-preview__activity-bar {
   width: 24px;
-  background: var(--accent-color);
-  opacity: 0.6;
+  background: color-mix(in srgb, var(--accent-color) 60%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -34,8 +38,7 @@
   width: 100%;
   height: 20px;
   flex-shrink: 0;
-  background: var(--accent-color);
-  opacity: 0.6;
+  background: color-mix(in srgb, var(--accent-color) 60%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -44,8 +47,7 @@
 /* Sidebar */
 .layout-preview__sidebar {
   width: 60px;
-  background: var(--text-secondary);
-  opacity: 0.25;
+  background: color-mix(in srgb, var(--text-secondary) 25%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -64,8 +66,7 @@
 .layout-preview__status-bar {
   height: 18px;
   flex-shrink: 0;
-  background: var(--text-secondary);
-  opacity: 0.2;
+  background: color-mix(in srgb, var(--text-secondary) 20%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -76,7 +77,6 @@
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
-  opacity: 0.7;
   user-select: none;
   white-space: nowrap;
 }

@@ -61,6 +61,7 @@ from termihub_harness.product_run.automation_steps import AutomationPhaseUi
 from termihub_harness.product_run.editor_layout import TUNNEL_ACTIONS, measure_editor_footer
 from termihub_harness.product_run.grades import row_leftover_text, tunnel_editor_primary_problems
 from termihub_harness.product_run.ssh_steps import SshPhaseUi
+from termihub_harness.ui.embedded_services import served_folder
 
 pytestmark = [
     pytest.mark.product_run,
@@ -213,11 +214,16 @@ class TestProductRunRowsNames(
             wid = self.ids["workflow"]
             marker = self.driver.get_text(f"automation-armed-{wid}").strip()
             assert marker.startswith("Triggers on: matching output in "), f"it reads {marker!r}"
+            # The trigger marker names the terminal it listens to (it is the
+            # "Triggers on: matching output in …" line itself), so the name is on
+            # the row by design; the tooltip still carries it.
             self._grade_row(
                 f"automation-item-{wid}",
                 [f"Answer rows {t}", "Replies on match", marker],
-                ["On output match", self.ids["conn_name"], "Tags: deploy"],
+                ["On output match", "Tags: deploy"],
             )
+            tip = self.row_tooltip(f"automation-item-{wid}")
+            assert self.ids["conn_name"] in tip, f"the terminal is not in the tooltip {tip!r}"
             self.shot(label="workflow")
 
     def test_40_schedule_row(self):
@@ -328,8 +334,11 @@ class TestProductRunRowsNames(
             self.require("rows-names.items")
             name = f"Rows service {t}"
             port = self.free_port()
+            # The folder the tooltip names: the app shows it resolved (on macOS
+            # the temp dir is under /private/var).
+            root = str(served_folder().resolve())
             server = self.create_server(
-                name, proto="http", port=port, description="Lab firmware"
+                name, proto="http", root=root, port=port, description="Lab firmware"
             )
             row = f"server-item-{server['id']}"
             self.wait(lambda: self.driver.exists(row), what="the service row")
@@ -339,7 +348,7 @@ class TestProductRunRowsNames(
                 [
                     f"HTTP · http://localhost:{port}",
                     "Share a folder that others open in a web browser.",
-                    "Serves /tmp",
+                    f"Serves {root}",
                 ],
             )
             assert not self.driver.exists(f"server-runloc-{server['id']}"), (
@@ -495,8 +504,11 @@ class TestProductRunRowsNames(
             )
             marker = self.driver.get_text(f"monitor-marker-{mid}").strip()
             assert marker == "Stopped", f"the marker reads {marker!r}"
+            # Every monitor row says where it runs (monitors on agents, #6052).
             self._grade_row(
-                row, [name, "Shop health", marker], [url, "GET every 30s · expects 200"]
+                row,
+                [name, "Shop health", "This computer", marker],
+                [url, "GET every 30s · expects 200"],
             )
             desc = self.driver.get_text(f"monitor-description-{mid}").strip()
             assert desc == "Shop health", f"the monitor description reads {desc!r}"

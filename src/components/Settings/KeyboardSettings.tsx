@@ -36,6 +36,7 @@ import { KeybindingRow, type RecordRejection, type RowNotice } from "./Keybindin
 import { serializeKeybindings, parseKeybindingEnvelope } from "@/services/keybindingIo";
 import { exportCheatSheet } from "@/utils/cheatSheetPdf";
 import { Button, Checkbox, ConfirmDialog, Field, Toggle, SearchInput } from "@/components/ui";
+import { SettingsField } from "./SettingsField";
 import { showUndoToast } from "@/utils/undoableDelete";
 import { customBindingCount, restoreKeybindings } from "./restoreKeybindings";
 import { useJsonFileExport, useJsonFileImport } from "@/hooks/useJsonFile";
@@ -371,42 +372,29 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
         />
       </div>
 
-      <div
-        className="keyboard-settings__passthrough"
-        data-testid="keyboard-settings-passthrough-label"
-      >
-        <Toggle
-          aria-label="Pass through shell keys when terminal is focused"
-          checked={passthroughEnabled}
-          onCheckedChange={handleTogglePassthrough}
-          data-testid="keyboard-settings-passthrough"
-        />
-        <span>
-          Pass through shell keys when terminal is focused
-          <small>
-            Common shell, tmux, vim, and SSH keys (Ctrl+letter, Ctrl+\, Alt+letter) are sent to the
-            terminal instead of triggering an app shortcut while a terminal pane has focus.
-          </small>
-        </span>
-      </div>
-
-      <div
-        className="keyboard-settings__passthrough"
-        data-testid="keyboard-settings-editor-delegation-label"
-      >
-        <Toggle
-          aria-label="Let editor tabs handle their own editing shortcuts"
-          checked={editorDelegationEnabled}
-          onCheckedChange={handleToggleEditorDelegation}
-          data-testid="keyboard-settings-editor-delegation"
-        />
-        <span>
-          Let editor tabs handle their own editing shortcuts
-          <small>
-            When on, shortcuts like Find (Cmd/Ctrl+F), Replace, and Select All go to the focused
-            editor or input instead of the global app while an editor tab is active.
-          </small>
-        </span>
+      <div className="settings-form">
+        <SettingsField
+          label="Pass through shell keys when terminal is focused"
+          hint={
+            "Common shell, tmux, vim, and SSH keys (Ctrl+letter, Ctrl+\\, Alt+letter) are sent to the terminal instead of triggering an app shortcut while a terminal pane has focus."
+          }
+        >
+          <Toggle
+            checked={passthroughEnabled}
+            onCheckedChange={handleTogglePassthrough}
+            data-testid="keyboard-settings-passthrough"
+          />
+        </SettingsField>
+        <SettingsField
+          label="Let editor tabs handle their own editing shortcuts"
+          hint="When on, shortcuts like Find (Cmd/Ctrl+F), Replace, and Select All go to the focused editor or input instead of the global app while an editor tab is active."
+        >
+          <Toggle
+            checked={editorDelegationEnabled}
+            onCheckedChange={handleToggleEditorDelegation}
+            data-testid="keyboard-settings-editor-delegation"
+          />
+        </SettingsField>
       </div>
 
       <div

@@ -26,6 +26,7 @@ import {
   runMaybeTrackedTransfer,
   runTransfer,
   pickPathOrReport,
+  pickPathsOrReport,
 } from "./transferFeedback";
 import { errorMessage } from "@/utils/errorMessage";
 import {
@@ -349,17 +350,20 @@ export function useSessionFileSystem() {
     [sessionFileBrowserId, sessionCurrentPath, refreshSession, transferQueueCapable]
   );
 
-  // `upload` replaces the direct upload of the picked file — the file browser
-  // passes its conflict-checked upload (#5157).
+  // `upload` replaces the direct upload of each picked file — the file browser
+  // passes its conflict-checked upload (#5157). Several files can be picked
+  // (#6165): each is uploaded as its own transfer, in turn, so a name conflict
+  // is decided before the next file starts, as for a multi-file drop.
   const uploadFile = useCallback(
     async (upload?: (localPath: string) => Promise<void>) => {
       if (!sessionFileBrowserId) return;
-      const localPath = await pickPathOrReport("Upload", async () => {
+      const localPaths = await pickPathsOrReport("Upload", async () => {
         const { open } = await import("@/services/nativeDialog");
-        return open({ title: "Select file to upload", multiple: false });
+        return open({ title: "Select files to upload", multiple: true });
       });
-      if (!localPath) return;
-      await (upload ?? uploadFileFromPath)(localPath);
+      for (const localPath of localPaths) {
+        await (upload ?? uploadFileFromPath)(localPath);
+      }
     },
     [sessionFileBrowserId, uploadFileFromPath]
   );

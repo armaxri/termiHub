@@ -301,10 +301,11 @@ const AGENT_SETTINGS = {
   verboseTracing: false,
 };
 
-function agentRow(id: string, name: string, connectionState: string) {
+function agentRow(id: string, name: string, connectionState: string, lastError?: string) {
   return {
     id,
     name,
+    ...(lastError ? { lastError } : {}),
     config: {
       host: `${id}.example.com`,
       port: 22,
@@ -324,6 +325,13 @@ const AGENTS_VIEW = {
   agents: [
     agentRow("agent-lab", "Raspberry Pi in the lab behind the office firewall", "connected"),
     agentRow("agent-edge", "Edge gateway in the Frankfurt datacenter rack", "disconnected"),
+    // A failed connect says why under its header (#6160).
+    agentRow(
+      "agent-down",
+      "Build server behind the VPN",
+      "disconnected",
+      "[thub-code:unreachable] connect timed out"
+    ),
   ],
   sessions: {},
   definitions: {},

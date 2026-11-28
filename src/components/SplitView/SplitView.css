@@ -124,3 +124,9 @@
   position: relative;
   overflow: hidden;
 }
+
+/* An empty panel of a split: the compact empty-window state fills it (#6162). */
+.split-view__empty-panel {
+  flex: 1;
+  min-height: 0;
+}

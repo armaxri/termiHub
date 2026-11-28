@@ -190,6 +190,19 @@ describe("ScheduleEditorHost keeps what the user did not change (#5983)", () => 
       info.mockRestore();
     });
 
+    it("takes the message back once the schedule is on, wherever it was switched on (automations-1)", async () => {
+      const info = vi.spyOn(toast, "info");
+      const dismiss = vi.spyOn(toast, "dismiss");
+      await saveAs({ enabled: false });
+      const { id } = info.mock.calls[0][1] as { id: string };
+      expect(id).toBe("schedule-saved-off-s1");
+      // Switched on from its row, not from the message.
+      act(() => useAppStore.setState({ schedules: [{ ...stored, enabled: true }] }));
+      expect(dismiss).toHaveBeenCalledWith("schedule-saved-off-s1");
+      info.mockRestore();
+      dismiss.mockRestore();
+    });
+
     it("Switch on… in that message asks which hosts first (B-030)", async () => {
       const info = vi.spyOn(toast, "info");
       await saveAs({ enabled: false });

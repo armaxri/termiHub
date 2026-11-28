@@ -128,8 +128,8 @@ describe("Activity Bar", () => {
       "Connections and Macros"
     );
     expect(checkActivityBar(readme, ACTIVITY_SRC)).toEqual([
-      `README.md: Activity Bar views misses "File Browser" (in src/components/ActivityBar/ActivityBar.tsx)`,
-      `README.md: Activity Bar views lists "Macros", which src/components/ActivityBar/ActivityBar.tsx does not have`,
+      `README.md: Activity Bar views misses "File Browser" (in src/components/ActivityBar/activityBarItems.ts)`,
+      `README.md: Activity Bar views lists "Macros", which src/components/ActivityBar/activityBarItems.ts does not have`,
     ]);
   });
   it("needs no experimental sentence while no view is behind the switch (#5818)", () => {
