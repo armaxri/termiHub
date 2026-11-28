@@ -197,7 +197,10 @@ class TestProductRunAutomationRunPicker(
             self.evidence(str(labels))
             self.shot(label="badges")
             for label in labels.values():
-                assert label and label.startswith('Running automation "Pick workflow'), labels
+                # The badge quotes the name typographically (“…”).
+                assert label and label.replace("“", '"').startswith(
+                    'Running automation "Pick workflow'
+                ), labels
 
             stopped, other = self.tabs
             self.driver.click(f"tab-automation-badge-{stopped}")
