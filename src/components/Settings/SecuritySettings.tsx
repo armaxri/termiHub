@@ -34,6 +34,7 @@ import {
   type SwitchResultView,
 } from "./credentialSwitchCopy";
 import { EXPERIMENTAL_SETTING_PATH } from "@/utils/experimentalSetting";
+import { LOCAL_PROGRAMS_SETTING_LABEL } from "@/utils/localProcessGate";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 interface SecuritySettingsProps {
@@ -579,13 +580,13 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
           </p>
 
           <SettingsField
-            label="Allow automations to run local programs"
+            label={LOCAL_PROGRAMS_SETTING_LABEL}
             hint={`Master switch. While off, any “Run local process” step is refused. The step is experimental: ${EXPERIMENTAL_SETTING_PATH} must be on too.`}
           >
             <Toggle
               checked={localProcessEnabled}
               onCheckedChange={handleToggleLocalProcess}
-              aria-label="Allow automations to run local programs"
+              aria-label={LOCAL_PROGRAMS_SETTING_LABEL}
               data-testid="workflow-local-process-toggle"
             />
           </SettingsField>

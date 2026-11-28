@@ -206,6 +206,8 @@ export interface ImportedEntry {
    * library with that very id, or `null`.
    */
   outside: (string | null)[];
+  /** The name in the file, when that was taken and it was imported as a copy. */
+  renamedFrom?: string;
 }
 
 /** What an import brought in. */
@@ -324,6 +326,8 @@ export function prepareAutomationImport(
       leftOut,
       triggersOff: automation.triggers.map(triggerName),
       localProcess: hasLocalProcess(steps),
+      // Its name was taken: it is a copy under another name (live review files-1).
+      ...(name !== entry.name ? { renamedFrom: entry.name } : {}),
       removedScriptPaths,
       outside: [...outside],
     });

@@ -550,6 +550,12 @@
   user-select: none;
 }
 
+/* Why an agent's last connect failed, under its header (#6160). */
+.agent-node__reason {
+  padding-left: var(--spacing-xl);
+  padding-right: var(--spacing-md);
+}
+
 /* The action in an agent's empty state (#5851): an inline text link, like the
    Connections empty state's. `--text-link` meets AA on the sidebar (R-139). */
 .agent-node__link {
