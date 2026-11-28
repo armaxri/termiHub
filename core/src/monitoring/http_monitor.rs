@@ -1201,6 +1201,49 @@ mod tests {
         );
     }
 
+    /// The live review read "error sending request for url (…)" as the reason
+    /// of a failed check: it does not say what failed. It names the cause.
+    #[tokio::test]
+    async fn a_refused_check_says_nothing_listens_there() {
+        let port = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap().port()
+        };
+        let mut cfg = sample_config();
+        cfg.url = format!("http://127.0.0.1:{port}/health");
+        cfg.allow_private_network = true;
+        let client = build_guarded_client(&cfg).expect("client builds");
+        let err = check_once(&cfg, &client).await.error.unwrap_or_default();
+        assert_eq!(
+            err,
+            format!("Connection refused: nothing is listening on 127.0.0.1:{port}")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_silent_server_check_says_how_long_it_waited() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let _held = std::thread::spawn(move || {
+            let accepted: Vec<_> = listener.incoming().take(1).collect();
+            std::thread::sleep(Duration::from_secs(3));
+            drop(accepted);
+        });
+        let mut cfg = sample_config();
+        cfg.url = format!("http://127.0.0.1:{port}/health");
+        cfg.allow_private_network = true;
+        cfg.timeout_ms = 300;
+        let client = build_guarded_client(&cfg).expect("client builds");
+        let err = check_once(&cfg, &client).await.error.unwrap_or_default();
+        assert_eq!(err, format!("No answer from 127.0.0.1:{port} within 300 ms"));
+    }
+
+    #[test]
+    fn a_timeout_reads_in_seconds_when_it_is_whole_seconds() {
+        assert_eq!(human_timeout(5000), "5 s");
+        assert_eq!(human_timeout(1500), "1500 ms");
+    }
+
     #[test]
     fn allow_private_network_defaults_to_false_when_absent() {
         // Configs stored before the field existed must deserialize to deny-internal.
