@@ -1,4 +1,7 @@
 import { useState } from "react";
+import { closeTabsNow } from "@/utils/closeTabs";
+import { getLayoutRenderTree } from "@/store/layoutSelectors";
+import { getAllLeaves } from "@/utils/panelTree";
 import { ConfirmDialog } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
@@ -47,7 +50,10 @@ export function ConfirmSessionCloseDialog() {
     if (dontAsk) {
       // Stop asking for the trigger that raised this prompt only (#5189,
       // #5844): Cmd/Ctrl+W keeps the pointer confirm and vice versa.
-      const trigger = request.kind === "panel" ? "pointer" : (request.trigger ?? "pointer");
+      const trigger =
+        request.kind === "panel" || request.kind === "tabs"
+          ? "pointer"
+          : (request.trigger ?? "pointer");
       const closeLiveSessionConfirm = closeConfirmWithout(resolveCloseConfirm(settings), trigger);
       void updateSettings({ ...settings, closeLiveSessionConfirm });
     }
@@ -56,6 +62,10 @@ export function ConfirmSessionCloseDialog() {
       showReopenToast(request.reopen);
     } else if (request.kind === "panel") {
       removePanel(request.panelId);
+    } else if (request.kind === "tabs") {
+      const ids = new Set(request.tabIds);
+      const panel = getAllLeaves(getLayoutRenderTree()).find((l) => l.id === request.panelId);
+      closeTabsNow(request.panelId, panel?.tabs.filter((t) => ids.has(t.id)) ?? []);
     } else {
       closeTabGroup(request.tabGroupId);
     }
@@ -110,6 +120,12 @@ function dialogCopy(request: SessionCloseConfirmRequest): {
         title: "Close group?",
         message: groupMessage(request.label, request.liveCount, request.dirtyCount),
         confirmLabel: "Close group",
+      };
+    case "tabs":
+      return {
+        title: `Close ${request.tabCount} tabs?`,
+        message: `Closing them will ${lossPhrase(request.liveCount, request.dirtyCount)}.`,
+        confirmLabel: "Close tabs",
       };
   }
 }
