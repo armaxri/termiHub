@@ -37,6 +37,8 @@ import {
   ExternalLink,
   AppWindow,
   ZoomIn,
+  Undo2,
+  ArrowRightToLine,
   ZoomOut,
   RotateCcw,
   Zap,
@@ -56,6 +58,10 @@ const ACTION_ICONS: Record<string, LucideIcon> = {
   "new-terminal": SquareTerminal,
   "close-tab": X,
   "next-tab": ChevronRight,
+  "reopen-closed-tab": Undo2,
+  ...Object.fromEntries(
+    Array.from({ length: 9 }, (_, i) => [`switch-to-tab-${i + 1}`, ArrowRightToLine])
+  ),
   "prev-tab": ChevronLeft,
   "clear-terminal": Eraser,
   "find-in-terminal": Search,
