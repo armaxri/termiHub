@@ -8,6 +8,7 @@ import type { CommandHandlers } from "@/test/fakeBackend";
 export const CONNECTION_EDITOR_MOUNT: CommandHandlers = {
   // Opening: which secrets a connection keeps, and the container runtimes.
   list_stored_field_secret_keys: () => null,
+  list_named_credentials: () => [],
   check_docker_available: () => false,
   check_podman_available: () => false,
   // Saving touches the settings (last-used type, folders open).
