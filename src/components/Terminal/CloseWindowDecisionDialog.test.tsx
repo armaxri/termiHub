@@ -114,6 +114,25 @@ describe("CloseWindowDecisionDialog (#1903)", () => {
     expect(move.textContent).toContain("Move tabs to Window 1");
   });
 
+  it("starts on Move, the safe primary action (multi-window concept, #6164)", async () => {
+    render();
+    act(() => useAppStore.getState().setPendingWindowClose(request()));
+    // Radix moves the focus on open in a later task.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(document.activeElement).toBe(q("close-window-decision-move"));
+  });
+
+  it("starts on Cancel, never on the destructive action, without a window to move to", async () => {
+    render();
+    act(() => useAppStore.getState().setPendingWindowClose(request({ otherWindows: [] })));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(document.activeElement).toBe(q("close-window-decision-cancel"));
+  });
+
   it("hides the Move action when there is no other window to move to", () => {
     render();
     act(() => useAppStore.getState().setPendingWindowClose(request({ otherWindows: [] })));
