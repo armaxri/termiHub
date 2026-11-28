@@ -14,7 +14,7 @@ grades the scrollback marker after a reconnect.
 
 #5908 / #5910 (run ``20261124T080801Z``): the notice is a full-width strip
 that pushes the terminal below it instead of a clear card over the output, and
-a process exit reads "Process exited (code N)", never "Session disconnected".
+a process exit reads "Process exited (code N)", never "Session ended" (#6159).
 """
 
 from __future__ import annotations
@@ -95,7 +95,7 @@ def notice_problems(
             problems += strip_layout_problems(
                 strip=layout["strip"], pane=layout["pane"], terminal=layout["terminal"]
             )
-        if expected_cause in ("exited", "ended", "user") and LINK_HEADING in flat:
+        if expected_cause == "exited" and LINK_HEADING in flat:
             problems.append(f"a process end says {LINK_HEADING!r} (#5910)")
         if "choose View scrollback" in flat:
             problems.append("the overlay still asks to choose View scrollback to read it")

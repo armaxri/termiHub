@@ -179,7 +179,7 @@ def test_grade_setup_tab_icon_of_run_20261124T155441Z_fails():
     # R-002: the red plug and the SSH chip after an installed agent.
     red = "tab__state-dot tab__state-dot--disconnected"
     problems = setup_tab_icon_problems(outcome="installed", dot_class=red,
-                                       dot_label="Disconnected", ssh_chip=True)
+                                       dot_label="Session ended", ssh_chip=True)
     assert len(problems) == 3
     assert any("SSH chip" in p for p in problems)
 

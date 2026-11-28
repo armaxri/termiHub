@@ -7,7 +7,7 @@ describe("statusLabel", () => {
       ["connected", "Connected"],
       ["connecting", "Connecting"],
       ["reconnecting", "Reconnecting"],
-      ["disconnected", "Disconnected"],
+      ["disconnected", "Connection failed"],
       ["error", "Error"],
     ])("maps %s to a distinct non-colour label", (state, label) => {
       expect(connectionStateLabel(state)).toBe(label);
@@ -22,7 +22,7 @@ describe("statusLabel", () => {
     // states the agent emits serialise to these exact wire strings, so the badge
     // label for every agent state stays byte-identical.
     it.each([
-      ["disconnected", "Disconnected"],
+      ["disconnected", "Connection failed"],
       ["connecting", "Connecting"],
       ["connected", "Connected"],
       ["reconnecting", "Reconnecting"],

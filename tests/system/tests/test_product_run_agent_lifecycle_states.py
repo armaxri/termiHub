@@ -74,7 +74,7 @@ def _row(**over: Any) -> dict[str, Any]:
 
 
 #: The R-002 / R-006 shape: the failure state of the connect that offered setup.
-RED = _row(dot_class="status-dot status-dot--disconnected", dot_label="Disconnected",
+RED = _row(dot_class="status-dot status-dot--disconnected", dot_label="Connection failed",
            has_connect=False, has_reconnect=True)
 
 

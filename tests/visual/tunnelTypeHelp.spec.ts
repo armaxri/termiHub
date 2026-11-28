@@ -226,9 +226,13 @@ for (const viewport of [
         await hover(page, page.locator(id("tunnel-name-tun-db")));
         await expect(tooltip("tun-db")).toBeVisible();
         await placed(tooltip("tun-db"));
-        const shown = (await tooltip("tun-db").boundingBox())!;
         const row = (await page.locator(id("tunnel-item-tun-db")).boundingBox())!;
-        expect(shown.x).toBeGreaterThanOrEqual(row.x + row.width);
+        // Beside the row, not over the next one. Polled: Radix may still be
+        // moving the content from its first measure when the wrapper is placed
+        // (CI saw x = 0 at 800x600 dark).
+        await expect
+          .poll(async () => (await tooltip("tun-db").boundingBox())?.x ?? -1)
+          .toBeGreaterThanOrEqual(row.x + row.width);
         await hover(page, next);
         await expect(tooltip("tun-socks")).toBeVisible();
         await expect(tooltip("tun-db")).toHaveCount(0);

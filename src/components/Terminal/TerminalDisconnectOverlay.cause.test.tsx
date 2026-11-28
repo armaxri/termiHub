@@ -108,7 +108,7 @@ describe("TerminalDisconnectOverlay — the cause line (#5831)", () => {
     const overlay = await renderWith(droppedWith(endCause));
     expect(overlay.dataset.cause).toBe(cause);
     expect(overlay.textContent).toContain(line);
-    expect(overlay.textContent).toContain("Session disconnected");
+    expect(overlay.textContent).toContain("Session ended");
   });
 
   it("a telnet server that closed the connection never reads as a lost connection", async () => {
@@ -240,7 +240,7 @@ describe("TerminalReconnectStrip — one model with the cause (#5831)", () => {
   it.each([
     ["remote_closed", "Server closed the connection — reconnecting…"],
     ["timeout", "Connection timed out — reconnecting…"],
-    ["io_error", "Connection lost — reconnecting…"],
+    ["io_error", "Reconnecting…"],
   ] as const)("an SSH drop with end cause %s reads %s", async (endCause, heading) => {
     seedTab(SSH);
     const strip = await renderWith(waiting(endCause));
@@ -251,7 +251,7 @@ describe("TerminalReconnectStrip — one model with the cause (#5831)", () => {
     seedTab(SSH);
     await renderWith(waiting("io_error"));
     const buttons = [...container.querySelectorAll("button")].map((b) => b.textContent);
-    expect(buttons).toEqual(["Cancel", "Retry now"]);
+    expect(buttons).toEqual(["Stop reconnecting", "Retry now"]);
 
     act(() => {
       container

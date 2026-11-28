@@ -5,15 +5,17 @@
  * (VNC/RDP) tabs and the monitoring status bar — words it the same way, so a
  * dropped link reads identically wherever it happens:
  *
- * - heading: {@link RECONNECTING_HEADING} ("Connection lost — reconnecting…");
+ * - heading: {@link RECONNECTING_HEADING} ("Reconnecting…", from the one
+ *   connection-state map, #6159);
  * - progress: {@link reconnectAttemptLabel} ("Attempt 3 of 10"), the budget being
  *   the shared `RECONNECT_POLICY.maxAttempts`;
  * - monitoring: one badge at a time, by {@link monitorStatusBadge}'s precedence.
  */
 import type { MonitorStatus } from "@/types/monitoring";
+import { connectionStateHeading } from "@/utils/connectionStateCopy";
 
 /** The heading shown while an automatic reconnect loop is running. */
-export const RECONNECTING_HEADING = "Connection lost — reconnecting…";
+export const RECONNECTING_HEADING = connectionStateHeading("reconnecting");
 
 /**
  * The attempt-progress label for a running reconnect loop: `Attempt n of N`, or

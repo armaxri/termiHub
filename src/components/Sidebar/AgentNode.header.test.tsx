@@ -176,7 +176,7 @@ describe("AgentNode — header presentation (#2524)", () => {
       ["connected", "Connected"],
       ["connecting", "Connecting"],
       ["reconnecting", "Reconnecting"],
-      ["disconnected", "Disconnected"],
+      ["disconnected", "Connection failed"],
     ] as const)(
       "exposes a non-colour accessible name (%s → %s) for the state dot",
       (connectionState, label) => {

@@ -17,6 +17,10 @@
  * - [one-primary] One footer (one parent element) holds at most one primary
  *   `<Button>`. A `<Button>` without a `variant` is primary.
  * - [cancel-left] "Cancel" is the first `<Button>` of its footer.
+ * - [glossary] User-facing text uses the glossary's names and the one
+ *   connection-state wording (#6159): "tunnel", not "port forwarding"; a
+ *   "persistent session", not a "background session"; never "Connection lost"
+ *   or "Disconnected" as a state.
  *
  * Today's violations are grandfathered in a checked-in baseline
  * (scripts/internal/copy-style-baseline.json), keyed by file, check and text,
@@ -116,6 +120,14 @@ const BRITISH_SPELLINGS = [
   ],
 ];
 
+/** Old names and the glossary term or state word that replaces them (#6159). */
+const GLOSSARY = [
+  [/\bport[- ]forward(s|ing|ed)?\b/i, "tunnel"],
+  [/\bbackground sessions?\b/i, "persistent session"],
+  [/^connection lost\b/i, '"Reconnecting…" or "Session ended"'],
+  [/^(session )?disconnected\.?$/i, '"Session ended" or "Connection failed"'],
+];
+
 const ACKNOWLEDGEMENT_WORDS = new Set(["done", "dismiss", "ok", "okay", "got it"]);
 const DISCARD_PHRASES = new Set([
   "discard",
@@ -137,6 +149,7 @@ const ADVICE = {
   "us-spelling": "use US spelling",
   "one-primary": "use one primary button per footer; make the others secondary",
   "cancel-left": "put Cancel first (left) in the footer, the primary action last (right)",
+  glossary: "use the glossary term or connection-state word (docs/copy-style.md)",
 };
 
 /** Placeholder for an interpolated expression inside a template literal. */
@@ -220,6 +233,15 @@ export function britishSpelling(text) {
   for (const [pattern, us] of BRITISH_SPELLINGS) {
     const match = pattern.exec(text);
     if (match) return { found: match[0], us };
+  }
+  return null;
+}
+
+/** The glossary term for the first old name in `text`, or null (#6159). */
+export function glossaryTerm(text) {
+  for (const [pattern, term] of GLOSSARY) {
+    const match = pattern.exec(text);
+    if (match) return { found: match[0], term };
   }
   return null;
 }
@@ -449,6 +471,7 @@ export const copyStyleRule = {
 
     const checkSpelling = (node, text) => {
       if (britishSpelling(text)) report(node, "us-spelling", text);
+      if (glossaryTerm(text)) report(node, "glossary", text);
     };
     const checkLabel = (node, text) => {
       if (titleCaseWords(text).length > 0) report(node, "sentence-case", text);

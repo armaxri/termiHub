@@ -999,7 +999,7 @@ flowchart TD
     R -->|configured device back| O[reopen with saved line settings] --> C[Connected]
     R -->|absent / unverified / different device| F[failed attempt]
     F -->|attempts left| W
-    F -->|limit reached| G[Reconnect failed]
+    F -->|limit reached| G[Connection failed]
     W -->|Cancel| X[Disconnected]
 ```
 

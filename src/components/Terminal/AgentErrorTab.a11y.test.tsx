@@ -98,7 +98,7 @@ describe("AgentErrorTab announcement (#4514)", () => {
     const regions = announcers();
     expect(regions).toHaveLength(1);
     expect(regions[0].getAttribute("role")).toBe("alert");
-    expect(regions[0].textContent).toBe("Reconnect failed. host unreachable");
+    expect(regions[0].textContent).toBe("Connection failed. host unreachable");
   });
 
   it("has no axe violations", async () => {

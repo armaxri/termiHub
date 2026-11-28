@@ -118,16 +118,16 @@ describe("RemoteDesktopOverlay", () => {
     }
   );
 
-  it("shows the reconnecting overlay with a clamped attempt counter and Abort", () => {
+  it("shows the reconnecting overlay with a clamped attempt counter and Stop reconnecting", () => {
     const { onCancel } = render("reconnecting", { reconnectAttempt: 0 });
     const el = query("remote-desktop-overlay-reconnecting");
     // Worded exactly like a terminal tab's reconnect (#3730).
-    expect(el?.textContent).toContain("Connection lost — reconnecting…");
+    expect(el?.textContent).toContain("Reconnecting…");
     // reconnectAttempt 0 is clamped up to 1 for display; the budget is the
     // shared reconnect policy's 10 attempts.
     expect(el?.textContent).toContain("Attempt 1 of 10");
     const cancel = Array.from(el?.querySelectorAll("button") ?? []).find(
-      (b) => b.textContent === "Abort"
+      (b) => b.textContent === "Stop reconnecting"
     );
     act(() => cancel?.click());
     expect(onCancel).toHaveBeenCalledOnce();
@@ -228,7 +228,7 @@ describe("RemoteDesktopOverlay", () => {
       const el = query("remote-desktop-overlay-error");
       expect(el?.querySelector(".ui-connect-progress")?.getAttribute("data-phase")).toBe("aborted");
       expect(el?.textContent).toContain("Connection aborted");
-      expect(el?.textContent).not.toContain("Disconnected");
+      expect(el?.textContent).not.toContain("Session ended");
       expect(query("remote-desktop-edit")).toBeNull();
       act(() => query("remote-desktop-retry")?.click());
       expect(onReconnect).toHaveBeenCalledOnce();
@@ -252,14 +252,14 @@ describe("RemoteDesktopOverlay", () => {
     const el = query("remote-desktop-overlay-error");
     expect(el?.textContent).toContain("Session ended by the server");
     expect(el?.textContent).toContain("initiated by the user logging off");
-    expect(el?.textContent).not.toContain("Connection lost");
+    expect(el?.textContent).not.toContain("Session ended.");
     act(() => query("remote-desktop-reconnect")?.click());
     expect(onReconnect).toHaveBeenCalledOnce();
   });
 
-  it("shows a Disconnected heading with Reconnect and Close tab for a closed session", () => {
+  it("shows a Session ended heading with Reconnect and Close tab for a closed session", () => {
     const { onCloseTab } = render("closed");
-    expect(query("remote-desktop-overlay-error")?.textContent).toContain("Disconnected");
+    expect(query("remote-desktop-overlay-error")?.textContent).toContain("Session ended");
     expect(query("remote-desktop-reconnect")).not.toBeNull();
     act(() => query("remote-desktop-close-tab")?.click());
     expect(onCloseTab).toHaveBeenCalledOnce();
@@ -274,7 +274,7 @@ describe("RemoteDesktopOverlay", () => {
     });
     expect(query("remote-desktop-overlay-reconnecting")).toBeNull();
     const el = query("remote-desktop-overlay-error");
-    expect(el?.textContent).toContain("Connection lost");
+    expect(el?.textContent).toContain("Session ended");
     expect(el?.textContent).toContain("Reconnect failed after 10 attempts");
     act(() => query("remote-desktop-reconnect")?.click());
     expect(onReconnect).toHaveBeenCalledOnce();
@@ -287,7 +287,7 @@ describe("RemoteDesktopOverlay", () => {
     const { onReconnect } = render("disconnected", { message: reason });
     expect(query("remote-desktop-overlay-reconnecting")).toBeNull();
     const el = query("remote-desktop-overlay-error");
-    expect(el?.textContent).toContain("Connection lost");
+    expect(el?.textContent).toContain("Session ended");
     expect(container.querySelector(".rd-overlay__error")?.textContent).toBe(reason);
     act(() => query("remote-desktop-reconnect")?.click());
     expect(onReconnect).toHaveBeenCalledOnce();
@@ -308,7 +308,7 @@ describe("RemoteDesktopOverlay", () => {
     it.each([
       ["connecting", {}, "Connecting to rd-host… Establishing connection"],
       ["authenticating", {}, "Signing in to rd-host… Authenticating"],
-      ["reconnecting", { reconnectAttempt: 2 }, "Connection lost — reconnecting… Attempt 2 of 10"],
+      ["reconnecting", { reconnectAttempt: 2 }, "Reconnecting… Attempt 2 of 10"],
     ] as const)("%s", (state, overrides, expected) => {
       const records: MutationRecord[] = [];
       const observer = new MutationObserver((recs) => records.push(...recs));

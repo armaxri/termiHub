@@ -133,6 +133,7 @@ export {
   CONNECT_CANCELED_TYPE_PASSWORD_LABEL,
   CONNECT_CANCELED_RETRY_LABEL,
 } from "@/utils/connectCanceledToast";
+import { connectionStateHeading, connectionVerb } from "@/utils/connectionStateCopy";
 
 /**
  * Acknowledge an attended cancel (#5188) and say what to do next (#5838):
@@ -513,8 +514,8 @@ export async function connectSavedConnection(
     // toast appears once the store is unlocked (or skipped) instead.
     const showConnecting = () => {
       if (unattended || preconnect.signal.aborted) return;
-      connectingToastId = toast.loading("Connecting…", {
-        action: { label: "Abort", onClick: abortPreconnect },
+      connectingToastId = toast.loading(connectionStateHeading("connecting"), {
+        action: { label: connectionVerb("abort"), onClick: abortPreconnect },
         testId: "connect-preconnect-toast",
       });
     };
@@ -607,10 +608,10 @@ export async function connectSavedConnection(
           started: (id) => (preconnectId = id),
           stage: (text) => {
             if (connectingToastId !== undefined) {
-              toast.loading("Connecting…", {
+              toast.loading(connectionStateHeading("connecting"), {
                 id: connectingToastId,
                 description: text,
-                action: { label: "Abort", onClick: abortPreconnect },
+                action: { label: connectionVerb("abort"), onClick: abortPreconnect },
                 testId: "connect-preconnect-toast",
               });
             }

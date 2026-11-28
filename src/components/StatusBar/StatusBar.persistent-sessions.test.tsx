@@ -75,7 +75,7 @@ describe("StatusBar — persistent-session count segment", () => {
     const item = query();
     expect(item).not.toBeNull();
     expect(item!.textContent).toContain("2");
-    expect(item!.getAttribute("aria-label")).toContain("2 background sessions running");
+    expect(item!.getAttribute("aria-label")).toContain("2 persistent sessions running");
   });
 
   it("uses the singular label for a single running session", async () => {
@@ -87,7 +87,7 @@ describe("StatusBar — persistent-session count segment", () => {
     const item = query();
     expect(item).not.toBeNull();
     expect(item!.textContent).toContain("1");
-    expect(item!.getAttribute("aria-label")).toContain("1 background session running");
+    expect(item!.getAttribute("aria-label")).toContain("1 persistent session running");
     expect(item!.getAttribute("aria-label")).not.toContain("sessions");
   });
 

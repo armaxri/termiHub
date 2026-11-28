@@ -39,8 +39,8 @@ FINISHED_DOT_CLASS = "tab__state-dot--finished"
 #: An ended setup tab's dot (class suffix, label) per outcome (#5992).
 OUTCOME_DOTS: dict[str, tuple[str, str]] = {
     "installed": ("finished", "Finished"),
-    "failed": ("disconnected", "Disconnected"),
-    "cancelled": ("disconnected", "Disconnected"),
+    "failed": ("disconnected", "Session ended"),
+    "cancelled": ("disconnected", "Session ended"),
     "checking": ("checking", "Checking the agent…"),
     "unknown": ("unknown", "Agent setup outcome unknown"),
 }

@@ -135,7 +135,7 @@ Prefer to build it yourself? See [Development](#development) below.
 ### SSH Features
 
 - **File browser** — Browse, upload, download, and edit remote files via SFTP
-- **SSH tunneling** — Local, remote, and dynamic (SOCKS5, SOCKS4 and SOCKS4a) port forwarding with session pooling. The **Services** sidebar view lists every tunnel in one place, beside the file servers; each has an editor with **Settings** and **Activity** (what happened, traffic, and why it failed with the next step). An SSH connection's editor lists the tunnels through it on the same rows (**SSH tunnels** section), with **New tunnel** and **Show in Services**. The three types, which the tunnel editor also explains on each type's card and when you hover or focus it (a tunnel hosted on a remote agent opens its port on the agent instead of your computer):
+- **SSH tunnels** — Local, remote, and dynamic (SOCKS5, SOCKS4 and SOCKS4a) tunnels with session pooling. The **Services** sidebar view lists every tunnel in one place, beside the file servers; each has an editor with **Settings** and **Activity** (what happened, traffic, and why it failed with the next step). An SSH connection's editor lists the tunnels through it on the same rows (**SSH tunnels** section), with **New tunnel** and **Show in Services**. The three types, which the tunnel editor also explains on each type's card and when you hover or focus it (a tunnel hosted on a remote agent opens its port on the agent instead of your computer):
   - **Local** (`ssh -L`) — use something on the SSH server's side as if it ran here, e.g. a database only the server can reach at `localhost:5432`
   - **Remote** (`ssh -R`) — let the SSH server use something here, e.g. show a web app running on your computer to someone logged in on the server
   - **Dynamic** (`ssh -D`) — use the SSH server as a SOCKS proxy for many destinations, e.g. to browse an internal network
@@ -153,7 +153,8 @@ Prefer to build it yourself? See [Development](#development) below.
 ### Workspace and Windows
 
 - **Multi-window** — Tear tabs out into separate native windows
-- **Workspaces / tab groups** — Save and restore named layouts of connections and splits
+- **Workspaces** — Save and restore named layouts of tabs, splits and connections
+- **Tab groups** — Several sets of tabs and splits in one window, each with its own chip above the tab bar
 - **Session auto-save and restore** — Reopen your previous sessions on launch, with a Recent Sessions list
 - **Broadcast input** — Type once and mirror input across a group of terminals; save a selection as a named broadcast group (kept by saved connection, so it works again after a restart). Multi-line pastes to several terminals always ask first, naming the target count
 
@@ -515,7 +516,7 @@ By default the file records **Info** level and above — enough to be readable w
 - **Auto-login (optional, off by default)** — set **Login** to _Auto-login_ and enter a username and password. termiHub types the username when the output ends with a login prompt (default `login:`, `username:`, or `user name:`) and the password at the password prompt (default `password:`). Matching is case-insensitive; alternatives are separated with `|`. A device that asks only for a password gets the password at the first prompt. If a prompt does not appear within the prompt timeout (default 10 s), or the login prompt reappears after the username was sent (the login was rejected), auto-login stops and the session stays interactive — it never retries.
   - The password is kept in the credential store (keychain or master-password vault) when **Save password** is on and is never written to the connection file or logged. Leave it empty to be asked on connect.
   - **Telnet is unencrypted**: the username and password travel in cleartext and can be read by anyone on the network path. Only use auto-login on trusted networks and prefer SSH where the device supports it.
-- **Auto-Reconnect (optional, off by default)** — switch on **Auto-reconnect** to have a dropped telnet connection retried in the same tab with a growing pause (up to 10 attempts, pauses of at most 30 s), with the same reconnect strip, countdown and **Cancel** as SSH. Each retry opens a fresh telnet session (and runs auto-login again when it is set up); the remote session is not preserved.
+- **Auto-Reconnect (optional, off by default)** — switch on **Auto-reconnect** to have a dropped telnet connection retried in the same tab with a growing pause (up to 10 attempts, pauses of at most 30 s), with the same reconnect strip, countdown and **Stop reconnecting** as SSH. Each retry opens a fresh telnet session (and runs auto-login again when it is set up); the remote session is not preserved.
 
 ## SSH Configuration
 
@@ -668,11 +669,11 @@ sudo usermod -a -G dialout $USER
 
 When a serial port disappears — a USB adapter is unplugged or re-enumerates — the tab stays open and termiHub reopens the port when it comes back, like Tera Term's COM-port auto-reconnect. Auto-reconnect is **on by default** for serial connections; switch it off per connection.
 
-- While the port is gone, the reconnect strip at the top of the tab shows the countdown and attempt number. termiHub checks for the port with a growing pause (up to 10 attempts, pauses of at most 30 s, about 3 minutes in all) and then shows **Reconnect failed** with **Try Again**.
-- Click **Cancel** on the strip to stop retrying. The tab then shows the manual reconnect prompt.
+- While the port is gone, the reconnect strip at the top of the tab shows the countdown and attempt number. termiHub checks for the port with a growing pause (up to 10 attempts, pauses of at most 30 s, about 3 minutes in all) and then shows **Connection failed** with **Retry**.
+- Click **Stop reconnecting** on the strip to stop retrying. The tab then shows the manual reconnect prompt.
 - The port is reopened with the saved line settings (baud rate, data bits, stop bits, parity, flow control).
-- Only the port you configured is reopened. For a USB adapter, termiHub also remembers the USB identity of the adapter (vendor, product and serial number). A different adapter that shows up under the same name is not opened: termiHub keeps waiting for the original, and if it gives up, the **Reconnect failed** notice names the other device. If the same adapter comes back under a new name (for example `/dev/ttyUSB1` instead of `/dev/ttyUSB0`, or `COM7` instead of `COM3`) and it reports a serial number, termiHub follows it to the new name. This works on Linux, macOS and Windows. Two adapters of the same model without a serial number cannot be told apart. A port that is not a USB adapter is matched by its name only.
-- A serial connection hosted on a remote agent reconnects too. The agent reopens the port on its own host, in the same session, with the same rules: the same countdown and attempts, only the configured adapter, and a rename followed only on a matching serial number. **Cancel** stops the agent from retrying and closes the session. This needs an up-to-date agent (protocol 0.37.0 or later); with an older agent the session ends when the port drops, as before.
+- Only the port you configured is reopened. For a USB adapter, termiHub also remembers the USB identity of the adapter (vendor, product and serial number). A different adapter that shows up under the same name is not opened: termiHub keeps waiting for the original, and if it gives up, the **Connection failed** notice names the other device. If the same adapter comes back under a new name (for example `/dev/ttyUSB1` instead of `/dev/ttyUSB0`, or `COM7` instead of `COM3`) and it reports a serial number, termiHub follows it to the new name. This works on Linux, macOS and Windows. Two adapters of the same model without a serial number cannot be told apart. A port that is not a USB adapter is matched by its name only.
+- A serial connection hosted on a remote agent reconnects too. The agent reopens the port on its own host, in the same session, with the same rules: the same countdown and attempts, only the configured adapter, and a rename followed only on a matching serial number. **Stop reconnecting** stops the agent from retrying and closes the session. This needs an up-to-date agent (protocol 0.37.0 or later); with an older agent the session ends when the port drops, as before.
 
 ### Terminal Size
 

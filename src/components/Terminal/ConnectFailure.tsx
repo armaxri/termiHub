@@ -17,6 +17,7 @@ import {
 } from "@/utils/connectionErrorHints";
 import { t } from "@/i18n/catalog";
 import "./TerminalConnectionOverlay.css";
+import { connectionStateHeading } from "@/utils/connectionStateCopy";
 
 /**
  * Copy a suggested fix command to the clipboard so the user can paste and run it
@@ -134,7 +135,7 @@ export function restingConnectHeading(
     case "timeout":
       return "Timed out";
     case "failed":
-      return connectionErrorHeading(kind) ?? "Connection failed";
+      return connectionErrorHeading(kind) ?? connectionStateHeading("failed");
   }
 }
 

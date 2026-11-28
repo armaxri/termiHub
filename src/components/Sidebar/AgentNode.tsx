@@ -124,6 +124,7 @@ import { TreeFolderRow, TreeItemRow, treeItemPaddingLeft, treeRowPaddingLeft } f
 import { errorMessage } from "@/utils/errorMessage";
 import { toastConnectCanceled } from "@/utils/connectCanceledToast";
 import { tf } from "@/i18n/catalog";
+import { connectionStateHeading, connectionStateWord } from "@/utils/connectionStateCopy";
 
 const EMPTY_SESSIONS: AgentSessionInfo[] = [];
 const EMPTY_DEFINITIONS: AgentDefinitionInfo[] = [];
@@ -174,7 +175,8 @@ export interface AgentRowPresentation {
  * agent uses its live tone. A not-connected agent is **neutral** ("Not
  * connected", grey dot, "Connect") unless something actually went wrong —
  * `failed` (a stored `lastError`, a failed connect attempt, or an unexpected
- * drop) — and only then reads as the red "Disconnected" with "Reconnect".
+ * drop) — and only then reads as the red "Connection failed" with "Reconnect"
+ * (the one connection-state wording, #6159).
  * An agent whose host has no termiHub agent yet (`notInstalled`) is an
  * expected first-run state, not a failure (#5851): neutral, "Agent not
  * installed", with "Set up agent" as its action.
@@ -201,7 +203,7 @@ export function agentRowPresentation(
     return { tone: "connecting", label: "Installing…", action: "installing" };
   }
   if (setupPhase === "installed") {
-    return { tone: "disabled", label: "Not connected", action: "connect" };
+    return { tone: "disabled", label: connectionStateWord("notConnected"), action: "connect" };
   }
   if (setupPhase === "unknown") {
     const action = notInstalled ? "setup" : failed ? "reconnect" : "connect";
@@ -212,7 +214,7 @@ export function agentRowPresentation(
   }
   return failed
     ? { tone: "disconnected", label: connectionStateLabel("disconnected"), action: "reconnect" }
-    : { tone: "disabled", label: "Not connected", action: "connect" };
+    : { tone: "disabled", label: connectionStateWord("notConnected"), action: "connect" };
 }
 
 /**
@@ -1903,17 +1905,17 @@ export function AgentNode({
                 {isConnected && <AgentUpdateMarker agentId={agent.id} />}
               </button>
               {isConnecting && (
-                // Inline Cancel so a stuck connect is abortable without opening the
+                // Inline Abort so a stuck connect is abortable without opening the
                 // context menu (G1, #1235).
                 <div className="connection-list__group-actions connection-list__group-actions--inline">
-                  <Tooltip content="Cancel connect" side="top">
+                  <Tooltip content="Abort connect" side="top">
                     <Button
                       variant="ghost"
                       size="sm"
                       iconOnly
                       icon={<XCircle size={16} />}
                       onClick={() => void handleCancelConnect()}
-                      aria-label="Cancel connect"
+                      aria-label="Abort connect"
                       data-testid={`agent-cancel-connect-${agent.id}`}
                     />
                   </Tooltip>
@@ -2257,7 +2259,7 @@ export function AgentNode({
                   style={{ paddingLeft: 24 }}
                 >
                   <RefreshCw size={12} />
-                  Reconnecting…
+                  {connectionStateHeading("reconnecting")}
                 </div>
               )}
 
@@ -2454,7 +2456,7 @@ export function AgentNode({
               style={{ paddingLeft: 32 }}
               data-testid={`agent-empty-${agent.id}`}
             >
-              Not connected.
+              {`${connectionStateWord("notConnected")}.`}
             </p>
           )}
         </AgentRootDropZone>

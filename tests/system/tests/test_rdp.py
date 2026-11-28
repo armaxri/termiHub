@@ -399,7 +399,7 @@ class TestRdpReconnect(_RdpSuite):
         try:
             probe.stop()
             text = self.wait_for_error(
-                "Connection lost", "the disconnected overlay after the server went away"
+                "Session ended", "the disconnected overlay after the server went away"
             )
             assert text
             # No retry is running: the overlay stays put while the server is down.

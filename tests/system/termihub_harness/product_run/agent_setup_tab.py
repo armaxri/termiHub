@@ -25,7 +25,7 @@ HEADINGS: dict[str, str] = {
 }
 
 #: The plain session-end headings a setup tab must no longer show.
-PLAIN_END_HEADINGS = ("Session ended", "Process exited", "Session disconnected")
+PLAIN_END_HEADINGS = ("Session ended", "Process exited")
 
 
 def setup_tab_problems(

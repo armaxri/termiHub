@@ -20,6 +20,7 @@ import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import { errorMessage } from "@/utils/errorMessage";
 import { newId } from "@/services/transport/ids";
 import "./ConnectionPathDialog.css";
+import { connectionStateHeading } from "@/utils/connectionStateCopy";
 
 interface ConnectionPathDialogProps {
   open: boolean;
@@ -192,7 +193,7 @@ export function ConnectionPathDialog({ open, connection, onClose }: ConnectionPa
                 <span className="connection-path-dialog__detail">{node.detail}</span>
                 {spin && reducedMotion && (
                   <span className="connection-path-dialog__status-label" aria-hidden>
-                    Connecting…
+                    {connectionStateHeading("connecting")}
                   </span>
                 )}
                 {StatusIcon === null ? (

@@ -385,7 +385,7 @@ class TestVncReconnect(_VncSuite):
             )
             assert self.driver.exists(self.RECONNECT)
             overlay = self.driver.get_text(self.OVERLAY_ERROR)
-            assert "Connection lost" in overlay, overlay
+            assert "Session ended" in overlay, overlay
             # No retry is running: the overlay stays put while the server is down.
             time.sleep(3)
             assert self.remote_desktop_phase() == "error"

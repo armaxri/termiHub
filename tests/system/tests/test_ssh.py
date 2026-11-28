@@ -440,7 +440,7 @@ class TestSshServerDisconnect(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptU
             what="the view-mode banner",
         )
         banner = self.driver.get_text("terminal-view-mode-banner")
-        assert "Session disconnected" in banner or "Session ended" in banner, banner
+        assert "Session ended" in banner, banner
         assert marker in self.driver.read_terminal(tab_id), (
             "view mode must keep the pre-disconnect scrollback"
         )

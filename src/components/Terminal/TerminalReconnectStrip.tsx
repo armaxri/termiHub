@@ -15,6 +15,11 @@ import {
 import { serialDeviceName } from "@/utils/serialDeviceName";
 import { useTopNoticeInset } from "./topNoticeInset";
 import "./TerminalReconnectStrip.css";
+import { connectionStateHeading, connectionVerb } from "@/utils/connectionStateCopy";
+
+/** The one reconnect wording (#6159). */
+const RECONNECTING = connectionStateHeading("reconnecting");
+const STOP_RECONNECTING = connectionVerb("stopReconnecting");
 
 interface TerminalReconnectStripProps {
   tabId: string;
@@ -150,7 +155,7 @@ export function TerminalReconnectStrip({
     reasonNews.speak && lastAttemptError ? `${LAST_ATTEMPT_PREFIX} ${lastAttemptError}` : null;
 
   const cause = disconnectCauseOf({ transport, endCause });
-  const heading = inLoop ? reconnectHeadingFor(transport, cause) : "Reconnecting…";
+  const heading = inLoop ? reconnectHeadingFor(transport, cause) : RECONNECTING;
   // Retry now (#5831, R-164): only while a backoff window is open and the
   // desktop times the loop — an agent reopening its own port runs its attempts
   // itself.
@@ -165,7 +170,7 @@ export function TerminalReconnectStrip({
     ? reconnectStatusFor(transport)
     : waiting && secondsLeft > 0
       ? `Retrying in ${secondsLeft}s · ${attemptLabel}`
-      : `Reconnecting… · ${attemptLabel}`;
+      : `${RECONNECTING} · ${attemptLabel}`;
 
   // Announce the state and each attempt change — never the per-second countdown.
   // A plain reconnect has no ticking text, so its status line is announced too.
@@ -265,7 +270,7 @@ export function TerminalReconnectStrip({
             onClick={handleCancel}
             data-testid="terminal-auto-reconnect-cancel-btn"
           >
-            Cancel
+            {STOP_RECONNECTING}
           </Button>
           {canRetryNow && (
             <Button
@@ -285,7 +290,7 @@ export function TerminalReconnectStrip({
           onClick={handleCancel}
           data-testid="terminal-disconnect-stop-btn"
         >
-          Stop
+          {STOP_RECONNECTING}
         </Button>
       )}
     </div>

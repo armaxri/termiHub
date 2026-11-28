@@ -289,7 +289,7 @@ class TestProductRunRemoteDesktopTab(
         with self.step(
             "rd-tab.disconnect",
             "The toolbar's Disconnect ends the session and does not dial again (#5836)",
-            expect="the VNC tab on the 'Disconnected' screen with Reconnect and Close tab",
+            expect="the VNC tab on the 'Session ended' screen with Reconnect and Close tab",
         ):
             self.require("rd-tab.toolbar")
             before = self.vnc.connections()
@@ -299,10 +299,10 @@ class TestProductRunRemoteDesktopTab(
             finally:
                 self.driver.force_hover(None)
             self.wait(lambda: self.driver.exists(self.RECONNECT),
-                      what="the Disconnected resting screen")
+                      what="the Session ended resting screen")
             time.sleep(2.0)  # a reconnect would have dialled by now
             text = self.driver.get_text(self.OVERLAY_ERROR)
             self.evidence(f"after Disconnect: {text!r}; connections {before} -> {self.vnc.connections()}")
-            assert "Disconnected" in text, text
+            assert "Session ended" in text, text
             assert self.vnc.connections() == before, "Disconnect dialled the server again"
         self.close_all_tabs()

@@ -4,6 +4,7 @@ import { ContentOverlay } from "./ContentOverlay";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import { formatElapsed } from "@/utils/formatters";
 import "./ui.css";
+import { connectionStateHeading, connectionStateWord } from "@/utils/connectionStateCopy";
 
 /** Where one connect stage stands. */
 export type ConnectStageState = "pending" | "active" | "done" | "failed";
@@ -95,7 +96,7 @@ const RESTING_ICON: Record<"failed" | "timeout" | "aborted", React.ReactNode> = 
 };
 
 const RESTING_HEADING: Record<"failed" | "timeout" | "aborted", string> = {
-  failed: "Connection failed",
+  failed: connectionStateHeading("failed"),
   timeout: "Timed out",
   aborted: "Connection aborted",
 };
@@ -275,7 +276,7 @@ export function ConnectProgress({
   const heading =
     headingOverride ??
     (busy
-      ? `${phase === "retrying" ? "Reconnecting" : "Connecting"} to ${target}`
+      ? `${connectionStateWord(phase === "retrying" ? "reconnecting" : "connecting")} to ${target}`
       : RESTING_HEADING[phase]);
 
   return (

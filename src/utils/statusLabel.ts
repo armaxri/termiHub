@@ -1,4 +1,5 @@
 import type { PersistentRunState } from "@/types/connection";
+import { connectionStateWord } from "@/utils/connectionStateCopy";
 
 /**
  * Screen-reader-facing labels for the various colour-coded status dots across
@@ -15,11 +16,15 @@ export type ConnectionDotState =
   | "disconnected"
   | "error";
 
+/**
+ * The words come from the one connection-state map (#6159): a dot that went
+ * down after something failed reads "Connection failed".
+ */
 const CONNECTION_STATE_LABELS: Record<ConnectionDotState, string> = {
-  connected: "Connected",
-  connecting: "Connecting",
-  reconnecting: "Reconnecting",
-  disconnected: "Disconnected",
+  connected: connectionStateWord("connected"),
+  connecting: connectionStateWord("connecting"),
+  reconnecting: connectionStateWord("reconnecting"),
+  disconnected: connectionStateWord("failed"),
   error: "Error",
 };
 

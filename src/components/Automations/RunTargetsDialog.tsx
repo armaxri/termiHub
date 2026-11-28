@@ -28,6 +28,7 @@ import { runBlockedReason } from "@/utils/runBlocked";
 import { useRunTargets } from "./useRunTargets";
 import { RUN_PREVIEW_STEPS, runPreview, stepCountText } from "./runPreview";
 import "./RunTargetsDialog.css";
+import { connectionStateWord } from "@/utils/connectionStateCopy";
 
 /** An automation the picker can run. */
 export interface RunPickerAutomation {
@@ -316,7 +317,7 @@ export function RunTargetsDialog({
               <StatusDot
                 tone={t.live ? "connected" : "disconnected"}
                 size="sm"
-                label={t.live ? "Live" : "Not connected"}
+                label={t.live ? "Live" : connectionStateWord("notConnected")}
               />
               <label htmlFor={`run-targets-terminal-${t.id}`}>
                 {t.title}{" "}

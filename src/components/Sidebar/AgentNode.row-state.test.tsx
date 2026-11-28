@@ -143,7 +143,7 @@ function expectNeutral() {
 function expectFailed() {
   const cls = stateDot()?.className ?? "";
   expect(cls).toContain("status-dot--disconnected");
-  expect(stateDot()?.getAttribute("aria-label")).toBe("Disconnected");
+  expect(stateDot()?.getAttribute("aria-label")).toBe("Connection failed");
   expect(reconnectButton()?.getAttribute("aria-label")).toBe("Reconnect");
   expect(connectButton()).toBeNull();
 }

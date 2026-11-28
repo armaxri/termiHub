@@ -755,6 +755,8 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
       "tab",
       "persistent",
       "session",
+      // The glossary's old name for a persistent session (#6159).
+      "background session",
       "background",
       "attached",
       "detach",
@@ -777,6 +779,8 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
       "folder",
       "theme",
       "tunnel",
+      // The glossary's old name for a tunnel (#6159).
+      "port forwarding",
       "prompt",
       "dialog",
     ],

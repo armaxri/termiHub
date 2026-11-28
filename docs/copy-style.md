@@ -129,6 +129,66 @@ everywhere ("stored in the OS Keychain"). Text that refers to the options takes 
 | choose OS Keychain or Master password        | choose Master Password or OS Keychain        |
 | Passwords will be stored in the OS Keychain. | Passwords will be stored in the OS keychain. |
 
+## Glossary
+
+One name per thing, in the app, the README and the docs
+([#6159](https://github.com/armaxri/termiHub/issues/6159)). Search words may keep the other names, so
+people who type them still find the thing (Settings `keywords`, the command palette's aliases, the
+Services view's New menu).
+
+| Term                   | Means                                                                                                   | Not                                      |
+| ---------------------- | ------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| **Tunnel**             | An SSH tunnel: local, remote or dynamic (SOCKS). Listed under Services                                  | port forwarding, port forward, forward   |
+| **Remote agent**       | `termihub-agent` on another machine, reached over SSH. "The agent" once it is clear which               | daemon, server agent, remote host        |
+| **Persistent session** | A session that lives on a remote agent and keeps running when its tab closes or termiHub quits          | background session, detached session     |
+| **Workspace**          | A saved, named layout of tabs, splits and connections, opened from the Workspaces view                  | tab group (for a saved layout)           |
+| **Tab group**          | A set of tabs and splits in the open window, with its own chip above the tab bar                        | workspace (for a set in the open window) |
+| **Stop**               | Ends something that runs: a process, a persistent session, a tunnel, a file server, a reconnect         | kill, terminate, end (as a button)       |
+| **Disconnect**         | Closes the link to a connection or a remote agent. Persistent sessions on the agent keep running        | stop (for a link), close connection      |
+| **Delete**             | Destroys a saved item: a connection, a tunnel, a file server. See [Delete vs Remove](#delete-vs-remove) | remove (for destroying)                  |
+
+## Connection states
+
+A connection's state reads the same on every surface: the sidebar, tabs, the status bar, overlays
+and toasts ([#6159](https://github.com/armaxri/termiHub/issues/6159), audit UX-023 / UX-029). The
+words live in one map, `src/utils/connectionStateCopy.ts`, which reads them from the message catalog;
+`connectionStateCopy.test.ts` fails when a surface types its own or uses a retired word.
+
+| State             | Word (dot, tooltip, accessible name) | Heading (overlay, banner, toast) | Verb                  |
+| ----------------- | ------------------------------------ | -------------------------------- | --------------------- |
+| Connecting        | Connecting                           | Connecting…                      | **Abort**             |
+| Connected         | Connected                            | (none: the screen shows it)      | —                     |
+| Reconnecting      | Reconnecting                         | Reconnecting…                    | **Stop reconnecting** |
+| Connection failed | Connection failed                    | Connection failed                | **Retry**             |
+| Session ended     | Session ended                        | Session ended                    | **Reconnect**         |
+| Not connected     | Not connected                        | (none: a row says it)            | **Connect**           |
+
+- **What lasts ends in `…`** (Connecting…, Reconnecting…); what rests does not.
+- **Connection failed** is a connect that did not get in, and also a reconnect whose attempts all
+  failed. **Retry** tries the same connect again. An agent row offers its **Reconnect** icon
+  for this state too, because the row reconnects the agent whatever ended it.
+- **Session ended** is a session that was up and is over: the link dropped and no reconnect is
+  running, the server closed it, or the user disconnected it. The line under the heading says what
+  ended it ("The connection was lost.", "The server closed the connection."). **Reconnect** starts
+  a new session. A local process that exits is not a session ending: it reads "Process exited" and
+  offers **Restart**.
+- **Reconnecting…** may name its cause first when it is known: "Connection timed out —
+  reconnecting…", "Device disconnected — reconnecting…".
+- **Not connected** is neutral: nothing failed. It is grey, and its verb is **Connect**.
+- **Why** a connect failed is not a state word. An agent row says it with `agentFailureReason`
+  (`src/components/Sidebar/agentFailureReason.ts`, #6160); a terminal says it on its failure
+  screen.
+- **One surface per object.** A tab's state shows on the tab and in its pane; a monitor's in the
+  status bar; an agent's on its row. A toast adds only what no surface shows (see
+  [Toasts](#toasts-only-what-the-screen-does-not-show)).
+
+| Do                | Don't                                                 |
+| ----------------- | ----------------------------------------------------- |
+| Reconnecting…     | Connection lost — reconnecting…                       |
+| Session ended     | Disconnected · Session disconnected · Connection lost |
+| Stop reconnecting | Cancel · Abort · Stop (on a running reconnect)        |
+| Retry             | Try again (after a failed connect)                    |
+
 ## Delete vs Remove
 
 - **Delete** destroys data: a saved connection, a key file, a credential. It cannot be undone

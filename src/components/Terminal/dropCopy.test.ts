@@ -55,8 +55,8 @@ describe("reconnect strip copy", () => {
   });
 
   it("keeps the shared heading for SSH and agent drops", () => {
-    expect(reconnectHeadingFor("ssh")).toBe("Connection lost — reconnecting…");
-    expect(reconnectHeadingFor("agent")).toBe("Connection lost — reconnecting…");
+    expect(reconnectHeadingFor("ssh")).toBe("Reconnecting…");
+    expect(reconnectHeadingFor("agent")).toBe("Reconnecting…");
   });
 });
 

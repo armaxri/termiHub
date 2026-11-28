@@ -132,10 +132,10 @@ describe("TerminalDisconnectOverlay — agentless auto-reconnect variant (#1962)
       root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
     });
     await flushSessionRegion();
-    // The manual "Session disconnected" heading must NOT appear while auto-
+    // The manual "Session ended" heading must NOT appear while auto-
     // reconnect is counting down.
-    expect(container.textContent).not.toContain("Session disconnected");
-    expect(container.textContent).toContain("Connection lost");
+    expect(container.textContent).not.toContain("Session ended");
+    expect(container.textContent).toContain("Reconnecting…");
   });
 
   it("cancel button stops the loop via cancelAutoReconnect", async () => {

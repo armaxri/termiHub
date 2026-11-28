@@ -8,6 +8,7 @@ import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
 import { errorMessage } from "@/utils/errorMessage";
 import "./AgentErrorTab.css";
+import { connectionStateHeading, connectionVerb } from "@/utils/connectionStateCopy";
 
 interface AgentErrorTabProps {
   tabId: string;
@@ -71,7 +72,7 @@ export function AgentErrorTab({ tabId: _tabId, meta, isVisible }: AgentErrorTabP
   // A failure the user must act on (#4514): the reason lives in the details rows,
   // and a failed manual reconnect changes the announcement so it is spoken too.
   const announcement = reconnectError
-    ? `Reconnect failed. ${reconnectError}`
+    ? `${connectionStateHeading("failed")}. ${reconnectError}`
     : `Agent connection unavailable. ${meta.agentName}, ${meta.definitionName}: ${meta.error}`;
 
   return (
@@ -102,7 +103,9 @@ export function AgentErrorTab({ tabId: _tabId, meta, isVisible }: AgentErrorTabP
               disabled={isReconnecting}
               data-testid="agent-error-reconnect-btn"
             >
-              {isReconnecting ? "Reconnecting…" : "Reconnect"}
+              {isReconnecting
+                ? connectionStateHeading("reconnecting")
+                : connectionVerb("reconnect")}
             </Button>
             {reconnectError && (
               <span id={reconnectErrorId} className="agent-error-tab__reconnect-error">

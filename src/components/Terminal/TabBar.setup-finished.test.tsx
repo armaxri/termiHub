@@ -159,7 +159,7 @@ describe("TabBar — finished agent setup tab (#5980)", () => {
   it.each([
     [{ kind: "running" }, "checking", "Checking the agent…"],
     [{ kind: "unknown", message: "?" }, "unknown", "Agent setup outcome unknown"],
-    [{ kind: "failed", message: "no" }, "disconnected", "Disconnected"],
+    [{ kind: "failed", message: "no" }, "disconnected", "Session ended"],
     [{ kind: "installed" }, "finished", "Finished"],
   ] as const)("a Windows exit 0 with %o shows %s (#5992)", async (progress, status, label) => {
     registerSetupTab("t1", { reportsExit: false, progress });

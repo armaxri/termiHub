@@ -142,7 +142,7 @@ describe("TerminalPluginExitOverlay (#4188)", () => {
   it("keeps the generic overlay for a session without a plugin exit", async () => {
     await renderWith(undefined);
     expect(q("terminal-plugin-exit")).toBeNull();
-    expect(q("terminal-disconnect-overlay")!.textContent).toContain("Session disconnected");
+    expect(q("terminal-disconnect-overlay")!.textContent).toContain("Session ended");
   });
 
   it("does not show a stale plugin exit over a live session", async () => {

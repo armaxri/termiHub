@@ -61,7 +61,7 @@ describe("TerminalDisconnectOverlay announcements (#4331)", () => {
   it("announces a failed reconnect assertively with its error", async () => {
     await renderWith(failed("connection timed out"), true);
     expect(liveRegion()?.getAttribute("role")).toBe("alert");
-    expect(liveRegion()?.textContent).toBe("Reconnect failed. connection timed out");
+    expect(liveRegion()?.textContent).toBe("Connection failed. connection timed out");
   });
 
   it("announces an authentication failure assertively", async () => {
@@ -81,7 +81,7 @@ describe("TerminalDisconnectOverlay announcements (#4331)", () => {
   it("announces a plain disconnect politely", async () => {
     await renderWith(disconnected("unexpected"), true);
     expect(liveRegion()?.getAttribute("role")).toBe("status");
-    expect(liveRegion()?.textContent).toContain("Session disconnected.");
+    expect(liveRegion()?.textContent).toContain("Session ended.");
   });
 
   it("announces the busy reconnecting state politely through the live region (#4512)", async () => {
@@ -95,7 +95,7 @@ describe("TerminalDisconnectOverlay announcements (#4331)", () => {
     const region = byTestId("terminal-reconnect-strip-announcement");
     expect(region?.getAttribute("role")).toBe("status");
     expect(region?.textContent).toBe(
-      "Reconnecting… Connection lost. Attempting to reconnect automatically."
+      "Reconnecting… The connection was lost. Reconnecting automatically."
     );
     // The region was in the document before its text arrived.
     expect(

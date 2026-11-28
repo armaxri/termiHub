@@ -79,7 +79,7 @@ def test_grade_top_banner_with_clear_toast_passes():
     assert _grade(toasts=[toast]) == []
     assert _grade(banner_text="Session ended. Press Enter to reconnect.") == []
     # #5955: the banner keeps the strip's heading.
-    assert _grade(banner_text="Session disconnected. Press Enter to reconnect.") == []
+    assert _grade(banner_text="Session ended. Press Enter to reconnect.") == []
     assert _grade(banner_text="Process exited (code 0). Press Enter to restart.") == []
 
 

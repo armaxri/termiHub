@@ -13,7 +13,7 @@ connection from the server side (telnet starts with auto-reconnect off), and a
 local shell exits with code 3. Each notice is graded for its cause line, the
 auto-reconnect note, the strip that pushes the terminal below it instead of
 covering it (#5908), and, after Reconnect, the marker. A process exit reads
-"Process exited (code N)", never "Session disconnected" (#5910).
+"Process exited (code N)", never "Session ended" (#5910).
 
 The ``test_grade_*`` functions grade fixed notices without an app and run in
 the normal lane.
@@ -47,7 +47,7 @@ TELNET_USER = "product-run"
 TELNET_PASSWORD = "pr-telnet-pw"
 
 TELNET_CLOSED = (
-    "Session disconnected The server closed the connection. Scrollback is kept. "
+    "Session ended The server closed the connection. Scrollback is kept. "
     "Auto-reconnect is off for this connection: telnet connections start with it off. "
     "Turn it on with “Auto-reconnect” in the connection's settings. "
     "Press Enter to reconnect. Reconnect"
@@ -81,7 +81,7 @@ def test_grade_a_telnet_server_close_with_its_cause_passes():
 def test_grade_the_old_telnet_overlay_fails():
     # The R-062 shape: "lost" for a server close, no word on auto-reconnect.
     old = (
-        "Session disconnected The connection was lost. Your scrollback is kept — "
+        "Session ended The connection was lost. Your scrollback is kept — "
         "choose View scrollback to read it. Reconnect View scrollback"
     )
     problems = _overlay(text=old, cause=None)
@@ -115,13 +115,13 @@ def test_grade_a_process_exit_needs_its_code():
         == []
     )
     # The #5910 shape (R-004): a process exit titled as a lost connection.
-    old = "Session disconnected Process exited (code 3). Scrollback is kept."
+    old = "Session ended Process exited (code 3). Scrollback is kept."
     assert notice_problems(
         variant="disconnected", text=old, cause="exited", expected_cause="exited"
-    ) == ["a process end says 'Session disconnected' (#5910)"]
+    ) == ["a process end says 'Session ended' (#5910)"]
     assert notice_problems(
         variant="disconnected",
-        text="Session disconnected The connection was lost.",
+        text="Session ended The connection was lost.",
         cause="lost",
         expected_cause="exited",
     )
@@ -153,7 +153,7 @@ def test_grade_the_strip_needs_retry_now_and_the_last_attempt():
 
 
 def test_grade_the_strip_names_a_server_close():
-    text = "Connection lost — reconnecting… After attempt 10, retrying stops and the tab offers Reconnect."
+    text = "Reconnecting… After attempt 10, retrying stops and the tab offers Reconnect."
     problems = notice_problems(
         variant="strip", text=text, cause="server", expected_cause="server", buttons=["Cancel"]
     )
@@ -222,7 +222,7 @@ class TestProductRunReconnectModel(
             "The telnet server closing the connection says so, says why telnet did not retry, "
             "and keeps the scrollback readable (#5831)",
             expect="a full-width strip at the top of the telnet tab with the login prompt fully "
-            "readable below it: 'Session disconnected — The server closed the connection.' and "
+            "readable below it: 'Session ended — The server closed the connection.' and "
             "'Auto-reconnect is off for this connection: telnet connections start with it off.' "
             "with Reconnect",
         ):
@@ -266,7 +266,7 @@ class TestProductRunReconnectModel(
             "A shell that exits with a code says so, not that a connection was lost (#5831, "
             "#5910)",
             expect="a local tab with a full-width strip above the output: a process icon, "
-            "'Process exited (code 3)' and Restart; no wifi icon, no 'Session disconnected'",
+            "'Process exited (code 3)' and Restart; no wifi icon, no 'Session ended'",
         ):
             self.switch_to_connections_sidebar()
             self.create_local_connection(name, connect=True)
