@@ -2615,8 +2615,10 @@ expect(backend.callsTo("local_read_file")).toEqual([{ path: "/a.txt" }]);
 
 A command without a handler rejects and fails the test when it finishes, so a
 test lists every command its code reaches; put what a component asks on mount in
-one shared object and spread it. `backend.handle({ … })` adds or replaces handlers
-mid-test.
+one shared object and spread it (`CONNECTION_EDITOR_MOUNT` in
+`src/test/connectionEditorBackend.ts`, `FILE_BROWSER_MOUNT` in
+`src/test/fileBrowserBackend.ts`). `backend.handle({ … })` adds or replaces
+handlers mid-test, and `backend.clearCalls()` forgets the calls so far.
 
 The map is generated from every production `invoke` call by
 `node scripts/internal/gen-command-types.mjs`. Run it after adding, renaming or

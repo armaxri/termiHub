@@ -7,7 +7,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
-import { invoke } from "@tauri-apps/api/core";
+import { fakeBackend, type CommandHandlers, type FakeBackend } from "@/test/fakeBackend";
+import { FILE_BROWSER_MOUNT } from "@/test/fileBrowserBackend";
 import { useAppStore } from "@/store/appStore";
 import { currentFileBrowsersView } from "@/store/fileBrowsersBridge";
 import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
@@ -60,7 +61,13 @@ vi.mock("@/services/api", async (importOriginal) => {
   };
 });
 
-const mockedInvoke = vi.mocked(invoke);
+let backend: FakeBackend;
+
+/** Install the typed fake backend (#6151) with the browser's mount calls under `handlers`. */
+function installBackend(handlers: CommandHandlers): FakeBackend {
+  backend = fakeBackend({ ...FILE_BROWSER_MOUNT, ...handlers });
+  return backend;
+}
 
 let container: HTMLDivElement;
 let root: Root;
@@ -164,14 +171,11 @@ describe("FileBrowser — agent-hosted sessions (#3242)", () => {
     "lists an agent-hosted %s session's own files through its session",
     async (sessionType) => {
       const sessionId = `${sessionType}-on-agent`;
-      mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
-        if (cmd === "session_list_files") {
-          const { sessionId: asked } = args as { sessionId: string };
-          return asked === sessionId
-            ? Promise.resolve([entry("app.log"), entry("data", true)])
-            : Promise.reject(new Error(`unexpected session ${asked}`));
-        }
-        return Promise.resolve(undefined);
+      installBackend({
+        session_list_files: ({ sessionId: asked }) => {
+          if (asked !== sessionId) throw new Error(`unexpected session ${asked}`);
+          return [entry("app.log"), entry("data", true)];
+        },
       });
       seedAgentSession(sessionType, sessionId);
 
@@ -179,26 +183,23 @@ describe("FileBrowser — agent-hosted sessions (#3242)", () => {
 
       expect(currentFileBrowsersView().mode).toBe("session");
       expect(useAppStore.getState().sessionFileBrowserId).toBe(sessionId);
-      const listCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === "session_list_files");
+      const listCalls = backend.callsTo("session_list_files");
       expect(listCalls.length).toBeGreaterThan(0);
-      expect(
-        listCalls.every(([, args]) => (args as { sessionId: string }).sessionId === sessionId)
-      ).toBe(true);
+      expect(listCalls.every((args) => args.sessionId === sessionId)).toBe(true);
       expect(container.textContent).toContain("app.log");
       expect(container.textContent).toContain("data");
     }
   );
 
   it("says to update the agent when the remote agent is too old to browse the session", async () => {
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "session_list_files") {
-        return Promise.reject({
+    installBackend({
+      session_list_files: () => {
+        throw {
           code: "agent_outdated",
           message:
             "Remote agent error: Operation failed: the remote agent is too old to browse files in this session; update the agent",
-        });
-      }
-      return Promise.resolve(undefined);
+        };
+      },
     });
     seedAgentSession("docker", "docker-on-old-agent");
 
@@ -213,11 +214,10 @@ describe("FileBrowser — agent-hosted sessions (#3242)", () => {
   });
 
   it("keeps any other listing error's own message", async () => {
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "session_list_files") {
-        return Promise.reject({ code: "remote_error", message: "Permission denied: /root" });
-      }
-      return Promise.resolve(undefined);
+    installBackend({
+      session_list_files: () => {
+        throw { code: "remote_error", message: "Permission denied: /root" };
+      },
     });
     seedAgentSession("ssh", "ssh-on-agent");
 
@@ -229,16 +229,18 @@ describe("FileBrowser — agent-hosted sessions (#3242)", () => {
 
   it("downloads a folder in a multi-select Download by its files, never as one file (#3944)", async () => {
     const sessionId = "docker-on-agent";
-    mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
-      if (cmd === "session_list_files") {
-        const { path } = args as { path: string };
-        return Promise.resolve(
-          path === "/srv/data"
-            ? [{ ...entry("inner.txt"), path: "/srv/data/inner.txt" }]
-            : [entry("app.log"), entry("data", true)]
-        );
-      }
-      return Promise.resolve(undefined);
+    installBackend({
+      session_list_files: ({ path }) =>
+        path === "/srv/data"
+          ? [{ ...entry("inner.txt"), path: "/srv/data/inner.txt" }]
+          : [entry("app.log"), entry("data", true)],
+      session_download_to_local_file: () => undefined,
+      // The folder's download is one tracked paste into a new local folder.
+      folder_paste_begin: () => "paste-1",
+      folder_paste_link_transfer: () => undefined,
+      folder_paste_end: () => undefined,
+      local_mkdir: () => undefined,
+      local_list_dir: () => [],
     });
     seedAgentSession("docker", sessionId);
     await renderBrowser();
@@ -261,10 +263,7 @@ describe("FileBrowser — agent-hosted sessions (#3242)", () => {
     await flushAsync();
     await flushAsync();
 
-    const downloads = () =>
-      mockedInvoke.mock.calls
-        .filter(([cmd]) => cmd === "session_download_to_local_file")
-        .map(([, args]) => args as { remotePath: string; localPath: string });
+    const downloads = () => backend.callsTo("session_download_to_local_file");
     expect(openMock).toHaveBeenCalledWith(expect.objectContaining({ directory: true }));
     expect(saveMock).toHaveBeenCalledTimes(1);
     // Folders list first; the folder itself is never copied as one file.

@@ -11,8 +11,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { flushAsync } from "@/test/flushAsync";
 import { createRoot, Root } from "react-dom/client";
-import { invoke } from "@tauri-apps/api/core";
-import type { InvokeArgs } from "@tauri-apps/api/core";
+import { fakeBackend, type CommandHandlers, type FakeBackend } from "@/test/fakeBackend";
+import { FILE_BROWSER_MOUNT, LOCAL_FILE_ACTIONS_OK } from "@/test/fileBrowserBackend";
+import type { FileEntry } from "@/types/generated/FileEntry";
 import { useAppStore } from "@/store/appStore";
 import { setupFileBrowsersRegion } from "@/test/fileBrowsersRegionTestHarness";
 import { setupVirtualListSizing } from "@/test/virtualListSize";
@@ -65,16 +66,28 @@ vi.mock("@/services/api", async (importOriginal) => {
   };
 });
 
-const mockedInvoke = vi.mocked(invoke);
+let backend: FakeBackend;
+
+/** Install the typed fake backend (#6151) with the browser's mount calls under `handlers`. */
+function installBackend(handlers: CommandHandlers): FakeBackend {
+  backend = fakeBackend({ ...FILE_BROWSER_MOUNT, ...LOCAL_FILE_ACTIONS_OK, ...handlers });
+  return backend;
+}
 
 let container: HTMLDivElement;
 let root: Root;
 
-const entries = [
-  { name: "a.txt", path: "/home/a.txt", isDirectory: false, size: 1, modified: "" },
-  { name: "b.txt", path: "/home/b.txt", isDirectory: false, size: 1, modified: "" },
-  { name: "c.txt", path: "/home/c.txt", isDirectory: false, size: 1, modified: "" },
-];
+const file = (name: string): FileEntry => ({
+  name,
+  path: `/home/${name}`,
+  isDirectory: false,
+  size: 1,
+  modified: "",
+  permissions: null,
+  writable: null,
+});
+
+const entries = [file("a.txt"), file("b.txt"), file("c.txt")];
 
 function makeTab(overrides: Partial<TerminalTab>): TerminalTab {
   return {
@@ -114,14 +127,6 @@ function row(name: string): HTMLElement {
 
 const q = (testId: string) => document.querySelector(`[data-testid="${testId}"]`) as HTMLElement;
 
-/** Read the `path` field from an invoke args payload, tolerating its union type. */
-function argPath(args?: InvokeArgs): string | undefined {
-  if (args && typeof args === "object" && "path" in args) {
-    return (args as Record<string, unknown>).path as string;
-  }
-  return undefined;
-}
-
 setupFileBrowsersRegion();
 // Size the virtualized list so its rows mount under jsdom (MOCK-008).
 setupVirtualListSizing();
@@ -144,13 +149,11 @@ describe("FileBrowser — multi-delete outcome reporting (#1394)", () => {
 
   it("reports surviving deletions and lists failures when a batch partially fails", async () => {
     // b.txt fails to delete; a.txt and c.txt succeed.
-    mockedInvoke.mockImplementation((cmd: string, args?: InvokeArgs) => {
-      if (cmd === "local_list_dir") return Promise.resolve(entries);
-      if (cmd === "local_delete") {
-        if (argPath(args) === "/home/b.txt") return Promise.reject(new Error("permission denied"));
-        return Promise.resolve(undefined);
-      }
-      return Promise.resolve(undefined);
+    installBackend({
+      local_list_dir: () => entries,
+      local_delete: ({ path }) => {
+        if (path === "/home/b.txt") throw new Error("permission denied");
+      },
     });
 
     await renderLocal();
@@ -181,7 +184,7 @@ describe("FileBrowser — multi-delete outcome reporting (#1394)", () => {
     await flushAsync();
 
     // All three deletes were attempted (Promise.allSettled, not Promise.all).
-    const deleteCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === "local_delete");
+    const deleteCalls = backend.callsTo("local_delete");
     expect(deleteCalls).toHaveLength(3);
 
     // A single summary error toast reports the two successes and names the failure.
@@ -194,9 +197,8 @@ describe("FileBrowser — multi-delete outcome reporting (#1394)", () => {
   });
 
   it("raises no toast when every item in the batch deletes (#5859)", async () => {
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "local_list_dir") return Promise.resolve(entries);
-      return Promise.resolve(undefined);
+    installBackend({
+      local_list_dir: () => entries,
     });
 
     await renderLocal();
@@ -224,12 +226,11 @@ describe("FileBrowser — multi-delete outcome reporting (#1394)", () => {
   });
 
   it("surfaces a single-delete failure via an error toast instead of failing silently", async () => {
-    mockedInvoke.mockImplementation((cmd: string, args?: InvokeArgs) => {
-      if (cmd === "local_list_dir") return Promise.resolve(entries);
-      if (cmd === "local_delete" && argPath(args) === "/home/a.txt") {
-        return Promise.reject(new Error("permission denied"));
-      }
-      return Promise.resolve(undefined);
+    installBackend({
+      local_list_dir: () => entries,
+      local_delete: ({ path }) => {
+        if (path === "/home/a.txt") throw new Error("permission denied");
+      },
     });
 
     await renderLocal();

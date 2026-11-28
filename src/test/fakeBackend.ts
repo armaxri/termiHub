@@ -61,6 +61,8 @@ export interface FakeBackend {
   callsTo<K extends CommandName>(command: K): Commands[K]["args"][];
   /** Add or replace handlers. */
   handle(handlers: CommandHandlers): void;
+  /** Forget the calls so far (the handlers stay). */
+  clearCalls(): void;
 }
 
 /** Install a typed fake backend behind the `invoke` mock. */
@@ -97,5 +99,8 @@ export function fakeBackend(
     callsTo: <K extends CommandName>(command: K) =>
       calls.filter((c) => c.command === command).map((c) => c.args as Commands[K]["args"]),
     handle: (more) => Object.assign(current, more),
+    clearCalls: () => {
+      calls.length = 0;
+    },
   };
 }

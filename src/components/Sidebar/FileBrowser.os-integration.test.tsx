@@ -19,6 +19,8 @@ import { act } from "react";
 import { flushAsync } from "@/test/flushAsync";
 import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
+import { fakeBackend, type CommandHandlers, type FakeBackend } from "@/test/fakeBackend";
+import { FILE_BROWSER_MOUNT, LOCAL_FILE_ACTIONS_OK } from "@/test/fileBrowserBackend";
 import { useAppStore } from "@/store/appStore";
 import { setupFileBrowsersRegion } from "@/test/fileBrowsersRegionTestHarness";
 import { FileBrowser, FileMenuItems } from "./FileBrowser";
@@ -37,7 +39,7 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
 
 /** The `local_open_folder` invocations so far. */
 function openFolderCalls(): unknown[] {
-  return mockedInvoke.mock.calls.filter(([cmd]) => cmd === "local_open_folder").map(([, a]) => a);
+  return backend.callsTo("local_open_folder");
 }
 
 const toastSuccess = vi.fn();
@@ -81,7 +83,13 @@ vi.mock("@/services/api", async (importOriginal) => {
   };
 });
 
-const mockedInvoke = vi.mocked(invoke);
+let backend: FakeBackend;
+
+/** Install the typed fake backend (#6151) with the browser's mount calls under `handlers`. */
+function installBackend(handlers: CommandHandlers): FakeBackend {
+  backend = fakeBackend({ ...FILE_BROWSER_MOUNT, ...LOCAL_FILE_ACTIONS_OK, ...handlers });
+  return backend;
+}
 
 let container: HTMLDivElement;
 let root: Root;
@@ -164,10 +172,9 @@ describe("FileBrowser — local OS-integration toolbar actions (#2656)", () => {
     openPath.mockResolvedValue(undefined);
     toastSuccess.mockClear();
     toastError.mockClear();
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "local_list_dir") return Promise.resolve([]);
-      if (cmd === "session_list_files") return Promise.resolve([]);
-      return Promise.resolve(undefined);
+    installBackend({
+      local_list_dir: () => [],
+      session_list_files: () => [],
     });
   });
 
@@ -216,15 +223,16 @@ describe("FileBrowser — local OS-integration toolbar actions (#2656)", () => {
       action!.click();
     });
     await flushAsync();
-    expect(mockedInvoke).toHaveBeenCalledWith("vscode_open_local", { path: "/home" });
+    expect(invoke).toHaveBeenCalledWith("vscode_open_local", { path: "/home" });
     expect(toastError).not.toHaveBeenCalled();
   });
 
   it("shows an error toast when opening the file manager fails", async () => {
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "local_list_dir") return Promise.resolve([]);
-      if (cmd === "local_open_folder") return Promise.reject(new Error("no file manager"));
-      return Promise.resolve(undefined);
+    installBackend({
+      local_list_dir: () => [],
+      local_open_folder: () => {
+        throw new Error("no file manager");
+      },
     });
     await renderLocal();
     const action = await findFileBrowserAction("file-browser-open-in-explorer");
@@ -237,10 +245,11 @@ describe("FileBrowser — local OS-integration toolbar actions (#2656)", () => {
   });
 
   it("shows an error toast when opening the folder in VS Code fails", async () => {
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "local_list_dir") return Promise.resolve([]);
-      if (cmd === "vscode_open_local") return Promise.reject(new Error("code not found"));
-      return Promise.resolve(undefined);
+    installBackend({
+      local_list_dir: () => [],
+      vscode_open_local: () => {
+        throw new Error("code not found");
+      },
     });
     await renderLocal();
     const action = await findFileBrowserAction("file-browser-open-folder-vscode");
