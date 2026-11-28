@@ -706,29 +706,73 @@ fn an_unreadable_file_of_owed_stops_owes_nothing() {
 }
 
 /// A Restart sends the stop from its own thread while the Stop's background send
-/// is still out (develop red, run 140819327936): whichever answer lands second
-/// finds the owed stop already settled, and that is a confirmed stop too.
+/// is still out (develop red, job 140819327936): the second send waits for the
+/// first, finds the stop confirmed and sends nothing, so no late stop reaches
+/// the agent after the restart's new start.
 #[test]
-fn a_stop_that_another_send_confirmed_meanwhile_counts_as_confirmed() {
-    let services = Arc::new(Services::default());
+fn overlapping_sends_of_one_owed_stop_send_it_once_and_both_confirm() {
+    let services = Services::default();
     started(&services, "a");
     assert_eq!(services.stop("a"), StopPlan::StopThere("edge".into()));
 
-    // While this send's stop is out, a second send confirms it first.
+    // The first stop hangs at the agent until the second send has begun.
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel::<()>();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let release_rx = Mutex::new(release_rx);
+    let mut agent = FakeAgent::session_host();
+    agent.responder = Some(Box::new(move |method, _params| {
+        if method == "stop" {
+            let _ = entered_tx.send(());
+            let _ = release_rx.lock().unwrap().recv();
+        }
+        Some(Ok(json!({"stopped": true})))
+    }));
+    let agent = Arc::new(agent);
+
+    let (first_services, first_agent) = (services.clone(), Arc::clone(&agent));
+    let first = std::thread::spawn(move || {
+        first_services.send_owed_stop(first_agent.as_ref(), "edge", "a", Instant::now())
+    });
+    entered_rx.recv().unwrap();
+    let (second_services, second_agent) = (services.clone(), Arc::clone(&agent));
+    let second = std::thread::spawn(move || {
+        second_services.send_owed_stop(second_agent.as_ref(), "edge", "a", Instant::now())
+    });
+    release_tx.send(()).unwrap();
+    // A second stop, were one sent, must not hang the test.
+    let _ = release_tx.send(());
+
+    assert!(first.join().unwrap(), "the first send confirmed it");
+    assert!(second.join().unwrap(), "the second finds it confirmed");
+    assert_eq!(stops_sent(&agent), 1, "sent once");
+    assert_eq!(view(&services), None);
+}
+
+/// The poller's stop can confirm an owed stop while a send is out: that send
+/// counts it as confirmed too.
+#[test]
+fn a_stop_the_poller_confirmed_meanwhile_counts_as_confirmed() {
+    let services = Services::default();
+    started(&services, "a");
+    assert_eq!(services.stop("a"), StopPlan::StopThere("edge".into()));
+
     let (plain, _answers) = agent();
     let mut racing = FakeAgent::session_host();
-    let other = (Arc::clone(&services), Arc::clone(&plain));
+    let poller = services.clone();
     racing.responder = Some(Box::new(move |method, _params| {
         if method == "stop" {
-            let (services, agent) = &other;
-            assert!(services.send_owed_stop(agent.as_ref(), "edge", "a", Instant::now()));
+            let samples = Services::poll(plain.as_ref(), &poller.targets());
+            assert_eq!(
+                poller.apply(samples, Instant::now()),
+                vec![Change::Stopped("a".into())]
+            );
         }
         Some(Ok(json!({"stopped": true})))
     }));
 
     assert!(
         services.send_owed_stop(&racing, "edge", "a", Instant::now()),
-        "the stop was confirmed, by the other send"
+        "the stop was confirmed, by the poller"
     );
     assert_eq!(view(&services), None);
 }
