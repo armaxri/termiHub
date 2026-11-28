@@ -196,6 +196,7 @@ class TestConnectionForms(TabsUi, SidebarUi, ConnectionsUi, SystemTest):
         self.driver.type(self.EDITOR_NAME, name)
         self.driver.type("field-host", "127.0.0.1")
         self.driver.type("field-username", "tester")
+        self.expand_form_group("advanced")  # X11 lives in the collapsed Advanced group
         self.driver.click("field-enableX11Forwarding")  # off → on
         # Gate on the form reporting itself valid before saving (see the
         # defaults-on test); the aria-disabled Save button would otherwise

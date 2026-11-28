@@ -112,6 +112,25 @@ class ConnectionsUi(HarnessMixin):
         """
         return self.driver.exists(f"field-{key}")
 
+    def expand_form_group(self, group: str) -> None:
+        """Open the editor's collapsed settings group ``group`` (e.g. ``advanced``).
+
+        Fields of a collapsed group (SSH's Advanced: shell, X11, timeouts) are
+        mounted but hidden; a bridge click or type refuses a hidden control
+        (#6149), as a user could not reach it either. No-op when the group is
+        open or absent.
+        """
+        toggle = f"form-group-{group}-toggle"
+        if not self.driver.exists(toggle):
+            return
+        if self.driver.get_attribute(toggle, "aria-expanded") == "true":
+            return
+        self.driver.click(toggle)
+        self.wait(
+            lambda: self.driver.get_attribute(toggle, "aria-expanded") == "true",
+            what=f"the {group} settings group to open",
+        )
+
     def create_folder(self, name: str) -> dict[str, Any]:
         """Create a connection folder via the sidebar toolbar, returning it with a
         *settled* (persisted) id.
@@ -393,6 +412,7 @@ class ConnectionsUi(HarnessMixin):
                 lambda: self.driver.exists("field-enableX11Forwarding"),
                 what="the X11-forwarding toggle",
             )
+            self.expand_form_group("advanced")  # X11 lives in the collapsed Advanced group
             self.driver.click("field-enableX11Forwarding")  # off → on
         if before_save is not None:
             before_save()
