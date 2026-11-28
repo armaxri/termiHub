@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
-import { invoke } from "@tauri-apps/api/core";
+import { fakeBackend, type FakeBackend } from "@/test/fakeBackend";
+import { CONNECTION_EDITOR_MOUNT } from "@/test/connectionEditorBackend";
 import { useAppStore } from "@/store/appStore";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
@@ -37,7 +38,7 @@ globalThis.ResizeObserver = class {
   disconnect() {}
 } as unknown as typeof ResizeObserver;
 
-const mockedInvoke = vi.mocked(invoke);
+let backend: FakeBackend;
 
 /** Local type with no required config fields — Save gates on the name alone. */
 const LOCAL_TYPE: ConnectionTypeInfo = {
@@ -184,11 +185,9 @@ beforeEach(() => {
     credentialStoreStatus: { mode: "none", status: "unlocked" },
   });
   seedConnectionsRegion({ connections: [] });
-  mockedInvoke.mockImplementation((cmd) => {
-    if (cmd === "check_docker_available") return Promise.resolve(false);
-    if (cmd === "check_podman_available") return Promise.resolve(false);
-    if (cmd === "resolve_credential") return Promise.resolve(null);
-    return Promise.resolve(undefined);
+  backend = fakeBackend({
+    ...CONNECTION_EDITOR_MOUNT,
+    resolve_credential: () => null,
   });
 });
 
@@ -492,15 +491,8 @@ describe("ConnectionEditor top-level fields — storage-file change (#3590)", ()
       sourceFile: null,
     };
     seedConnectionsRegion({ connections: [existing] });
-    mockedInvoke.mockImplementation((cmd, args) => {
-      if (cmd === "check_docker_available") return Promise.resolve(false);
-      if (cmd === "check_podman_available") return Promise.resolve(false);
-      if (cmd === "resolve_credential") return Promise.resolve(null);
-      if (cmd === "save_connection_to_file") {
-        const { connection } = args as { connection: SavedConnection };
-        return Promise.resolve({ ...connection, id: connection.name });
-      }
-      return Promise.resolve(undefined);
+    backend.handle({
+      save_connection_to_file: ({ connection }) => ({ ...connection, id: connection.name }),
     });
     renderEditor("Main Conn");
     await flush();
@@ -526,16 +518,13 @@ describe("ConnectionEditor top-level fields — storage-file change (#3590)", ()
     await flush();
     await flush();
 
-    const commands = mockedInvoke.mock.calls.map(([cmd]) => cmd);
+    const commands = backend.calls.map((c) => c.command);
     // A separate save plus move wrote the connection into the target twice.
     expect(commands).not.toContain("save_connection");
     expect(commands).not.toContain("move_connection_to_file");
-    const writes = mockedInvoke.mock.calls.filter(([cmd]) => cmd === "save_connection_to_file");
+    const writes = backend.callsTo("save_connection_to_file");
     expect(writes).toHaveLength(1);
-    const { connection, currentSource } = writes[0][1] as {
-      connection: SavedConnection;
-      currentSource: string | null;
-    };
+    const { connection, currentSource } = writes[0];
     expect(currentSource).toBeNull();
     expect(connection.id).toBe("Main Conn");
     expect(connection.name).toBe("Moved Conn");
