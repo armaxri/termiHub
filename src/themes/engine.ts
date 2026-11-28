@@ -47,6 +47,7 @@ export const COLOR_TO_CSS_VAR: Record<keyof ThemeColors, string> = {
 
   borderPrimary: "--border-primary",
   borderSecondary: "--border-secondary",
+  borderInput: "--border-input",
 
   accentColor: "--accent-color",
   accentHover: "--accent-hover",
@@ -83,6 +84,10 @@ export const COLOR_TO_CSS_VAR: Record<keyof ThemeColors, string> = {
   ansiBrightMagenta: "--ansi-bright-magenta",
   ansiBrightCyan: "--ansi-bright-cyan",
   ansiBrightWhite: "--ansi-bright-white",
+
+  colorNotice: "--color-notice",
+  broadcastAccent: "--broadcast-accent",
+  macroAccent: "--macro-accent",
 
   scrollbarThumb: "--scrollbar-thumb",
   scrollbarThumbHover: "--scrollbar-thumb-hover",

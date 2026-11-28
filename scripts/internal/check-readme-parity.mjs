@@ -6,7 +6,7 @@
 // a message naming the mismatch when:
 //
 //   1. the "Activity Bar" bullet's view lists differ from the ActivityBar items
-//      in src/components/ActivityBar/ActivityBar.tsx — the views always shown
+//      in src/components/ActivityBar/activityBarItems.ts — the views always shown
 //      and the ones behind the `experimental` flag;
 //   2. the "Authentication Methods" bullets differ from the SSH `authMethod`
 //      select options in core/src/backends/ssh/mod.rs, or mark another default;
@@ -28,7 +28,7 @@ import { isMainModule } from "./is-main-module.mjs";
 const DEFAULT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 export const README = "README.md";
-export const ACTIVITY_BAR = "src/components/ActivityBar/ActivityBar.tsx";
+export const ACTIVITY_BAR = "src/components/ActivityBar/activityBarItems.ts";
 export const SSH_BACKEND = "core/src/backends/ssh/mod.rs";
 export const KEYBINDINGS = "src/services/keybindings.ts";
 
@@ -117,7 +117,7 @@ function diffLists(what, readme, code, source) {
 /**
  * Parse the ActivityBar item definitions.
  *
- * @param {string} source - ActivityBar.tsx.
+ * @param {string} source - activityBarItems.ts.
  * @returns {{ label: string, experimental: boolean }[]}
  */
 export function parseActivityBarItems(source) {
@@ -130,7 +130,7 @@ export function parseActivityBarItems(source) {
  * Check the README's "Activity Bar" bullet.
  *
  * @param {string} readme - README.md.
- * @param {string} source - ActivityBar.tsx.
+ * @param {string} source - activityBarItems.ts.
  * @returns {string[]} problems.
  */
 export function checkActivityBar(readme, source) {

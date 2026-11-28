@@ -81,13 +81,15 @@ describe("Button aria-disabled look (#5286)", () => {
     container.remove();
   });
 
-  it("keeps the native disabled look unchanged", () => {
+  it("gives a native disabled button the muted look, without stacked opacity (#6154)", () => {
     const computed = getComputedStyle(render(<Button disabled>Save</Button>));
     expect({
       opacity: computed.opacity,
       cursor: computed.cursor,
       pointerEvents: computed.pointerEvents,
-    }).toEqual({ opacity: "0.5", cursor: "not-allowed", pointerEvents: "none" });
+    }).toEqual({ opacity: "", cursor: "not-allowed", pointerEvents: "none" });
+    expect(ruleDecls(".ui-btn[disabled]").get("color")).toBe("var(--text-muted)");
+    expect(ruleDecls(".ui-btn[disabled]").get("background")).toBe("var(--bg-tertiary)");
   });
 
   it("gives an aria-disabled primary button the not-allowed cursor, still clickable", () => {
@@ -104,12 +106,14 @@ describe("Button aria-disabled look (#5286)", () => {
     const btn = render(<Button aria-disabled>Save</Button>);
     act(() => btn.focus());
     expect(document.activeElement).toBe(btn);
-    // The ring is a box-shadow on the button itself, so the button (and every
-    // ancestor) must stay fully opaque.
+    // The ring is drawn by the button itself (an outline since #6154), so the
+    // button (and every ancestor) must stay fully opaque.
     for (let el: Element | null = btn; el; el = el.parentElement) {
       expect(["", "1"]).toContain(getComputedStyle(el).opacity);
     }
-    expect(ruleDecls(".ui-btn:focus-visible").get("box-shadow")).toBe("var(--shadow-focus)");
+    expect(ruleDecls(".ui-btn:focus-visible").get("outline")).toBe(
+      "var(--focus-ring-width) solid var(--focus-border)"
+    );
     for (const variant of VARIANTS) {
       expect(ruleDecls(`.ui-btn--${variant}${ARIA_DISABLED}`).has("opacity")).toBe(false);
     }

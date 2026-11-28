@@ -67,6 +67,7 @@ export const COLOR_TOKEN_GROUPS: ColorTokenGroup[] = [
     tokens: [
       { key: "borderPrimary", label: "Border primary" },
       { key: "borderSecondary", label: "Border secondary" },
+      { key: "borderInput", label: "Input border" },
       { key: "accentColor", label: "Accent" },
       { key: "accentHover", label: "Accent hover" },
       { key: "focusBorder", label: "Focus border" },
@@ -82,6 +83,14 @@ export const COLOR_TOKEN_GROUPS: ColorTokenGroup[] = [
       { key: "stateConnected", label: connectionStateWord("connected") },
       { key: "stateConnecting", label: connectionStateWord("connecting") },
       { key: "stateDisconnected", label: connectionStateWord("failed") },
+    ],
+  },
+  {
+    label: "Indicators",
+    tokens: [
+      { key: "colorNotice", label: "Notice" },
+      { key: "broadcastAccent", label: "Broadcast" },
+      { key: "macroAccent", label: "Automation running" },
     ],
   },
   {
