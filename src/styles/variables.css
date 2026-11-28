@@ -208,8 +208,8 @@
   /* Scrollbar — must equal dark.ts scrollbarThumb/Hover, which the theme engine
      writes over these at runtime (#3144 tuned that value; darkTokenParity.test.ts) */
   --scrollbar-bg: transparent;
-  --scrollbar-thumb: rgba(121, 121, 121, 0.5);
-  --scrollbar-thumb-hover: rgba(100, 100, 100, 0.7);
+  --scrollbar-thumb: rgba(151, 151, 151, 0.65);
+  --scrollbar-thumb-hover: rgba(170, 170, 170, 0.85);
   --scrollbar-width: 8px;
 
   /* Spacing (UI-009). Two half-step tiers (#3170) sit between xs/sm and sm/md:

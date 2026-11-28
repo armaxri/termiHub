@@ -18,6 +18,13 @@
 export interface ClickCommand {
   action: "click";
   testId: string;
+  /**
+   * Click even when a user could not (#6149): skip the wait and the refusal of
+   * a disabled, aria-disabled, inert, sizeless or covered target. Only for a
+   * test that clicks such a control on purpose, e.g. an invalid form's
+   * aria-disabled Save, which shows every reason (#5917).
+   */
+  force?: boolean;
 }
 
 /**
@@ -34,6 +41,8 @@ export interface ClickCommand {
 export interface DoubleClickCommand {
   action: "doubleClick";
   testId: string;
+  /** As {@link ClickCommand.force}. */
+  force?: boolean;
 }
 
 /**

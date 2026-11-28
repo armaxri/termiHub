@@ -1,7 +1,8 @@
 import { useRef, useState } from "react";
+import { escapeMacroStepData, parseMacroStepText } from "./keysFormat";
 import type React from "react";
 import { flushSync } from "react-dom";
-import { ArrowDown, ArrowUp, CornerDownLeft, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
 import { Button, Field, Input, NumberInput, Select } from "@/components/ui";
 import { DEFAULT_FIXED_DELAY_MS, MAX_STEP_DELAY_MS } from "@/services/macroPlayback";
 import type { TypingSpeed } from "@/types/generated/TypingSpeed";
@@ -255,6 +256,16 @@ function KeyRow({
     inputRef.current?.setSelectionRange(start + 1, start + 1);
   };
 
+  // Keys typed as escapes (`\r`, `\x03`) read as the row shows keys (`⏎`, `⌃C`)
+  // once the row is left: Enter and Ctrl keys have one notation (live review
+  // editor-2). A row that does not parse keeps what was typed, with its error.
+  const handleBlur = () => {
+    const parsed = parseMacroStepText(draft.text);
+    if (!parsed.ok) return;
+    const canonical = escapeMacroStepData(parsed.data);
+    if (canonical !== draft.text) onChange({ text: canonical });
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key !== "Enter" || isImeComposing(e)) return;
     if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
@@ -277,6 +288,7 @@ function KeyRow({
           value={draft.text}
           onChange={(e) => onChange({ text: e.target.value })}
           onKeyDown={handleKeyDown}
+          onBlur={handleBlur}
           onSelect={(e) => onCaret(e.currentTarget.selectionStart ?? draft.text.length)}
           placeholder="e.g. ls -la⏎"
           spellCheck={false}
@@ -290,11 +302,11 @@ function KeyRow({
           variant="ghost"
           size="sm"
           aria-label={`Add Enter to ${label}`}
-          icon={<CornerDownLeft size={ICON_SIZE.xs} />}
+          icon={<Plus size={ICON_SIZE.xs} />}
           onClick={() => insertEnter(draft.text.length, draft.text.length)}
           data-testid={`automation-editor-keys-enter-${id}`}
         >
-          Enter
+          Add ⏎
         </Button>
         {showDelay && (
           <span className="type-keys__delay">

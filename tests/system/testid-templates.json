@@ -21,7 +21,7 @@
     },
     {
       "globs": ["activity-bar-*"],
-      "source": "src/components/ActivityBar/ActivityBar.tsx",
+      "source": "src/components/ActivityBar/activityBarItems.ts",
       "extract": {
         "kind": "object-field",
         "const": ["REQUIRED_ITEMS", "OPTIONAL_ITEMS"],

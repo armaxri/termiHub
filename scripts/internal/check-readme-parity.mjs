@@ -41,6 +41,7 @@ export const SHORTCUT_ROWS = {
   "New local terminal": ["new-terminal"],
   "Close active tab": ["close-tab"],
   "Next / previous tab": ["next-tab", "prev-tab"],
+  "Reopen closed tab": ["reopen-closed-tab"],
   "Command palette": ["command-palette"],
   "Find in terminal": ["find-in-terminal"],
   "Jump to previous / next prompt": ["jump-prev-prompt", "jump-next-prompt"],

@@ -118,7 +118,8 @@ export const darkTheme: ThemeDefinition = {
     broadcastAccent: "#e87d0d",
     macroAccent: "#a66cf0",
 
-    scrollbarThumb: "rgba(121, 121, 121, 0.5)",
-    scrollbarThumbHover: "rgba(100, 100, 100, 0.7)",
+    // 3:1 against every surface it sits on (#6167; graded in tokenContrast.test.ts).
+    scrollbarThumb: "rgba(151, 151, 151, 0.65)",
+    scrollbarThumbHover: "rgba(170, 170, 170, 0.85)",
   },
 };

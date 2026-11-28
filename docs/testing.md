@@ -1074,8 +1074,9 @@ budget overrun the guard lists each contributing fragment and its count.
 
 ### Rerun report and rerun budget (#5167)
 
-The bulk and OS-input lanes run `--reruns 2` (#2698), so a test that fails and
-then passes on a retry is green. The rerun count is the lane's flake metric, so
+The bulk lanes run `--reruns 2` (#2698), so a test that fails and then passes
+on a retry is green. The OS-input lanes run `--reruns 0` (#6148) and, like the
+display lanes, carry no budget. The rerun count is the lane's flake metric, so
 the harness publishes it and puts a limit on it:
 
 - **Report.** Every run lists the tests that needed a rerun. For each test it
@@ -1987,6 +1988,34 @@ whether that pytest process still runs. The guard only reads the process
 table: it never signals a foreign process or sends it input. The
 frontmost-window refusal (`GlobalInjectionRefused`) is unchanged, and it now
 also names a foreign termiHub that holds the foreground.
+
+**One failure per environment refusal, no reruns (#6148).** The OS-input step
+runs with `--reruns 0`: a grade is honest on its first attempt. Some failures
+are the same for every test of the step: global input not allowed on this
+host, a foreign termiHub alive (`ForeignAppAlive`), or a host that cannot inject
+at all (a missing tool or permission, or a shared xdist session; on CI also
+whatever `unavailable_reason` reports). They are `EnvironmentRefusal`s. The
+first one ends the session after that test, with one message naming the lane
+(`os-input-macos` / `os-input-windows`) and the cause, instead of failing every
+grade the same way. A per-test miss is not a refusal and does not stop the
+session: a calibration that found no window, or another app's window in front
+at one moment. A cover such as a system alert is still stepped around (#6143).
+Linux runs these files inside its bulk lane, so a refusal there never stops
+that session. After every OS-input test, a native dialog of the test instance
+that the test left open (`#32770`, an `NSSavePanel` sheet, a GTK chooser) is
+closed with Escape, so it cannot sit over the next test's window.
+
+**Running the grades locally.** They inject real keys and pointer events, so on
+a developer machine they skip unless you opt in. Close other apps on that
+display, quit any other termiHub, then run:
+
+```bash
+TERMIHUB_OS_INPUT_GLOBAL=1 ./scripts/test-system-py.sh --debug -m integration \
+  tests/test_os_input_desktop.py tests/test_os_input_keyboard.py -n 1
+```
+
+Keep your hands off the keyboard and pointer while it runs. macOS also needs
+the Accessibility permission for the terminal that runs pytest.
 
 A screen point comes
 from the element's DOM rect, calibrated by one trusted `pointermove` the
@@ -4118,7 +4147,7 @@ Mapping of manual test IDs that have been automated to their Python harness test
 | MT-UI-17, 18, 20                                                                                       | _manual_ (OS window resize / dev favicon — not bridge-drivable)                                                                                                                                       |
 | MT-UI-21                                                                                               | `tests/system/tests/test_sidebar_sections.py`                                                                                                                                                         |
 | MT-UI-22–25                                                                                            | _manual_ (separator size/cursor, overflow scroll — visual)                                                                                                                                            |
-| MT-AGENT (create/error/setup)                                                                          | `tests/system/tests/test_remote_agent.py` (create, error dialog, setup wizard vs. the password container)                                                                                             |
+| MT-AGENT (create/error/setup)                                                                          | `tests/system/tests/test_remote_agent.py` (create, failure row and its Details, setup wizard vs. the password container)                                                                              |
 | MT-AGENT (live connect/sessions)                                                                       | `tests/system/tests/test_remote_agent_live.py` (live connect + shells, child shell session, persistent-session reconnect, connected-agent menu — vs. the deployed-agent container, #995)              |
 | MT-AGENT (update banner)                                                                               | `test_agent_update_banner_live.py` (surfacing, gates, dismiss) + `test_agent_update_apply_now_live.py` (Apply Now live deferred/busy vs. armed container — #1520/#1546)                               |
 | MT-CRED-04–08                                                                                          | `tests/system/tests/test_credential_store.py`                                                                                                                                                         |

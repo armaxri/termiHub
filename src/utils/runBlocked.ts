@@ -7,7 +7,12 @@ import { findUnknownStep, unknownStepReason, visitSteps } from "@/services/autom
 import { t, tf } from "@/i18n/catalog";
 import type { Automation } from "@/types/generated/Automation";
 import { EXPERIMENTAL_SETTING_PATH } from "@/utils/experimentalSetting";
-import { localProcessBlockedReason } from "@/utils/localProcessGate";
+import {
+  LOCAL_PROGRAMS_SETTING_PATH,
+  localProcessBlockedReason,
+  localProcessSwitchOff,
+  type LocalProcessSwitches,
+} from "@/utils/localProcessGate";
 
 /** Finds an automation by id. */
 export type ResolveAutomation = (id: string) => Automation | undefined;
@@ -16,25 +21,28 @@ export type ResolveAutomation = (id: string) => Automation | undefined;
 export function runBlockedReason(
   automation: Automation,
   resolve: ResolveAutomation,
-  experimental: boolean
+  switches: boolean | LocalProcessSwitches
 ): string | null {
   const unknown = findUnknownStep(automation, resolve);
   if (unknown) return unknownStepReason(automation, unknown);
-  return localProcessBlockedReason(automation, resolve, experimental) === null
-    ? null
-    : tf("automation.blocked.localProcess", { path: EXPERIMENTAL_SETTING_PATH });
+  if (localProcessBlockedReason(automation, resolve, switches) === null) return null;
+  // Which switch it waits for (#6178): experimental features, then Security.
+  return localProcessSwitchOff(switches) === "experimental"
+    ? tf("automation.blocked.localProcess", { path: EXPERIMENTAL_SETTING_PATH })
+    : tf("automation.blocked.localPrograms", { path: LOCAL_PROGRAMS_SETTING_PATH });
 }
 
 /** The same in a few words: "needs a newer termiHub". */
 export function runBlockedShort(
   automation: Automation,
   resolve: ResolveAutomation,
-  experimental: boolean
+  switches: boolean | LocalProcessSwitches
 ): string | null {
   if (findUnknownStep(automation, resolve)) return t("automation.blockedShort.unknown");
-  return localProcessBlockedReason(automation, resolve, experimental) === null
-    ? null
-    : t("automation.blockedShort.local");
+  if (localProcessBlockedReason(automation, resolve, switches) === null) return null;
+  return localProcessSwitchOff(switches) === "experimental"
+    ? t("automation.blockedShort.local")
+    : t("automation.blockedShort.localPrograms");
 }
 
 /**

@@ -1,4 +1,5 @@
 import { StateCreator } from "zustand";
+import { recordClosedTab, reopenPayloadForTab } from "@/utils/closedTabStack";
 
 import { confirmSavedConnection } from "@/services/savedConnectionTrust";
 import type { AddTabOptions, AppState } from "../appStore";
@@ -693,9 +694,12 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
       // owning-window badge (#1926). Skipped for a session mid-move — that tab is
       // removed via the move path, not closed, and the destination window now
       // owns it. Best-effort (see `bestEffortOwnership`).
-      const closingSessionId = getAllLeaves(curLayout().rootPanel)
+      const closingTab = getAllLeaves(curLayout().rootPanel)
         .flatMap((l) => l.tabs)
-        .find((t) => t.id === tabId)?.sessionId;
+        .find((t) => t.id === tabId);
+      const closingSessionId = closingTab?.sessionId;
+      // Reopen closed tab can bring it back (#6161).
+      if (closingTab) recordClosedTab(reopenPayloadForTab(closingTab));
       if (closingSessionId && !get().isSessionMoving(closingSessionId)) {
         bestEffortOwnership(() => releaseSession(closingSessionId));
       }
@@ -908,6 +912,10 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
       // the removed panel held it.
       // The sole-leaf case is a no-op both here and in the store, so skip it.
       if (getAllLeaves(curLayout().rootPanel).length <= 1) return;
+      // Reopen closed tab can bring its tabs back (#6161).
+      getAllLeaves(curLayout().rootPanel)
+        .find((leaf) => leaf.id === panelId)
+        ?.tabs.forEach((tab) => recordClosedTab(reopenPayloadForTab(tab)));
       const prev = get();
       const pre = currentLayoutSnapshot(prev);
       const next = setLayoutLocal((state) => {

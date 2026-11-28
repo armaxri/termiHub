@@ -270,17 +270,20 @@ function MonitorRow({
       }
       details={
         <>
-          {/* Where it runs, always; a long name is cut at its end (F-009 round 2). */}
-          <Tooltip content={tf("monitor.tooltip.runsOn", { machine: where })} side="right">
-            <span className="service-row__machine" data-testid={`monitor-machine-${config.id}`}>
-              <HardDrive
-                size={ICON_SIZE.xs}
-                className="service-row__machine-icon"
-                aria-hidden="true"
-              />
-              <span className="network-sidebar__monitor-where">{where}</span>
-            </span>
-          </Tooltip>
+          {/* Where it runs when that is not this computer, as on a Services row
+              (live review 2026-11-28); a long name is cut at its end. */}
+          {host.kind !== "thisComputer" && (
+            <Tooltip content={tf("monitor.tooltip.runsOn", { machine: where })} side="right">
+              <span className="service-row__machine" data-testid={`monitor-machine-${config.id}`}>
+                <HardDrive
+                  size={ICON_SIZE.xs}
+                  className="service-row__machine-icon"
+                  aria-hidden="true"
+                />
+                <span className="network-sidebar__monitor-where">{where}</span>
+              </span>
+            </Tooltip>
+          )}
           <span className="network-sidebar__monitor-meta" data-testid={`monitor-meta-${config.id}`}>
             {markerEl}
           </span>

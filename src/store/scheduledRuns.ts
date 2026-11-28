@@ -61,7 +61,7 @@ import {
 } from "./slices/workflowFanout";
 import { automationForRun } from "./slices/automationStoreState";
 import { automationToWorkflow, isMacroShaped } from "./slices/automationViews";
-import { experimentalFeaturesOn } from "./localProcessRefusal";
+import { localProcessSwitchesNow } from "./localProcessRefusal";
 import {
   closeRunTabs,
   connectedIds,
@@ -281,7 +281,7 @@ async function resolveAction(
   const blocked = localProcessBlockedReason(
     automation,
     (id) => automationForRun(store.getState(), id),
-    experimentalFeaturesOn()
+    localProcessSwitchesNow()
   );
   if (blocked) return { refused: blocked };
   // Nobody is there to type what it waits for (#6025).

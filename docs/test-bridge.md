@@ -216,7 +216,7 @@ unmount.
 
 | Action                     | Purpose                                                        |
 | -------------------------- | -------------------------------------------------------------- |
-| `click`                    | Press the element (full pointer sequence, so Radix menus open) |
+| `click`                    | Press it as a user would (full pointer sequence; see below)    |
 | `doubleClick`              | Double-click to "activate" (open connection / dir / file)      |
 | `type`                     | Set an input/textarea value (native setter + `input` event)    |
 | `select`                   | Choose a native `<select>` option (native setter + `change`)   |
@@ -299,6 +299,27 @@ await driver.terminalInput("echo HELLO_MARKER"); // runs in the active terminal
 const output = await driver.readTerminal();
 output.includes("HELLO_MARKER"); // assert on the result
 ```
+
+### Clicking only what a user could click (`click`, `doubleClick`, `type`)
+
+A bridge click acts like a user's (#6149). It waits up to 2 s for the target to
+mount and become clickable, then fails with the reason when it is still:
+
+- disabled (natively, or inside a disabled `<fieldset>`), or `aria-disabled="true"`;
+- inside an `inert` region;
+- without a size (hidden), or covered at its centre by another element. A hit
+  on the target's own content, or on the `<label>` that activates it, counts as
+  the target. Size and cover are checked only where there is a layout, so not
+  under jsdom.
+
+`{ action: "click", testId, force: true }` (Python: `driver.click(id, force=True)`)
+skips the wait and the checks. Use it only to click such a control on purpose,
+e.g. an invalid form's aria-disabled Save, which then shows every reason
+(#5917). `doubleClick` refuses the same things and takes the same `force`.
+
+`type` gives the field the focus first, as clicking into it would, and refuses
+a field that is disabled, read-only, inert or does not take the focus (an input
+behind an open modal). It also types into a `contenteditable` element.
 
 ### Double-clicking (`doubleClick`)
 

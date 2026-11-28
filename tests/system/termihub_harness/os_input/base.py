@@ -32,11 +32,25 @@ class ByNameTargetRefused(ValueError):
     """A by-name target (app name, bundle id, title) was passed instead of a PID."""
 
 
+class EnvironmentRefusal(Exception):
+    """Marks a failure of the *environment*, the same for every OS-input test (#6148).
+
+    Global input not allowed here, another termiHub alive, or a host that cannot
+    inject at all. The first one ends the OS-input session with one message
+    (:mod:`termihub_harness.os_input.session`). A per-test miss — a calibration
+    that found no window, a foreign window in front at one moment — is not one.
+    """
+
+
 class GlobalInjectionRefused(RuntimeError):
     """Global injection without a GitHub runner / opt-in, or into the wrong window."""
 
 
-class ForeignAppAlive(GlobalInjectionRefused):
+class InjectionNotAllowed(GlobalInjectionRefused, EnvironmentRefusal):
+    """Global injection on a host that is neither a GitHub runner nor opted in."""
+
+
+class ForeignAppAlive(GlobalInjectionRefused, EnvironmentRefusal):
     """Another termiHub process is alive while an OS-input grade wants the desktop.
 
     Raised by :meth:`OsInput.require_exclusive_desktop` (#5467): every test app
@@ -48,6 +62,11 @@ class ForeignAppAlive(GlobalInjectionRefused):
 
 class OsInputUnavailable(RuntimeError):
     """This host cannot inject OS input (missing tool, permission, display)."""
+
+
+class HostUnavailable(OsInputUnavailable, EnvironmentRefusal):
+    """The host cannot inject at all: a tool, a permission or the display is missing,
+    or the session is shared with other workers. Not a per-test miss (#6148)."""
 
 
 def require_pid(target: object) -> int:
@@ -162,7 +181,7 @@ class OsInput:
 
     def _require_global(self, target: int, *, any_allowed: bool = False) -> None:
         if not global_injection_allowed(self._env):
-            raise GlobalInjectionRefused(
+            raise InjectionNotAllowed(
                 "global OS input is refused outside a GitHub runner; set "
                 f"{GLOBAL_OPT_IN_ENV}=1 to opt in on a machine with nothing else "
                 "on the display"

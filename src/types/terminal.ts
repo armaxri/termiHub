@@ -454,6 +454,8 @@ export interface ReopenTabPayload {
   title: string;
   connectionType: ConnectionType;
   config: ConnectionConfig;
+  /** The closed tab's id, to tell the toast's and the shortcut's reopen apart (#6161). */
+  closedTabId?: string;
 }
 
 /**
@@ -480,6 +482,16 @@ export type SessionCloseConfirmRequest =
       liveCount: number;
       tabCount: number;
       /** Editor tabs in the panel with unsaved changes that would be discarded. */
+      dirtyCount: number;
+    }
+  | {
+      /** Several tabs of one panel: Close others / Close tabs to the right (#6161). */
+      kind: "tabs";
+      panelId: string;
+      tabIds: string[];
+      liveCount: number;
+      tabCount: number;
+      /** Editor tabs among them with unsaved changes that would be discarded. */
       dirtyCount: number;
     }
   | {

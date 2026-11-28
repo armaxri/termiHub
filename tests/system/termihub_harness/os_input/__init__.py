@@ -33,8 +33,11 @@ from typing import Any, Callable, Mapping, Optional
 from .base import (
     GLOBAL_OPT_IN_ENV,
     ByNameTargetRefused,
+    EnvironmentRefusal,
     ForeignAppAlive,
     GlobalInjectionRefused,
+    HostUnavailable,
+    InjectionNotAllowed,
     OsInput,
     OsInputUnavailable,
     OsWindow,
@@ -47,8 +50,11 @@ from .helper import HelperWindow
 __all__ = [
     "GLOBAL_OPT_IN_ENV",
     "ByNameTargetRefused",
+    "EnvironmentRefusal",
     "ForeignAppAlive",
     "GlobalInjectionRefused",
+    "HostUnavailable",
+    "InjectionNotAllowed",
     "HelperWindow",
     "OsInput",
     "OsInputUnavailable",

@@ -26,6 +26,7 @@ import type { TypingSpeed } from "@/types/generated/TypingSpeed";
 import type { WorkflowComparisonOp } from "@/types/workflow";
 import { DEFAULT_FIXED_DELAY_MS } from "@/services/macroPlayback";
 import { EXPERIMENTAL_SETTING_PATH } from "@/utils/experimentalSetting";
+import { LOCAL_PROGRAMS_SETTING_PATH } from "@/utils/localProcessGate";
 import { isKnownStepKind, type AutomationStepKind, type AutomationTriggerKind } from "./stepText";
 
 export {
@@ -154,6 +155,11 @@ export const UNKNOWN_STEP_REASON =
 export const LOCAL_PROCESS_STEP_REASON =
   "Will not run: local programs are experimental and switched off. " +
   `Nothing of the automation runs until you turn on ${EXPERIMENTAL_SETTING_PATH} or delete the step.`;
+
+/** Why a "Run local process" step does not run while Security keeps local programs off (#6178). */
+export const LOCAL_PROGRAMS_STEP_REASON =
+  "Will not run: local programs are switched off in Security. " +
+  `Nothing of the automation runs until you turn on ${LOCAL_PROGRAMS_SETTING_PATH} or delete the step.`;
 
 /** Lucide icon component for each trigger kind. */
 const TRIGGER_ICONS: Record<AutomationTriggerKind, ComponentType<{ size?: number | string }>> = {
