@@ -24,6 +24,7 @@ from termihub_harness.artifacts import (
     sanitize_nodeid,
     write_failure_artifacts,
 )
+from termihub_harness.os_input.session import stop_on_environment_refusal
 from termihub_harness.manual import (
     ManualSession,
     detect_platform,
@@ -1202,6 +1203,9 @@ def pytest_runtest_makereport(item, call):
         item.config._termihub_egress_gate.finish(item, report)  # may fail it (#5388)
     if not report.failed:
         return
+    # An environment refusal ends the OS-input session once (#6148), instead
+    # of failing every test of the step the same way.
+    stop_on_environment_refusal(item, call, lane=os.environ.get("TERMIHUB_SKIP_GUARD_LANE"))
     instance = getattr(item, "instance", None)
     if instance is None:
         return  # function-style tests manage their own driver/app locally
