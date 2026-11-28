@@ -704,3 +704,31 @@ fn an_unreadable_file_of_owed_stops_owes_nothing() {
     // No file: the same.
     assert!(!Services::stored(dir.path().join("none.json")).any());
 }
+
+/// A Restart sends the stop from its own thread while the Stop's background send
+/// is still out (develop red, run 140819327936): whichever answer lands second
+/// finds the owed stop already settled, and that is a confirmed stop too.
+#[test]
+fn a_stop_that_another_send_confirmed_meanwhile_counts_as_confirmed() {
+    let services = Arc::new(Services::default());
+    started(&services, "a");
+    assert_eq!(services.stop("a"), StopPlan::StopThere("edge".into()));
+
+    // While this send's stop is out, a second send confirms it first.
+    let (plain, _answers) = agent();
+    let mut racing = FakeAgent::session_host();
+    let other = (Arc::clone(&services), Arc::clone(&plain));
+    racing.responder = Some(Box::new(move |method, _params| {
+        if method == "stop" {
+            let (services, agent) = &other;
+            assert!(services.send_owed_stop(agent.as_ref(), "edge", "a", Instant::now()));
+        }
+        Some(Ok(json!({"stopped": true})))
+    }));
+
+    assert!(
+        services.send_owed_stop(&racing, "edge", "a", Instant::now()),
+        "the stop was confirmed, by the other send"
+    );
+    assert_eq!(view(&services), None);
+}
