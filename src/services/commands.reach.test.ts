@@ -28,9 +28,11 @@ describe("the palette reaches the gear menu and the activity bar (#6158)", () =>
   });
 
   it("offers every gear-menu item", () => {
+    // Settings and Keyboard shortcuts are the shortcuts' own commands.
+    const ids = buildCommands().map((c) => c.id);
+    expect(ids).toContain("open-settings");
+    expect(ids).toContain("show-shortcuts");
     for (const label of [
-      "Settings",
-      "Keyboard shortcuts",
       "Customize layout…",
       "Open connections",
       "Updates",
