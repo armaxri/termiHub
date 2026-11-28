@@ -25,6 +25,7 @@
           <li><a href="#general-handling">General Handling</a></li>
           <li><a href="#states-sequences">States &amp; Sequences</a></li>
           <li><a href="#preliminary-implementation-details">Preliminary Implementation Details</a></li>
+          <li><a href="#sync">Sync Ledger</a></li>
         </ol>
       </nav>
 
@@ -133,7 +134,7 @@ Hover:     [  Dev ×  ]   — slightly lighter background
 <td>Close that tab group</td>
 </tr>
 <tr>
-<td>Click + (after chips)</td>
+<td>Click + (after chips) — drawn as a stack glyph labelled "New tab group", since the toolbar's only "+" opens a terminal (#5849)</td>
 <td>Create new empty tab group, switch to it</td>
 </tr>
 </tbody>
@@ -196,8 +197,8 @@ sequenceDiagram
 <td>New tab group</td>
 </tr>
 <tr>
-<td><code>Ctrl/Cmd+Shift+W</code></td>
-<td>Close current tab group</td>
+<td><code>Cmd+Shift+W</code> (macOS), <code>Ctrl+Shift+F4</code> (Windows, Linux)</td>
+<td>Close current tab group. On Windows and Linux <code>Ctrl+Shift+W</code> already closes the tab, and <code>Ctrl+Shift+Q</code> is the common Linux quit chord, so the group takes the Windows <code>Ctrl+F4</code> "close document" convention (#5316).</td>
 </tr>
 </tbody>
 </table>
@@ -389,6 +390,85 @@ interface WorkspaceTabGroupDef {
 </code></pre>
 <h3 id="performance">Performance</h3>
 <p>All tab group panel trees are mounted simultaneously (for session preservation). Inactive groups use <code>display: none</code>, removing them from layout calculations. xterm instances in hidden panels do not render or animate. For users with many groups and panels, future optimization: lazy unmount after configurable inactivity, re-parking terminals back to <code>TerminalHost</code>.</p>
+
+      <!-- ── Sync ledger ────────────────────────────────────────────── -->
+      <section>
+        <h2 id="sync">Sync Ledger</h2>
+        <blockquote>
+          <p>
+            Maintained by <code>/sync-concept tab-groups</code>. Records the last commit at which
+            the concept and code were reconciled, plus open divergences. The concept is the source
+            of truth.
+          </p>
+        </blockquote>
+        <p>
+          <strong>Last synced:</strong> 2026-11-28 at commit <code>695e6bb04</code> (#6164) ·
+          <strong>Status:</strong> diverged — one product question (Duplicate) and one missing
+          interaction filed (#6201)
+        </p>
+        <h3>Open divergences</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>#</th><th>Artifact claim</th><th>Code reality</th><th>Type</th><th>Recommendation</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td>Chip menu: Duplicate (<code>duplicateTabGroup</code>)</td>
+                <td>No duplicate action anywhere. The concept never says what a copy of a group with live sessions holds: the same layout with new sessions of the same connections, or an empty layout.</td>
+                <td>Missing (needs a product call)</td>
+                <td>Question in #6164's PR. Recommendation: drop Duplicate from the concept; a saved workspace already reopens a group's layout with fresh sessions.</td>
+              </tr>
+              <tr>
+                <td>2</td>
+                <td>Hovering a dragged tab over a chip for 500 ms switches to that group</td>
+                <td>A drop on a chip moves the tab (<code>moveTabToGroup</code>); nothing switches on a hover</td>
+                <td>Missing</td>
+                <td>Fix code: #6201</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <h3>Resolved</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>#</th><th>Artifact claim</th><th>Code reality</th><th>Type</th><th>Resolution</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>3</td>
+                <td><code>Ctrl/Cmd+Shift+W</code> closes the group</td>
+                <td>macOS <code>Cmd+Shift+W</code>; Windows/Linux <code>Ctrl+Shift+F4</code> (#5316)</td>
+                <td>Design reality</td>
+                <td>Concept edited: <code>Ctrl+Shift+W</code> is Close Tab there</td>
+              </tr>
+              <tr>
+                <td>4</td>
+                <td>Chip menu: Set Color</td>
+                <td>The store (<code>setTabGroupColor</code>) and the chip's dot existed; the menu did not offer it</td>
+                <td>Missing</td>
+                <td>Code fixed (#6164): "Set color…" opens the shared colour picker</td>
+              </tr>
+              <tr>
+                <td>5</td>
+                <td>"+" after the chips adds a group</td>
+                <td>A stack glyph, labelled "New tab group" while chips are hidden (#5849)</td>
+                <td>Design reality</td>
+                <td>Concept edited</td>
+              </tr>
+              <tr>
+                <td>6</td>
+                <td>Chips hidden with one group; drop a tab on a chip; close confirms live sessions; last group has no ×; shortcuts for new/next/previous group</td>
+                <td>As described (<code>TabGroupChips.tsx</code>, <code>resolveTabDrop.ts</code>, <code>tabGroupCloseGuard.ts</code>, <code>keybindings.ts</code>)</td>
+                <td>Match</td>
+                <td>—</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
     </div>
 
     <script src="../_assets/mermaid.min.js"></script>
