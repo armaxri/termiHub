@@ -19,7 +19,7 @@ function result(localProcess: boolean): AutomationImport {
     removedScriptPaths: [],
     outside: [],
   };
-  return { entries: [entry], refused: [] } as AutomationImport;
+  return { automations: [entry.automation], entries: [entry], refused: [] };
 }
 
 let container: HTMLDivElement;
