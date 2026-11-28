@@ -5,7 +5,8 @@ import { flushMacrotask } from "@/test/flushAsync";
 import React from "react";
 import { createRoot, Root } from "react-dom/client";
 import { flushAsync } from "@/test/flushAsync";
-import { invoke } from "@tauri-apps/api/core";
+import { fakeBackend, type CommandHandlers, type FakeBackend } from "@/test/fakeBackend";
+import { CONNECTION_EDITOR_MOUNT } from "@/test/connectionEditorBackend";
 import { useAppStore } from "@/store/appStore";
 import { currentConnectionsView } from "@/store/connectionsBridge";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
@@ -55,7 +56,13 @@ globalThis.ResizeObserver = class {
   disconnect() {}
 } as unknown as typeof ResizeObserver;
 
-const mockedInvoke = vi.mocked(invoke);
+let backend: FakeBackend;
+
+/** Install the typed fake backend (#6151) with the editor's mount calls under `handlers`. */
+function installBackend(handlers: CommandHandlers): FakeBackend {
+  backend = fakeBackend({ ...CONNECTION_EDITOR_MOUNT, ...handlers });
+  return backend;
+}
 
 /** Minimal SSH connection type schema with password and savePassword fields. */
 const SSH_TYPE: ConnectionTypeInfo = {
@@ -143,7 +150,7 @@ describe("ConnectionEditor — credential hint", () => {
     });
     seedConnectionsRegion({ connections: [EXISTING_CONN] });
 
-    mockedInvoke.mockImplementation(() => Promise.resolve(false));
+    installBackend({});
   });
 
   afterEach(() => {
@@ -158,9 +165,8 @@ describe("ConnectionEditor — credential hint", () => {
     // Regression: previously the hint appeared for any connection with savePassword=true,
     // even when no credential was actually stored. It must only appear after resolveCredential
     // confirms the credential exists.
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "resolve_credential") return Promise.resolve(null);
-      return Promise.resolve(false);
+    installBackend({
+      resolve_credential: () => null,
     });
 
     await render();
@@ -175,9 +181,8 @@ describe("ConnectionEditor — credential hint", () => {
   });
 
   it("shows 'Password saved' hint when resolve_credential returns a value", async () => {
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "resolve_credential") return Promise.resolve("s3cr3t");
-      return Promise.resolve(false);
+    installBackend({
+      resolve_credential: () => "s3cr3t",
     });
 
     await render();
@@ -338,12 +343,15 @@ describe("ConnectionEditor — Save and connect credential handling", () => {
     // password because connSettings.password is stripped from storage, even
     // when the vault already holds a valid credential. It must check the
     // store first and skip the dialog when a credential is found.
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "resolve_credential") return Promise.resolve("vault-secret");
-      if (cmd === "save_connection") return Promise.resolve();
-      if (cmd === "load_connections_and_folders")
-        return Promise.resolve({ connections: [SSH_CONN_PASSWORD, SSH_CONN_KEY], folders: [] });
-      return Promise.resolve(null);
+    installBackend({
+      resolve_credential: () => "vault-secret",
+      save_connection: ({ connection }) => connection.id,
+      load_connections_and_folders: () => ({
+        connections: [SSH_CONN_PASSWORD, SSH_CONN_KEY],
+        folders: [],
+        agents: [],
+        externalErrors: [],
+      }),
     });
 
     await renderFor(SSH_CONN_PASSWORD.id);
@@ -371,12 +379,15 @@ describe("ConnectionEditor — Save and connect credential handling", () => {
   });
 
   it("prompts for password when no stored credential exists", async () => {
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "resolve_credential") return Promise.resolve(null);
-      if (cmd === "save_connection") return Promise.resolve();
-      if (cmd === "load_connections_and_folders")
-        return Promise.resolve({ connections: [SSH_CONN_PASSWORD, SSH_CONN_KEY], folders: [] });
-      return Promise.resolve(null);
+    installBackend({
+      resolve_credential: () => null,
+      save_connection: ({ connection }) => connection.id,
+      load_connections_and_folders: () => ({
+        connections: [SSH_CONN_PASSWORD, SSH_CONN_KEY],
+        folders: [],
+        agents: [],
+        externalErrors: [],
+      }),
     });
 
     await renderFor(SSH_CONN_PASSWORD.id);
@@ -409,12 +420,15 @@ describe("ConnectionEditor — Save and connect credential handling", () => {
       requestPassword: vi.fn().mockResolvedValue(null), // user dismisses the prompt
       addTab,
     });
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "resolve_credential") return Promise.resolve(null);
-      if (cmd === "save_connection") return Promise.resolve();
-      if (cmd === "load_connections_and_folders")
-        return Promise.resolve({ connections: [SSH_CONN_PASSWORD, SSH_CONN_KEY], folders: [] });
-      return Promise.resolve(null);
+    installBackend({
+      resolve_credential: () => null,
+      save_connection: ({ connection }) => connection.id,
+      load_connections_and_folders: () => ({
+        connections: [SSH_CONN_PASSWORD, SSH_CONN_KEY],
+        folders: [],
+        agents: [],
+        externalErrors: [],
+      }),
     });
 
     await renderFor(SSH_CONN_PASSWORD.id);
@@ -450,12 +464,15 @@ describe("ConnectionEditor — Save and connect credential handling", () => {
       credentialStoreStatus: { mode: "master_password", status: "locked" },
       requestUnlockOutcome: mockRequestUnlock,
     });
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "resolve_credential") return Promise.resolve("vault-secret");
-      if (cmd === "save_connection") return Promise.resolve();
-      if (cmd === "load_connections_and_folders")
-        return Promise.resolve({ connections: [SSH_CONN_PASSWORD, SSH_CONN_KEY], folders: [] });
-      return Promise.resolve(null);
+    installBackend({
+      resolve_credential: () => "vault-secret",
+      save_connection: ({ connection }) => connection.id,
+      load_connections_and_folders: () => ({
+        connections: [SSH_CONN_PASSWORD, SSH_CONN_KEY],
+        folders: [],
+        agents: [],
+        externalErrors: [],
+      }),
     });
 
     await renderFor(SSH_CONN_PASSWORD.id);
@@ -484,13 +501,16 @@ describe("ConnectionEditor — Save and connect credential handling", () => {
     // findPasswordPromptInfo returns null — but a passphrase-protected key still
     // needs a passphrase prompt. The prompt now fires because the key is
     // encrypted (is_ssh_key_encrypted → true), independent of savePassword.
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "is_ssh_key_encrypted") return Promise.resolve(true);
-      if (cmd === "resolve_credential") return Promise.resolve(null);
-      if (cmd === "save_connection") return Promise.resolve();
-      if (cmd === "load_connections_and_folders")
-        return Promise.resolve({ connections: [SSH_CONN_PASSWORD, SSH_CONN_KEY], folders: [] });
-      return Promise.resolve(null);
+    installBackend({
+      is_ssh_key_encrypted: () => true,
+      resolve_credential: () => null,
+      save_connection: ({ connection }) => connection.id,
+      load_connections_and_folders: () => ({
+        connections: [SSH_CONN_PASSWORD, SSH_CONN_KEY],
+        folders: [],
+        agents: [],
+        externalErrors: [],
+      }),
     });
 
     await renderFor(SSH_CONN_KEY.id);
@@ -514,13 +534,16 @@ describe("ConnectionEditor — Save and connect credential handling", () => {
   });
 
   it("does not prompt for key auth when a passphrase is already stored (#879)", async () => {
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "is_ssh_key_encrypted") return Promise.resolve(true);
-      if (cmd === "resolve_credential") return Promise.resolve("stored-passphrase");
-      if (cmd === "save_connection") return Promise.resolve();
-      if (cmd === "load_connections_and_folders")
-        return Promise.resolve({ connections: [SSH_CONN_PASSWORD, SSH_CONN_KEY], folders: [] });
-      return Promise.resolve(null);
+    installBackend({
+      is_ssh_key_encrypted: () => true,
+      resolve_credential: () => "stored-passphrase",
+      save_connection: ({ connection }) => connection.id,
+      load_connections_and_folders: () => ({
+        connections: [SSH_CONN_PASSWORD, SSH_CONN_KEY],
+        folders: [],
+        agents: [],
+        externalErrors: [],
+      }),
     });
 
     await renderFor(SSH_CONN_KEY.id);
@@ -546,13 +569,16 @@ describe("ConnectionEditor — Save and connect credential handling", () => {
   it("does not prompt for an unencrypted key even when savePassword is on (#885)", async () => {
     // SSH_CONN_KEY has savePassword=true, but the key is unencrypted, so no
     // passphrase is needed — the prompt must not appear (no spurious prompt).
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "is_ssh_key_encrypted") return Promise.resolve(false);
-      if (cmd === "resolve_credential") return Promise.resolve(null);
-      if (cmd === "save_connection") return Promise.resolve();
-      if (cmd === "load_connections_and_folders")
-        return Promise.resolve({ connections: [SSH_CONN_PASSWORD, SSH_CONN_KEY], folders: [] });
-      return Promise.resolve(null);
+    installBackend({
+      is_ssh_key_encrypted: () => false,
+      resolve_credential: () => null,
+      save_connection: ({ connection }) => connection.id,
+      load_connections_and_folders: () => ({
+        connections: [SSH_CONN_PASSWORD, SSH_CONN_KEY],
+        folders: [],
+        agents: [],
+        externalErrors: [],
+      }),
     });
 
     await renderFor(SSH_CONN_KEY.id);
@@ -583,14 +609,17 @@ describe("ConnectionEditor — Save and connect credential handling", () => {
     secret: string;
     save: boolean;
   }): Promise<void> {
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "is_ssh_key_encrypted") return Promise.resolve(true);
-      if (cmd === "resolve_credential") return Promise.resolve(null);
-      if (cmd === "save_connection") return Promise.resolve(opts.persistedId);
-      if (cmd === "store_credential") return Promise.resolve(null);
-      if (cmd === "load_connections_and_folders")
-        return Promise.resolve({ connections: [SSH_CONN_PASSWORD, SSH_CONN_KEY], folders: [] });
-      return Promise.resolve(null);
+    installBackend({
+      is_ssh_key_encrypted: () => true,
+      resolve_credential: () => null,
+      save_connection: () => opts.persistedId,
+      store_credential: () => null,
+      load_connections_and_folders: () => ({
+        connections: [SSH_CONN_PASSWORD, SSH_CONN_KEY],
+        folders: [],
+        agents: [],
+        externalErrors: [],
+      }),
     });
 
     await renderFor(opts.connId);
@@ -625,13 +654,13 @@ describe("ConnectionEditor — Save and connect credential handling", () => {
     });
 
     // Typed into the prompt: saved only once the connect succeeds (#5156).
-    const callsOf = () => mockedInvoke.mock.calls.filter((c) => c[0] === "store_credential");
+    const callsOf = () => backend.callsTo("store_credential");
     expect(callsOf()).toHaveLength(0);
     await connectOpenedTab();
 
-    const storeCalls = mockedInvoke.mock.calls.filter((c) => c[0] === "store_credential");
+    const storeCalls = backend.callsTo("store_credential");
     expect(storeCalls).toHaveLength(1);
-    expect(storeCalls[0][1]).toMatchObject({
+    expect(storeCalls[0]).toMatchObject({
       connectionId: "ssh-pw-conn",
       credentialType: "password",
       value: "typed-secret",
@@ -656,7 +685,7 @@ describe("ConnectionEditor — Save and connect credential handling", () => {
       await Promise.resolve();
     });
 
-    expect(mockedInvoke.mock.calls.filter((c) => c[0] === "store_credential")).toHaveLength(0);
+    expect(backend.callsTo("store_credential")).toHaveLength(0);
   });
 
   it("does not store the password when the prompt's Save box is unchecked (#874)", async () => {
@@ -667,7 +696,7 @@ describe("ConnectionEditor — Save and connect credential handling", () => {
       save: false,
     });
 
-    const storeCalls = mockedInvoke.mock.calls.filter((c) => c[0] === "store_credential");
+    const storeCalls = backend.callsTo("store_credential");
     expect(storeCalls).toHaveLength(0);
   });
 
@@ -680,13 +709,13 @@ describe("ConnectionEditor — Save and connect credential handling", () => {
     });
 
     // Typed into the prompt: saved only once the connect succeeds (#5156).
-    const callsOf = () => mockedInvoke.mock.calls.filter((c) => c[0] === "store_credential");
+    const callsOf = () => backend.callsTo("store_credential");
     expect(callsOf()).toHaveLength(0);
     await connectOpenedTab();
 
-    const storeCalls = mockedInvoke.mock.calls.filter((c) => c[0] === "store_credential");
+    const storeCalls = backend.callsTo("store_credential");
     expect(storeCalls).toHaveLength(1);
-    expect(storeCalls[0][1]).toMatchObject({
+    expect(storeCalls[0]).toMatchObject({
       connectionId: "ssh-key-conn",
       credentialType: "key_passphrase",
       value: "typed-passphrase",
@@ -701,7 +730,7 @@ describe("ConnectionEditor — Save and connect credential handling", () => {
       save: false,
     });
 
-    const storeCalls = mockedInvoke.mock.calls.filter((c) => c[0] === "store_credential");
+    const storeCalls = backend.callsTo("store_credential");
     expect(storeCalls).toHaveLength(0);
   });
 });
@@ -776,11 +805,10 @@ describe("ConnectionEditor — unsaved-changes dirty state", () => {
     root = createRoot(container);
     resetRuntimeCache();
 
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "check_docker_available") return Promise.resolve(false);
-      if (cmd === "check_podman_available") return Promise.resolve(false);
-      if (cmd === "resolve_credential") return Promise.resolve(null);
-      return Promise.resolve(undefined);
+    installBackend({
+      check_docker_available: () => false,
+      check_podman_available: () => false,
+      resolve_credential: () => null,
     });
   });
 
@@ -1047,11 +1075,10 @@ describe("ConnectionEditor — name conflict validation namespaces", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     resetRuntimeCache();
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "check_docker_available") return Promise.resolve(false);
-      if (cmd === "check_podman_available") return Promise.resolve(false);
-      if (cmd === "resolve_credential") return Promise.resolve(null);
-      return Promise.resolve(undefined);
+    installBackend({
+      check_docker_available: () => false,
+      check_podman_available: () => false,
+      resolve_credential: () => null,
     });
   });
 
@@ -1306,11 +1333,14 @@ describe("ConnectionEditor — SSH Jump Host section", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     resetRuntimeCache();
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "save_connection") return Promise.resolve();
-      if (cmd === "load_connections_and_folders")
-        return Promise.resolve({ connections: [SSH_CONN_PASSWORD], folders: [] });
-      return Promise.resolve(null);
+    installBackend({
+      save_connection: ({ connection }) => connection.id,
+      load_connections_and_folders: () => ({
+        connections: [SSH_CONN_PASSWORD],
+        folders: [],
+        agents: [],
+        externalErrors: [],
+      }),
     });
     useAppStore.setState({
       ...useAppStore.getInitialState(),
@@ -1359,8 +1389,7 @@ describe("ConnectionEditor — SSH Jump Host section", () => {
     await flush();
 
     // Assert on the persisted payload (the post-save reload overwrites the store).
-    const saveCall = mockedInvoke.mock.calls.find(([cmd]) => cmd === "save_connection");
-    const persisted = (saveCall?.[1] as { connection: SavedConnection }).connection;
+    const [{ connection: persisted }] = backend.callsTo("save_connection");
     const cfg = persisted.config.config as Record<string, unknown>;
     // The schema edit landed...
     expect(cfg.savePassword).toBe(false);
@@ -1398,8 +1427,7 @@ describe("ConnectionEditor — SSH Jump Host section", () => {
     });
     await flush();
 
-    const saveCall = mockedInvoke.mock.calls.find(([cmd]) => cmd === "save_connection");
-    const persisted = (saveCall?.[1] as { connection: SavedConnection }).connection;
+    const [{ connection: persisted }] = backend.callsTo("save_connection");
     const cfg = persisted.config.config as Record<string, unknown>;
     // The schema edit landed, and the forwardAgent flag set before it survived.
     expect(cfg.savePassword).toBe(false);
@@ -1421,8 +1449,7 @@ describe("ConnectionEditor — SSH Jump Host section", () => {
     });
     await flush();
 
-    const saveCall = mockedInvoke.mock.calls.find(([cmd]) => cmd === "save_connection");
-    const persisted = (saveCall?.[1] as { connection: SavedConnection }).connection;
+    const [{ connection: persisted }] = backend.callsTo("save_connection");
     const cfg = persisted.config.config as Record<string, unknown>;
     // Off means the key is absent, keeping saved JSON stable for existing connections.
     expect(cfg.forwardAgent).toBeUndefined();
@@ -1446,8 +1473,7 @@ describe("ConnectionEditor — SSH Jump Host section", () => {
     await flush();
 
     // Save was prevented: no save_connection invoke.
-    const saveCall = mockedInvoke.mock.calls.find(([cmd]) => cmd === "save_connection");
-    expect(saveCall).toBeUndefined();
+    expect(backend.callsTo("save_connection")).toEqual([]);
   });
 });
 
@@ -1498,9 +1524,8 @@ describe("ConnectionEditor — Set up SSH agent button", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     resetRuntimeCache();
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "list_available_shells") return Promise.resolve(["zsh"]);
-      return Promise.resolve(null);
+    installBackend({
+      list_available_shells: () => ["zsh"],
     });
     useAppStore.setState({
       ...useAppStore.getInitialState(),
@@ -1581,7 +1606,7 @@ describe("ConnectionEditor — storage-file picker (#1105)", () => {
     seedConnectionsRegion({ connections: [EXISTING_CONN] });
     // At least one enabled external file makes the storage-file picker render.
     seedSettings({ externalConnectionFiles: [{ path: "/tmp/team.json", enabled: true }] });
-    mockedInvoke.mockImplementation(() => Promise.resolve(false));
+    installBackend({});
   });
 
   afterEach(() => {
@@ -1669,7 +1694,7 @@ describe("ConnectionEditor — Save gating on invalid input (#1357)", () => {
       credentialStoreStatus: { mode: "none", status: "unlocked" },
     });
     seedConnectionsRegion({ connections: [] });
-    mockedInvoke.mockImplementation(() => Promise.resolve(false));
+    installBackend({});
   });
 
   afterEach(() => {

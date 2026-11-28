@@ -8,7 +8,8 @@ import { setupSettingsRegion } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
-import { invoke } from "@tauri-apps/api/core";
+import { fakeBackend, type FakeBackend } from "@/test/fakeBackend";
+import { CONNECTION_EDITOR_MOUNT } from "@/test/connectionEditorBackend";
 import { useAppStore } from "@/store/appStore";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { setupAgentsRegion } from "@/test/agentsRegionTestHarness";
@@ -38,7 +39,7 @@ globalThis.ResizeObserver = class {
   disconnect() {}
 } as unknown as typeof ResizeObserver;
 
-const mockedInvoke = vi.mocked(invoke);
+let backend: FakeBackend;
 
 const SSH_TYPE: ConnectionTypeInfo = {
   typeId: "ssh",
@@ -101,9 +102,9 @@ describe("ConnectionEditor — jump-host hops follow connection id changes (#360
     document.body.appendChild(container);
     root = createRoot(container);
     resetRuntimeCache();
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "save_connection") return Promise.resolve();
-      return Promise.resolve(null);
+    backend = fakeBackend({
+      ...CONNECTION_EDITOR_MOUNT,
+      save_connection: ({ connection }) => connection.id,
     });
     useAppStore.setState({
       ...useAppStore.getInitialState(),
@@ -145,8 +146,7 @@ describe("ConnectionEditor — jump-host hops follow connection id changes (#360
     });
     await flushAsync();
 
-    const saveCall = mockedInvoke.mock.calls.find(([cmd]) => cmd === "save_connection");
-    const persisted = (saveCall?.[1] as { connection: SavedConnection }).connection;
+    const [{ connection: persisted }] = backend.callsTo("save_connection");
     expect((persisted.config.config as Record<string, unknown>).proxyJump).toEqual([
       { connectionId: "Job/bastion", host: "", port: 22, username: "", authMethod: "key" },
     ]);
@@ -220,9 +220,7 @@ describe("ConnectionEditor — follows its own connection's id change (#3622)", 
       container.querySelector<HTMLButtonElement>('[data-testid="connection-editor-save"]')!.click();
     });
     await flushAsync();
-    return mockedInvoke.mock.calls
-      .filter(([cmd]) => cmd === "save_connection")
-      .map(([, args]) => (args as { connection: SavedConnection }).connection);
+    return backend.callsTo("save_connection").map(({ connection }) => connection);
   }
 
   beforeEach(() => {
@@ -230,10 +228,10 @@ describe("ConnectionEditor — follows its own connection's id change (#3622)", 
     document.body.appendChild(container);
     root = createRoot(container);
     resetRuntimeCache();
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "save_connection") return Promise.resolve();
-      if (cmd === "list_automations") return Promise.resolve([]);
-      return Promise.resolve(null);
+    backend = fakeBackend({
+      ...CONNECTION_EDITOR_MOUNT,
+      save_connection: ({ connection }) => connection.id,
+      list_automations: () => [],
     });
     useAppStore.setState({
       ...useAppStore.getInitialState(),
