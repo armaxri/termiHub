@@ -1,6 +1,9 @@
 import { getDefaultBindings, getActionAccelerator } from "@/services/keybindings";
 import { useAppStore } from "@/store/appStore";
 import { CONTEXT_COMMANDS, ContextCommand } from "@/services/contextCommands";
+import type { LucideIcon } from "lucide-react";
+import { buildAppCommands } from "@/services/appCommands";
+import { commandIcon } from "@/services/commandIcons";
 
 /**
  * A runnable application command surfaced in the command palette (#1484, #1527).
@@ -23,6 +26,8 @@ export interface PaletteCommand {
    * applicable target, and the palette disables them with a clear affordance.
    */
   available: boolean;
+  /** The command's own glyph in the palette row (#6158). */
+  icon: LucideIcon;
   /** Execute the command. */
   run: () => void;
 }
@@ -69,7 +74,8 @@ function getRunner(action: string): ContextCommand | undefined {
 
 /**
  * Build the list of runnable commands for the command palette, in the order
- * their bindings are declared. Labels and accelerators come from the keybinding
+ * their bindings are declared, then the ones without a binding
+ * ({@link buildAppCommands}). Labels and accelerators come from the keybinding
  * service so the palette stays in sync with the shortcuts overlay and any user
  * overrides. Availability is resolved against live context at call time, so
  * callers rebuild whenever the focused panel/terminal changes.
@@ -84,8 +90,13 @@ export function buildCommands(): PaletteCommand[] {
       label: binding.label,
       accelerator: getActionAccelerator(binding.action),
       available: runner.isAvailable(),
+      icon: commandIcon(binding.action),
       run: runner.run,
     });
+  }
+  // What the gear menu and the activity bar reach without a key binding (#6158).
+  for (const command of buildAppCommands()) {
+    commands.push({ ...command, accelerator: null, available: true });
   }
   return commands;
 }
