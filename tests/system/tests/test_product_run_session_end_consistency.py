@@ -119,7 +119,7 @@ def test_grade_one_strip_layout_for_every_kind():
         == []
     )
     ssh = (
-        "Session disconnected The network connection was lost. Scrollback is kept. "
+        "Session ended The network connection was lost. Scrollback is kept. "
         "Press Enter to reconnect. Reconnect"
     )
     assert (
@@ -130,7 +130,7 @@ def test_grade_one_strip_layout_for_every_kind():
 
 def test_grade_the_old_ssh_strip_fails():
     # The R-010 / R-012 shape: no Enter hint and "View scrollback" beside the x.
-    old = "Session disconnected The network connection was lost. Scrollback is kept."
+    old = "Session ended The network connection was lost. Scrollback is kept."
     problems = end_notice_problems(
         text=old, action="reconnect", buttons=["Reconnect", "View scrollback"], dismiss_controls=1
     )

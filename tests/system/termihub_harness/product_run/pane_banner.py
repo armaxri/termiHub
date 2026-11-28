@@ -23,7 +23,6 @@ EPS = 3.0
 HEADINGS = (
     "Agent disconnected.",
     "Session ended.",
-    "Session disconnected.",
     "Device disconnected.",
     "Process exited",
 )

@@ -1,4 +1,5 @@
 import { ThemeColors } from "./types";
+import { connectionStateWord } from "@/utils/connectionStateCopy";
 
 /** A single editable color token: its `ThemeColors` key and a human label. */
 export interface ColorToken {
@@ -78,9 +79,9 @@ export const COLOR_TOKEN_GROUPS: ColorTokenGroup[] = [
       { key: "colorWarning", label: "Warning" },
       { key: "colorError", label: "Error" },
       { key: "colorInfo", label: "Info" },
-      { key: "stateConnected", label: "Connected" },
-      { key: "stateConnecting", label: "Connecting" },
-      { key: "stateDisconnected", label: "Disconnected" },
+      { key: "stateConnected", label: connectionStateWord("connected") },
+      { key: "stateConnecting", label: connectionStateWord("connecting") },
+      { key: "stateDisconnected", label: connectionStateWord("failed") },
     ],
   },
   {

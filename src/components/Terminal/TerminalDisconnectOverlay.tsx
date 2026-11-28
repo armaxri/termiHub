@@ -26,6 +26,7 @@ import { TerminalPluginExitOverlay } from "./TerminalPluginExitOverlay";
 import { TerminalReconnectStrip } from "./TerminalReconnectStrip";
 import { SESSION_END_ICONS } from "./sessionEndIcons";
 import "./TerminalDisconnectOverlay.css";
+import { connectionStateHeading, connectionVerb } from "@/utils/connectionStateCopy";
 
 interface TerminalDisconnectOverlayProps {
   tabId: string;
@@ -119,7 +120,7 @@ export function sessionEndNoticeForTab(
  *   - "reconnecting"   — non-blocking top strip, not an overlay (#5179): the
  *                        agentless countdown + attempt n/N + Cancel (#1962), or
  *                        a spinner + Stop ({@link TerminalReconnectStrip})
- *   - "error"          — error box, "Reconnect failed" heading, retry button
+ *   - "error"          — error box, "Connection failed" heading, Retry button
  *   - "disconnected"   — the session ended: "Process exited (code N)" + Restart
  *                        for a process, "Session disconnected" + Reconnect for
  *                        a dropped link (#5910), with a "Press Enter to …" hint
@@ -258,7 +259,9 @@ export function TerminalDisconnectOverlay({
   }
 
   if (disconnectError) {
-    const errorHeading = isAuthFailed ? "Authentication failed" : "Reconnect failed";
+    // Every reconnect attempt failed (#6159): the connection failed, and
+    // Retry tries it again.
+    const errorHeading = isAuthFailed ? "Authentication failed" : connectionStateHeading("failed");
     return (
       <DisconnectStrip variant="failed" cause={cause} tone="error" onDismiss={handleDismiss}>
         <ContentOverlay
@@ -293,7 +296,7 @@ export function TerminalDisconnectOverlay({
               onClick={handleReconnect}
               data-testid="terminal-disconnect-reconnect-btn"
             >
-              Try again
+              {connectionVerb("retry")}
             </Button>
           }
         >

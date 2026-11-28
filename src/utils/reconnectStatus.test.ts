@@ -10,7 +10,7 @@ import { RECONNECT_POLICY } from "./reconnectBackoff";
 
 describe("reconnectStatus — shared wording (#3730)", () => {
   it("uses one heading for every reconnecting surface", () => {
-    expect(RECONNECTING_HEADING).toBe("Connection lost — reconnecting…");
+    expect(RECONNECTING_HEADING).toBe("Reconnecting…");
   });
 
   it("labels attempt progress against the shared budget", () => {

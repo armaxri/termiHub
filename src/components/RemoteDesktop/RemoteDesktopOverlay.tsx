@@ -22,6 +22,7 @@ import {
   restingConnectPhase,
 } from "@/components/Terminal/ConnectFailure";
 import { graphicalStages } from "./graphicalStages";
+import { connectionStateHeading, connectionVerb } from "@/utils/connectionStateCopy";
 
 interface RemoteDesktopOverlayProps {
   state: GraphicalSessionState;
@@ -67,10 +68,10 @@ function restingHeading(state: GraphicalSessionState): string {
   switch (state) {
     case "serverClosed":
       return "Session ended by the server";
-    case "disconnected":
-      return "Connection lost";
     default:
-      return "Disconnected";
+      // A drop with no retry running and a plain close both end the session
+      // (#6159): the one wording, whatever ended it.
+      return connectionStateHeading("ended");
   }
 }
 
@@ -78,7 +79,7 @@ function restingHeading(state: GraphicalSessionState): string {
  * The one shared set of connection-state overlays for graphical remote-desktop
  * sessions (#1680): connecting (with Cancel, #4298), reconnecting (with attempt counter + Cancel)
  * while the backend auto-reconnect loop is retrying (#3364) — worded like a
- * terminal tab's reconnect (#3730: "Connection lost — reconnecting…",
+ * terminal tab's reconnect (#3730, #6159: "Reconnecting…",
  * "Attempt n of N") — a failed or aborted connect, which rests on the
  * terminal's failure screen (#5377: humanised reason, Retry, Edit connection,
  * Close tab, and credential re-entry for a rejected password) — and the
@@ -150,7 +151,7 @@ export function RemoteDesktopOverlay({
               onClick={onCancelConnect}
               data-testid="remote-desktop-cancel-connect"
             >
-              Abort
+              {connectionVerb("abort")}
             </Button>
           }
         />
@@ -170,7 +171,7 @@ export function RemoteDesktopOverlay({
           announcement={`${RECONNECTING_HEADING} ${attempt}`}
           actions={
             <Button variant="secondary" size="sm" icon={<Ban size={14} />} onClick={onCancel}>
-              Abort
+              {connectionVerb("stopReconnecting")}
             </Button>
           }
         />

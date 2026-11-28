@@ -11,6 +11,7 @@ import {
 } from "./dropCopy";
 import { SESSION_END_ICONS } from "./sessionEndIcons";
 import "./TerminalViewModeBanner.css";
+import { connectionStateHeading } from "@/utils/connectionStateCopy";
 
 interface TerminalViewModeBannerProps {
   tabId: string;
@@ -71,7 +72,7 @@ export function TerminalViewModeBanner({ tabId, cause, notice }: TerminalViewMod
     ? "Agent disconnected."
     : notice
       ? `${notice.heading}.`
-      : "Session ended.";
+      : `${connectionStateHeading("ended")}.`;
   const actionLabel = sessionEndActionLabel(restart ? "restart" : "reconnect");
   const hint = restart ? VIEW_MODE_RESTART_HINT : VIEW_MODE_ENTER_HINT;
   const reconnectTitle = agentDisconnected

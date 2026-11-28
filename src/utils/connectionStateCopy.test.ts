@@ -82,7 +82,7 @@ describe("connection-state words", () => {
 
   it("offers one verb per state", () => {
     expect(STATES.map((s) => [s, verbForState(s)])).toEqual([
-      ["connecting", "cancel"],
+      ["connecting", "abort"],
       ["connected", null],
       ["reconnecting", "stopReconnecting"],
       ["failed", "retry"],
@@ -92,7 +92,7 @@ describe("connection-state words", () => {
     expect(connectionVerb("retry")).toBe("Retry");
     expect(connectionVerb("reconnect")).toBe("Reconnect");
     expect(connectionVerb("stopReconnecting")).toBe("Stop reconnecting");
-    expect(connectionVerb("cancel")).toBe("Cancel");
+    expect(connectionVerb("abort")).toBe("Abort");
     expect(connectionVerb("connect")).toBe("Connect");
   });
 });
@@ -156,7 +156,7 @@ describe("every surface uses the map", () => {
   it("the copy guide states every word", () => {
     const guide = readFileSync(join(REPO_DIR, "docs/copy-style.md"), "utf8");
     for (const s of STATES) expect(guide).toContain(connectionStateWord(s));
-    for (const v of ["retry", "reconnect", "stopReconnecting", "cancel", "connect"] as const) {
+    for (const v of ["retry", "reconnect", "stopReconnecting", "abort", "connect"] as const) {
       expect(guide).toContain(connectionVerb(v));
     }
     expect(guide).toMatch(/## Glossary/);

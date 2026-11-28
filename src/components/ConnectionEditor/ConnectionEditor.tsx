@@ -142,6 +142,7 @@ import { isWindows } from "@/utils/platform";
 import "./ConnectionEditor.css";
 import { errorMessage } from "@/utils/errorMessage";
 import { requestRemoteAgentReveal } from "@/components/Sidebar/remoteAgentReveal";
+import { connectionStateHeading } from "@/utils/connectionStateCopy";
 
 type EditorCategory = "connection" | "terminal" | "appearance" | "agent";
 
@@ -1722,7 +1723,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       } else if (isAuthFailure(err)) {
         toast.error("Authentication failed", { description: backendErrorMessage(err) });
       } else {
-        toast.error("Connection failed", { description: backendErrorMessage(err) });
+        toast.error(connectionStateHeading("failed"), { description: backendErrorMessage(err) });
       }
       // Rethrow so the async Button leaves its pending state to idle rather than
       // flashing success on a failed or canceled test (its own error toast is
@@ -2050,8 +2051,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         )}
         {isAgentTunnelledGraphical && (
           <p className="settings-form__hint" data-testid="connection-editor-agent-tunnel-hint">
-            Runs on this computer and connects through the agent&apos;s port forwarding — the host
-            and port must be reachable from the agent host.
+            Runs on this computer and connects through a tunnel on the agent — the host and port
+            must be reachable from the agent host.
           </p>
         )}
         {!isAnyAgentMode && enabledExternalFiles.length > 0 && (

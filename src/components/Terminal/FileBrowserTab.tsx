@@ -37,6 +37,7 @@ import {
   restingConnectPhase,
 } from "./ConnectFailure";
 import "./FileBrowserTab.css";
+import { connectionStateHeading, connectionVerb } from "@/utils/connectionStateCopy";
 
 interface FileBrowserTabProps {
   tabId: string;
@@ -266,14 +267,14 @@ export function FileBrowserTab({ tabId, isVisible }: FileBrowserTabProps) {
         // The shared connect surface (#5068); file-only types report no stages.
         <ConnectProgress
           phase="connecting"
-          heading="Connecting…"
+          heading={connectionStateHeading("connecting")}
           target={target}
           typeLabel={typeLabel}
           typeIcon={typeIcon}
           details={identity.details}
           stages={buildStages(stepsFor(identity.sessionType), undefined)}
           status={`Opening ${connectingTarget}.`}
-          announcement={`Connecting… Opening ${connectingTarget}.`}
+          announcement={`${connectionStateHeading("connecting")} Opening ${connectingTarget}.`}
           startedAt={startedAt}
           deadlineAt={startedAt + CONNECTING_TIMEOUT_MS}
           actions={
@@ -284,7 +285,7 @@ export function FileBrowserTab({ tabId, isVisible }: FileBrowserTabProps) {
               onClick={handleAbort}
               data-testid="file-browser-tab-abort"
             >
-              Abort
+              {connectionVerb("abort")}
             </Button>
           }
           data-testid="file-browser-tab-connecting"

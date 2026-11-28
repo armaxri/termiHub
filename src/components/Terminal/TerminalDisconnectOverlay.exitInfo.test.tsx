@@ -94,12 +94,12 @@ describe("TerminalDisconnectOverlay — region-derived exit cause (#2615)", () =
     const overlay = await renderWithExit({ reason: "dropped", code: 137 });
     // #5910: a process exit is not a lost connection.
     expect(overlay?.textContent).toContain("Process exited (code 137)");
-    expect(overlay?.textContent).not.toContain("Session disconnected");
+    expect(overlay?.textContent).not.toContain("Session ended");
   });
 
   it("renders the codeless dropped wording when the region carries no exit code", async () => {
     const overlay = await renderWithExit({ reason: "dropped", code: null });
-    expect(overlay?.textContent).toContain("Session disconnected");
+    expect(overlay?.textContent).toContain("Session ended");
     expect(overlay?.textContent).toContain("The connection was lost");
   });
 
@@ -111,7 +111,7 @@ describe("TerminalDisconnectOverlay — region-derived exit cause (#2615)", () =
     await flush();
 
     const overlay = container.querySelector("[data-testid='terminal-disconnect-overlay']");
-    expect(overlay?.textContent).toContain("Reconnect failed");
+    expect(overlay?.textContent).toContain("Connection failed");
     expect(overlay?.textContent).toContain("host unreachable");
   });
 

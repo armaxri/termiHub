@@ -135,7 +135,7 @@ describe("reconnect strip (#5179)", () => {
     await renderWith(reconnecting(waiting()));
     const cancel = byTestId("terminal-auto-reconnect-cancel-btn") as HTMLButtonElement;
     expect(cancel.tagName).toBe("BUTTON");
-    expect(cancel.textContent).toBe("Cancel");
+    expect(cancel.textContent).toBe("Stop reconnecting");
     act(() => cancel.click());
     expect(
       harness.transport.dispatched.some(
@@ -153,7 +153,7 @@ describe("reconnect strip (#5179)", () => {
     const announcement = () => byTestId("terminal-reconnect-strip-announcement")?.textContent;
     expect(countdown()).toBe("Retrying in 8s · Attempt 1 of 10");
     const announced = announcement();
-    expect(announced).toBe("Connection lost — reconnecting… Attempt 1 of 10.");
+    expect(announced).toBe("Reconnecting… Attempt 1 of 10.");
 
     act(() => vi.advanceTimersByTime(3_000));
     expect(countdown()).toBe("Retrying in 5s · Attempt 1 of 10");
@@ -163,7 +163,7 @@ describe("reconnect strip (#5179)", () => {
     harness.transport.setSession(TAB, reconnecting(waiting({ attempt: 1, delayMs: 2_000 })));
     await flushSessionRegion();
     expect(countdown()).toBe("Retrying in 2s · Attempt 2 of 10");
-    expect(announcement()).toBe("Connection lost — reconnecting… Attempt 2 of 10.");
+    expect(announcement()).toBe("Reconnecting… Attempt 2 of 10.");
 
     // The attempt in flight keeps the strip (no full overlay) with a Stop control.
     harness.transport.setSession(
@@ -235,7 +235,7 @@ describe("reconnect strip: why the last attempt failed (#5395)", () => {
     await renderWith(withReason(waiting({ attempt: 1, delayMs: 2_000 }), OTHER_DEVICE));
     expect(reasonLine()).toBe(`${LAST_ATTEMPT_PREFIX} ${OTHER_DEVICE}`);
     expect(announcement()).toBe(
-      `Connection lost — reconnecting… Attempt 2 of 10. ${LAST_ATTEMPT_PREFIX} ${OTHER_DEVICE}`
+      `Reconnecting… Attempt 2 of 10. ${LAST_ATTEMPT_PREFIX} ${OTHER_DEVICE}`
     );
     // The countdown line is unchanged by it.
     expect(byTestId("terminal-auto-reconnect-countdown")?.textContent).toBe(
@@ -277,9 +277,9 @@ describe("reconnect strip: why the last attempt failed (#5395)", () => {
     record();
 
     expect(spoken).toEqual([
-      `Connection lost — reconnecting… Attempt 2 of 10. ${LAST_ATTEMPT_PREFIX} ${MISSING}`,
-      "Connection lost — reconnecting… Attempt 3 of 10.",
-      `Connection lost — reconnecting… Attempt 4 of 10. ${LAST_ATTEMPT_PREFIX} ${OTHER_DEVICE}`,
+      `Reconnecting… Attempt 2 of 10. ${LAST_ATTEMPT_PREFIX} ${MISSING}`,
+      "Reconnecting… Attempt 3 of 10.",
+      `Reconnecting… Attempt 4 of 10. ${LAST_ATTEMPT_PREFIX} ${OTHER_DEVICE}`,
     ]);
     // The visible line always shows the current reason.
     expect(reasonLine()).toBe(`${LAST_ATTEMPT_PREFIX} ${OTHER_DEVICE}`);

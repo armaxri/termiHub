@@ -18,7 +18,7 @@ import {
 // The disconnect overlay renders purely from the projected `session-lifecycle`
 // region now the per-client `terminalExitedTabs` / `terminalExitInfo` /
 // `terminalDisconnectErrors` slices are deleted (#2625): the variant is chosen by
-// the region status (`failed` → "Reconnect failed", `sessionLost` → "Session
+// the region status (`failed` → "Connection failed", `sessionLost` → "Session
 // lost") and the region `exit` metadata (clean / dropped wording). Seed the region
 // via the harness rather than the removed slices.
 const TAB = "tab-1";
@@ -71,7 +71,7 @@ describe("TerminalDisconnectOverlay — default (disconnected) state", () => {
     await flushSessionRegion();
 
     expect(container.querySelector("[data-testid='terminal-disconnect-overlay']")).not.toBeNull();
-    expect(container.textContent).toContain("Session disconnected");
+    expect(container.textContent).toContain("Session ended");
   });
 
   it("renders reconnect and one dismiss control, no view-scrollback (#5955)", async () => {
@@ -177,7 +177,7 @@ describe("TerminalDisconnectOverlay — exit-cause branching (#1121)", () => {
 
     // #5910: a process exit is not a lost connection.
     expect(container.textContent).toContain("Process exited (code 137)");
-    expect(container.textContent).not.toContain("Session disconnected");
+    expect(container.textContent).not.toContain("Session ended");
     // A local shell's exit is not a lost link, nor necessarily remote (#5784).
     expect(container.textContent).not.toContain("connection was lost");
     expect(container.textContent).not.toContain("remote process");
@@ -195,7 +195,7 @@ describe("TerminalDisconnectOverlay — exit-cause branching (#1121)", () => {
     });
     await flushSessionRegion();
 
-    expect(container.textContent).toContain("Session disconnected");
+    expect(container.textContent).toContain("Session ended");
     // Distinct wording from the clean-exit variant.
     expect(container.textContent).toContain("connection was lost");
   });
@@ -210,7 +210,7 @@ describe("TerminalDisconnectOverlay — exit-cause branching (#1121)", () => {
 
     // #5831: without a recorded exit the cause is unknown — say the link was
     // lost rather than claim a remote process exited.
-    expect(container.textContent).toContain("Session disconnected");
+    expect(container.textContent).toContain("Session ended");
     expect(container.textContent).toContain("The connection was lost.");
   });
 });
@@ -344,7 +344,7 @@ describe("TerminalDisconnectOverlay — error (reconnect failed) state", () => {
     });
     await flushSessionRegion();
 
-    expect(container.textContent).toContain("Reconnect failed");
+    expect(container.textContent).toContain("Connection failed");
     expect(container.textContent).toContain("Failed to reconnect after 10 attempts");
     expect(container.querySelector("[data-testid='terminal-disconnect-error-box']")).not.toBeNull();
   });

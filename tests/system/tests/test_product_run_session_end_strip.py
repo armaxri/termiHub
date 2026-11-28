@@ -4,7 +4,7 @@ The live grade is hand-triggered only (``scripts/internal/product-run.sh``;
 deselected without ``--product-run``). The UI review of run
 ``20261124T080801Z`` saw the disconnected / session-ended card float over the
 terminal and cut the first or last output lines (#5908: R-003, R-005, R-009),
-and a local shell that exited with code 3 titled "Session disconnected" with a
+and a local shell that exited with code 3 titled "Session ended" with a
 no-wifi icon and "Reconnect"; a clean exit 0 also offered "Reconnect" (#5910:
 R-004, R-021).
 
@@ -12,7 +12,7 @@ The strip now spans the top of the pane and pushes the terminal down below it,
 so every output line stays readable and selectable. A process exit reads
 "Process exited (code N)" with a process icon and Restart — a local exit with
 code 0 too (#5955); a remote session's normal end reads "Session ended" with
-Reconnect; only a dropped link says "Session disconnected".
+Reconnect; only a dropped link says "Session ended".
 The live grade uses no servers: a local shell exits with code 3, another with 0.
 
 The plugin crash notice (#5916) is the same strip; its grade
@@ -90,7 +90,7 @@ def test_grade_a_process_exit_says_so_and_restarts():
 
 def test_grade_the_old_process_exit_wording_fails():
     # The R-004 shape: a local exit 3 read as a lost connection with Reconnect.
-    old = "Session disconnected The process exited with code 3. Scrollback is kept."
+    old = "Session ended The process exited with code 3. Scrollback is kept."
     problems = end_copy_problems(
         text=old, cause="exited", buttons=["Reconnect"], local=True, code=3
     )
@@ -117,7 +117,7 @@ def test_grade_a_clean_exit_restarts_locally_and_reconnects_remotely():
 
 
 def test_grade_a_dropped_link_keeps_the_network_wording():
-    text = "Session disconnected The network connection was lost. Scrollback is kept."
+    text = "Session ended The network connection was lost. Scrollback is kept."
     assert end_copy_problems(text=text, cause="network", buttons=["Reconnect"], local=False) == []
     assert end_copy_problems(
         text="Session ended", cause="network", buttons=["Reconnect"], local=False

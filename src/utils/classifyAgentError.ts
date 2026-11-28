@@ -9,6 +9,7 @@ import {
   SECOND_FACTOR_FAILED_MESSAGE,
   parseBackendError,
 } from "@/utils/backendErrorCode";
+import { connectionStateHeading } from "@/utils/connectionStateCopy";
 
 /** The specific error categories plus a generic fallback. */
 export type AgentErrorCategory =
@@ -116,7 +117,7 @@ export function classifyAgentError(error: unknown): ClassifiedAgentError {
 
   return {
     category: "unknown",
-    title: "Connection failed",
+    title: connectionStateHeading("failed"),
     message: raw,
     rawError: raw,
   };

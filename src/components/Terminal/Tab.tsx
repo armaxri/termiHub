@@ -62,14 +62,19 @@ import { isContextMenuShortcut, openContextMenuFromKeyboard } from "@/utils/cont
 import { isUnencryptedSession } from "@/utils/unencryptedSession";
 import { UnencryptedBadge } from "@/components/UnencryptedBadge";
 import { splitTabTitle, tabTooltipTitle } from "@/utils/tabTitleTruncation";
+import { connectionStateHeading, connectionStateWord } from "@/utils/connectionStateCopy";
 
-/** Human-readable label for each connection status, used as the dot's tooltip. */
+/**
+ * Human-readable label for each connection status, used as the dot's tooltip.
+ * The connection states take the one wording (#6159): a session that dropped
+ * or was ended reads "Session ended".
+ */
 const STATUS_LABELS: Record<TabStatus, string> = {
-  connecting: "Connecting",
+  connecting: connectionStateWord("connecting"),
   starting: "Waiting for the shell's first prompt",
-  connected: "Connected",
-  failed: "Connection failed",
-  disconnected: "Disconnected",
+  connected: connectionStateWord("connected"),
+  failed: connectionStateWord("failed"),
+  disconnected: connectionStateWord("ended"),
   exited: "Process exited",
   evicted: "Taken over by another desktop",
   finished: "Finished",
@@ -404,7 +409,7 @@ export function Tab({
         })()}
       {status === "connecting" && reducedMotion && (
         <span className="tab__state-label" aria-hidden data-testid={`tab-state-label-${tab.id}`}>
-          Connecting…
+          {connectionStateHeading("connecting")}
         </span>
       )}
       <span className="tab__title">

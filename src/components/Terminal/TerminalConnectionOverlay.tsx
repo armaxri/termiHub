@@ -35,6 +35,7 @@ import { markTerminalRefocusPending } from "./terminalRefocus";
 import { MAX_AGENT_SPAWN_ATTEMPTS } from "./terminalConnectionPlan";
 import { reconnectAttemptLabel } from "@/utils/reconnectStatus";
 import "./TerminalConnectionOverlay.css";
+import { connectionStateHeading, connectionVerb } from "@/utils/connectionStateCopy";
 
 interface TerminalConnectionOverlayProps {
   tabId: string;
@@ -229,7 +230,7 @@ export function TerminalConnectionOverlay({
       onClick={handleAbort}
       data-testid="terminal-connection-abort-btn"
     >
-      Abort
+      {connectionVerb("abort")}
     </Button>
   );
   const retryNowBtn = (onClick: () => void) => (
@@ -357,7 +358,7 @@ export function TerminalConnectionOverlay({
   // Same words as the ConnectProgress defaults; spelled out for the announcement.
   const headings: Record<ConnectProgressPhase, string> = {
     // A refused / unreachable / unresolvable host names itself (#5183).
-    failed: connectionErrorHeading(errorKind) ?? "Connection failed",
+    failed: connectionErrorHeading(errorKind) ?? connectionStateHeading("failed"),
     timeout: "Timed out",
     aborted: "Connection aborted",
     connecting: "",

@@ -18,7 +18,7 @@ never implemented:
   the SSH connection dropping and reappears on reconnect),
 * **double-click a stopped persistent shell** (MT-AGENT-13, #3686): the session
   starts through the persistent-session machinery, the sidebar dot turns green,
-  and closing the tab leaves the background session running,
+  and closing the tab leaves the persistent session running,
 * the **connect / disconnect / new-session / edit / delete context menu** against
   a *connected* agent.
 
@@ -188,7 +188,7 @@ class TestRemoteAgentLive(
             what="the running definition's Attach / Stop actions",
         )
 
-        # Closing the tab detaches; the background session keeps running. The
+        # Closing the tab detaches; the persistent session keeps running. The
         # live states are ``running`` / ``attached`` (backend-confirmed, see
         # ``wait_persistent_running``); what must never happen is ``stopped``.
         self.close_all_tabs()

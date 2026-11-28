@@ -159,7 +159,7 @@ describe("TabBar — per-tab connection status dot", () => {
     harness.transport.setSession("t1", disconnected());
     await render([makeTerminalTab("t1", true)]);
     await flushSessionRegion();
-    expect(dotFor("t1")?.getAttribute("aria-label")).toBe("Disconnected");
+    expect(dotFor("t1")?.getAttribute("aria-label")).toBe("Session ended");
   });
 
   it("renders a 'disconnected' dot when the terminal session has exited", async () => {

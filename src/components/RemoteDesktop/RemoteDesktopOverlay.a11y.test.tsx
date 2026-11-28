@@ -58,7 +58,7 @@ function retryButton(): HTMLElement | null {
 describe("RemoteDesktopOverlay resting-state announcement (#4514)", () => {
   it.each([
     ["connectFailed", "Connection failed. rd-host: Connection refused"],
-    ["disconnected", "Connection lost. Connection refused"],
+    ["disconnected", "Session ended. Connection refused"],
   ] as const)("announces %s assertively with its message", (state, spoken) => {
     render(state, "Connection refused");
     const region = liveRegion();
@@ -81,7 +81,7 @@ describe("RemoteDesktopOverlay resting-state announcement (#4514)", () => {
 
   it.each([
     ["serverClosed", "Session ended by the server."],
-    ["closed", "Disconnected."],
+    ["closed", "Session ended."],
   ] as const)("announces %s politely", (state, spoken) => {
     render(state, null);
     const region = liveRegion();

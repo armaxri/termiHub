@@ -10,6 +10,7 @@
  */
 import { t, tf } from "@/i18n/catalog";
 import { RECONNECTING_HEADING } from "@/utils/reconnectStatus";
+import { connectionStateHeading, connectionVerb } from "@/utils/connectionStateCopy";
 import type { SessionEndCause } from "@/types/generated/SessionEndCause";
 import type { TerminalExitInfo } from "@/types/terminal";
 import { serialDeviceName } from "@/utils/serialDeviceName";
@@ -286,9 +287,8 @@ export interface SessionEndNotice {
  * The session-end notice for `cause` (#5910). A process that exits is not a
  * lost connection: it reads "Process exited (code N)" — for a local process
  * also when it ended normally with code 0 (#5955) —, a remote session's normal
- * end reads "Session ended", and only a dropped link says "Session
- * disconnected". A
- * local process (transport `other`) offers Restart; a session over a link
+ * end reads "Session ended", and so does a dropped link: the one wording for
+ * an ended session (#6159), its cause line says what ended it. A local process (transport `other`) offers Restart; a session over a link
  * offers Reconnect, since starting it again reconnects first.
  */
 export function sessionEndNoticeFor(
@@ -320,14 +320,14 @@ export function sessionEndNoticeFor(
     case "shellEnded":
       return {
         kind: "ended",
-        heading: t("drop.end.ended"),
+        heading: connectionStateHeading("ended"),
         causeLine: line,
         action: local ? "restart" : "reconnect",
       };
     case "user":
       return {
         kind: "user",
-        heading: t("drop.end.ended"),
+        heading: connectionStateHeading("ended"),
         causeLine: line,
         action: local ? "restart" : "reconnect",
       };
@@ -341,7 +341,7 @@ export function sessionEndNoticeFor(
     default:
       return {
         kind: "link",
-        heading: t("drop.end.disconnected"),
+        heading: connectionStateHeading("ended"),
         causeLine: line,
         action: "reconnect",
       };
@@ -371,5 +371,5 @@ export function sessionEndEnterHint(action: SessionEndNotice["action"]): string 
 
 /** The label of a session-end notice's primary action (#5910). */
 export function sessionEndActionLabel(action: SessionEndNotice["action"]): string {
-  return action === "restart" ? t("drop.end.restart") : t("drop.end.reconnect");
+  return action === "restart" ? t("drop.end.restart") : connectionVerb("reconnect");
 }

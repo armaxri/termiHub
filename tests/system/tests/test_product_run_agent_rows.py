@@ -138,7 +138,7 @@ def test_grade_not_installed_row():
     neutral = _row(dot_label="Agent not installed", has_setup=True)
     assert not_installed_row_problems(neutral) == []
     # The R-095 shape: red dot + Reconnect for an expected first run.
-    red = _row(dot_class="status-dot status-dot--disconnected", dot_label="Disconnected",
+    red = _row(dot_class="status-dot status-dot--disconnected", dot_label="Connection failed",
                has_reconnect=True)
     problems = not_installed_row_problems(red)
     assert any("red" in p for p in problems)

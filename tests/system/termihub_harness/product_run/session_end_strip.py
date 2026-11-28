@@ -9,8 +9,8 @@ disconnected" with a no-wifi icon and "Reconnect" (R-004, R-021).
 terminal under it: a full-width strip at the pane top, with the terminal
 starting below it so no output line is covered. :func:`end_copy_problems` grades
 its wording: a process exit says so and offers Restart (a local exit reads
-"Process exited (code N)" for every code, #5955); only a dropped link says
-"Session disconnected".
+"Process exited (code N)" for every code, #5955); a session that ended or
+dropped reads "Session ended", the one connection-state wording (#6159).
 """
 
 from __future__ import annotations
@@ -29,11 +29,19 @@ HEADINGS: dict[str, str] = {
     "ended": "Session ended",
     "user": "Session ended",
     "device": "Device disconnected",
-    "link": "Session disconnected",
+    "link": "Session ended",
 }
 LINK_HEADING = HEADINGS["link"]
 #: The ``data-cause`` values that are a dropped link.
 LINK_CAUSES = ("server", "timeout", "network", "lost")
+#: The cause lines of a dropped link (twins of ``drop.cause.*``). With one
+#: "Session ended" heading for every end (#6159), the line says it dropped.
+LINK_CAUSE_LINES = (
+    "The server closed the connection.",
+    "The connection timed out.",
+    "The network connection was lost.",
+    "The connection was lost.",
+)
 
 
 def end_kind(cause: Optional[str]) -> str:
@@ -102,7 +110,9 @@ def end_copy_problems(
         heading = f"Process exited (code {code})"
     if heading not in flat:
         problems.append(f"the strip does not say {heading!r}: {flat!r}")
-    if kind != "link" and LINK_HEADING in flat:
+    if kind == "link" and not any(line in flat for line in LINK_CAUSE_LINES):
+        problems.append(f"a dropped link does not say what dropped: {flat!r}")
+    if kind == "exited" and LINK_HEADING in flat:
         problems.append(f"a {kind!r} end says {LINK_HEADING!r}: a process exit is no lost connection")
     process_end = kind in ("exited", "ended", "user")
     want = "Restart" if process_end and local else "Reconnect"

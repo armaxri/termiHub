@@ -565,13 +565,36 @@ const en = {
   "fileManagerIntegration.fallback.picker": "Ask which session",
   "fileManagerIntegration.fallback.systemDefaultShell": "Open a new terminal",
 
+  // ── Connection states: one word per state, everywhere (#6159) ──────────
+  // The sidebar, tabs, the status bar, overlays and toasts all take these
+  // (through src/utils/connectionStateCopy.ts); docs/copy-style.md has the spec.
+  // A state word names the state (dots, tooltips, accessible names); a heading
+  // is what an overlay, banner or toast says while it lasts.
+  "connection.state.connecting": "Connecting",
+  "connection.state.connected": "Connected",
+  "connection.state.reconnecting": "Reconnecting",
+  "connection.state.failed": "Connection failed",
+  "connection.state.ended": "Session ended",
+  "connection.state.notConnected": "Not connected",
+  "connection.heading.connecting": "Connecting…",
+  "connection.heading.reconnecting": "Reconnecting…",
+  "connection.heading.failed": "Connection failed",
+  "connection.heading.ended": "Session ended",
+  // The verbs, one per state: Abort a connect, Retry a failed one, Stop
+  // reconnecting, Reconnect an ended session, Connect what is not connected.
+  "connection.verb.connect": "Connect",
+  "connection.verb.abort": "Abort",
+  "connection.verb.retry": "Retry",
+  "connection.verb.reconnect": "Reconnect",
+  "connection.verb.stopReconnecting": "Stop reconnecting",
+
   // ── Dropped-session wording per transport (#5619, #5660, #5666) ─────────
   // A serial port has no shell or agent, and a network drop is not a process
   // exit: each transport says what actually happened.
   "drop.heading.serial": "Device disconnected — reconnecting…",
   "drop.heading.telnet": "Connection closed — reconnecting…",
   "drop.status.serial": "Device disconnected. Waiting for it to come back.",
-  "drop.status.network": "Connection lost. Attempting to reconnect automatically.",
+  "drop.status.network": "The connection was lost. Reconnecting automatically.",
   "drop.detail.serial": "Scrollback is kept. Waiting for {port} to come back.",
   "drop.detail.serialUnknownPort": "Scrollback is kept. Waiting for the device to come back.",
   "drop.detail.ssh": "Scrollback is kept. Your remote shell restarts; running programs are lost.",
@@ -612,15 +635,13 @@ const en = {
   "drop.cause.deviceUnknown": "The device was disconnected.",
   "drop.cause.lost": "The connection was lost.",
   // ── Session-end notice headings and actions (#5910) ────────────────────
-  // A process that exits is not a lost connection: only a dropped link says
-  // "disconnected", and a local process is restarted, not reconnected.
+  // A process that exits is not a lost connection, and a local process is
+  // restarted, not reconnected. An ended session's heading and its Reconnect
+  // are the connection-state words (connection.heading.ended, #6159).
   "drop.end.exited": "Process exited (code {code})",
   "drop.end.exitedNoCode": "Process exited",
-  "drop.end.ended": "Session ended",
   "drop.end.device": "Device disconnected",
-  "drop.end.disconnected": "Session disconnected",
   "drop.end.restart": "Restart",
-  "drop.end.reconnect": "Reconnect",
   // One Enter hint for the strip and the view-mode banner (#5955).
   "drop.end.enterReconnect": "Press Enter to reconnect.",
   "drop.end.enterRestart": "Press Enter to restart.",

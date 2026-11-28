@@ -119,8 +119,6 @@ describe("TerminalDisconnectOverlay — transport-specific wording", () => {
     const dismiss = container.querySelector("[data-testid='terminal-disconnect-dismiss-btn']");
     const card = dismiss?.closest(".terminal-disconnect-strip");
     expect(card).not.toBeNull();
-    expect(card?.querySelector(".ui-content-overlay__heading")?.textContent).toBe(
-      "Session disconnected"
-    );
+    expect(card?.querySelector(".ui-content-overlay__heading")?.textContent).toBe("Session ended");
   });
 });

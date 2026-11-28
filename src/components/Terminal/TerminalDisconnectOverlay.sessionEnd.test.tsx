@@ -3,7 +3,7 @@
  *
  * The UI review of run 20261124T080801Z saw the session-ended card float over
  * the terminal and cut the first or last output lines (R-003, R-005, R-009),
- * and a local shell that exited with code 3 titled "Session disconnected" with
+ * and a local shell that exited with code 3 titled "Session ended" with
  * a no-wifi icon and "Reconnect" (R-004, R-021). These pin the strip at the top
  * of the slot that publishes its height so the terminal is pushed below it, and
  * one wording per kind of end: a process exit is not a lost connection.
@@ -100,7 +100,7 @@ describe("session-end strip (#5908, #5910)", () => {
     const strip = await renderWith(exitedWith(3));
     expect(strip.dataset.cause).toBe("exited");
     expect(heading()).toBe("Process exited (code 3)");
-    expect(strip.textContent).not.toContain("Session disconnected");
+    expect(strip.textContent).not.toContain("Session ended");
     expect(strip.textContent).not.toContain("connection");
     expect(host.querySelector("[data-testid='terminal-disconnect-icon-exited']")).not.toBeNull();
     expect(host.querySelector("[data-testid='terminal-disconnect-icon-link']")).toBeNull();
@@ -139,11 +139,11 @@ describe("session-end strip (#5908, #5910)", () => {
     expect(primary()?.textContent).toBe("Reconnect");
   });
 
-  it("only a dropped link says 'Session disconnected' with the no-wifi icon", async () => {
+  it("only a dropped link says 'Session ended' with the no-wifi icon", async () => {
     seedTab(SSH);
     const strip = await renderWith(dropped());
     expect(strip.dataset.cause).toBe("network");
-    expect(heading()).toBe("Session disconnected");
+    expect(heading()).toBe("Session ended");
     expect(strip.textContent).toContain("The network connection was lost.");
     expect(host.querySelector("[data-testid='terminal-disconnect-icon-link']")).not.toBeNull();
     expect(primary()?.textContent).toBe("Reconnect");
@@ -213,11 +213,11 @@ describe("TerminalViewModeBanner — process exits restart (#5910)", () => {
     expect(container.querySelector("[data-testid='terminal-view-mode-cause']")).toBeNull();
   });
 
-  it("a dropped SSH link says 'Session disconnected.' like its strip (#5955)", () => {
+  it("a dropped SSH link says 'Session ended.' like its strip (#5955)", () => {
     seedTab(SSH);
     const notice = sessionEndNoticeForTab(TAB, { code: null, reason: "dropped" }, "io_error");
     act(() => root.render(<TerminalViewModeBanner tabId={TAB} notice={notice} />));
-    expect(label()).toBe("Session disconnected. Press Enter to reconnect.");
+    expect(label()).toBe("Session ended. Press Enter to reconnect.");
     expect(button()).toBe("Reconnect");
     expect(container.querySelector("[data-testid='terminal-view-mode-cause']")?.textContent).toBe(
       "The network connection was lost."
@@ -252,7 +252,7 @@ describe("sessionEndNoticeFor (#5910)", () => {
     for (const cause of ["server", "timeout", "network", "lost", undefined] as const) {
       const notice = sessionEndNoticeFor(cause, { transport: "other" });
       expect(notice.kind).toBe("link");
-      expect(notice.heading).toBe("Session disconnected");
+      expect(notice.heading).toBe("Session ended");
       expect(notice.action).toBe("reconnect");
     }
   });
