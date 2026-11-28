@@ -100,8 +100,9 @@ describe("NetworkToolsSidebar — monitor rows on SidebarListItem (#5193)", () =
       "up.example.com/health"
     );
     expect(header.querySelector(".sidebar-list-item__actions")).not.toBeNull();
-    // Every row says where it runs and its state in a word (F-009 round 2).
-    expect(q('[data-testid="monitor-machine-up"]')?.textContent).toBe("This computer");
+    // Like a Services row, it names the machine only when that is not this
+    // computer (live review 2026-11-28); its state is one word.
+    expect(q('[data-testid="monitor-machine-up"]')).toBeNull();
     expect(q('[data-testid="monitor-marker-up"]')?.textContent).toBe("Running");
     expect(row.getAttribute("aria-description")).toBe(
       "GET every 30s · expects 200. Last check: 200 in 42 ms, just now"

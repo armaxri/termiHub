@@ -174,8 +174,9 @@ for (const viewport of WINDOWS) {
         await expect(page.locator(id("monitor-row-owed"))).toContainText("will be stopped");
         // Where it runs, the reason with its next step, nothing to run while stopping (F-009).
         await expect(page.locator(id("monitor-machine-lab"))).toContainText("Raspberry Pi");
-        // Every row: where it runs and one state word (round 2).
-        await expect(page.locator(id("monitor-machine-here"))).toHaveText("This computer");
+        // Like a Services row, it names its machine only off this computer (live
+        // review 2026-11-28), and one state word.
+        await expect(page.locator(id("monitor-machine-here"))).toHaveCount(0);
         await expect(page.locator(id("monitor-machine-cloud"))).toHaveText("Location unknown");
         await expect(page.locator(id("monitor-marker-here"))).toHaveText("Running");
         await expect(page.locator(id("monitor-marker-edge"))).toHaveText("Agent offline");

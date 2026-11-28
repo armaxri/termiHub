@@ -115,9 +115,22 @@ describe("RecordingSaveDialog", () => {
     });
   });
 
-  it("offers no existing automation when there is none", async () => {
+  it("shows adding to an automation, off with why, when there is none (live review)", async () => {
     await render({ automations: [] });
-    expect(query("recording-save-to-existing")).toBeNull();
+    const existing = query("recording-save-to-existing");
+    expect(existing).not.toBeNull();
+    expect(existing!.hasAttribute("disabled") || existing!.hasAttribute("data-disabled")).toBe(
+      true
+    );
+    expect(query("recording-save-dialog")?.textContent).toContain("No automations yet");
+    expect(query("recording-save-name")).not.toBeNull();
+  });
+
+  it("says where Keep for later puts the recording (live review)", async () => {
+    await render();
+    expect(query("recording-save-keep")?.getAttribute("title")).toBe(
+      "It waits in a bar above the terminal until you save or discard it"
+    );
   });
 
   it("asks for a name only once it is missing on Save", async () => {

@@ -9,6 +9,7 @@ import {
 import { EXPERIMENTAL_SETTING_PATH } from "@/utils/experimentalSetting";
 import { LOCAL_PROGRAMS_SETTING_LABEL } from "@/utils/localProcessGate";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
+import { useAppStore } from "@/store/appStore";
 import "./AutomationImportDialog.css";
 
 /** Props for {@link AutomationImportDialog}. */
@@ -37,6 +38,15 @@ function localProgramNote({ experimental, localPrograms }: LocalProgramSwitches)
     return `Runs a program on this computer: not until you turn on Settings ▸ Security ▸ ${LOCAL_PROGRAMS_SETTING_LABEL}.`;
   }
   return "Runs a program on this computer: termiHub asks you before it runs the program.";
+}
+
+/** The Settings page of the switch a local program still waits for, or `null`. */
+export function localProgramSettingPage({
+  experimental,
+  localPrograms,
+}: LocalProgramSwitches): "general" | "security" | null {
+  if (!experimental) return "general";
+  return localPrograms ? null : "security";
 }
 
 /** What to know about one imported automation, a sentence each. */
@@ -85,7 +95,24 @@ export function AutomationImportDialog({ result, onClose, onShow }: AutomationIm
     experimental: settings.experimentalFeaturesEnabled ?? false,
     localPrograms: settings.workflowLocalProcessEnabled ?? false,
   };
+  const openSettingsTab = useAppStore((s) => s.openSettingsTab);
   const entries = current?.entries ?? [];
+  // A way to the switch the note names, not only its path (live review 2026-11-28).
+  const settingPage = entries.some((e) => e.localProcess)
+    ? localProgramSettingPage(switches)
+    : null;
+  const openSetting = settingPage && (
+    <Button
+      variant="secondary"
+      onClick={() => {
+        openSettingsTab({ category: settingPage });
+        onClose();
+      }}
+      data-testid="automation-import-open-setting"
+    >
+      {settingPage === "general" ? "Open general settings" : "Open security settings"}
+    </Button>
+  );
   const refused = current?.refused ?? [];
   const count = entries.length;
   const total = count + refused.length;
@@ -112,6 +139,7 @@ export function AutomationImportDialog({ result, onClose, onShow }: AutomationIm
           </Button>
         ) : (
           <>
+            {openSetting}
             <Button variant="secondary" onClick={onClose} data-testid="automation-import-close">
               Close
             </Button>
