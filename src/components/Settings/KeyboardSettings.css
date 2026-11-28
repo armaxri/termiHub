@@ -36,7 +36,7 @@
 
 .keyboard-settings__group-title {
   font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-secondary);
   margin: 0 0 var(--spacing-sm) 0;
   padding-bottom: var(--spacing-xs);
@@ -53,7 +53,7 @@
   text-align: left;
   padding: var(--spacing-xs) var(--spacing-sm);
   color: var(--text-secondary);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   border-bottom: 1px solid var(--border-primary);
 }
 

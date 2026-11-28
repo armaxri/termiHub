@@ -15,9 +15,6 @@
   flex: 1 1 auto;
   gap: var(--spacing-xs);
   min-width: 0;
-  color: var(--text-secondary);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
 }
 
 .sidebar-section-header__title > svg {
@@ -67,5 +64,5 @@
   gap: var(--spacing-xs);
   white-space: nowrap;
   color: var(--text-secondary);
-  font-size: var(--font-size-2xs);
+  font-size: var(--font-size-xs);
 }

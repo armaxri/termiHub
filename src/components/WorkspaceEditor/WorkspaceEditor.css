@@ -23,7 +23,7 @@
 
 .workspace-editor__title {
   font-size: var(--font-size-xl);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
   margin: 0;
 }
@@ -43,7 +43,7 @@
 
 .workspace-editor__label {
   font-size: var(--font-size-sm);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   color: var(--text-secondary);
 }
 
@@ -149,7 +149,7 @@
   background: none;
   color: var(--text-secondary);
   cursor: pointer;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   padding: 0;
   flex-shrink: 0;
 }
@@ -233,8 +233,8 @@
 }
 
 .layout-split-container__label {
-  font-size: var(--font-size-2xs);
-  font-weight: 500;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
   color: var(--text-secondary);
   text-transform: uppercase;
   display: flex;
@@ -295,8 +295,8 @@
 }
 
 .layout-leaf__label {
-  font-size: var(--font-size-2xs);
-  font-weight: 600;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-secondary);
   text-transform: uppercase;
 }
@@ -436,7 +436,7 @@
 }
 
 .connection-picker__item-type {
-  font-size: var(--font-size-2xs);
+  font-size: var(--font-size-xs);
   padding: var(--spacing-xxs) var(--spacing-xs);
   border-radius: var(--radius-sm);
   background: var(--bg-tertiary);
@@ -450,7 +450,7 @@
 
 .connection-picker__group-name {
   font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-secondary);
   padding: var(--spacing-xs) var(--spacing-sm) var(--spacing-xxs);
   text-transform: uppercase;
@@ -462,7 +462,7 @@
 
 .connection-picker__agent-name {
   font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-secondary);
   padding: var(--spacing-xs) var(--spacing-sm) var(--spacing-xxs) var(--spacing-lg);
   opacity: 0.8;
@@ -512,8 +512,8 @@
   align-items: center;
   justify-content: center;
   padding: 1px var(--spacing-xs);
-  font-size: var(--font-size-2xs);
-  font-weight: 500;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-xs);
   background: var(--bg-secondary);
@@ -544,7 +544,7 @@ input.layout-size-input {
   width: 40px;
   height: auto;
   padding: 1px var(--spacing-xxs);
-  font-size: var(--font-size-2xs);
+  font-size: var(--font-size-xs);
   text-align: center;
   border: 1px solid var(--accent-color);
   border-radius: var(--radius-xs);

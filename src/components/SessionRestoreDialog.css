@@ -48,6 +48,4 @@
   flex-shrink: 0;
   color: var(--text-secondary);
   font-size: var(--font-size-xs);
-  letter-spacing: var(--letter-spacing-ui);
-  text-transform: uppercase;
 }

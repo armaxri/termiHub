@@ -17,7 +17,7 @@
   text-align: left;
   padding: var(--spacing-xs) var(--spacing-sm);
   color: var(--text-secondary);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   border-bottom: 1px solid var(--border-primary);
 }
 
@@ -30,11 +30,6 @@
 }
 
 .shortcuts-overlay__group-label {
-  font-weight: 600;
-  font-size: var(--font-size-sm);
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
   border-bottom: 1px solid var(--border-primary);
   padding-bottom: var(--spacing-xs);
 }

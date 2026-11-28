@@ -26,9 +26,10 @@
   gap: var(--spacing-xs);
 }
 
-.save-workspace-dialog__field label {
+.save-workspace-dialog__field label,
+.save-workspace-dialog__field-label {
   font-size: var(--font-size-sm);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   color: var(--text-secondary);
 }
 

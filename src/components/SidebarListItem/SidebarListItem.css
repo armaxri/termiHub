@@ -47,7 +47,7 @@
   background: var(--bg-secondary);
   color: var(--text-secondary);
   text-transform: uppercase;
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   flex-shrink: 1;
 }
 

@@ -54,7 +54,7 @@ export function HttpMonitorChecks({ history, intervalMs, onExport }: HttpMonitor
         </span>
       </div>
 
-      <div className="network-panel__section-title network-panel__section-title--with-action">
+      <div className="ui-section-label network-panel__section-title network-panel__section-title--with-action">
         <span>Recent checks</span>
         <Button
           variant="secondary"

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useId, useRef } from "react";
 import { AlertTriangle } from "lucide-react";
 import { Modal } from "./Modal";
 import { Button, ButtonVariant } from "./Button";
@@ -191,6 +191,10 @@ export function ConfirmDialog({
   ...rest
 }: ConfirmDialogProps): React.ReactElement {
   const cancelBtnRef = useRef<HTMLButtonElement>(null);
+  const messageId = useId();
+  // A danger confirm (a delete, a reset) is an alert dialog whose message is its
+  // description, so a screen reader announces the consequence with it (#6155).
+  const isDanger = variant === "danger" || confirmVariant === "danger";
   const alternateBtnRef = useRef<HTMLButtonElement>(null);
 
   // Resolve the title accent icon: a caller-supplied `icon` wins, otherwise the
@@ -225,6 +229,8 @@ export function ConfirmDialog({
       onOpenChange={(isOpen) => !isOpen && (onDismiss ?? onCancel)()}
       title={titleNode}
       description={description}
+      role={isDanger ? "alertdialog" : "dialog"}
+      describedById={message != null && message !== false ? messageId : undefined}
       data-testid={rest["data-testid"]}
       onKeyDown={(e) => {
         if (e.key === "Enter") {
@@ -273,7 +279,7 @@ export function ConfirmDialog({
         </>
       }
     >
-      {message}
+      {message != null && message !== false ? <div id={messageId}>{message}</div> : null}
       {children}
       {dontAskAgain && (
         <label className="ui-confirm__ask-again">

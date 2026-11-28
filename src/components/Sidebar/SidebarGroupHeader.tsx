@@ -60,7 +60,7 @@ export function SidebarGroupHeader({
   const Chevron = expanded ? ChevronDown : ChevronRight;
   const toggle = (
     <button
-      className="connection-list__group-toggle"
+      className="ui-section-label connection-list__group-toggle"
       onClick={onToggle}
       aria-expanded={expanded}
       data-testid={toggleTestId}

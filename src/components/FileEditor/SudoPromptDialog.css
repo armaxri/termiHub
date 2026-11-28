@@ -32,10 +32,6 @@
 .sudo-prompt__fact dt {
   flex-shrink: 0;
   width: 44px;
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
 .sudo-prompt__fact dd {

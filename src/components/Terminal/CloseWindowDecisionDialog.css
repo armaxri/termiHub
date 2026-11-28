@@ -52,7 +52,7 @@
 }
 
 .close-window-decision__row-name {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;

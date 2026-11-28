@@ -23,11 +23,12 @@ export function ActivityBarItem({
         className={`activity-bar__item ${isActive ? "activity-bar__item--active" : ""}`}
         onClick={onClick}
         aria-label={label}
+        aria-current={isActive ? "page" : undefined}
         data-testid={`activity-bar-${label.toLowerCase().replace(/\s+/g, "-")}`}
         data-icon={iconName}
       >
         <Icon size={24} strokeWidth={1.5} />
-        {isActive && <div className="activity-bar__indicator" />}
+        {isActive && <div className="activity-bar__indicator" aria-hidden="true" />}
       </button>
     </Tooltip>
   );

@@ -77,7 +77,7 @@
 .mobaxterm-import__skipped-title {
   margin: 0;
   font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-secondary);
   padding: var(--spacing-xs) var(--spacing-xxs);
   border-bottom: 1px solid var(--border-primary);

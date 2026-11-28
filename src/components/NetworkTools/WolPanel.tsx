@@ -214,7 +214,7 @@ export function WolPanel() {
       {error && <div className="network-panel__error">{error}</div>}
 
       {/* Saved Devices */}
-      <div className="network-panel__section-title">Saved devices</div>
+      <div className="ui-section-label network-panel__section-title">Saved devices</div>
       {savedDevices.length === 0 && (
         <EmptyState variant="panel" title="No saved devices" data-testid="wol-devices-empty" />
       )}

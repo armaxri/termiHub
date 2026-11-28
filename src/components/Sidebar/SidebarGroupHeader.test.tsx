@@ -80,4 +80,9 @@ describe("SidebarGroupHeader", () => {
     });
     expect(onToggle).toHaveBeenCalledTimes(1);
   });
+
+  it("draws its title as the shared section label (#6156)", () => {
+    act(() => root.render(<SidebarGroupHeader title="Connections" expanded onToggle={() => {}} />));
+    expect(toggle().classList.contains("ui-section-label")).toBe(true);
+  });
 });

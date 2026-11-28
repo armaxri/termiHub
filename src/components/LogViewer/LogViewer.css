@@ -31,7 +31,7 @@
 .log-viewer__level-filter {
   padding: var(--spacing-xxs) var(--spacing-sm);
   font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-sm);
   background: transparent;
@@ -141,7 +141,7 @@
 .log-viewer__level {
   width: 44px;
   text-align: center;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   flex-shrink: 0;
 }
 

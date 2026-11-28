@@ -1167,3 +1167,225 @@ describe("--text-disabled is reserved for disabled states (#5165)", () => {
     ]);
   });
 });
+
+/**
+ * Type tokens, one section label, one sidebar empty state (#6156; audit UI-017,
+ * UI-019, UI-027, UI-035).
+ *
+ * - Weights, tracking and radii come from tokens: a raw `font-weight: 600`,
+ *   `letter-spacing: 0.04em` or `border-radius: 2px` drifts per component.
+ * - The section-label look lives in one place, `.ui-section-label` in ui.css.
+ *   Tracked capitals (`text-transform: uppercase` plus `letter-spacing`) are
+ *   that look; a component rule that rebuilds them is a copy. The copy style
+ *   is sentence case (#5848, R-088), so the shared label is too.
+ * - `--font-size-2xs` is the count-badge tier only; headers and badges use xs.
+ * - The sidebars share one EmptyState variant, `inline`.
+ */
+const ALL_CSS = collectFiles(SRC_DIR, (name) => name.endsWith(".css")).filter(
+  (f) => !toPosix(f).endsWith("src/styles/variables.css")
+);
+
+/** Each `selector { body }` rule in `css`, comments removed, `@font-face` skipped. */
+function cssRules(css: string): { selector: string; body: string }[] {
+  const out: { selector: string; body: string }[] = [];
+  for (const m of stripCssComments(css).matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const selector = m[1].replace(/\s+/g, " ").trim();
+    // A @font-face weight range ("100 900") is a font descriptor, not a style.
+    if (selector.endsWith("@font-face")) continue;
+    out.push({ selector, body: m[2] });
+  }
+  return out;
+}
+
+/** The values of `prop` (a regex source) declared in `body`. */
+function declValues(body: string, prop: string): string[] {
+  const re = new RegExp(`(?:^|[;\\s])(?:${prop})\\s*:\\s*([^;]+)`, "gi");
+  return [...body.matchAll(re)].map((m) => m[1].trim());
+}
+
+/** A value outside `var(...)` that is a number other than a bare zero. */
+function rawNumber(value: string): boolean {
+  const outside = value.replace(/var\([^)]*\)/g, " ");
+  return outside
+    .split(/\s+/)
+    .filter(Boolean)
+    .some((part) => /\d/.test(part) && !/^-?0(\.0+)?(px|em|rem|%)?$/.test(part));
+}
+
+/** Raw weight, tracking and radius literals in one CSS text, as "selector: decl". */
+function rawTypeLiterals(css: string): string[] {
+  const found: string[] = [];
+  for (const { selector, body } of cssRules(css)) {
+    for (const [prop, label] of [
+      ["font-weight", "font-weight"],
+      ["letter-spacing", "letter-spacing"],
+      ["border(?:-[a-z]+)*-radius", "border-radius"],
+    ]) {
+      for (const value of declValues(body, prop)) {
+        if (rawNumber(value)) found.push(`${selector}: ${label}: ${value}`);
+      }
+    }
+  }
+  return found;
+}
+
+describe("raw weight, tracking and radius literals (#6156)", () => {
+  it("flags raw literals and accepts tokens, zero and keywords (guard self-check)", () => {
+    expect(rawTypeLiterals(".a { font-weight: 600; }")).toHaveLength(1);
+    expect(rawTypeLiterals(".a { letter-spacing: 0.04em; }")).toHaveLength(1);
+    expect(rawTypeLiterals(".a { border-radius: 2px; }")).toHaveLength(1);
+    expect(rawTypeLiterals(".a { border-top-left-radius: 50%; }")).toHaveLength(1);
+    expect(rawTypeLiterals(".a { border-radius: 0 2px 2px 0; }")).toHaveLength(1);
+    expect(
+      rawTypeLiterals(
+        ".a { font-weight: var(--font-weight-semibold); letter-spacing: normal; " +
+          "border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }"
+      )
+    ).toEqual([]);
+    expect(rawTypeLiterals(".a { border-radius: 0; letter-spacing: 0; }")).toEqual([]);
+    expect(rawTypeLiterals("@font-face { font-weight: 100 900; }")).toEqual([]);
+  });
+
+  it("defines the weight, tracking and radius tokens it asks for", () => {
+    const css = stripCssComments(readFileSync(join(STYLES_DIR, "variables.css"), "utf8"));
+    for (const tok of [
+      "--font-weight-normal",
+      "--font-weight-medium",
+      "--font-weight-semibold",
+      "--font-weight-bold",
+      "--letter-spacing-label",
+      "--letter-spacing-heading",
+      "--radius-xs",
+      "--radius-circle",
+    ]) {
+      expect(css.includes(`${tok}:`), `variables.css must define ${tok}`).toBe(true);
+    }
+  });
+
+  it("uses tokens for every font-weight, letter-spacing and border-radius in app CSS", () => {
+    const offenders = ALL_CSS.flatMap((file) =>
+      rawTypeLiterals(readFileSync(file, "utf8")).map(
+        (hit) => `${toPosix(file).split("/src/")[1]} ${hit}`
+      )
+    );
+    expect(
+      offenders,
+      "Use --font-weight-*, --letter-spacing-* and --radius-* tokens:\n" + offenders.join("\n")
+    ).toEqual([]);
+  });
+});
+
+describe("one section label (#6156)", () => {
+  const ui = stripCssComments(readFileSync(join(UI_DIR, "ui.css"), "utf8"));
+
+  it("defines .ui-section-label: xs, semibold, label tracking, secondary text", () => {
+    const rule = cssRules(ui).find((r) => r.selector === ".ui-section-label");
+    expect(rule, ".ui-section-label must exist in ui.css").toBeDefined();
+    const body = rule!.body.replace(/\s+/g, " ");
+    expect(body).toContain("font-size: var(--font-size-xs)");
+    expect(body).toContain("font-weight: var(--font-weight-semibold)");
+    expect(body).toContain("letter-spacing: var(--letter-spacing-label)");
+    expect(body).toContain("color: var(--text-secondary)");
+    expect(body).not.toMatch(/text-transform\s*:\s*uppercase/);
+  });
+
+  it("has no component rule that rebuilds the tracked-capitals label look", () => {
+    const offenders: string[] = [];
+    for (const file of ALL_CSS) {
+      if (file === join(UI_DIR, "ui.css")) continue;
+      for (const { selector, body } of cssRules(readFileSync(file, "utf8"))) {
+        if (/text-transform\s*:\s*uppercase/i.test(body) && /letter-spacing\s*:/i.test(body)) {
+          offenders.push(`${toPosix(file).split("/src/")[1]} ${selector}`);
+        }
+      }
+    }
+    expect(
+      offenders,
+      "Use the shared .ui-section-label (sentence case) instead of:\n" + offenders.join("\n")
+    ).toEqual([]);
+  });
+});
+
+/**
+ * The count-badge rules allowed the 2xs tier: numbers overlaid on a row's dot
+ * or icon, where a larger digit would not fit. Everything else is xs or up.
+ */
+const COUNT_BADGE_2XS = [".connection-tree__jump-count", ".connection-tree__state-badge"];
+
+describe("the 2xs tier is for count badges only (#6156)", () => {
+  it("uses --font-size-2xs only in the count-badge rules", () => {
+    const offenders: string[] = [];
+    for (const file of ALL_CSS) {
+      for (const { selector, body } of cssRules(readFileSync(file, "utf8"))) {
+        if (!body.includes("--font-size-2xs")) continue;
+        if (COUNT_BADGE_2XS.includes(selector)) continue;
+        offenders.push(`${toPosix(file).split("/src/")[1]} ${selector}`);
+      }
+    }
+    expect(offenders, "Headers and badges use --font-size-xs:\n" + offenders.join("\n")).toEqual(
+      []
+    );
+  });
+
+  it("still finds the count badges (guard is not vacuous)", () => {
+    const list = readFileSync(join(COMPONENTS_DIR, "Sidebar", "ConnectionList.css"), "utf8");
+    const users = cssRules(list).filter((r) => r.body.includes("--font-size-2xs"));
+    expect(users.map((r) => r.selector).sort()).toEqual([...COUNT_BADGE_2XS].sort());
+  });
+});
+
+/**
+ * The `variant` of each `<EmptyState …>` in `tsx` ("inline" when unset). Only
+ * the tag's own attributes count: a `{…}` expression (an `action={<Button
+ * variant="primary" />}`) is skipped by brace depth.
+ */
+function emptyStateVariants(tsx: string): string[] {
+  const out: string[] = [];
+  for (const m of tsx.matchAll(/<EmptyState\b/g)) {
+    let depth = 0;
+    let own = "";
+    for (let i = m.index! + m[0].length; i < tsx.length; i++) {
+      const c = tsx[i];
+      if (c === "{") depth++;
+      else if (c === "}") depth--;
+      else if (depth === 0 && c === ">") break;
+      else if (depth === 0) own += c;
+    }
+    out.push(own.match(/\bvariant="(\w+)"/)?.[1] ?? "inline");
+  }
+  return out;
+}
+
+describe("one sidebar empty state (#6156)", () => {
+  it("reads only the tag's own variant (guard self-check)", () => {
+    expect(
+      emptyStateVariants(
+        '<EmptyState variant="card" action={<Button variant="primary" icon={<Plus />} />} />' +
+          '<EmptyState title="x" action={<Button variant="secondary" />} />'
+      )
+    ).toEqual(["card", "inline"]);
+  });
+
+  it("has no per-variant title colour override", () => {
+    const ui = stripCssComments(readFileSync(join(UI_DIR, "ui.css"), "utf8"));
+    expect(ui).not.toMatch(/\.ui-empty--panel\s+\.ui-empty__title/);
+  });
+
+  it("uses the inline variant for every EmptyState in a sidebar", () => {
+    const sidebarFiles = collectFiles(
+      COMPONENTS_DIR,
+      (name) => name.endsWith(".tsx") && !name.includes(".test.") && !name.includes("Dialog")
+    ).filter((f) => /\/[A-Za-z]*Sidebar\//.test(toPosix(f)));
+    expect(sidebarFiles.length).toBeGreaterThan(5);
+    const offenders: string[] = [];
+    for (const file of sidebarFiles) {
+      const tsx = readFileSync(file, "utf8");
+      for (const variant of emptyStateVariants(tsx)) {
+        if (variant !== "inline") {
+          offenders.push(`${toPosix(file).split("/src/")[1]} variant="${variant}"`);
+        }
+      }
+    }
+    expect(offenders, "Sidebars use the inline EmptyState:\n" + offenders.join("\n")).toEqual([]);
+  });
+});

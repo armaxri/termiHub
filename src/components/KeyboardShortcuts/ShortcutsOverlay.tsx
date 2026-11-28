@@ -133,7 +133,7 @@ export function ShortcutsOverlay({ open, onOpenChange }: ShortcutsOverlayProps) 
           {groupedBindings.map((group) => (
             <Fragment key={group.category}>
               <tr className="shortcuts-overlay__group-row">
-                <td colSpan={2} className="shortcuts-overlay__group-label">
+                <td colSpan={2} className="ui-section-label shortcuts-overlay__group-label">
                   {group.label}
                 </td>
               </tr>
